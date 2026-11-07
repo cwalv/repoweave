@@ -34,7 +34,7 @@ fn label(project: &ProjectName) -> String {
     project_rel_path(project)
 }
 
-fn named(
+pub(crate) fn named(
     vcs: &dyn Vcs,
     project: &ProjectName,
     dir: &Path,
@@ -200,15 +200,24 @@ pub fn require_recorded(ctx: &WorkspaceContext) -> anyhow::Result<()> {
         return Ok(());
     };
     let branch = named(vcs.as_ref(), &project, &dir, &text)?;
-    let store = Store::open(vcs.as_ref(), &dir)?;
+    recorded_value(vcs.as_ref(), &project, &dir, &branch).map(|_| ())
+}
+
+/// `branch`'s record, the records remotes' tips merged into the local records
+/// branch first; a record that does not read as one value refuses, judged.
+pub(crate) fn recorded_value(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+) -> anyhow::Result<Record> {
+    let store = Store::open(vcs, dir)?;
     let written = store
         .write(|_| Ok(Vec::new()))
-        .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &branch, e))?;
-    match written.view.lookup(&branch) {
-        Lookup::Value(_) => Ok(()),
-        lookup => {
-            Err(judge_lookup(vcs.as_ref(), &store, &project, &dir, &branch, lookup)?.refused())
-        }
+        .map_err(|e| write_refusal(vcs, &store, project, dir, branch, e))?;
+    match written.view.lookup(branch) {
+        Lookup::Value(record) => Ok(record),
+        lookup => Err(judge_lookup(vcs, &store, project, dir, branch, lookup)?.refused()),
     }
 }
 

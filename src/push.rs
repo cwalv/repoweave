@@ -1,24 +1,32 @@
-//! `rwv push` — coordinated cross-repo push.
+//! `rwv push` — publish a weave branch: its members' branches, then its
+//! record, then the project branch.
 //!
-//! The publisher-side counterpart to `rwv update --remote`. Pushes manifest repos
-//! first, then the project repo last — the project repo carries the
-//! committed lock that pins manifest SHAs, so collaborators' `rwv clone` or `rwv update`
-//! must never see a committed lock referencing unpushed manifest commits.
+//! The project branch carries the lock that pins each member's commit, so it
+//! is published last: collaborators who clone or update from it must never
+//! find a lock naming a commit no remote holds. The record travels with the
+//! branch it describes, ahead of it, so a branch rwv publishes is published
+//! with its record.
 
-use crate::diagnosis::{Report, State};
+use crate::alignment::{Accounting, Aligner, Member as AlignedMember, Pin, Target};
+use crate::cli::consent::OverwriteConsent;
+use crate::diagnosis::{ChoiceId, Fact, FactKind, Report, State};
 use crate::manifest::{
-    LockFile, Manifest, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType,
+    LockFile, Manifest, Project, ProjectName, RepoEntry, RepoOperand, RepoPath, Role, VcsType,
 };
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
+use crate::push_branch::Standing;
+use crate::records::{BranchName, Published, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::vcs::{
-    project_vcs, vcs_for, Force, HeadAttachment, PublishRef, RawRevisionId, RemoteHandle, Vcs,
+    project_vcs, vcs_for, BackupSource, HeadAttachment, LocalRefName, PublishRef, RawRefName,
+    RemoteHandle, Replace, Vcs,
 };
-use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, project_rel_path, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -27,16 +35,13 @@ use std::sync::Mutex;
 /// `$schema` field of the [`PushJsonOutput`] envelope.
 pub const PUSH_SCHEMA_URL: &str = crate::schema_url::schema_url!("push");
 
-// ---------------------------------------------------------------------------
-// JSON wire-output types for `rwv push --json`
-// ---------------------------------------------------------------------------
-
 /// One per-repo outcome record in `rwv push --json` output.
 ///
 /// Member-repo records use `kind` values `pushed`, `skipped`, and `failed`.
 /// The project-repo record uses `kind` values `project-repo-pushed` and
-/// `project-repo-failed`, making it distinguishable from member-repo records
-/// in the same flat `outcomes` array.
+/// `project-repo-failed`, and the record of the branch `records-published` and
+/// `records-rejected`, making each distinguishable from member-repo records in
+/// the same flat `outcomes` array.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PushOutcomeOutput {
@@ -56,6 +61,26 @@ pub enum PushOutcomeOutput {
         absolute_path: crate::path_spelling::WirePath,
         /// Free-form error message from the git push attempt.
         message: String,
+    },
+    /// The branch's record, and the drops this machine had made, reached the
+    /// remote the project branch publishes to.
+    RecordsPublished {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+        project: ProjectName,
+        /// The entries the publish removed from the remote's records.
+        dropped: Vec<String>,
+    },
+    /// The remote refused its records branch. For the remote's default branch
+    /// recorded as `declared` the project branch was published all the same.
+    RecordsRejected {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+        project: ProjectName,
+        /// What the remote answered.
+        message: String,
+        /// Whether the project branch was withheld because of it.
+        withheld: bool,
     },
     /// Project repo was pushed successfully (always the last record).
     ProjectRepoPushed {
@@ -85,8 +110,8 @@ impl PushOutcomeOutput {
 /// Top-level envelope for `rwv push --json`.
 ///
 /// Shape: `{ "$schema": "<url>", "outcomes": [<PushOutcomeOutput>, ...] }`.
-/// Member-repo records appear first, sorted by repo path; the project-repo
-/// record is appended last (reflecting push ordering). Consumers can
+/// Member-repo records appear first, sorted by repo path; the branch's record
+/// and the project-repo record follow, in that order. Consumers can
 /// distinguish the project-repo record by checking `kind` for
 /// `"project-repo-pushed"` or `"project-repo-failed"`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -99,515 +124,1121 @@ pub struct PushJsonOutput {
     /// project repo withheld because members' pushes failed lists each of
     /// those members as `publish` `withheld`.
     pub refused: Vec<crate::diagnosis::JudgedOutput>,
-    /// Each repo push judged and went past without pushing it: a branch
-    /// behind its push branch, or one whose upstream is gone, with that
-    /// state's choices.
+    /// Each repo push judged and went past without refusing it: a branch
+    /// behind its push branch, one whose upstream is gone, a merge whose
+    /// unmerged pin a later lock waived, with that state's choices.
     pub reported: Vec<crate::diagnosis::JudgedOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolution: Option<Resolution>,
+    pub resolution: Option<crate::workspace::Resolution>,
 }
 
 /// What `rwv push` does once its preconditions pass.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushMode {
     /// Print the plan and push nothing.
     DryRun,
-    Publish(Force),
+    Publish,
+}
+
+/// What an invocation of `rwv push` asked for.
+pub struct PushRequest<'a> {
+    pub mode: PushMode,
+    /// The `--role` and `--repo` selectors; none pushes `owned` and `fork`
+    /// members, the record and the project branch.
+    pub filter: &'a RepoFilter,
+    /// The repos `--overwrite` names.
+    pub overwrite: &'a OverwriteConsent,
+    /// `--branch`: push this weave branch instead of the checked-out one.
+    pub branch: Option<&'a str>,
+    /// Workers for the member fetches and pushes; the project repo always
+    /// goes last, alone.
+    pub jobs: usize,
+    pub output: OutputMode,
+}
+
+/// The weave branch being pushed, and what the push reads of it.
+struct Pushed {
+    project: ProjectName,
+    project_dir: PathBuf,
+    workweave_dir: Option<PathBuf>,
+    branch: BranchName,
+    raw: RawRefName,
+    /// The project repo has it checked out here.
+    checked_out: bool,
+    record: Record,
+    manifest: Manifest,
+    lock: Option<LockFile>,
+}
+
+impl Pushed {
+    fn is_feature(&self) -> bool {
+        matches!(self.record, Record::Feature { .. })
+    }
+
+    /// The branch a member of `role` is expected on for this weave branch.
+    fn expected(&self, role: Role, entry: &RepoEntry) -> RawRefName {
+        if self.is_feature() && matches!(role, Role::Owned | Role::Fork) {
+            self.raw.clone()
+        } else {
+            RawRefName::new(entry.branch.local_counterpart().as_str())
+        }
+    }
+}
+
+struct Member {
+    path: RepoPath,
+    entry: RepoEntry,
+    dir: PathBuf,
+    vcs: Box<dyn Vcs>,
+    /// The push acts on this member: it selects it by default, by role or by
+    /// name.
+    acting: bool,
+    url: Option<crate::registry::CloneUrl>,
+}
+
+/// A member branch to publish.
+struct PushPlanItem {
+    repo_path: RepoPath,
+    branch: String,
+    vcs_type: VcsType,
+    publish_ref: PublishRef,
+    /// Where the branch publishes: its push target.
+    target: RemoteHandle,
+    replace: Replace,
+}
+
+/// Outcome of pushing a single manifest repo.
+enum PushOutcome {
+    Pushed,
+    Failed(String),
+}
+
+fn project_label(project: &ProjectName) -> String {
+    project_rel_path(project).to_string()
+}
+
+fn print_envelope(
+    outcomes: Vec<PushOutcomeOutput>,
+    refusal: &anyhow::Error,
+    reported: &Report,
+    ctx: &WorkspaceContext,
+) {
+    let envelope = PushJsonOutput {
+        schema_url: PUSH_SCHEMA_URL.to_string(),
+        outcomes,
+        refused: crate::diagnosis::refused_output(refusal),
+        reported: reported.output(),
+        resolution: Some(ctx.resolution()),
+    };
+    if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+        outln!("{out}");
+    }
+}
+
+/// Refuse in the shape the output mode asks for, then hand the refusal back.
+fn refuse_json(
+    request: &PushRequest<'_>,
+    ctx: &WorkspaceContext,
+    outcomes: Vec<PushOutcomeOutput>,
+    reported: &Report,
+    refusal: anyhow::Error,
+) -> anyhow::Error {
+    if request.output.is_json() {
+        print_envelope(outcomes, &refusal, reported, ctx);
+    }
+    refusal
 }
 
 /// Run `rwv push` for the current workspace context.
 ///
-/// Refuses if invoked from a workweave (workweave branches shouldn't leak
-/// to shared remotes). Refuses if the project repo is off its canonical
-/// branch. Walks the manifest pushing writable repos (Owned + Fork by
-/// default) on the currently-checked-out branch; aggregates failures and
-/// only pushes the project repo if every manifest push succeeded.
+/// Pushes the weave branch checked out here (or `--branch`'s) from any
+/// workspace, on a branch that has a record and a name rwv publishes. With no
+/// selector it pushes the `owned` and `fork` members' branches, then the
+/// branch's record and the drops this machine has made, then the project
+/// branch; `--role` and `--repo` push only the repos they select, and the
+/// project branch and the record only where `projects/<name>` is named.
+/// A `dependency` or `reference` member is pushed only when named. Nothing
+/// here writes `rwv.lock`.
 ///
-/// When `filter` is empty (no `--role` / `--repo` selectors), the push loop
-/// defaults to `[Owned, Fork]`. Dependency and Reference repos are skipped
-/// with a one-line notice each. When `filter` is non-empty, the caller's
-/// selectors are used verbatim — selectors override the default and can
-/// include non-writable roles.
-///
-/// `mode` is a dry run, which prints the plan without executing any pushes,
-/// or a publish whose [`Force`] applies to every git push in the operation.
-///
-/// Under `--json` the result is one pretty-printed [`PushJsonOutput`]
-/// envelope, the project-repo record last. Text-mode chatter (the normal
-/// "rwv push: pushing X" lines) is suppressed under `--json`.
-///
-/// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`])
-/// for the manifest-repo push loop. `jobs == 1` runs serially with no prefix;
-/// `jobs > 1` fans the manifest-repo pushes out over a bounded worker pool,
-/// prefixing per-repo lines with `[<repo-path>]`. The project-repo push always
-/// runs serially as the last step, regardless of `jobs`.
-pub fn run_push(
-    ctx: &WorkspaceContext,
-    mode: PushMode,
-    filter: &RepoFilter,
-    jobs: usize,
-    output: OutputMode,
-) -> anyhow::Result<()> {
-    // 1. Workspace precondition — refuse from a workweave.
-    if let Checkout::Workweave { name, dir, .. } = &ctx.checkout {
-        let addressed = match name.recorded() {
-            Some(name) => format!("'{name}'"),
-            None => format!("at {}", dir.as_path().display()),
-        };
-        crate::refuse!(
-            RefusalKind::PushFromWorkweave,
-            "rwv push: refusing to push from workweave {addressed}; \
-             workweave branches shouldn't leak to shared remotes. \
-             Run `rwv sync-to` from the workweave to land changes on the parent first."
-        );
+/// Every refusal is reported before anything is published, and the project
+/// branch is withheld while any pin its lock holds is not reached as the pin
+/// gate requires, any member push failed, or the remote refused the record.
+pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Result<()> {
+    let pvcs = project_vcs();
+    let pushed = resolve(ctx, &request, pvcs.as_ref())?;
+    let json_refusal = |reported: &Report, e: anyhow::Error| -> anyhow::Error {
+        refuse_json(&request, ctx, Vec::new(), reported, e)
+    };
+    let nothing_reported = Report::default();
+
+    if pushed.checked_out {
+        refuse_uncommitted_project_state(pvcs.as_ref(), &pushed.project_dir, &pushed.project)
+            .map_err(|e| json_refusal(&nothing_reported, e))?;
     }
 
-    let project_name = ctx.require_active_project_on_disk()?.clone();
-    crate::branch::require_recorded(ctx)?;
-    let primary_root = ctx.primary_path().to_path_buf();
-    let project_dir = project_dir(&primary_root, &project_name);
+    let members = members_of(ctx, &request, &pushed);
+    let acting_roles = request.filter.is_empty();
+    let push_project = acting_roles || request.filter.names_text(&project_label(&pushed.project));
+    validate_overwrites(ctx, &request, &pushed, &members, push_project)
+        .map_err(|e| json_refusal(&nothing_reported, e))?;
 
-    let project = Project::from_dir(&project_dir, project_name.clone())
-        .with_context(|| format!("failed to load project '{}'", project_name))?;
+    let project_url_remote = pvcs
+        .project_url_remote(&pushed.project_dir)
+        .with_context(|| format!("failed to read the remotes of {}", pushed.project))?;
 
-    let project_vcs = project_vcs();
+    let mut fetched = Fetched::default();
+    if request.mode == PushMode::Publish {
+        fetched = fetch_all(
+            &request,
+            &pushed,
+            &members,
+            pvcs.as_ref(),
+            project_url_remote.as_ref(),
+        )
+        .map_err(|e| json_refusal(&nothing_reported, e))?;
+    } else {
+        fetched.fill_present(&members);
+    }
 
-    // 2. Project repo must be on its canonical branch. Publishing is a
-    //    gateway-to-collaboration operation; require a stable primary
-    //    context so collaborators see a predictable target branch.
-    //
-    //    "Canonical branch" is the declaration of the remote the branch
-    //    publishes to (`RemoteDefaultBranch`) — not a fabricated default.
-    //    `None` means that remote's HEAD is unset, and the gate refuses
-    //    rather than guessing "main". A non-repo project dir surfaces as
-    //    `VcsError::NotARepo` at the first read of its remotes, before HEAD
-    //    is ever read, instead of being misreported as a detached checkout.
-    let project_url_remote = project_vcs
-        .project_url_remote(&project_dir)
-        .with_context(|| format!("failed to read the remotes of {project_name}"))?;
+    let plan = judge(
+        ctx,
+        &request,
+        &pushed,
+        &members,
+        pvcs.as_ref(),
+        project_url_remote.as_ref(),
+        &fetched,
+        push_project,
+    )
+    .map_err(|(reported, e)| json_refusal(&reported, e))?;
 
-    let project_attachment = project_vcs
-        .head_attachment(&project_dir)
-        .with_context(|| format!("failed to read current branch for {project_name}"))?;
-    let project_attached = match project_attachment {
-        HeadAttachment::Attached(a) => a,
-        HeadAttachment::Unborn(u) => crate::refuse!(
+    if request.mode == PushMode::DryRun {
+        plan.print_dry_run(&pushed, &members, push_project);
+        return Ok(());
+    }
+
+    publish(
+        ctx,
+        &request,
+        &pushed,
+        &members,
+        pvcs.as_ref(),
+        &fetched,
+        plan,
+        push_project,
+    )
+}
+
+/// The weave branch to push, with the record and the manifest and lock it
+/// is judged against; refuses a detached workspace, a name rwv does not
+/// publish, a branch with no record or one that reads as no one value.
+fn resolve(
+    ctx: &WorkspaceContext,
+    request: &PushRequest<'_>,
+    pvcs: &dyn Vcs,
+) -> anyhow::Result<Pushed> {
+    let (project, workweave_dir) = crate::lock::scope(ctx)?;
+    let dir = project_dir(ctx.active_path(), &project);
+    let attachment = pvcs
+        .head_attachment(&dir)
+        .with_context(|| format!("failed to read current branch for {project}"))?;
+    let current = match &attachment {
+        HeadAttachment::Attached(attached) => attached.to_string(),
+        HeadAttachment::Unborn(unborn) => crate::refuse!(
             RefusalKind::HeadNotOnBranch,
-            "rwv push: project repo at projects/{project_name}/ is on branch '{u}' with no \
+            "rwv push: project repo at projects/{project}/ is on branch '{unborn}' with no \
              commits yet; make an initial commit before pushing"
         ),
-        HeadAttachment::Detached(_) => crate::refuse!(
-            RefusalKind::HeadNotOnBranch,
-            "rwv push: project repo at projects/{project_name}/ is on a detached HEAD; \
-             check out its canonical branch first"
-        ),
+        HeadAttachment::Detached(_) => {
+            let aligner = Aligner::open(ctx.active_path(), &project, Accounting::default())?;
+            crate::lock::refuse_detached(&aligner, &project)?;
+            crate::refuse!(
+                RefusalKind::HeadNotOnBranch,
+                "rwv push: project repo at projects/{project}/ is on a detached HEAD; \
+                 check out the branch to publish first"
+            );
+        }
     };
-    let project_current = project_attached.to_string();
-    let mut refusals = Report::default();
-    let project_target = project_vcs
-        .push_target(&project_attached, project_url_remote.as_ref())
-        .with_context(|| format!("failed to find where {project_name} publishes"))?;
-    match &project_target {
-        None => {
-            let (standing, _) = crate::push_branch::standing(
-                project_vcs.as_ref(),
-                &project_attached,
-                project_url_remote.as_ref(),
-            )?;
-            if let Some(judged) = crate::push_branch::judge(
-                project_vcs.as_ref(),
-                &crate::push_branch::Subject {
-                    repo: &project_rel_path(&project_name),
-                    checkout: &project_dir,
-                    branch: &project_current,
-                    declared: None,
-                    member: false,
-                },
-                &standing,
-            ) {
-                refusals.add(judged);
-            }
-        }
-        Some(target) => {
-            let project_remote_default = project_vcs
-                .remote_default_branch(&project_dir, target)
-                .with_context(|| {
-                    format!("failed to determine canonical branch for {project_name}")
-                })?;
-            let Some(project_remote_default) = project_remote_default else {
-                crate::refuse!(
-                    RefusalKind::NoRemoteDefaultBranch,
-                    "rwv push: project repo at projects/{project_name}/: {}, then re-run `rwv push`",
-                    project_vcs.remote_default_branch_repair_hint(target)
-                );
-            };
-            let project_canonical = project_remote_default.local_counterpart();
-            if !project_attached.is_named(&project_canonical) {
-                crate::refuse!(
-                    RefusalKind::ProjectRepoOffCanonicalBranch,
-                    "rwv push: project repo at projects/{project_name}/ is on branch \
-                     '{project_attached}', not the canonical branch '{project_canonical}'. \
-                     Switch to '{project_canonical}' before pushing — publishing requires a \
-                     stable primary context."
-                );
-            }
-        }
+    let (text, checked_out) = match request.branch {
+        Some(named) if named != current => (named.to_owned(), false),
+        _ => (current, true),
+    };
+    let branch = crate::branch::named(pvcs, &project, &dir, &text)?;
+    if crate::naming::workweave_name_in(&project, branch.as_str()).is_some() {
+        return Err(State::NameMinted
+            .of(project_label(&project))
+            .project_repo()
+            .subject(&branch)
+            .checkout(&dir)
+            .judge(pvcs)
+            .refused());
     }
-    // The single decision site: `from_attached` publishes whatever the
-    // checkout is on, never the manifest's declared branch.
-    let project_publish_ref = PublishRef::from_attached(&project_attached);
-
-    if let Err(e) =
-        refuse_uncommitted_project_state(project_vcs.as_ref(), &project_dir, &project_name)
-    {
-        if output.is_json() {
-            print_envelope(Vec::new(), &e, ctx);
-        }
-        return Err(e);
+    let raw = RawRefName::new(branch.as_str());
+    let tip = pvcs.resolve_local_branch_tip(&dir, &raw)?;
+    if tip.is_none() && !checked_out {
+        return Err(State::NameNoSuchBranch
+            .of(project_label(&project))
+            .project_repo()
+            .subject(&branch)
+            .judge(pvcs)
+            .refused());
     }
+    let record = crate::branch::recorded_value(pvcs, &project, &dir, &branch)?;
+    let (manifest, lock) = if checked_out {
+        let loaded = Project::from_dir(&dir, project.clone())
+            .with_context(|| format!("failed to load project '{project}'"))?;
+        (loaded.manifest, loaded.lock)
+    } else {
+        let tip = tip.expect("a branch that is not checked out was found");
+        let manifest = Manifest::from_toml_str(
+            &pvcs
+                .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
+                .with_context(|| format!("failed to read rwv.toml at {branch}"))?,
+        )
+        .with_context(|| format!("failed to load rwv.toml at {branch}"))?;
+        let lock = pvcs
+            .read_file_at_revision(&dir, &tip, Path::new(LockFile::FILE_NAME))
+            .ok()
+            .and_then(|text| LockFile::from_json_str(&text).ok());
+        (manifest, lock)
+    };
+    Ok(Pushed {
+        project,
+        project_dir: dir,
+        workweave_dir,
+        branch,
+        raw,
+        checked_out,
+        record,
+        manifest,
+        lock,
+    })
+}
 
-    // Snapshot manifest repos into a Vec so we can iterate twice (precondition
-    // checks + push loop) without re-walking the BTreeMap.
-    let manifest_repos: Vec<(RepoPath, RepoEntry)> = project
+fn members_of(ctx: &WorkspaceContext, request: &PushRequest<'_>, pushed: &Pushed) -> Vec<Member> {
+    pushed
         .manifest
         .iter_entries()
-        .map(|(rp, e)| (rp.clone(), e.clone()))
-        .collect();
+        .map(|(path, entry)| {
+            let dir = crate::workspace::member_checkout_dir(
+                path,
+                ctx.primary_path(),
+                pushed.workweave_dir.as_deref(),
+            )
+            .path()
+            .to_path_buf();
+            let acting = if request.filter.is_empty() {
+                matches!(entry.role, Role::Owned | Role::Fork)
+            } else {
+                request.filter.matches(path, entry.role)
+            };
+            Member {
+                path: path.clone(),
+                entry: entry.clone(),
+                dir,
+                vcs: vcs_for(entry.vcs_type),
+                acting,
+                url: crate::registry::resolve_to_clone_info(&entry.url)
+                    .ok()
+                    .map(|info| info.url),
+            }
+        })
+        .collect()
+}
 
-    // 3. The pin gate. Every member of the manifest is judged against the
-    //    commit the committed lock pins for it, before the network is
-    //    touched, so a lock that names commits only this clone holds is never
-    //    half-published. A member with no pin, a pin no ref reaches, a
-    //    checkout behind or diverged from its pin, or commits beyond it that
-    //    nothing else holds refuses; commits beyond the pin that are pushed
-    //    or pinned by another live lock are reported and go on.
-    //
-    //    Filter scope: this check ALWAYS runs against the full manifest, even
-    //    when `--role` / `--repo` narrows the actual push loop below. The
-    //    committed lock describes every manifest repo; publishing a
-    //    project-repo lock that doesn't match the unfiltered repos breaks
-    //    collaborators' `rwv clone` or `rwv update` (they hit "object missing" against the
-    //    pinned-but-unpublished SHAs). The filter narrows the push loop,
-    //    not the gate.
-    let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
-        if let Some(raw_lock) = &project.lock {
-            raw_lock
-                .iter_entries()
-                .map(|(rp, entry)| (rp.clone(), entry.version.clone()))
-                .collect()
-        } else {
-            std::collections::BTreeMap::new()
+/// `--overwrite` names repos this push acts on, and none of them is a branch
+/// something declares.
+fn validate_overwrites(
+    ctx: &WorkspaceContext,
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    push_project: bool,
+) -> anyhow::Result<()> {
+    let mut accounting = None;
+    for operand in request.overwrite.named() {
+        match operand {
+            RepoOperand::Project(name) => {
+                if *name != pushed.project || !push_project {
+                    crate::refuse!(
+                        RefusalKind::InapplicableFlag,
+                        "rwv push: `--overwrite {operand}` names a repo this push does not \
+                         publish; `projects/{}` is published when no selector narrows the push \
+                         or `--repo projects/{}` names it",
+                        pushed.project,
+                        pushed.project
+                    );
+                }
+                if pushed.record == Record::Declared {
+                    crate::refuse!(
+                        RefusalKind::InapplicableFlag,
+                        "rwv push: `{}` is a declared-mode project branch, which `--overwrite` \
+                         never rewrites",
+                        pushed.branch
+                    );
+                }
+            }
+            RepoOperand::Member(path) => {
+                let Some(member) = members.iter().find(|m| &m.path == path && m.acting) else {
+                    crate::refuse!(
+                        RefusalKind::InapplicableFlag,
+                        "rwv push: `--overwrite {operand}` names no member this push publishes; \
+                         a `dependency` or `reference` member is published only when `--repo` \
+                         or `--role` names it"
+                    );
+                };
+                let expected = pushed.expected(member.entry.role, &member.entry);
+                let accounting =
+                    accounting.get_or_insert_with(|| Accounting::scan(ctx.primary_path()));
+                if accounting.declares(&member.path, expected.as_str()) {
+                    crate::refuse!(
+                        RefusalKind::InapplicableFlag,
+                        "rwv push: `{}` in {} is a branch some weave branch declares, which \
+                         `--overwrite` never rewrites",
+                        expected,
+                        member.path
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Each repo's url remote after the fetch, and the remotes whose fetch
+/// could not complete.
+#[derive(Default)]
+struct Fetched {
+    url_remotes: BTreeMap<RepoPath, Option<RemoteHandle>>,
+    unconfirmed: BTreeMap<String, Vec<crate::vcs::UnconfirmedRemote>>,
+}
+
+impl Fetched {
+    fn fill_present(&mut self, members: &[Member]) {
+        for member in members {
+            let present =
+                crate::url_remote::present(member.vcs.as_ref(), &member.dir, &member.entry.url)
+                    .ok()
+                    .flatten();
+            self.url_remotes.insert(member.path.clone(), present);
+        }
+    }
+
+    fn url_remote(&self, path: &RepoPath) -> Option<&RemoteHandle> {
+        self.url_remotes.get(path).and_then(Option::as_ref)
+    }
+}
+
+/// The pruning fetch of the project repo and every member, the url remotes
+/// added first. A remote the fetch could not complete, when it is one this
+/// push publishes to or judges pins by, refuses the push.
+fn fetch_all(
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+) -> anyhow::Result<Fetched> {
+    let mut report = Report::default();
+    let mut adds = Vec::with_capacity(members.len());
+    for member in members {
+        let planned = match (&member.url, member.dir.exists()) {
+            (Some(url), true) => {
+                match crate::url_remote::find(
+                    member.vcs.as_ref(),
+                    &member.path,
+                    "push",
+                    &member.dir,
+                    url,
+                )?
+                .plan()
+                {
+                    Ok(planned) => Some(planned),
+                    Err(judged) => {
+                        report.add(*judged);
+                        None
+                    }
+                }
+            }
+            _ => None,
         };
-    let live = crate::pins::live_pins(&primary_root)?;
+        adds.push(planned);
+    }
+    report.into_result()?;
 
-    let mut pin_refusals = Report::default();
-    let mut pin_notes = Report::default();
-    let mut pin_failures: Vec<String> = Vec::new();
-    for (repo_path, entry) in &manifest_repos {
-        let vcs = vcs_for(entry.vcs_type);
-        let repo_dir = primary_root.join(repo_path.as_path());
-        if !repo_dir.exists() {
-            // `rwv update` re-clones missing members of the
-            // active project — the settled repair verb for dangling
-            // references. See fetch::run_fetch_in_place.
-            pin_failures.push(format!(
+    struct Job<'a> {
+        label: String,
+        dir: &'a Path,
+        vcs: &'a dyn Vcs,
+        add: Option<&'a crate::vcs::AbsentRemote>,
+    }
+    let mut jobs: Vec<Job<'_>> = vec![Job {
+        label: project_label(&pushed.project),
+        dir: &pushed.project_dir,
+        vcs: pvcs,
+        add: None,
+    }];
+    for (member, planned) in members.iter().zip(&adds) {
+        if member.dir.exists() {
+            jobs.push(Job {
+                label: member.path.to_string(),
+                dir: &member.dir,
+                vcs: member.vcs.as_ref(),
+                add: planned.as_ref().and_then(|p| p.add.as_ref()),
+            });
+        }
+    }
+    let results = run_in_parallel(&jobs, request.jobs, |_, job| {
+        crate::fetch::pruning_fetch(job.vcs, job.dir, job.add)
+            .map_err(|e| format!("{}: fetch failed: {e:#}", job.label))
+    });
+    let mut fetched = Fetched::default();
+    for (job, result) in jobs.iter().zip(results) {
+        match result {
+            Ok(done) if done.unconfirmed.is_empty() => {}
+            Ok(done) => {
+                fetched
+                    .unconfirmed
+                    .insert(job.label.clone(), done.unconfirmed);
+            }
+            Err(message) => anyhow::bail!("{message}"),
+        }
+    }
+    for (member, planned) in members.iter().zip(&adds) {
+        let remote = planned.as_ref().map(|p| p.remote.clone()).or_else(|| {
+            crate::url_remote::present(member.vcs.as_ref(), &member.dir, &member.entry.url)
+                .ok()
+                .flatten()
+        });
+        fetched.url_remotes.insert(member.path.clone(), remote);
+    }
+
+    let mut blocked = Report::default();
+    let project_target =
+        pvcs.push_target_of(&pushed.project_dir, &pushed.raw, project_url_remote)?;
+    let mut judged_unconfirmed = |label: &str,
+                                  dir: &Path,
+                                  vcs: &dyn Vcs,
+                                  relevant: &[Option<&RemoteHandle>],
+                                  member: bool| {
+        let Some(remotes) = fetched.unconfirmed.get(label) else {
+            return;
+        };
+        let blocking: Vec<&crate::vcs::UnconfirmedRemote> = remotes
+            .iter()
+            .filter(|u| relevant.iter().flatten().any(|r| r.name() == u.remote))
+            .collect();
+        if blocking.is_empty() {
+            return;
+        }
+        let mut judging = State::PushBranchUnconfirmed
+            .of(label)
+            .checkout(dir)
+            .subject(
+                blocking
+                    .iter()
+                    .map(|u| u.remote.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .listing(
+                blocking
+                    .iter()
+                    .map(|u| format!("{}: {}", u.remote, u.cause)),
+            );
+        judging = if member {
+            judging.member().bind("<m>", label)
+        } else {
+            judging.project_repo()
+        };
+        blocked.add(judging.judge(vcs));
+    };
+    judged_unconfirmed(
+        &project_label(&pushed.project),
+        &pushed.project_dir,
+        pvcs,
+        &[project_url_remote, project_target.as_ref()],
+        false,
+    );
+    for member in members {
+        let expected = pushed.expected(member.entry.role, &member.entry);
+        let target =
+            member
+                .vcs
+                .push_target_of(&member.dir, &expected, fetched.url_remote(&member.path))?;
+        judged_unconfirmed(
+            member.path.as_str(),
+            &member.dir,
+            member.vcs.as_ref(),
+            &[fetched.url_remote(&member.path), target.as_ref()],
+            true,
+        );
+    }
+    blocked.into_result()?;
+    Ok(fetched)
+}
+
+/// What the judging found to do.
+struct Plan {
+    items: Vec<PushPlanItem>,
+    /// Members left out of this push because their role is not pushed by
+    /// default, for the output.
+    default_skipped: Vec<RepoPath>,
+    /// Members whose branch the push left alone: even, behind, or nothing to
+    /// publish.
+    state_skipped: Vec<RepoPath>,
+    project: Option<ProjectPlan>,
+    reported: Report,
+}
+
+struct ProjectPlan {
+    target: RemoteHandle,
+    /// The branch has something the push branch lacks.
+    push_branch: bool,
+    replace: Replace,
+}
+
+impl Plan {
+    fn print_dry_run(&self, pushed: &Pushed, members: &[Member], push_project: bool) {
+        outln!("rwv push (dry-run):");
+        for item in &self.items {
+            outln!(
+                "  {}: would push {} -> {}",
+                item.repo_path.as_str(),
+                item.branch,
+                item.target,
+            );
+        }
+        for path in &self.default_skipped {
+            outln!(
+                "  {}: skipped (not pushed by default; pass --repo or --role to include)",
+                path.as_str(),
+            );
+        }
+        let _ = members;
+        if let (true, Some(project)) = (push_project, &self.project) {
+            outln!(
+                "  projects/{}: would publish the record of {} -> {}",
+                pushed.project,
+                pushed.branch,
+                project.target,
+            );
+            if project.push_branch {
+                outln!(
+                    "  projects/{}: would push {} -> {} (last)",
+                    pushed.project,
+                    pushed.branch,
+                    project.target,
+                );
+            }
+        }
+    }
+}
+
+/// Judge everything the push acts on before anything is published: the
+/// project repo's name, record and standing, each acting member's alignment,
+/// pin and standing, and the merges in the pushed range.
+#[allow(clippy::too_many_arguments)]
+fn judge(
+    ctx: &WorkspaceContext,
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+    fetched: &Fetched,
+    push_project: bool,
+) -> Result<Plan, (Report, anyhow::Error)> {
+    let mut refusals = Report::default();
+    let mut reported = Report::default();
+    let mut failures: Vec<String> = Vec::new();
+    let result = judge_into(
+        ctx,
+        request,
+        pushed,
+        members,
+        pvcs,
+        project_url_remote,
+        fetched,
+        push_project,
+        &mut refusals,
+        &mut reported,
+        &mut failures,
+    );
+    if !failures.is_empty() {
+        if refusals.is_empty() {
+            return Err((reported, anyhow::anyhow!("{}", failures.join("\n"))));
+        }
+        for failure in &failures {
+            refusals.note(failure);
+        }
+    }
+    match (result, refusals.is_empty()) {
+        (Err(e), true) => Err((reported, e)),
+        (_, false) => Err((
+            reported,
+            refusals
+                .into_result()
+                .expect_err("a report holding a line refuses"),
+        )),
+        (Ok(mut plan), true) => {
+            if request.output == OutputMode::Text && !reported.is_empty() {
+                eprint!("{}", reported.render("push"));
+            }
+            plan.reported = reported;
+            Ok(plan)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn judge_into(
+    ctx: &WorkspaceContext,
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+    fetched: &Fetched,
+    push_project: bool,
+    refusals: &mut Report,
+    reported: &mut Report,
+    failures: &mut Vec<String>,
+) -> anyhow::Result<Plan> {
+    let primary = ctx.primary_path();
+    let live = crate::pins::live_pins(primary)?;
+    let aligner = if pushed.checked_out {
+        Some(Aligner::open(
+            ctx.active_path(),
+            &pushed.project,
+            Accounting::scan(primary),
+        )?)
+    } else {
+        None
+    };
+    let mut plan = Plan {
+        items: Vec::new(),
+        default_skipped: Vec::new(),
+        state_skipped: Vec::new(),
+        project: None,
+        reported: Report::default(),
+    };
+
+    for member in members {
+        if !member.acting {
+            if request.filter.is_empty() {
+                plan.default_skipped.push(member.path.clone());
+            }
+            continue;
+        }
+        if !member.dir.exists() {
+            failures.push(format!(
                 "{}: clone missing on disk; run `rwv update` from the workspace \
                  to re-materialize missing manifest members, then re-run `rwv push`",
-                repo_path.as_str(),
+                member.path.as_str(),
             ));
             continue;
         }
-        let head = match vcs.head_revision(&repo_dir) {
-            Ok(h) => h,
-            Err(e) => {
-                pin_failures.push(format!(
-                    "{}: failed to resolve HEAD: {e:#}",
-                    repo_path.as_str()
-                ));
-                continue;
-            }
-        };
-        let judging = |state: State| {
-            state
-                .of(repo_path)
-                .member()
-                .checkout(&repo_dir)
-                .bind("<m>", repo_path.as_str())
-        };
-        let Some(lock_raw) = lock_entries.get(repo_path) else {
-            pin_refusals.add(judging(State::PinNone).judge(vcs.as_ref()));
-            continue;
-        };
-        // Resolve the lock's raw version against the repo so tag-form lock
-        // entries (e.g. `v1.2.3`) compare equal to a SHA-form HEAD.
-        let Ok(pin) = vcs.resolve_revision(&repo_dir, lock_raw.as_str()) else {
-            pin_refusals.add(
-                judging(State::PinUnreachable)
-                    .subject(lock_raw.short_display())
-                    .judge(vcs.as_ref()),
-            );
-            continue;
-        };
-        let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
-        let standing = match crate::pins::standing(vcs.as_ref(), &repo_dir, &head, &pin, held) {
-            Ok(standing) => standing,
-            Err(e) => {
-                pin_failures.push(format!("{}: {e:#}", repo_path.as_str()));
-                continue;
-            }
-        };
-        if let Some(judged) =
-            crate::pins::judge(repo_path, &repo_dir, vcs.as_ref(), &standing, &head, &pin)
-        {
-            if judged.state() == State::PinAhead {
-                pin_notes.add(judged);
-            } else {
-                pin_refusals.add(judged);
-            }
-        }
-    }
-    if !pin_notes.is_empty() {
-        eprint!("{}", pin_notes.render("push"));
-    }
-    if !pin_failures.is_empty() {
-        if pin_refusals.is_empty() {
-            anyhow::bail!("{}", pin_failures.join("\n"));
-        }
-        for failure in &pin_failures {
-            pin_refusals.note(failure);
-        }
-    }
-    if let Err(e) = pin_refusals.into_result() {
-        if output.is_json() {
-            print_envelope(Vec::new(), &e, ctx);
-        }
-        return Err(e);
+        judge_member(
+            request,
+            pushed,
+            member,
+            aligner.as_ref(),
+            fetched.url_remote(&member.path),
+            &live,
+            refusals,
+            reported,
+            failures,
+            &mut plan,
+        )?;
     }
 
-    // 4. Per-repo branch sanity. Detached HEAD is fatal; off-version branch
-    //    is a warning (footgun catcher — operator may have a topic branch
-    //    they intend to push; we warn but don't override).
-    //
-    //    Filter scope: the per-repo branch check runs only over the FILTERED
-    //    subset — there's no reason to fail a filtered push because of a
-    //    detached HEAD in a repo we aren't going to push. Contrast with the
-    //    lock-precondition above, which runs over the full manifest because
-    //    the *lock* describes the full manifest.
+    judge_project(
+        request,
+        pushed,
+        members,
+        pvcs,
+        project_url_remote,
+        push_project,
+        refusals,
+        reported,
+        &mut plan,
+    )?;
+    Ok(plan)
+}
 
-    // Plan-time default: when no --role / --repo selectors are supplied, limit
-    // the push loop to writable roles (Owned + Fork). Dependency and Reference
-    // repos return 403 against upstreams the operator doesn't own. When
-    // selectors ARE passed, use them verbatim — selectors override the default.
-    let (effective_filter, using_default): (RepoFilter, bool) = if filter.is_empty() {
-        (RepoFilter::from_roles(vec![Role::Owned, Role::Fork]), true)
-    } else {
-        (filter.clone(), false)
+#[allow(clippy::too_many_arguments)]
+fn judge_member(
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    member: &Member,
+    aligner: Option<&Aligner>,
+    url_remote: Option<&RemoteHandle>,
+    live: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
+    refusals: &mut Report,
+    reported: &mut Report,
+    failures: &mut Vec<String>,
+    plan: &mut Plan,
+) -> anyhow::Result<()> {
+    let vcs = member.vcs.as_ref();
+    let path = &member.path;
+    let aligned = AlignedMember {
+        path,
+        entry: &member.entry,
+        dir: &member.dir,
+        vcs,
     };
+    let expected = pushed.expected(member.entry.role, &member.entry);
+    let mut branch = Some(expected.clone());
+    if let Some(aligner) = aligner {
+        let aligned_plan = aligner
+            .plan(&aligned, pushed.lock.as_ref())
+            .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+        if let Some(off) = aligner.refusal(&aligned, &aligned_plan, path)? {
+            refusals.add(off);
+        }
+        branch = match &aligned_plan.target {
+            Target::Branch { name, .. } => Some(name.clone()),
+            Target::Detached { .. } | Target::AsFound => None,
+        };
+    }
 
-    let filtered_repos: Vec<&(RepoPath, RepoEntry)> = manifest_repos
-        .iter()
-        .filter(|(rp, entry)| effective_filter.matches(rp, entry.role))
-        .collect();
-
-    // When using the default filter, collect the repos that were excluded so
-    // we can emit Skipped records and a user-visible skip notice.
-    let default_skipped_repos: Vec<&(RepoPath, RepoEntry)> = if using_default {
-        manifest_repos
-            .iter()
-            .filter(|(rp, entry)| !effective_filter.matches(rp, entry.role))
-            .collect()
-    } else {
-        Vec::new()
+    let judging = |state: State| {
+        state
+            .of(path)
+            .member()
+            .checkout(&member.dir)
+            .bind("<m>", path.as_str())
     };
-    let mut branch_errors: Vec<String> = Vec::new();
-    let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
-    let mut reported = Report::default();
-    let mut state_skipped: Vec<RepoPath> = Vec::new();
-    for (repo_path, entry) in &filtered_repos {
-        let vcs = vcs_for(entry.vcs_type);
-        let repo_dir = primary_root.join(repo_path.as_path());
-        let attachment = match vcs.head_attachment(&repo_dir) {
-            Ok(a) => a,
-            Err(e) => {
-                branch_errors.push(format!(
-                    "{}: failed to read current branch: {e:#}",
-                    repo_path.as_str()
-                ));
-                continue;
-            }
-        };
-        let attached = match &attachment {
-            HeadAttachment::Attached(a) => a,
-            HeadAttachment::Unborn(u) => {
-                branch_errors.push(format!(
-                    "{}: branch '{u}' has no commits yet — make an initial commit before pushing",
-                    repo_path.as_str(),
-                ));
-                continue;
-            }
-            HeadAttachment::Detached(_) => {
-                branch_errors.push(format!(
-                    "{}: detached HEAD — checkout a branch before pushing",
-                    repo_path.as_str()
-                ));
-                continue;
-            }
-        };
-        if !attached.is_named(&entry.branch.local_counterpart()) {
-            eprintln!(
-                "rwv push: warning: {} is on branch '{}', manifest declares '{}'",
-                repo_path.as_str(),
-                attached,
-                entry.branch,
-            );
+    let pin = match crate::alignment::pin_of(vcs, &member.dir, pushed.lock.as_ref(), path) {
+        Pin::None => {
+            refusals.add(judging(State::PinNone).judge(vcs));
+            return Ok(());
         }
-        let url_remote = crate::url_remote::present(vcs.as_ref(), &repo_dir, &entry.url)?;
-        let (standing, target) =
-            crate::push_branch::standing(vcs.as_ref(), attached, url_remote.as_ref())
-                .with_context(|| {
-                    format!("{}: failed to find where the branch publishes", repo_path)
-                })?;
-        let judged = crate::push_branch::judge(
-            vcs.as_ref(),
-            &crate::push_branch::Subject {
-                repo: repo_path,
-                checkout: &repo_dir,
-                branch: &attached.to_string(),
-                declared: Some(&entry.branch),
-                member: true,
-            },
-            &standing,
-        );
-        use crate::push_branch::Standing;
-        let overwriting = matches!(mode, PushMode::Publish(Force::Overwrite(_)));
-        match (&standing, judged) {
-            (Standing::NoPushTarget | Standing::ForeignUpstream { .. }, Some(judged)) => {
-                refusals.add(judged);
-                continue;
-            }
-            (Standing::Diverged { .. }, Some(judged))
-                if standing.diverged_with_unpushed() && !overwriting =>
-            {
-                refusals.add(judged);
-                continue;
-            }
-            (Standing::Behind | Standing::Diverged { .. }, Some(judged)) if !overwriting => {
-                reported.add(judged);
-                state_skipped.push(repo_path.clone());
-                continue;
-            }
-            (Standing::Gone { .. }, judged) if using_default => {
-                reported.extend(judged);
-                state_skipped.push(repo_path.clone());
-                continue;
-            }
-            _ => {}
+        Pin::Unreachable => {
+            let version = pushed
+                .lock
+                .as_ref()
+                .and_then(|lock| lock.get_entry(path))
+                .map(|entry| entry.version.short_display().to_owned())
+                .unwrap_or_default();
+            refusals.add(judging(State::PinUnreachable).subject(version).judge(vcs));
+            return Ok(());
         }
-        let target = target.expect("a standing other than no push target has one");
-        plan.push(PushPlanItem {
-            repo_path: repo_path.clone(),
-            branch: attached.to_string(),
-            vcs_type: entry.vcs_type,
-            publish_ref: PublishRef::from_attached(attached),
-            target,
-        });
-    }
-    if !branch_errors.is_empty() {
-        eprintln!(
-            "rwv push: {} repo(s) cannot be pushed:",
-            branch_errors.len()
-        );
-        for msg in &branch_errors {
-            eprintln!("  - {msg}");
+        Pin::At(pin) => pin,
+    };
+    let Some(branch) = branch else {
+        return Ok(());
+    };
+    let head = match vcs.resolve_local_branch_tip(&member.dir, &branch)? {
+        Some(tip) => tip,
+        None if pushed.checked_out => {
+            failures.push(format!("{path}: branch {branch} does not exist"));
+            return Ok(());
         }
-        crate::refuse!(
-            RefusalKind::UnpushableRepoBranch,
-            "aborted before network — fix per-repo branch state and retry"
-        );
-    }
-    if !refusals.is_empty() {
-        let refusal = refusals
-            .into_result()
-            .expect_err("a report holding a line refuses");
-        if output.is_json() {
-            print_envelope(Vec::new(), &refusal, ctx);
-        }
-        return Err(refusal);
-    }
-    if output == OutputMode::Text && !reported.is_empty() {
-        eprint!("{}", reported.render("push"));
-    }
-
-    let project_target = project_target.expect("a project branch with no push target was refused");
-
-    // 5. Dry-run: print the plan.
-    let force = match mode {
-        PushMode::Publish(force) => force,
-        PushMode::DryRun => {
-            outln!("rwv push (dry-run):");
-            for item in &plan {
-                outln!(
-                    "  {}: would push {} -> {}",
-                    item.repo_path.as_str(),
-                    item.branch,
-                    item.target,
-                );
-            }
-            for (repo_path, _) in &default_skipped_repos {
-                outln!(
-                    "  {}: skipped (non-writable role; pass --repo or --role to include)",
-                    repo_path.as_str(),
-                );
-            }
-            outln!(
-                "  projects/{}: would push {} -> {} (last)",
-                project_name,
-                project_current,
-                project_target,
-            );
+        None => pin.clone(),
+    };
+    let held = live.get(path).map(Vec::as_slice).unwrap_or_default();
+    let standing = match crate::pins::standing(vcs, &member.dir, &head, &pin, held) {
+        Ok(standing) => standing,
+        Err(e) => {
+            failures.push(format!("{path}: {e:#}"));
             return Ok(());
         }
     };
+    if let Some(judged) = crate::pins::judge(path, &member.dir, vcs, &standing, &head, &pin) {
+        if judged.state() == State::PinAhead {
+            reported.add(judged);
+        } else {
+            refusals.add(judged);
+            return Ok(());
+        }
+    }
 
-    // 6. Manifest-repo push loop. Attempt all and collect — same shape as
-    //    update.rs. Fans out over `jobs` workers when `jobs > 1`; per-line
-    //    `[<repo>]` prefix under parallel mode, no prefix under `-j 1`.
-    //
-    //    Under `--json`, text-mode output (the per-repo "rwv push: pushing
-    //    X" lines) is suppressed so stdout stays clean for the envelope.
-    let parallel = jobs > 1;
-    let write_lock: Mutex<()> = Mutex::new(());
+    let (branch_standing, target) =
+        crate::push_branch::standing_of_branch(vcs, &member.dir, &branch, url_remote)
+            .with_context(|| format!("{path}: failed to find where the branch publishes"))?;
+    let subject = crate::push_branch::Subject {
+        repo: path,
+        checkout: &member.dir,
+        branch: branch.as_str(),
+        declared: Some(&member.entry.branch),
+        member: true,
+    };
+    let judged = crate::push_branch::judge(vcs, &subject, &branch_standing);
+    let named = !request.filter.is_empty();
+    let operand = RepoOperand::Member(path.clone());
+    let replace = match &branch_standing {
+        Standing::NoPushTarget | Standing::ForeignUpstream { .. } => {
+            refusals.extend(judged);
+            return Ok(());
+        }
+        Standing::Diverged { .. } if branch_standing.diverged_with_unpushed() => {
+            let remote_tip = target
+                .as_ref()
+                .and_then(|target| {
+                    vcs.remote_copies(&member.dir, &branch)
+                        .ok()?
+                        .into_iter()
+                        .find(|copy| &copy.remote == target)
+                })
+                .map(|copy| copy.tip);
+            match remote_tip.and_then(|tip| request.overwrite.lease(&operand, tip)) {
+                Some(lease) => Replace::Leased(lease),
+                None => {
+                    refusals.extend(judged);
+                    return Ok(());
+                }
+            }
+        }
+        Standing::Behind | Standing::Diverged { .. } => {
+            reported.extend(judged);
+            plan.state_skipped.push(path.clone());
+            return Ok(());
+        }
+        Standing::Gone { .. } if !named => {
+            reported.extend(judged);
+            plan.state_skipped.push(path.clone());
+            return Ok(());
+        }
+        Standing::Even => {
+            plan.state_skipped.push(path.clone());
+            return Ok(());
+        }
+        Standing::Unpublished
+            if pushed.is_feature()
+                && matches!(member.entry.role, Role::Owned | Role::Fork)
+                && vcs.unpushed_commits(&member.dir, &branch)?.is_empty() =>
+        {
+            plan.state_skipped.push(path.clone());
+            return Ok(());
+        }
+        Standing::Ahead | Standing::Unpublished | Standing::Gone { .. } => Replace::FastForwardOnly,
+    };
+    let target = target.expect("a standing other than no push target has one");
+    plan.items.push(PushPlanItem {
+        repo_path: path.clone(),
+        branch: branch.as_str().to_owned(),
+        vcs_type: member.entry.vcs_type,
+        publish_ref: PublishRef::from_local(&LocalRefName::of_branch(&branch)),
+        target,
+        replace,
+    });
+    Ok(())
+}
 
-    // Collect (path, abs_path, outcome) triples for the JSON path.
-    let plan_with_paths: Vec<(RepoPath, PathBuf, PushPlanItem)> = plan
-        .into_iter()
-        .map(|item| {
-            let abs = primary_root.join(item.repo_path.as_path());
-            let rp = item.repo_path.clone();
-            (rp, abs, item)
-        })
-        .collect();
+#[allow(clippy::too_many_arguments)]
+fn judge_project(
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+    push_project: bool,
+    refusals: &mut Report,
+    reported: &mut Report,
+    plan: &mut Plan,
+) -> anyhow::Result<()> {
+    if !push_project {
+        return Ok(());
+    }
+    let label = project_label(&pushed.project);
+    let (standing, target) = crate::push_branch::standing_of_branch(
+        pvcs,
+        &pushed.project_dir,
+        &pushed.raw,
+        project_url_remote,
+    )
+    .with_context(|| format!("failed to find where {} publishes", pushed.project))?;
+    let subject = crate::push_branch::Subject {
+        repo: &label,
+        checkout: &pushed.project_dir,
+        branch: pushed.branch.as_str(),
+        declared: None,
+        member: false,
+    };
+    let judged = crate::push_branch::judge(pvcs, &subject, &standing);
+    let operand = RepoOperand::Project(pushed.project.clone());
+    let mut replace = Replace::FastForwardOnly;
+    let push_branch = match &standing {
+        Standing::NoPushTarget | Standing::ForeignUpstream { .. } => {
+            refusals.extend(judged);
+            return Ok(());
+        }
+        Standing::Diverged { .. } if standing.diverged_with_unpushed() => {
+            let remote_tip = target
+                .as_ref()
+                .and_then(|target| {
+                    pvcs.remote_copies(&pushed.project_dir, &pushed.raw)
+                        .ok()?
+                        .into_iter()
+                        .find(|copy| &copy.remote == target)
+                })
+                .map(|copy| copy.tip);
+            match remote_tip.and_then(|tip| request.overwrite.lease(&operand, tip)) {
+                Some(lease) => {
+                    replace = Replace::Leased(lease);
+                    true
+                }
+                None => {
+                    refusals.extend(judged);
+                    return Ok(());
+                }
+            }
+        }
+        Standing::Behind | Standing::Diverged { .. } => {
+            reported.extend(judged);
+            false
+        }
+        Standing::Even => false,
+        Standing::Ahead | Standing::Unpublished | Standing::Gone { .. } => true,
+    };
+    let target = target.expect("a project branch with no push target was refused");
 
-    // Re-form the bare plan slice for run_in_parallel.
-    let plan_items: Vec<PushPlanItem> = plan_with_paths
+    if push_branch {
+        judge_range(
+            pushed, members, pvcs, &standing, &target, refusals, reported,
+        )?;
+    }
+    plan.project = Some(ProjectPlan {
+        target,
+        push_branch,
+        replace,
+    });
+    Ok(())
+}
+
+/// The merges in the range the project branch publishes: each member one
+/// joined without joining the member is refused unless waived.
+fn judge_range(
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    standing: &Standing,
+    target: &RemoteHandle,
+    refusals: &mut Report,
+    reported: &mut Report,
+) -> anyhow::Result<()> {
+    let Some(tip) = pvcs.resolve_local_branch_tip(&pushed.project_dir, &pushed.raw)? else {
+        return Ok(());
+    };
+    let pushed_tip = match standing {
+        Standing::Unpublished | Standing::Gone { .. } => None,
+        _ => pvcs
+            .remote_copies(&pushed.project_dir, &pushed.raw)?
+            .into_iter()
+            .find(|copy| &copy.remote == target)
+            .map(|copy| copy.tip),
+    };
+    let range = pvcs.pushed_range(&pushed.project_dir, &tip, pushed_tip.as_ref())?;
+    if !range.iter().any(|commit| commit.parents.len() > 1) {
+        return Ok(());
+    }
+    let judged: Vec<crate::unmerged::Member<'_>> = members
         .iter()
-        .map(|(_, _, item)| PushPlanItem {
-            repo_path: item.repo_path.clone(),
-            branch: item.branch.clone(),
-            vcs_type: item.vcs_type,
-            publish_ref: item.publish_ref.clone(),
-            target: item.target.clone(),
+        .filter(|m| m.dir.exists())
+        .map(|m| crate::unmerged::Member {
+            path: &m.path,
+            dir: m.dir.clone(),
+            vcs: m.vcs.as_ref(),
         })
         .collect();
+    let findings = crate::unmerged::analyze(pvcs, &pushed.project_dir, &judged, &range, tip.id())?;
+    for finding in findings {
+        let dir = members
+            .iter()
+            .find(|m| m.path == finding.member)
+            .map(|m| m.dir.clone())
+            .unwrap_or_default();
+        let member_vcs = members
+            .iter()
+            .find(|m| m.path == finding.member)
+            .map(|m| m.vcs.as_ref())
+            .unwrap_or(pvcs);
+        let pins = format!(
+            "its parents pinned {} and {}",
+            finding.pins.0.short(),
+            finding.pins.1.short()
+        );
+        let judging = |state: State| {
+            state
+                .of(&finding.member)
+                .member()
+                .checkout(&dir)
+                .bind("<m>", finding.member.as_str())
+                .subject(format!("merge {}", finding.merge.short()))
+        };
+        match &finding.verdict {
+            crate::unmerged::Verdict::Unmerged => refusals.add(
+                judging(State::PinUnmerged)
+                    .listing([
+                        pins,
+                        "the pushed lock holds no commit containing both".to_owned(),
+                    ])
+                    .bind("<rev>", finding.pins.1.short())
+                    .judge(member_vcs),
+            ),
+            crate::unmerged::Verdict::ListedOnly => reported.add(
+                judging(State::PinUnmerged)
+                    .listing([
+                        pins,
+                        "the parents declare the member differently".to_owned(),
+                    ])
+                    .bind("<rev>", finding.pins.1.short())
+                    .only(&[ChoiceId::C26])
+                    .judge(member_vcs),
+            ),
+            crate::unmerged::Verdict::Waived { by, to } => reported.add(
+                judging(State::PinWaived)
+                    .listing([
+                        pins,
+                        format!("re-pinned to {} in {}", to.short(), by.short()),
+                    ])
+                    .fact(Fact {
+                        kind: FactKind::PinLanded,
+                        about: None,
+                    })
+                    .judge(member_vcs),
+            ),
+        }
+    }
+    Ok(())
+}
 
-    // One handle per repo, resolved from its declared backend before the
-    // fan-out. Workers index by the same position `run_in_parallel` hands
-    // the item at, so nothing is resolved on a worker thread.
-    let plan_vcs: Vec<Box<dyn Vcs>> = plan_items.iter().map(|i| vcs_for(i.vcs_type)).collect();
-
-    let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |idx, item| {
+/// Push the members' branches, then judge the pins the project branch's lock
+/// holds against what the remotes now hold, then publish the record and the
+/// project branch.
+#[allow(clippy::too_many_arguments)]
+fn publish(
+    ctx: &WorkspaceContext,
+    request: &PushRequest<'_>,
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    fetched: &Fetched,
+    plan: Plan,
+    push_project: bool,
+) -> anyhow::Result<()> {
+    let output = request.output;
+    let reported = &plan.reported;
+    let parallel = request.jobs > 1;
+    let write_lock: Mutex<()> = Mutex::new(());
+    let plan_vcs: Vec<Box<dyn Vcs>> = plan.items.iter().map(|i| vcs_for(i.vcs_type)).collect();
+    let dirs: Vec<PathBuf> = plan
+        .items
+        .iter()
+        .map(|item| {
+            members
+                .iter()
+                .find(|m| m.path == item.repo_path)
+                .map(|m| m.dir.clone())
+                .expect("a planned member is a member")
+        })
+        .collect();
+    crate::test_pause::point("push-members");
+    let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan.items, request.jobs, |idx, item| {
         let reporter = if output.is_json() {
             Reporter::silent()
         } else if parallel {
@@ -615,83 +1246,71 @@ pub fn run_push(
         } else {
             Reporter::serial()
         };
-        push_one(
-            plan_vcs[idx].as_ref(),
-            item,
-            &primary_root,
-            &reporter,
-            force,
-        )
+        push_one(plan_vcs[idx].as_ref(), item, &dirs[idx], &reporter)
     });
 
-    // Build wire-output records (manifest repos only, in order).
-    //
-    // Prepend plan-time skipped records first (default-filter excluded repos),
-    // then the pushed/failed outcomes from the parallel loop. This ordering
-    // keeps the JSON wire shape uniform: all manifest records before the
-    // project-repo record.
     let mut json_outcomes: Vec<PushOutcomeOutput> = Vec::new();
     let mut push_errors: Vec<String> = Vec::new();
     let mut withheld = Report::default();
-    let mut pushed = 0usize;
+    let mut pushed_count = 0usize;
     let mut skipped = 0usize;
+    let wire_path = |path: &RepoPath| {
+        crate::path_spelling::WirePath::of(
+            &members
+                .iter()
+                .find(|m| &m.path == path)
+                .map(|m| m.dir.clone())
+                .unwrap_or_else(|| ctx.primary_path().join(path.as_path())),
+        )
+    };
 
-    // Emit text + JSON records for plan-time skipped repos (default filter
-    // excluded non-writable roles). Under --json, these become Skipped
-    // records in the outcomes array.
-    for (repo_path, _entry) in &default_skipped_repos {
-        let path_str = repo_path.as_str().to_string();
-        let abs_str = crate::path_spelling::WirePath::of(&primary_root.join(repo_path.as_path()));
+    for path in &plan.default_skipped {
         if output == OutputMode::Text {
-            outln!("rwv push: skipped {} (non-writable role)", path_str,);
+            outln!(
+                "rwv push: skipped {} (not pushed by default)",
+                path.as_str()
+            );
         }
         skipped += 1;
         json_outcomes.push(PushOutcomeOutput::Skipped {
-            path: path_str,
-            absolute_path: abs_str,
+            path: path.as_str().to_string(),
+            absolute_path: wire_path(path),
         });
     }
-
-    for repo_path in &state_skipped {
+    for path in &plan.state_skipped {
         json_outcomes.push(PushOutcomeOutput::Skipped {
-            path: repo_path.as_str().to_string(),
-            absolute_path: crate::path_spelling::WirePath::of(
-                &primary_root.join(repo_path.as_path()),
-            ),
+            path: path.as_str().to_string(),
+            absolute_path: wire_path(path),
         });
     }
-
-    for ((repo_path, abs_path, item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
-        let path_str = repo_path.to_string();
-        let abs_str = crate::path_spelling::WirePath::of(abs_path);
-
-        let wire = match &raw {
+    for ((item, dir), raw) in plan.items.iter().zip(&dirs).zip(raw_outcomes) {
+        let path = item.repo_path.to_string();
+        let absolute_path = crate::path_spelling::WirePath::of(dir);
+        match raw {
             PushOutcome::Pushed => {
-                pushed += 1;
-                PushOutcomeOutput::Pushed {
-                    path: path_str,
-                    absolute_path: abs_str,
-                }
+                pushed_count += 1;
+                json_outcomes.push(PushOutcomeOutput::Pushed {
+                    path,
+                    absolute_path,
+                });
             }
-            PushOutcome::Failed(msg) => {
-                push_errors.push(msg.clone());
+            PushOutcome::Failed(message) => {
+                push_errors.push(message.clone());
                 withheld.add(
                     State::PublishWithheld
-                        .of(repo_path)
-                        .listing(msg.lines())
-                        .checkout(abs_path)
+                        .of(&item.repo_path)
+                        .listing(message.lines())
+                        .checkout(dir)
                         .bind("<b>", &item.branch)
                         .judge(vcs_for(item.vcs_type).as_ref()),
                 );
-                PushOutcomeOutput::Failed {
-                    path: path_str,
-                    absolute_path: abs_str,
-                    message: msg.clone(),
-                }
+                json_outcomes.push(PushOutcomeOutput::Failed {
+                    path,
+                    absolute_path,
+                    message,
+                });
             }
-        };
-
-        json_outcomes.push(wire);
+        }
     }
 
     if !push_errors.is_empty() {
@@ -699,21 +1318,21 @@ pub fn run_push(
             eprintln!(
                 "rwv push: {}/{} member repo(s) failed; project repo not pushed:",
                 push_errors.len(),
-                plan_items.len(),
+                plan.items.len(),
             );
             for msg in &push_errors {
                 eprintln!("  - {msg}");
             }
         }
-
         withheld.note(format!(
-            "projects/{project_name} was not pushed; member pushes that succeeded are published"
+            "projects/{} was not pushed; member pushes that succeeded are published",
+            pushed.project
         ));
         let refusal = withheld
             .into_result()
             .expect_err("a failed member push is judged withheld");
         if output.is_json() {
-            print_envelope(json_outcomes, &refusal, ctx);
+            print_envelope(json_outcomes, &refusal, reported, ctx);
         }
         return Err(refusal);
     }
@@ -721,50 +1340,148 @@ pub fn run_push(
     if output == OutputMode::Text {
         if skipped > 0 {
             outln!(
-                "rwv push: pushed {} member repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
-                pushed, skipped
+                "rwv push: pushed {} member repo(s); {} skipped (not pushed by default; pass --repo or --role to include)",
+                pushed_count, skipped
             );
         } else {
-            outln!("rwv push: pushed {} member repo(s)", pushed);
+            outln!("rwv push: pushed {} member repo(s)", pushed_count);
         }
     }
 
-    // 7. Project-repo push (gated). The project repo's committed lock pins
-    //    the manifest SHAs we just pushed — pushing it last preserves the
-    //    invariant that the remote-side lock never references unpushed
-    //    objects.
-    let project_path_str = project_rel_path(&project_name);
-    let project_abs_str = crate::path_spelling::WirePath::of(&project_dir);
-
-    if output == OutputMode::Text {
-        outln!(
-            "rwv push: pushing project repo projects/{} ({} -> {})",
-            project_name,
-            project_current,
-            project_target,
-        );
-    }
-    let project_push_result =
-        project_vcs.push_ref(&project_dir, &project_target, &project_publish_ref, force);
-
-    let project_wire = match &project_push_result {
-        Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
-            path: project_path_str,
-            absolute_path: project_abs_str,
-            project: project_name.clone(),
-        },
-        Err(e) => PushOutcomeOutput::ProjectRepoFailed {
-            path: project_path_str,
-            absolute_path: project_abs_str,
-            project: project_name.clone(),
-            message: format!("{e:#}"),
-        },
+    let Some(project_plan) = plan.project.as_ref().filter(|_| push_project) else {
+        if output.is_json() {
+            let envelope = PushJsonOutput {
+                schema_url: PUSH_SCHEMA_URL.to_string(),
+                outcomes: json_outcomes,
+                refused: Vec::new(),
+                reported: reported.output(),
+                resolution: Some(ctx.resolution()),
+            };
+            outln!("{}", serde_json::to_string_pretty(&envelope)?);
+        } else {
+            outln!("rwv push: done");
+        }
+        return Ok(());
     };
 
-    json_outcomes.push(project_wire);
+    let mut gate = Report::default();
+    gate_reachability(pushed, members, pvcs, fetched, &mut gate);
+    if let Err(refusal) = gate.into_result() {
+        if output.is_json() {
+            print_envelope(json_outcomes, &refusal, reported, ctx);
+        }
+        return Err(refusal);
+    }
 
-    if let Err(e) = project_push_result {
-        // Under --json, emit partial outcomes before bailing.
+    let project_path = project_label(&pushed.project);
+    let project_abs = crate::path_spelling::WirePath::of(&pushed.project_dir);
+    let store = Store::open(pvcs, &pushed.project_dir)?;
+    let refetch = || {
+        crate::fetch::pruning_fetch_of(
+            pvcs,
+            &pushed.project_dir,
+            std::slice::from_ref(&project_plan.target),
+        )
+        .map(|_| ())
+    };
+    if output == OutputMode::Text {
+        outln!(
+            "rwv push: publishing the record of {} ({})",
+            pushed.branch,
+            project_plan.target,
+        );
+    }
+    match store.publish(&pushed.branch, &project_plan.target, &refetch)? {
+        Published::AlreadyThere => {}
+        Published::Sent { dropped } => {
+            json_outcomes.push(PushOutcomeOutput::RecordsPublished {
+                path: project_path.clone(),
+                absolute_path: project_abs.clone(),
+                project: pushed.project.clone(),
+                dropped,
+            });
+        }
+        Published::Rejected(message) => {
+            let default_branch = pvcs
+                .remote_default_branch(&pushed.project_dir, &project_plan.target)?
+                .map(|default| default.local_counterpart());
+            let is_default = default_branch
+                .as_ref()
+                .is_some_and(|default| default.as_str() == pushed.branch.as_str());
+            let is_fact = is_default && pushed.record == Record::Declared;
+            let line = State::PublishRecordsRejected
+                .of(&project_path)
+                .project_repo()
+                .checkout(&pushed.project_dir)
+                .listing([message.clone()])
+                .judge(pvcs);
+            json_outcomes.push(PushOutcomeOutput::RecordsRejected {
+                path: project_path.clone(),
+                absolute_path: project_abs.clone(),
+                project: pushed.project.clone(),
+                message,
+                withheld: !is_fact,
+            });
+            if is_fact {
+                let mut fact = Report::default();
+                fact.add(line);
+                if output == OutputMode::Text {
+                    eprint!("{}", fact.render("push"));
+                }
+            } else {
+                let mut refusal = Report::default();
+                refusal.add(line);
+                refusal.note(format!(
+                    "projects/{} {} was not pushed; the members' branches that were pushed are published",
+                    pushed.project, pushed.branch
+                ));
+                let refusal = refusal
+                    .into_result()
+                    .expect_err("a rejected record is judged withheld");
+                if output.is_json() {
+                    print_envelope(json_outcomes, &refusal, reported, ctx);
+                }
+                return Err(refusal);
+            }
+        }
+    }
+
+    let mut project_error = None;
+    if project_plan.push_branch {
+        if output == OutputMode::Text {
+            outln!(
+                "rwv push: pushing project repo projects/{} ({} -> {})",
+                pushed.project,
+                pushed.branch,
+                project_plan.target,
+            );
+        }
+        let publish_ref = PublishRef::from_local(&LocalRefName::of_branch(&pushed.raw));
+        let result = pvcs.push_ref(
+            &pushed.project_dir,
+            &project_plan.target,
+            &publish_ref,
+            &project_plan.replace,
+        );
+        match &result {
+            Ok(()) => json_outcomes.push(PushOutcomeOutput::ProjectRepoPushed {
+                path: project_path,
+                absolute_path: project_abs,
+                project: pushed.project.clone(),
+            }),
+            Err(e) => {
+                json_outcomes.push(PushOutcomeOutput::ProjectRepoFailed {
+                    path: project_path,
+                    absolute_path: project_abs,
+                    project: pushed.project.clone(),
+                    message: format!("{e:#}"),
+                });
+                project_error = Some(format!("{e:#}"));
+            }
+        }
+    }
+
+    if let Some(message) = project_error {
         if output.is_json() {
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
@@ -778,13 +1495,12 @@ pub fn run_push(
             }
         }
         anyhow::bail!(
-            "project-repo push failed after all member repos pushed cleanly: {e:#}. \
+            "project-repo push failed after all member repos pushed cleanly: {message}. \
              Member-side state is published; the lock carrier is not. \
              Retry `rwv push` once the project-repo issue is resolved."
         );
     }
 
-    // Emit JSON output for the success path.
     if output.is_json() {
         let envelope = PushJsonOutput {
             schema_url: PUSH_SCHEMA_URL.to_string(),
@@ -799,26 +1515,151 @@ pub fn run_push(
     } else {
         outln!("rwv push: done");
     }
-
     Ok(())
 }
 
-/// The envelope a refused `rwv push --json` prints: what it pushed, and every
-/// repo it judged in `refusal`.
-fn print_envelope(
-    outcomes: Vec<PushOutcomeOutput>,
-    refusal: &anyhow::Error,
-    ctx: &WorkspaceContext,
+/// The pins the project branch's lock holds, judged against what the remotes
+/// hold after the members were pushed: a feature's `owned` and `fork` pins by
+/// a remote-tracking branch of the url remote or the branch's push target, a
+/// declared branch's by the push branch of the branch each member declares,
+/// and a `dependency` or `reference` member's by a remote-tracking branch of
+/// its url remote.
+fn gate_reachability(
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    fetched: &Fetched,
+    gate: &mut Report,
 ) {
-    let envelope = PushJsonOutput {
-        schema_url: PUSH_SCHEMA_URL.to_string(),
-        outcomes,
-        refused: crate::diagnosis::refused_output(refusal),
-        reported: Vec::new(),
-        resolution: Some(ctx.resolution()),
-    };
-    if let Ok(out) = serde_json::to_string_pretty(&envelope) {
-        outln!("{out}");
+    for member in members {
+        let vcs = member.vcs.as_ref();
+        let path = &member.path;
+        let judging = |state: State| {
+            state
+                .of(path)
+                .member()
+                .checkout(&member.dir)
+                .bind("<m>", path.as_str())
+        };
+        let Some(entry) = pushed.lock.as_ref().and_then(|lock| lock.get_entry(path)) else {
+            gate.add(judging(State::PublishNoPin).judge(vcs));
+            continue;
+        };
+        if !member.dir.exists() {
+            continue;
+        }
+        let Ok(pin) = vcs.resolve_revision(&member.dir, entry.version.as_str()) else {
+            gate.add(
+                judging(State::PinUnreachable)
+                    .subject(entry.version.short_display())
+                    .judge(vcs),
+            );
+            continue;
+        };
+        let url_remote = fetched.url_remote(path);
+        let reached_by = |remote: Option<&RemoteHandle>| {
+            remote.is_some_and(|remote| {
+                vcs.reached_by_remote(&member.dir, &pin, remote)
+                    .unwrap_or(false)
+            })
+        };
+        let reached = match member.entry.role {
+            Role::Owned | Role::Fork if pushed.is_feature() => {
+                let target = vcs
+                    .push_target_of(&member.dir, &pushed.raw, url_remote)
+                    .ok()
+                    .flatten();
+                reached_by(url_remote) || reached_by(target.as_ref())
+            }
+            Role::Owned | Role::Fork => {
+                let declared = RawRefName::new(member.entry.branch.local_counterpart().as_str());
+                let target = vcs
+                    .push_target_of(&member.dir, &declared, url_remote)
+                    .ok()
+                    .flatten();
+                vcs.remote_copies(&member.dir, &declared)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|copy| Some(&copy.remote) == target.as_ref())
+                    .any(|copy| {
+                        vcs.is_ancestor(&member.dir, &pin, &copy.tip)
+                            .unwrap_or(false)
+                    })
+            }
+            Role::Dependency | Role::Reference => reached_by(url_remote),
+        };
+        if reached {
+            continue;
+        }
+        let reaching: Vec<String> = vcs
+            .branch_tips(&member.dir)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|tip| tip.label.contains('/'))
+            .filter(|tip| {
+                vcs.is_ancestor(&member.dir, &pin, &tip.tip)
+                    .unwrap_or(false)
+            })
+            .map(|tip| tip.label)
+            .collect();
+        let listing = if reaching.is_empty() {
+            format!(
+                "the pin {} is reached by no remote-tracking branch",
+                pin.id().short()
+            )
+        } else {
+            format!(
+                "the pin {} is reached only by {}",
+                pin.id().short(),
+                reaching.join(", ")
+            )
+        };
+        gate.add(
+            judging(State::PublishWithheld)
+                .listing([listing])
+                .bind("<b>", member.entry.branch.local_counterpart().as_str())
+                .only(&[ChoiceId::C7, ChoiceId::C27, ChoiceId::C17])
+                .judge(vcs),
+        );
+    }
+    let _ = pvcs;
+}
+
+/// Per-repo worker: push one member branch to its push target. All
+/// user-facing output is routed through `reporter`, which prefixes `[<repo>]`
+/// and serializes writes under `-j > 1`.
+fn push_one(
+    vcs: &dyn Vcs,
+    item: &PushPlanItem,
+    repo_dir: &Path,
+    reporter: &Reporter<'_>,
+) -> PushOutcome {
+    reporter.out(&format!(
+        "rwv push: pushing {} ({} -> {})",
+        item.repo_path.as_str(),
+        item.branch,
+        item.target,
+    ));
+    if let Replace::Leased(lease) = &item.replace {
+        let branch = RawRefName::new(item.branch.clone());
+        if let Err(e) = vcs.create_backup(
+            repo_dir,
+            &BackupSource::Branch(branch),
+            lease.expected(),
+            None,
+        ) {
+            return PushOutcome::Failed(format!(
+                "{}: could not keep the remote tip as a backup first: {e:#}",
+                item.repo_path.as_str()
+            ));
+        }
+    }
+    match vcs.push_ref(repo_dir, &item.target, &item.publish_ref, &item.replace) {
+        Ok(()) => PushOutcome::Pushed,
+        Err(e) => PushOutcome::Failed(format!(
+            "{}: git push failed: {e:#}",
+            item.repo_path.as_str()
+        )),
     }
 }
 
@@ -858,182 +1699,4 @@ fn refuse_uncommitted_project_state(
             .judge(vcs),
     );
     report.into_result()
-}
-
-/// One manifest repo's resolved plan entry — what branch it's on and which
-/// backend publishes it. Built up-front so the dry-run output and the
-/// actual push loop share the same shape.
-///
-/// `publish_ref` is the typed ref `push_one` hands to `Vcs::push_ref` —
-/// computed once, at plan time, from the same `AttachedRef` witness
-/// `branch` was rendered from. There is no independent re-read at push time,
-/// so the plan reports and pushes the same ref even if the checkout moves
-/// under it.
-struct PushPlanItem {
-    repo_path: RepoPath,
-    branch: String,
-    vcs_type: VcsType,
-    publish_ref: PublishRef,
-    /// Where the branch publishes: its push target.
-    target: RemoteHandle,
-}
-
-/// Outcome of pushing a single manifest repo.
-///
-/// `Pushed` and `Failed` are produced by `push_one` for each plan item.
-/// Plan-time skipped repos (filtered out by the default `[Owned, Fork]`
-/// scope, or by explicit selectors) never enter the push loop and never
-/// produce a `PushOutcome`; they are handled separately as
-/// `PushOutcomeOutput::Skipped` records in the JSON output and as text
-/// skip notices in text mode.
-enum PushOutcome {
-    Pushed,
-    Failed(String),
-}
-
-/// Per-repo worker: push one manifest entry on its current branch to its
-/// push target. All user-facing output is routed through
-/// `reporter`, which prefixes `[<repo>]` and serializes writes under
-/// `-j > 1`; under `-j 1` the reporter is a no-prefix passthrough that
-/// matches the pre-`-j` serial output exactly.
-///
-/// `Vcs::push_ref` captures stdout/stderr; we don't stream git's output
-/// line-by-line. The user-visible signal under parallel mode is the
-/// pre/post "rwv push: pushing X" pair (lock-protected via reporter); on
-/// failure the captured stderr is surfaced through the aggregated error
-/// summary post-join.
-fn push_one(
-    vcs: &dyn Vcs,
-    item: &PushPlanItem,
-    primary_root: &Path,
-    reporter: &Reporter<'_>,
-    force: Force,
-) -> PushOutcome {
-    let repo_dir = primary_root.join(item.repo_path.as_path());
-    reporter.out(&format!(
-        "rwv push: pushing {} ({} -> {})",
-        item.repo_path.as_str(),
-        item.branch,
-        item.target,
-    ));
-    match vcs.push_ref(&repo_dir, &item.target, &item.publish_ref, force) {
-        Ok(()) => PushOutcome::Pushed,
-        Err(e) => PushOutcome::Failed(format!(
-            "{}: git push failed: {e:#}",
-            item.repo_path.as_str()
-        )),
-    }
-}
-
-/// Resolve the project repo's path for tests that need the on-disk dir.
-/// Kept `pub(crate)` so the integration tests in `tests/push_test.rs`
-/// can mirror primary's layout when staging fixtures.
-#[allow(dead_code)]
-pub(crate) fn project_repo_dir(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project)
-}
-
-#[cfg(test)]
-mod tests {
-    //! Unit tests for the small private helpers `push.rs` uses to format
-    //! its output. These helpers are only reachable through the verb's
-    //! integration tests; the unit tests below pin them directly so
-    //! refactors of either helper can't quietly change the verb's
-    //! user-visible strings.
-    use super::*;
-    use crate::manifest::RepoPath;
-    use crate::vcs::{RawRefName, RawRevisionId, TrackingRef};
-    use std::collections::BTreeMap;
-
-    // --- PushPlanItem round-trip ------------------------------------------
-
-    /// Build a `PublishRef` for a test fixture without a real repo.
-    ///
-    /// `PublishRef::from_attached` needs an `AttachedRef` witness, which
-    /// only `Vcs::head_attachment` can produce (its fields are private
-    /// outside `vcs.rs`). `from_local` is the other constructor, which the
-    /// gate does not call — reaching for it here to fabricate a test value
-    /// doesn't touch the gate's decision, it just needs *a* value.
-    fn test_publish_ref(name: &str) -> PublishRef {
-        let declared = TrackingRef::parse(RawRefName::new(name)).expect("known-safe literal");
-        PublishRef::from_local(&declared.local_counterpart())
-    }
-
-    /// PushPlanItem is the in-memory shape we hand to the parallel push
-    /// loop and to dry-run printing. Pin construction-via-fields-and-
-    /// readback so an accidental field rename doesn't silently change
-    /// the dry-run output format.
-    #[test]
-    fn push_plan_item_round_trip_fields_readable() {
-        let item = PushPlanItem {
-            repo_path: RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
-            branch: "main".to_string(),
-            vcs_type: VcsType::Git,
-            publish_ref: test_publish_ref("main"),
-            target: RemoteHandle::new("origin"),
-        };
-        assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
-        assert_eq!(item.branch, "main");
-    }
-
-    /// Sorted iteration is what the verb actually does — pin the
-    /// shape we hand into `run_in_parallel`. (Selector-filtered
-    /// subset preserves manifest order; the manifest is a BTreeMap.)
-    #[test]
-    fn push_plan_item_vec_preserves_order() {
-        let plan = [
-            PushPlanItem {
-                repo_path: RepoPath::new("a").expect("known-safe literal"),
-                branch: "main".into(),
-                vcs_type: VcsType::Git,
-                publish_ref: test_publish_ref("main"),
-                target: RemoteHandle::new("origin"),
-            },
-            PushPlanItem {
-                repo_path: RepoPath::new("b").expect("known-safe literal"),
-                branch: "main".into(),
-                vcs_type: VcsType::Git,
-                publish_ref: test_publish_ref("main"),
-                target: RemoteHandle::new("origin"),
-            },
-            PushPlanItem {
-                repo_path: RepoPath::new("c").expect("known-safe literal"),
-                branch: "main".into(),
-                vcs_type: VcsType::Git,
-                publish_ref: test_publish_ref("main"),
-                target: RemoteHandle::new("origin"),
-            },
-        ];
-        let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();
-        assert_eq!(paths, vec!["a", "b", "c"]);
-    }
-
-    /// The `BTreeMap<RepoPath, RawRevisionId>` shape used by the
-    /// lock-precondition block is part of the verb's contract with
-    /// `project.lock.repositories`. Spot-check the round-trip via a
-    /// throwaway map so a future refactor of `RawRevisionId` would
-    /// break this test before it broke the verb.
-    #[test]
-    fn lock_entries_btreemap_round_trip() {
-        let mut entries: BTreeMap<RepoPath, RawRevisionId> = BTreeMap::new();
-        entries.insert(
-            RepoPath::new("github/x/y").expect("known-safe literal"),
-            RawRevisionId::new("v1.0.0"),
-        );
-        entries.insert(
-            RepoPath::new("github/a/b").expect("known-safe literal"),
-            RawRevisionId::new("abcdef0123456789abcdef0123456789abcdef01"),
-        );
-        // BTreeMap orders by key — manifest order, lexicographic.
-        let keys: Vec<&str> = entries.keys().map(|k| k.as_str()).collect();
-        assert_eq!(keys, vec!["github/a/b", "github/x/y"]);
-        // Values stay intact through insertion.
-        assert_eq!(
-            entries
-                .get(&RepoPath::new("github/x/y").expect("known-safe literal"))
-                .unwrap()
-                .as_str(),
-            "v1.0.0"
-        );
-    }
 }

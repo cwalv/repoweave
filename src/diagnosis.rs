@@ -334,6 +334,7 @@ pub enum State {
     PushBranchGone,
     PushBranchForeignUpstream,
     PushBranchNoPushTarget,
+    PushBranchUnconfirmed,
     PinNone,
     PinUnreachable,
     NameTaken,
@@ -341,7 +342,10 @@ pub enum State {
     NameARevision,
     NameNoSuchBranch,
     NameReserved,
+    NameMinted,
     PublishWithheld,
+    PublishRecordsRejected,
+    PublishNoPin,
     UnparseableProjectHere,
     UnparseableProjectMalformed,
     PinWouldBeUnreachable,
@@ -368,6 +372,8 @@ pub enum State {
     PinDiverged,
     PinOffRemote,
     PinBackwards,
+    PinUnmerged,
+    PinWaived,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -385,7 +391,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 45] = [
+    pub const ALL: [State; 51] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -397,6 +403,7 @@ impl State {
         Self::PushBranchGone,
         Self::PushBranchForeignUpstream,
         Self::PushBranchNoPushTarget,
+        Self::PushBranchUnconfirmed,
         Self::PinBehind,
         Self::PinAhead,
         Self::PinUnpinned,
@@ -406,13 +413,18 @@ impl State {
         Self::PinUnreachable,
         Self::PinOffRemote,
         Self::PinBackwards,
+        Self::PinUnmerged,
+        Self::PinWaived,
         Self::PinWouldBeUnreachable,
         Self::NameTaken,
         Self::NameExists,
         Self::NameARevision,
         Self::NameNoSuchBranch,
         Self::NameReserved,
+        Self::NameMinted,
         Self::PublishWithheld,
+        Self::PublishRecordsRejected,
+        Self::PublishNoPin,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
         Self::TargetNoTarget,
@@ -550,6 +562,16 @@ impl State {
                 offers: &[Form::C17],
                 verb_offers: &[],
             },
+            Self::PushBranchUnconfirmed => &StateRow {
+                axis: Axis::PushBranch,
+                name: "unconfirmed",
+                means: "the last pruning fetch of the remote the branch publishes to could not \
+                        complete, the cause listed; the verb needs the remote's answer and \
+                        judges nothing from refs as last fetched",
+                refused_by: "`rwv push`",
+                offers: &[Form::C33],
+                verb_offers: &[],
+            },
             Self::PinNone => &StateRow {
                 axis: Axis::Pin,
                 name: "none",
@@ -639,13 +661,48 @@ impl State {
                 offers: &[Form::C10],
                 verb_offers: &[],
             },
+            Self::NameMinted => &StateRow {
+                axis: Axis::Name,
+                name: "minted",
+                means: "the project branch is the name `rwv workweave create` gave a workweave \
+                        that was not given one, `<project>--<workweave>`, which is never \
+                        published, and neither is its record",
+                refused_by: "`rwv push`",
+                offers: &[Form::C10],
+                verb_offers: &[],
+            },
             Self::PublishWithheld => &StateRow {
                 axis: Axis::Publish,
                 name: "withheld",
-                means: "the remote rejected this member's push, so the project repo was not \
-                        pushed; what the remote answered is listed",
+                means: "the project repo was not pushed: a pin the project branch's lock \
+                        holds is not reached by the remote-tracking branches that must reach \
+                        it, or the remote rejected a member's push; the branches that do reach \
+                        each pin, and what the remote answered, are listed",
                 refused_by: "`rwv push`",
-                offers: &[Form::C7Push, Form::C17],
+                offers: &[Form::C7Push, Form::C7PushRepo, Form::C27, Form::C17],
+                verb_offers: &[],
+            },
+            Self::PublishRecordsRejected => &StateRow {
+                axis: Axis::Publish,
+                name: "records rejected",
+                means: "the remote the project branch publishes to refused the branch that \
+                        holds the weave branches' records, so the branch was withheld; for the \
+                        remote's default branch, whose record is `declared`, the branch is \
+                        published and the rejection reported as a fact. What the remote \
+                        answered is listed",
+                refused_by: "`rwv push`, for a branch that is not the remote's default branch \
+                             recorded as `declared`; reported for that one",
+                offers: &[Form::C17],
+                verb_offers: &[],
+            },
+            Self::PublishNoPin => &StateRow {
+                axis: Axis::Publish,
+                name: "no pin",
+                means: "the project branch's lock has no entry for a member the push does not \
+                        act on, so the project repo was not pushed with a lock that pins \
+                        nothing there",
+                refused_by: "`rwv push`",
+                offers: &[Form::C25],
                 verb_offers: &[],
             },
             Self::UnparseableProjectHere => &StateRow {
@@ -888,6 +945,29 @@ impl State {
                         waiting",
                 refused_by: "nothing refuses; `rwv fetch` and `rwv pull` report it",
                 offers: &[Form::C7PushRepo, Form::C27, Form::C25, Form::C19],
+                verb_offers: &[],
+            },
+            Self::PinUnmerged => &StateRow {
+                axis: Axis::Pin,
+                name: "unmerged",
+                means: "a merge commit in the range being pushed joined two pins of one \
+                        member that its parents changed, each under one declared branch, and \
+                        the pushed tip pins neither merged with the other: a commit holding \
+                        both. The merge and the pins are listed. A member the parents declare \
+                        differently is listed and not refused",
+                refused_by: "`rwv push`",
+                offers: &[Form::C26],
+                verb_offers: &[],
+            },
+            Self::PinWaived => &StateRow {
+                axis: Axis::Pin,
+                name: "waived",
+                means: "a merge in the range being pushed left one member's pins unmerged, and \
+                        a later lock in the range, the merge's own included, re-pinned the \
+                        member backward by name to a commit that does not reach the pin the \
+                        merge left. The merge and the re-pin that waived it are listed",
+                refused_by: "nothing refuses; `rwv push` reports it and goes on",
+                offers: &[],
                 verb_offers: &[],
             },
             Self::PinBackwards => &StateRow {
@@ -1489,7 +1569,7 @@ impl Form {
                 choice: C::C7,
                 steps: &[Rwv("rwv push --branch <W>")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C9BranchDelete => &FormRow {
                 choice: C::C9,
@@ -2667,7 +2747,11 @@ mod tests {
         }
         assert_eq!(
             offering_nothing,
-            [State::UnparseableProjectMalformed, State::AlignmentAligned],
+            [
+                State::PinWaived,
+                State::UnparseableProjectMalformed,
+                State::AlignmentAligned
+            ],
             "a state that offers nothing is a decision the table records, not an omission"
         );
         for axis in Axis::ALL {

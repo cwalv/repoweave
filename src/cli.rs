@@ -482,7 +482,7 @@ pub enum Commands {
         no_materialize: bool,
     },
 
-    /// Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding.
+    /// Publish a weave branch: its members' branches, then its record and the drops made here, then the project branch. Runs from any workspace on a recorded, named branch; never writes the lock. Pushes `owned` and `fork` members by default and a `dependency` or `reference` member only when named.
     Push {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
@@ -490,16 +490,19 @@ pub enum Commands {
         /// Print the push plan without executing
         #[arg(long)]
         dry_run: bool,
-        /// Force-push every repo in the operation (member repos and the project repo). Default deny.
-        #[arg(long)]
-        force: bool,
-        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
+        /// Push this weave branch instead of the checked-out one, judging each member by the branch's record and lock as the refs hold them
+        #[arg(long, value_name = "W")]
+        branch: Option<String>,
+        /// Replace this repo's diverged push branch, keeping the remote tip as a backup and leasing the replacement to it. The repo is its workspace-relative path, or `projects/<name>` for the project repo; repeat the flag per repo. Never rewrites a branch some weave branch declares
+        #[arg(long, value_name = "REPO")]
+        overwrite: Vec<crate::manifest::RepoOperand>,
+        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Naming a `dependency` or `reference` role pushes those members. With a selector the project branch and its record are pushed only when `projects/<name>` is named by --repo.
         #[arg(long = "role")]
         roles: Vec<String>,
-        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
+        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. `projects/<name>` names the project repo.
         #[arg(long = "repo")]
         repos: Vec<String>,
-        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
+        /// Number of parallel per-repo workers for the fetches and member pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.

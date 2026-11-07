@@ -41,6 +41,7 @@
 //! never a bare `--force`.
 
 use crate::manifest::{ProjectName, RepoKey, RepoOperand};
+use crate::vcs::ResolvedRevisionId;
 
 /// Proof that the operator consented to deleting a branch whose commits have
 /// not landed, after a backup. Minted from `--discard-unlanded`.
@@ -65,27 +66,58 @@ impl DiscardUnlandedConsent {
     }
 }
 
-/// Proof that the operator consented to `rwv push` replacing a remote tip
-/// the pushed one does not descend from, discarding the remote history it
-/// does not contain. Minted from `--force`.
+/// Proof that the operator consented to `rwv push` replacing the push branch
+/// of the repos named here, discarding the remote history the pushed tip does
+/// not contain. Minted from `--overwrite`, one occurrence per repo.
 ///
-/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
-#[derive(Debug, Clone, Copy)]
-pub struct ForcePushConsent(());
+/// Like [`AbandonForeignTipConsent`] it carries data, because the loss is
+/// per repo: a flag that named no repo, or all of them, would answer for
+/// repos the operator never looked at.
+#[derive(Debug, Clone, Default)]
+pub struct OverwriteConsent(std::collections::BTreeSet<RepoOperand>);
 
-impl ForcePushConsent {
+impl OverwriteConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
     /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
-    pub(crate) fn granted() -> Self {
-        Self(())
+    pub(crate) fn granted(repo: RepoOperand) -> Self {
+        Self(std::iter::once(repo).collect())
     }
 
-    /// Mint from the parsed `--force` value: `Some` iff the operator passed
-    /// it. `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s doc
-    /// comment.
-    pub(in crate::cli) fn from_flag(force: bool) -> Option<Self> {
-        force.then_some(Self(()))
+    /// Mint from the parsed `--overwrite` values, one per occurrence of the
+    /// flag. `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s
+    /// doc comment.
+    pub(in crate::cli) fn from_flag(overwrite: &[RepoOperand]) -> Self {
+        Self(overwrite.iter().cloned().collect())
+    }
+
+    /// The repos the operator named.
+    pub fn named(&self) -> impl Iterator<Item = &RepoOperand> {
+        self.0.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The lease that lets a push replace `repo`'s push branch while it
+    /// still holds `expected`, when the operator named `repo`.
+    pub fn lease(&self, repo: &RepoOperand, expected: ResolvedRevisionId) -> Option<Lease> {
+        self.0.contains(repo).then_some(Lease { expected })
+    }
+}
+
+/// Permission to replace one push branch, provided it still holds the tip it
+/// was read at. Minted only by [`OverwriteConsent::lease`].
+#[derive(Debug, Clone)]
+pub struct Lease {
+    expected: ResolvedRevisionId,
+}
+
+impl Lease {
+    /// The tip the push branch must still hold for the replacement to land.
+    pub fn expected(&self) -> &ResolvedRevisionId {
+        &self.expected
     }
 }
 

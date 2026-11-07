@@ -16,8 +16,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::vcs::{
-    CommitId, CommittedFile, FileChange, RawRefName, RecordsAdvance, RecordsSite, RemoteHandle,
-    Vcs, VcsError,
+    CommitId, CommittedFile, FileChange, RawRefName, RecordsAdvance, RecordsPublish, RecordsSite,
+    RemoteHandle, Vcs, VcsError,
 };
 
 const WRITER_TRAILER: &str = "Rwv-Writer";
@@ -750,6 +750,74 @@ impl<'a> Store<'a> {
         Err(WriteError::Busy)
     }
 
+    /// Publish `branch`'s record, and the drops this machine has made, to
+    /// `remote`: one commit on the tip of `remote`'s records branch as last
+    /// fetched, pushed as a fast-forward. It changes `branch`'s own entry and
+    /// removes the entries the local branch no longer holds; no other entry
+    /// of the local branch is sent, and a conflicted or unreadable one is
+    /// never sent. A remote that moved meanwhile is fetched through `refetch`,
+    /// the records merged again and the commit rebuilt.
+    pub fn publish(
+        &self,
+        branch: &BranchName,
+        remote: &RemoteHandle,
+        refetch: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<Published> {
+        for _ in 0..WRITE_ATTEMPTS {
+            let settled = self.settle().map_err(anyhow::Error::new)?;
+            let settled = SettledView { view: settled };
+            let remote_tip = self
+                .vcs
+                .records_tip(self.repo, RecordsSite::Remote(remote))?;
+            let base = match &remote_tip {
+                Some(tip) => self.snapshot_at(tip)?,
+                None => Snapshot::new(),
+            };
+            let mut next = base.clone();
+            let dropped: Vec<String> = base
+                .keys()
+                .filter(|name| !settled.view.snapshot.contains_key(*name))
+                .cloned()
+                .collect();
+            for name in &dropped {
+                next.remove(name);
+            }
+            if let (Some(Entry::Value(_)), Some(mine)) =
+                (settled.view.entry(branch), settled.view.raw(branch))
+            {
+                if !base
+                    .get(branch.as_str())
+                    .is_some_and(|held| same_entry(held, mine))
+                {
+                    next.insert(branch.as_str().to_owned(), mine.to_vec());
+                }
+            }
+            if next == base {
+                return Ok(Published::AlreadyThere);
+            }
+            let mut parts: Vec<String> = Vec::new();
+            if next.get(branch.as_str()) != base.get(branch.as_str()) {
+                parts.push(format!("publish {branch}"));
+            }
+            if !dropped.is_empty() {
+                parts.push(format!("drop {}", dropped.join(", ")));
+            }
+            let commit = self.vcs.write_commit(
+                self.repo,
+                &remote_tip.iter().cloned().collect::<Vec<_>>(),
+                &changes_between(&base, &next),
+                &commit_message(&parts.join("; ")),
+            )?;
+            crate::test_pause::point("records-publish");
+            match self.vcs.publish_records(self.repo, remote, &commit)? {
+                RecordsPublish::Published => return Ok(Published::Sent { dropped }),
+                RecordsPublish::Rejected(why) => return Ok(Published::Rejected(why)),
+                RecordsPublish::RemoteMoved => refetch()?,
+            }
+        }
+        Err(anyhow::Error::new(WriteError::Busy))
+    }
+
     /// The release the commit that last changed `branch`'s entry names, when
     /// it names one.
     pub fn writer_of(&self, branch: &BranchName) -> Result<Option<String>, VcsError> {
@@ -791,6 +859,22 @@ impl<'a> Store<'a> {
         }
         Ok(names)
     }
+}
+
+struct SettledView {
+    view: View,
+}
+
+/// How publishing a record to a remote ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Published {
+    /// The remote's records branch now holds the entry, and has lost the
+    /// entries listed as dropped.
+    Sent { dropped: Vec<String> },
+    /// The remote already held everything a publish would send.
+    AlreadyThere,
+    /// The remote refused its records branch, for the reason it gave.
+    Rejected(String),
 }
 
 /// What a write left behind.

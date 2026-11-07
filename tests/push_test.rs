@@ -19,6 +19,23 @@ fn rwv() -> Command {
     common::rwv()
 }
 
+/// An `update` hook that refuses pushes of `refname` and accepts the rest.
+fn refuse_pushes_to(bare: &Path, refname: &str) {
+    let hooks = bare.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("update");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nif [ \"$1\" = {refname} ]; then\n    echo refused >&2\n    exit 1\nfi\nexit 0\n"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 /// Get the `main` SHA in a bare repo, or `None` if `main` doesn't exist
 /// (e.g. nothing was ever pushed).
 fn bare_main_sha(bare: &Path) -> Option<String> {
@@ -52,7 +69,9 @@ fn push_happy_path_pushes_manifest_then_project() {
     );
 
     // Advance each manifest repo with a new commit so there's something to
-    // push. Re-write the lock to match new HEADs.
+    // push. Re-write the lock to match the new HEADs of the repos the push
+    // acts on; the dependency is advanced too, but its pin stays where it
+    // was, a commit its remote holds.
     let repos = [
         ("local/org/a", "owned"),
         ("local/org/b", "fork"),
@@ -68,11 +87,16 @@ fn push_happy_path_pushes_manifest_then_project() {
         common::git_in(&local, &["add", "."]);
         common::git_in(&local, &["commit", "-m", "advance"]);
         let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
+        let pinned = if *role == "dependency" {
+            common::git_in(&local, &["rev-parse", "HEAD~1"])
+        } else {
+            sha.clone()
+        };
         let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
-        lock_entries.push(((*rp).to_string(), bare_url, sha.clone()));
+        lock_entries.push(((*rp).to_string(), bare_url, pinned));
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
@@ -195,48 +219,6 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
         bare_main_sha(&ws.project_bare),
         baseline_project,
         "dry-run must not touch the project bare"
-    );
-}
-
-// ============================================================================
-// Negative: workweave invocation refused
-// ============================================================================
-
-#[test]
-fn push_refuses_from_workweave() {
-    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
-
-    // Drop a `.rwv-workweave` marker in a sibling dir so resolve sees a
-    // Workweave. This sidesteps the need to actually run `rwv workweave
-    // create` (which requires a much heavier setup).
-    let workweave_dir = ws.workspace.parent().unwrap().join("alpha--feat");
-    std::fs::create_dir_all(&workweave_dir).unwrap();
-    let marker = common::workweave_marker(&ws.workspace, &ws.project_name, &ws.workspace);
-    std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
-
-    let output = rwv()
-        .args(["push"])
-        .current_dir(&workweave_dir)
-        .output()
-        .expect("rwv push");
-    assert!(
-        !output.status.success(),
-        "push from workweave must fail; stdout: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("workweave"),
-        "error should mention workweave; got: {stderr}"
-    );
-    // Hint must name sync-to, not the wrong direction `sync primary`.
-    assert!(
-        stderr.contains("sync-to"),
-        "error hint must name `rwv sync-to` (not `rwv sync primary`); got: {stderr}"
-    );
-    assert!(
-        !stderr.contains("sync primary"),
-        "error hint must NOT say `sync primary` (wrong direction); got: {stderr}"
     );
 }
 
@@ -470,37 +452,54 @@ fn push_refuses_detached_head() {
 }
 
 // ============================================================================
-// Negative: project repo off canonical branch refused
+// A recorded feature branch publishes from the primary
 // ============================================================================
 
-/// Tightened from a loose `"canonical" || "branch"` substring to the route
-/// token: that substring also matches `head-not-on-branch`'s message, so it
-/// could not tell this refusal apart from
-/// `push_refuses_project_repo_detached_head_by_route_token` below. Revert to
-/// watch it go red: in `run_push` (src/push.rs), change the
-/// `RefusalKind::ProjectRepoOffCanonicalBranch` arm to
-/// `RefusalKind::HeadNotOnBranch`.
+/// The project repo need not be on the remote's default branch: a push
+/// publishes the recorded branch it is on, and the record before it.
 #[test]
-fn push_refuses_when_project_repo_off_canonical_branch() {
+fn push_publishes_a_recorded_feature_branch_from_the_primary() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    // Move project repo to a non-canonical branch.
     common::git_in(&project_dir, &["checkout", "-b", "feat/x"]);
     common::record_feature(&project_dir, "feat/x", "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let member = ws.workspace.join("local/org/a");
+    std::fs::write(member.join("x.txt"), "x").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "feature work"]);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
 
-    let output = rwv()
+    rwv()
         .args(["push"])
         .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    assert!(
-        !output.status.success(),
-        "off-canonical-branch project must refuse"
+        .assert()
+        .success();
+
+    let head = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
+    let member_head = common::git_in(&member, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        common::git_in(&ws.manifest_bares[0].1, &["rev-parse", "refs/heads/feat/x"]),
+        member_head,
+        "the member's branch is published"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let on_bare = common::git_in(&ws.project_bare, &["rev-parse", "refs/heads/feat/x"]);
+    assert_eq!(
+        on_bare, head,
+        "the recorded branch is on the project remote"
+    );
+    let record = common::git_in(&ws.project_bare, &["show", "rwv-records:feat/x"]);
     assert!(
-        stderr.contains("\nrwv explain project-repo-off-canonical-branch\n"),
-        "expected the `project-repo-off-canonical-branch` route token; got: {stderr}"
+        record.contains("feature") && record.contains("main"),
+        "the remote holds the branch's record beside it; got: {record}"
     );
 }
 
@@ -508,13 +507,9 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 // Negative: project repo detached or unborn — `head-not-on-branch`
 // ============================================================================
 
-/// B2: a project repo on a detached HEAD refuses with `head-not-on-branch`
-/// (cli.md:317, docs/how-to/push-cross-repo-feature.md:14) — distinct from
-/// `push_refuses_detached_head` above, which detaches a *member* repo and
-/// takes the `unpushable-repo-branch` route instead. Revert to watch it go
-/// red: in `run_push` (src/push.rs), change the project-repo
-/// `HeadAttachment::Detached` arm's `RefusalKind::HeadNotOnBranch` to
-/// `RefusalKind::ProjectRepoOffCanonicalBranch`.
+/// A project repo on a detached HEAD is a detached workspace, which runs no
+/// push: it refuses on the `alignment` axis, project detached — distinct from
+/// `push_refuses_detached_head` above, which detaches a *member* repo.
 #[test]
 fn push_refuses_project_repo_detached_head_by_route_token() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
@@ -533,8 +528,9 @@ fn push_refuses_project_repo_detached_head_by_route_token() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("\nrwv explain head-not-on-branch\n"),
-        "expected the `head-not-on-branch` route token; got: {stderr}"
+        stderr.contains("alignment project detached")
+            && stderr.contains("\nrwv explain alignment\n"),
+        "expected the `alignment` project detached refusal; got: {stderr}"
     );
 }
 
@@ -570,18 +566,13 @@ fn push_refuses_project_repo_unborn_head_by_route_token() {
 }
 
 // ============================================================================
-// Negative: project repo's `origin/HEAD` is unset — no "main" fallback
+// The remote's default branch is not read to gate a push
 // ============================================================================
 
-/// `RemoteDefaultBranch`'s sole producer returns `None` when `origin/HEAD`
-/// is unset, and the gate must refuse
-/// rather than fabricate "main". Proves the refusal by construction: the
-/// project repo here IS on `main` (the real canonical branch `git clone`
-/// would have recorded), so the old fallback-to-"main" behavior would
-/// have let this push through silently — only the typed `None` path
-/// catches it.
+/// No gate reads the remote's default branch, so a project repo whose
+/// `origin/HEAD` is unset publishes.
 #[test]
-fn push_refuses_when_project_repo_origin_head_unset() {
+fn push_does_not_read_the_remotes_default_branch_to_gate() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     common::git_in(
@@ -589,27 +580,6 @@ fn push_refuses_when_project_repo_origin_head_unset() {
         &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
     );
 
-    let output = rwv()
-        .args(["push"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    assert!(
-        !output.status.success(),
-        "unset origin/HEAD must refuse rather than fall back to a guessed branch"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("origin/HEAD is unset"),
-        "error should name the unset origin/HEAD condition, not a fabricated branch; got: {stderr}"
-    );
-
-    // The refusal's own advice must cure the state it names — a refusal
-    // whose remedy does not unblock the same command is dead advice. Drives
-    // the advised pair verbatim; the fetch is a no-op here but is part of
-    // the advice because the never-fetched case needs it.
-    common::git_in(&project_dir, &["fetch", "origin"]);
-    common::git_in(&project_dir, &["remote", "set-head", "origin", "-a"]);
     rwv()
         .args(["push"])
         .current_dir(&ws.workspace)
@@ -651,69 +621,11 @@ fn push_refuses_when_project_repo_is_not_a_repo() {
 }
 
 // ============================================================================
-// Branch-mismatch warning is non-fatal
+// A member off the branch the checked-out branch's record expects refuses
 // ============================================================================
 
 #[test]
-fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
-    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
-
-    // Create a new branch in the manifest repo and commit there — the
-    // manifest declares `main`, so this should warn.
-    let local = ws.workspace.join("local/org/a");
-    common::git_in(&local, &["checkout", "-b", "feat-x"]);
-    std::fs::write(local.join("f.txt"), "f").unwrap();
-    common::git_in(&local, &["add", "."]);
-    common::git_in(&local, &["commit", "-m", "feat advance"]);
-    let feat_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
-
-    // Update lock to point at the new SHA (HEAD on feat-x).
-    let (_, bare) = &ws.manifest_bares[0];
-    let bare_url = common::file_url(bare);
-    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    common::fixture_lock(&project_dir, &[("local/org/a", &bare_url, &feat_sha)]);
-    common::git_in(&project_dir, &["add", "."]);
-    common::git_in(&project_dir, &["commit", "-m", "relock"]);
-
-    let output = rwv()
-        .args(["push"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    assert!(
-        output.status.success(),
-        "branch-mismatch is non-fatal warn; stdout={}, stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("warning") && (stderr.contains("feat-x") || stderr.contains("main")),
-        "expected branch-mismatch warning; got stderr: {stderr}"
-    );
-
-    // The bare's `feat-x` ref should now exist and equal feat_sha.
-    let bare_feat = common::git()
-        .args(["rev-parse", "feat-x"])
-        .current_dir(bare)
-        .output()
-        .unwrap();
-    assert!(bare_feat.status.success(), "feat-x must exist on bare");
-    let bare_feat_sha = String::from_utf8(bare_feat.stdout)
-        .unwrap()
-        .trim()
-        .to_string();
-    assert_eq!(bare_feat_sha, feat_sha);
-}
-
-/// The warning is built from two typed refs — the
-/// checkout's `AttachedRef` witness and the manifest's declared
-/// `TrackingRef` — routed through named projections instead of a raw
-/// string compare. Assert both names appear in the *same* warning line
-/// (not just "either", as the looser check above allows), pinning that the
-/// typed refactor didn't drop or garble either side.
-#[test]
-fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
+fn push_refuses_a_member_on_another_branch_than_the_record_expects() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     let local = ws.workspace.join("local/org/a");
@@ -735,13 +647,22 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
         .current_dir(&ws.workspace)
         .output()
         .expect("rwv push");
-    assert!(output.status.success(), "branch-mismatch is non-fatal warn");
+    assert!(!output.status.success(), "an unaligned member refuses");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let expected = "rwv push: warning: local/org/a is on branch 'feat-x', manifest declares 'main'";
     assert!(
-        stderr.contains(expected),
-        "expected warning naming both the observed branch ('feat-x') and the \
-         manifest's declared branch ('main') in one line; got stderr: {stderr}"
+        stderr.contains("local/org/a: alignment on branch (feat-x)")
+            && stderr.contains("rwv update"),
+        "expected the alignment refusal naming `rwv update`; got: {stderr}"
+    );
+    assert!(
+        common::git()
+            .args(["rev-parse", "--verify", "--quiet", "feat-x"])
+            .current_dir(bare)
+            .output()
+            .unwrap()
+            .stdout
+            .is_empty(),
+        "nothing was published before the refusal"
     );
 }
 
@@ -782,14 +703,9 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
-    // Sabotage repo B's remote URL so push fails (point at a nonexistent
-    // location). Repo A pushes succeed; B fails; project must not be pushed.
-    let local_b = ws.workspace.join("local/org/b");
-    let bad_url = ws.workspace.join("nonexistent-remote.git");
-    common::git_in(
-        &local_b,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    // Make repo B's remote refuse the push. Repo A pushes succeed; B fails;
+    // project must not be pushed.
+    refuse_pushes_to(&ws.manifest_bares[1].1, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])
@@ -834,12 +750,8 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
-    // Sabotage the project repo's origin so its push fails.
-    let bad_url = ws.workspace.join("nonexistent-project.git");
-    common::git_in(
-        &project_dir,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    // Make the project remote refuse the branch, not the record beside it.
+    refuse_pushes_to(&ws.project_bare, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])
@@ -878,8 +790,11 @@ fn push_command_is_registered() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
     assert!(
-        combined.contains("--dry-run") && combined.contains("--force"),
-        "push --help should list --dry-run and --force; got: {combined}"
+        combined.contains("--dry-run")
+            && combined.contains("--overwrite")
+            && combined.contains("--branch")
+            && !combined.contains("--force"),
+        "push --help should list --dry-run, --overwrite and --branch, and no --force; got: {combined}"
     );
 }
 
@@ -1096,26 +1011,22 @@ fn push_union_role_and_repo_selectors() {
 }
 
 // ----------------------------------------------------------------------------
-// Lock-precondition always runs against the FULL manifest, never the
-// filter — the filter narrows the push loop, not the precondition.
+// A selector narrows what the push acts on: the members it does not select are
+// not judged, and the project branch is not published unless it is named.
 // ----------------------------------------------------------------------------
 
 #[test]
-fn push_filter_still_runs_lock_precondition_against_full_manifest() {
-    // Build a 2-repo workspace. Advance BOTH local clones but only update the
-    // lock for repo A. Push with --repo local/org/a (the in-sync one). The
-    // push must still refuse — repo B's HEAD drifts from the committed lock,
-    // and the committed lock is shared with collaborators regardless of
-    // which subset the operator pushes today.
+fn push_judges_only_the_members_it_acts_on() {
+    // Two owned members, both advanced locally, the lock updated for A only.
+    // `--repo a` pushes A's branch and judges nothing of B, whose HEAD has
+    // drifted from its pin; the project branch, which carries the lock, is
+    // not published without `projects/<name>`.
     let ws = common::build_workspace(
         "alpha",
         &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
+    let baseline_project = bare_main_sha(&ws.project_bare);
 
-    let baseline_a = bare_main_sha(&ws.manifest_bares[0].1);
-    let baseline_b = bare_main_sha(&ws.manifest_bares[1].1);
-
-    // Advance both locals.
     let mut new_shas: Vec<String> = Vec::new();
     for (rp, _) in &ws.manifest_bares {
         let local = ws.workspace.join(rp);
@@ -1124,11 +1035,8 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
         common::git_in(&local, &["commit", "-m", &format!("advance {rp}")]);
         new_shas.push(common::git_in(&local, &["rev-parse", "HEAD"]));
     }
-
-    // Update lock for A only — leaving B's lock entry stale.
     let (_, a_bare) = &ws.manifest_bares[0];
     let (_, b_bare) = &ws.manifest_bares[1];
-    // HEAD~1 is the original lock SHA from build_workspace
     let stale_b_lock_sha =
         common::git_in(ws.workspace.join("local/org/b"), &["rev-parse", "HEAD~1"]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
@@ -1142,29 +1050,31 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "partial relock"]);
 
-    let output = rwv()
+    rwv()
         .args(["push", "--repo", "local/org/a"])
         .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    assert!(
-        !output.status.success(),
-        "filtered push must still refuse when an unfiltered repo's lock disagrees with HEAD; stdout: {}, stderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+        .assert()
+        .success();
+    assert_eq!(bare_main_sha(a_bare), Some(new_shas[0].clone()));
+    assert_ne!(
+        bare_main_sha(b_bare),
+        Some(new_shas[1].clone()),
+        "the unselected member is not pushed"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("local/org/b"),
-        "error should name the unfiltered repo with the lock mismatch; got: {stderr}"
+    assert_eq!(
+        bare_main_sha(&ws.project_bare),
+        baseline_project,
+        "the project branch is not published without `projects/alpha`"
     );
 
-    // Neither bare should have advanced: lock-precondition bails before
-    // touching the network.
+    rwv()
+        .args(["push", "--repo", "local/org/a", "--repo", "projects/alpha"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
     assert_eq!(
-        bare_main_sha(&ws.manifest_bares[0].1),
-        baseline_a,
-        "lock-precondition refusal must happen before any network call"
+        bare_main_sha(&ws.project_bare),
+        Some(common::git_in(&project_dir, &["rev-parse", "HEAD"])),
+        "naming `projects/alpha` publishes the project branch"
     );
-    assert_eq!(bare_main_sha(&ws.manifest_bares[1].1), baseline_b);
 }

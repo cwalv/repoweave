@@ -8681,7 +8681,7 @@ mod tests {
         let page = concat!(
             "# page\n",
             "\n",
-            "`stale-lock`, `tool-missing`, `push-from-workweave`, `rebase-failed`,\n",
+            "`stale-lock`, `tool-missing`, `head-not-on-branch`, `rebase-failed`,\n",
             "[`alignment`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n",
             "`legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",

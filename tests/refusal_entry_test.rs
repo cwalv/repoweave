@@ -320,7 +320,7 @@ fn explain_serves_the_page_section_verbatim() {
         .to_owned();
 
     for token in [
-        "push-from-workweave",
+        "head-not-on-branch",
         "stale-lock",
         "dangling-parent",
         "edits",

@@ -689,6 +689,15 @@ impl Vcs for FakeVcs {
         unsupported("advance_records")
     }
 
+    fn publish_records(
+        &self,
+        _repo: &Path,
+        _remote: &RemoteHandle,
+        _commit: &CommitId,
+    ) -> Result<RecordsPublish, VcsError> {
+        unsupported("publish_records")
+    }
+
     fn files_at(&self, _repo: &Path, _commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError> {
         unsupported("files_at")
     }
@@ -751,6 +760,15 @@ impl Vcs for FakeVcs {
         _branch: &RawRefName,
     ) -> Result<usize, VcsError> {
         unsupported("count_commits_ahead_of_remote")
+    }
+
+    fn pushed_range(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _pushed: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<RangeCommit>, VcsError> {
+        unsupported("pushed_range")
     }
 
     fn fetch_objects_from(&self, _dst_repo: &Path, _src_repo: &Path) {
@@ -1017,7 +1035,7 @@ impl Vcs for FakeVcs {
         _repo: &Path,
         _target: &RemoteHandle,
         _r: &PublishRef,
-        _force: Force,
+        _replace: &Replace,
     ) -> Result<(), VcsError> {
         unsupported("push_ref")
     }

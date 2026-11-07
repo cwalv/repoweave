@@ -4,8 +4,8 @@
 
 use super::{git_command, remote_tracking, Argv, GitVcs, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
-    CommitId, CommittedFile, FileChange, NamedBranch, RecordsAdvance, RecordsSite, RemoteHandle,
-    VcsError,
+    CommitId, CommittedFile, FileChange, NamedBranch, RecordsAdvance, RecordsPublish, RecordsSite,
+    RemoteHandle, VcsError,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -87,6 +87,36 @@ impl GitVcs {
                     Ok(RecordsAdvance::Lost)
                 }
             }
+        }
+    }
+
+    pub(super) fn publish_records_commit(
+        repo: &Path,
+        remote: &RemoteHandle,
+        commit: &CommitId,
+    ) -> Result<RecordsPublish, VcsError> {
+        let refspec = format!(
+            "{}:{LOCAL_BRANCH_NAMESPACE}{RECORDS_BRANCH}",
+            commit.as_str()
+        );
+        match Self::run(["push", remote.name(), refspec.as_str()], repo) {
+            Ok(_) => Ok(RecordsPublish::Published),
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.contains("[remote rejected]") => {
+                Ok(RecordsPublish::Rejected(
+                    stderr
+                        .lines()
+                        .map(|line| line.trim_start_matches("remote: ").trim())
+                        .filter(|line| {
+                            !line.is_empty() && !line.starts_with("error: failed to push")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ))
+            }
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.contains("[rejected]") => {
+                Ok(RecordsPublish::RemoteMoved)
+            }
+            Err(e) => Err(e),
         }
     }
 

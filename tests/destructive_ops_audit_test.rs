@@ -52,7 +52,7 @@ const TRACKED: &[&str] = &[
     "symlink::remove(",         // typed symlink unlink (remove_file/remove_dir by link type)
     "\"-D\"",                   // git branch force-delete
     "\"worktree\", \"remove\"", // git worktree remove
-    "push(\"--force\")",        // git push --force
+    "--force-with-lease=",      // git push --force-with-lease, leased to a tip
     "\"checkout\"",             // git checkout (worktree overwrite when forced)
     "\"update-ref\"",           // ref surgery
 ];
@@ -312,19 +312,18 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git.rs",
-        pattern: "push(\"--force\")",
-        count: 1,
+        pattern: "--force-with-lease=",
+        count: 2,
         callers: &[],
-        justification: "push_ref: force only under Force::Overwrite, whose \
-            ForcePushConsent is minted only from rwv push --force; \
-            lock-freshness and branch preconditions run first. The branch-model form takes the ref to publish as a \
-            parameter (PublishRef) instead of reading whatever branch the \
-            checkout happens to be on, so the choice belongs to the caller \
-            rather than to the VCS impl, and no caller can publish a ref it \
-            did not name (Q6 decides what push.rs passes). Its predecessor \
-            push_with_role — which read `current_ref` inside the impl — was \
-            deleted, so there is no longer a publish path \
-            that force-pushes a ref nobody chose.",
+        justification: "Both sites replace a remote branch only while it still \
+            holds the tip the caller read, so a remote that moved since refuses \
+            instead of losing the move. (1) push_ref: a leased replacement only \
+            under Replace::Leased, whose Lease is minted only by \
+            OverwriteConsent::lease, which exists only for a repo the operator \
+            named with rwv push --overwrite; the pushed branch is the PublishRef \
+            the caller names, and push.rs keeps the remote tip as a backup first. \
+            (2) delete_remote: a remote delete takes a DestroyProof, whose \
+            landed or backed-up ground it ran the checks for.",
     },
     Allowed {
         file: "git.rs",

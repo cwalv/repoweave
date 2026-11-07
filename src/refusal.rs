@@ -39,8 +39,6 @@ pub enum RefusalKind {
     OpInProgress,
     /// A phase stopped and op-state is held there, awaiting resume or abort.
     OpParked,
-    /// `rwv push` was invoked from a workweave.
-    PushFromWorkweave,
     /// A name spells a character the flat rendering reserves.
     UnrenderableName,
     /// A name is not usable as a ref-name component.
@@ -56,10 +54,6 @@ pub enum RefusalKind {
     NoRemoteDefaultBranch,
     /// HEAD is detached, unborn or unreadable where the verb must land or move.
     HeadNotOnBranch,
-    /// The project repo is attached to a non-canonical branch.
-    ProjectRepoOffCanonicalBranch,
-    /// Repos in the push plan are not on a pushable branch.
-    UnpushableRepoBranch,
     /// Preflight: tips are not in the fast-forward relation the strategy needs.
     NotFastForwardable,
     /// A checkout dropped from the lock carries commits nothing else reaches.
@@ -489,10 +483,7 @@ mod tests {
     #[test]
     fn the_token_is_the_kebab_case_variant_name() {
         assert_eq!(RefusalKind::OpInProgress.token(), "op-in-progress");
-        assert_eq!(
-            RefusalKind::PushFromWorkweave.token(),
-            "push-from-workweave"
-        );
+        assert_eq!(RefusalKind::HeadNotOnBranch.token(), "head-not-on-branch");
         assert_eq!(RefusalKind::InvalidRefName.token(), "invalid-ref-name");
     }
 

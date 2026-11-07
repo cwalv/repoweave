@@ -7,14 +7,15 @@ use crate::vcs::{
     AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange,
     BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
     DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
-    FileChange, Force, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
-    LocalRefName, MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef,
+    FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
+    MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeCommit,
     RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
-    RecordsSite, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
-    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
-    ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
-    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Upstream,
-    UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    RecordsPublish, RecordsSite, RefOrigin, RegistrationPrune, RemoteBranchCopies,
+    RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip,
+    RemoteTracking, Replace, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId,
+    SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind,
+    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
+    WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -2943,6 +2944,40 @@ impl Vcs for GitVcs {
             .collect()
     }
 
+    fn pushed_range(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        pushed: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<RangeCommit>, VcsError> {
+        let mut args = vec![
+            "rev-list",
+            "--parents",
+            "--reverse",
+            "--topo-order",
+            tip.id().as_str(),
+            "--not",
+        ];
+        match pushed {
+            Some(pushed) => args.push(pushed.id().as_str()),
+            None => args.push("--remotes"),
+        }
+        Self::run_trimmed(&args[..], repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let mut ids = line
+                    .split_whitespace()
+                    .map(|id| commit_id_printed(id, &args[..], repo));
+                let id = ids.next().expect("a listed line names its commit")?;
+                Ok(RangeCommit {
+                    id,
+                    parents: ids.collect::<Result<_, _>>()?,
+                })
+            })
+            .collect()
+    }
+
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
         // Errors are swallowed by design — for sibling worktrees that
         // share an object store the fetch may fail (FETCH_HEAD unavailable)
@@ -3260,6 +3295,15 @@ impl Vcs for GitVcs {
         to: &CommitId,
     ) -> Result<RecordsAdvance, VcsError> {
         Self::advance_records_ref(&Self::work_dir_for_store(repo), expected, to)
+    }
+
+    fn publish_records(
+        &self,
+        repo: &Path,
+        remote: &RemoteHandle,
+        commit: &CommitId,
+    ) -> Result<RecordsPublish, VcsError> {
+        Self::publish_records_commit(&Self::work_dir_for_store(repo), remote, commit)
     }
 
     fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError> {
@@ -3827,14 +3871,19 @@ impl Vcs for GitVcs {
         repo: &Path,
         target: &RemoteHandle,
         r: &PublishRef,
-        force: Force,
+        replace: &Replace,
     ) -> Result<(), VcsError> {
-        let mut args: Vec<&str> = vec!["push"];
-        if let Force::Overwrite(_) = force {
-            args.push("--force");
-        }
-        args.push(target.name());
         let branch = local_branch(r.name().as_str());
+        let lease = match replace {
+            Replace::FastForwardOnly => None,
+            Replace::Leased(lease) => Some(format!(
+                "--force-with-lease={branch}:{}",
+                lease.expected().id()
+            )),
+        };
+        let mut args: Vec<&str> = vec!["push"];
+        args.extend(lease.as_deref());
+        args.push(target.name());
         let refspec = format!("{branch}:{branch}");
         args.push(&refspec);
         Self::run(&args, repo)?;
@@ -5124,8 +5173,9 @@ mod branch_model_tests {
 
     use super::*;
     use crate::cli::consent::{
-        DiscardLocalCommitsConsent, DiscardUnlandedConsent, ForcePushConsent,
+        DiscardLocalCommitsConsent, DiscardUnlandedConsent, OverwriteConsent,
     };
+    use crate::manifest::{RepoOperand, RepoPath};
     use crate::op_state::OpId;
     use crate::vcs::{
         DestroyProof, DiscardWarrant, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind,
@@ -6292,21 +6342,19 @@ mod branch_model_tests {
         (tmp, clone, bare)
     }
 
-    /// The `PublishRef` for whatever `repo` is attached to — the same
-    /// derivation the shipped gate performs (`PublishRef::from_attached`).
+    /// The `PublishRef` for whatever branch `repo` is attached to.
     fn publish_ref_of(repo: &Path) -> PublishRef {
         let HeadAttachment::Attached(a) = GitVcs.head_attachment(repo).unwrap() else {
             panic!("fixture should be attached");
         };
-        PublishRef::from_attached(&a)
+        PublishRef::from_local(&LocalRefName::of_branch(&RawRefName::new(a.to_string())))
     }
 
     #[test]
-    fn push_ref_refuses_a_non_fast_forward_until_force_is_passed() {
+    fn push_ref_replaces_a_diverged_push_branch_only_while_it_holds_the_leased_tip() {
         let (tmp, clone, bare) = clone_of_bare_origin();
+        let seeded = git_bare(&bare, &["rev-parse", "main"]);
 
-        // Advance origin through a second clone, so the local tip is no
-        // longer a descendant of what origin holds.
         let other = tmp.path().join("other");
         git(
             tmp.path(),
@@ -6318,10 +6366,35 @@ mod branch_model_tests {
         git(&other, &["push", "origin", "main"]);
 
         let local_tip = commit(&clone, "local");
+        let repo = RepoOperand::Member(RepoPath::new("m").unwrap());
+        let consent = OverwriteConsent::granted(repo.clone());
+        let leased_to = |tip: &str| {
+            consent
+                .lease(
+                    &repo,
+                    ResolvedRevisionId::from(CommitId::parse(tip).unwrap()),
+                )
+                .unwrap()
+        };
 
         let err = GitVcs
-            .push_ref(&clone, &origin(), &publish_ref_of(&clone), Force::FfOnly)
-            .expect_err("a non-fast-forward push must refuse without force");
+            .push_ref(
+                &clone,
+                &origin(),
+                &publish_ref_of(&clone),
+                &Replace::FastForwardOnly,
+            )
+            .expect_err("a non-fast-forward push must refuse without a lease");
+        assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
+
+        let err = GitVcs
+            .push_ref(
+                &clone,
+                &origin(),
+                &publish_ref_of(&clone),
+                &Replace::Leased(leased_to(&seeded)),
+            )
+            .expect_err("a lease on a tip the remote has moved past must refuse");
         assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
@@ -6334,9 +6407,9 @@ mod branch_model_tests {
                 &clone,
                 &origin(),
                 &publish_ref_of(&clone),
-                Force::Overwrite(ForcePushConsent::granted()),
+                &Replace::Leased(leased_to(foreign.id().as_str())),
             )
-            .expect("force should overwrite the divergent remote tip");
+            .expect("a lease on the tip the remote holds should replace it");
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
             local_tip.id().as_str()
@@ -6350,7 +6423,12 @@ mod branch_model_tests {
         git(&clone, &["tag", "main"]);
 
         GitVcs
-            .push_ref(&clone, &origin(), &publish_ref_of(&clone), Force::FfOnly)
+            .push_ref(
+                &clone,
+                &origin(),
+                &publish_ref_of(&clone),
+                &Replace::FastForwardOnly,
+            )
             .expect("a tag named like the branch must not make the push ambiguous");
 
         assert_eq!(
@@ -6375,7 +6453,7 @@ mod branch_model_tests {
         assert_ne!(main_tip, side_tip, "the two branches must differ");
 
         GitVcs
-            .push_ref(&clone, &origin(), &publish, Force::FfOnly)
+            .push_ref(&clone, &origin(), &publish, &Replace::FastForwardOnly)
             .unwrap();
 
         assert_eq!(

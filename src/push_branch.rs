@@ -41,13 +41,27 @@ pub(crate) fn standing(
     attached: &AttachedRef,
     url_remote: Option<&RemoteHandle>,
 ) -> Result<(Standing, Option<RemoteHandle>), VcsError> {
-    let Some(target) = vcs.push_target(attached, url_remote)? else {
+    standing_of_branch(
+        vcs,
+        attached.repo(),
+        &RawRefName::new(attached.to_string()),
+        url_remote,
+    )
+}
+
+/// [`standing`] for the local branch `branch` of `repo`, checked out or not.
+pub(crate) fn standing_of_branch(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    url_remote: Option<&RemoteHandle>,
+) -> Result<(Standing, Option<RemoteHandle>), VcsError> {
+    let Some(target) = vcs.push_target_of(repo, branch, url_remote)? else {
         return Ok((Standing::NoPushTarget, None));
     };
-    let branch = attached.to_string();
-    let upstream = vcs.upstream(attached)?;
+    let upstream = vcs.upstream_of(repo, branch)?;
     if let Some(upstream) = &upstream {
-        if upstream.branch.as_str() != branch {
+        if upstream.branch != *branch {
             return Ok((
                 Standing::ForeignUpstream {
                     upstream: format!("{}/{}", upstream.remote, upstream.branch),
@@ -56,15 +70,26 @@ pub(crate) fn standing(
             ));
         }
     }
-    let unpushed = || vcs.unpushed_commits(attached.repo(), &RawRefName::new(branch.clone()));
-    let standing = match vcs.push_branch(attached, &target)? {
-        None if upstream.is_some() && vcs.upstream_tip(attached)?.is_none() => Standing::Gone {
-            unpushed: unpushed()?,
-        },
+    let unpushed = || vcs.unpushed_commits(repo, branch);
+    let copies = vcs.remote_copies(repo, branch)?;
+    let standing = match copies.iter().find(|copy| copy.remote == target) {
+        None if upstream
+            .as_ref()
+            .is_some_and(|up| !copies.iter().any(|copy| copy.remote == up.remote)) =>
+        {
+            Standing::Gone {
+                unpushed: unpushed()?,
+            }
+        }
         None => Standing::Unpublished,
         Some(pushed) => {
-            let tip = vcs.head_revision(attached.repo())?;
-            match vcs.relation(attached.repo(), &tip, &pushed)? {
+            let tip = vcs.resolve_local_branch_tip(repo, branch)?.ok_or_else(|| {
+                VcsError::RevisionNotFound {
+                    repo: repo.to_path_buf(),
+                    rev: branch.as_str().to_owned(),
+                }
+            })?;
+            match vcs.relation(repo, &tip, &pushed.tip)? {
                 Relation::Even => Standing::Even,
                 Relation::Ahead => Standing::Ahead,
                 Relation::Behind => Standing::Behind,

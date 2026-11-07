@@ -181,6 +181,16 @@ impl RepoFilter {
         self.roles.is_empty() && self.selectors.is_empty()
     }
 
+    /// Does a `--repo` selector name `text`, a repo that has no role: the
+    /// project repo, `projects/<name>`? Roles name no such repo.
+    pub fn names_text(&self, text: &str) -> bool {
+        self.selectors.iter().any(|s| match s {
+            RepoSelector::Exact(want) => text == want.as_str(),
+            RepoSelector::Regex { re, .. } => re.is_match(text),
+            RepoSelector::Glob { matcher, .. } => matcher.is_match(text),
+        })
+    }
+
     /// Does `(path, role)` pass the filter?
     ///
     /// An empty filter passes everything. Otherwise the repo passes if its

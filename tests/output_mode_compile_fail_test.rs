@@ -63,12 +63,24 @@ fn push_is_not_handed_the_json_flag() {
         "E0308",
         "push takes the resolved mode, never the flag",
         r#"
-        use repoweave::push::{run_push, PushMode};
+        use repoweave::cli::consent::OverwriteConsent;
+        use repoweave::push::{run_push, PushMode, PushRequest};
         use repoweave::selector::RepoFilter;
         use repoweave::workspace::WorkspaceContext;
 
         pub fn flag(ctx: &WorkspaceContext, filter: &RepoFilter) {
-            let _ = run_push(ctx, PushMode::DryRun, filter, 1, true);
+            let overwrite = OverwriteConsent::default();
+            let _ = run_push(
+                ctx,
+                PushRequest {
+                    mode: PushMode::DryRun,
+                    filter,
+                    overwrite: &overwrite,
+                    branch: None,
+                    jobs: 1,
+                    output: true,
+                },
+            );
         }
         "#,
     );

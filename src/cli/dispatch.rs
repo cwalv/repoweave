@@ -1236,7 +1236,8 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Push {
             project,
             dry_run,
-            force,
+            branch,
+            overwrite,
             roles,
             repos,
             jobs,
@@ -1249,15 +1250,22 @@ pub fn run() -> anyhow::Result<()> {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
-            let mode = if dry_run {
-                push::PushMode::DryRun
-            } else {
-                push::PushMode::Publish(
-                    consent::ForcePushConsent::from_flag(force)
-                        .map_or(crate::vcs::Force::FfOnly, crate::vcs::Force::Overwrite),
-                )
-            };
-            push::run_push(&ctx, mode, &filter, jobs, OutputMode::from_flag(json))?;
+            let overwrite = consent::OverwriteConsent::from_flag(&overwrite);
+            push::run_push(
+                &ctx,
+                push::PushRequest {
+                    mode: if dry_run {
+                        push::PushMode::DryRun
+                    } else {
+                        push::PushMode::Publish
+                    },
+                    filter: &filter,
+                    overwrite: &overwrite,
+                    branch: branch.as_deref(),
+                    jobs,
+                    output: OutputMode::from_flag(json),
+                },
+            )?;
         }
         Some(Commands::Fetch {
             no_reference,

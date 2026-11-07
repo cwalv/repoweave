@@ -170,9 +170,10 @@ fn every_shipped_form_spells_only_commands_that_parse() {
 #[test]
 fn an_unshipped_spelling_is_reported() {
     assert!(parse_failure("rwv member set-branch <m> <b>").is_some());
-    assert!(parse_failure("rwv push --branch <W>").is_some());
+    assert!(parse_failure("rwv branch rename <new>").is_some());
     assert!(parse_failure("rwv workweave delete <ww> --discard-unmerged-commits").is_some());
     assert!(parse_failure("rwv push --repo <m>").is_none());
+    assert!(parse_failure("rwv push --branch <W>").is_none());
     assert!(parse_failure("rwv workweave delete <ww>").is_none());
     assert!(!Form::C16Switch.printable());
     assert!(

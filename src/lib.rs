@@ -145,6 +145,7 @@ pub mod symlink;
 pub mod sync;
 pub(crate) mod test_pause;
 pub(crate) mod tool_program;
+pub mod unmerged;
 pub mod update;
 pub mod update_remote;
 pub mod url_remote;

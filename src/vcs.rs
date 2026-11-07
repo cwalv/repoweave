@@ -4,7 +4,7 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use crate::alignment::Departure;
-use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnlandedConsent, ForcePushConsent};
+use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnlandedConsent, Lease};
 use crate::naming::FlatAddress;
 use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
@@ -323,6 +323,14 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
 pub struct CommitSummary {
     pub id: CommitId,
     pub subject: String,
+}
+
+/// A commit of a pushed range and the commits it joins: one for an ordinary
+/// commit, several for a merge, the first the branch the merge was made on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeCommit {
+    pub id: CommitId,
+    pub parents: Vec<CommitId>,
 }
 
 /// The result of [`Vcs::diff_beyond`] — the unified diff of what a checkout's
@@ -1194,6 +1202,18 @@ pub enum RecordsAdvance {
     Lost,
 }
 
+/// How publishing a records commit to a remote ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordsPublish {
+    /// The remote's records branch now holds the commit.
+    Published,
+    /// The remote's records branch moved past the tip the commit was built
+    /// on, and nothing was written.
+    RemoteMoved,
+    /// The remote refused the records branch, for the reason it gave.
+    Rejected(String),
+}
+
 /// A branch of a repo, local or only on a remote, with the tip a reader of its
 /// files uses: the local branch's, else a remote-tracking branch's.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1866,39 +1886,13 @@ impl fmt::Display for RemoteDefaultBranch {
     }
 }
 
-/// The ref a publish targets.
-///
-/// An opaque wrapper whose constructors are visible only inside this crate
-/// and whose *use* is confined to one decision site in `push.rs`'s publish
-/// gate. Whether a member's publish ref is the attached ref or the
-/// manifest's declared tracking branch, and whether `branch` is a
-/// constraint or a default, is **open** — and this type is where the
-/// deferral is visible: a deferred
-/// decision with a producer, rather than a placeholder without one. The
-/// gate calls `from_attached`, preserving today's behavior; nothing here
-/// decides the policy.
+/// The ref a publish targets: a local branch, named at the one place
+/// `push.rs` decides what to publish.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishRef(RawRefName);
 
 impl PublishRef {
-    /// Publish the ref the checkout is actually on.
-    ///
-    /// This is the constructor `push.rs`'s publish gate calls, the single
-    /// site the type's doc comment promises: it accepts the attached ref,
-    /// which is what push publishes. `from_local` stays defined and is
-    /// called by no gate — only
-    /// by `push.rs`'s `test_publish_ref` helper, to fabricate a value — so
-    /// the other answer keeps a producer even though one branch is live.
-    pub(crate) fn from_attached(a: &AttachedRef) -> Self {
-        Self(a.name.clone())
-    }
-
-    /// Publish the local counterpart of a declared tracking branch.
-    ///
-    /// Unused by the shipped gate (see `from_attached`). Left in place as
-    /// the other answer: if the decision goes to "publish the manifest's
-    /// declared branch", this is the constructor the call site switches to.
-    #[allow(dead_code)]
+    /// Publish the local branch `l`.
     pub(crate) fn from_local(l: &LocalRefName) -> Self {
         Self(RawRefName(l.0.clone()))
     }
@@ -2028,11 +2022,11 @@ impl fmt::Display for HeadAttachment {
 
 /// Whether a push may replace a remote tip that is not an ancestor of the one
 /// it pushes.
-#[derive(Debug, Clone, Copy)]
-pub enum Force {
-    FfOnly,
-    /// Discards the remote history the pushed tip does not contain.
-    Overwrite(ForcePushConsent),
+#[derive(Debug, Clone)]
+pub enum Replace {
+    FastForwardOnly,
+    /// Replaces the push branch only while it still holds the lease's tip.
+    Leased(Lease),
 }
 
 /// A savepoint that has actually been written.
@@ -3255,6 +3249,19 @@ pub trait Vcs: Send + Sync {
         base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError>;
 
+    /// The commits a push of `tip` would publish, oldest first, each with its
+    /// parents: those the push branch `pushed` lacks, or, where the branch has
+    /// no push branch, those no remote-tracking branch reaches.
+    ///
+    /// For git: `git rev-list --parents --reverse --topo-order <tip> --not
+    /// <pushed>` or `--not --remotes`.
+    fn pushed_range(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        pushed: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<RangeCommit>, VcsError>;
+
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
     ///
@@ -3948,7 +3955,7 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         target: &RemoteHandle,
         r: &PublishRef,
-        force: Force,
+        replace: &Replace,
     ) -> Result<(), VcsError>;
 
     /// `remote`'s declared primary branch, or `None` when it is unset or
@@ -4191,6 +4198,18 @@ pub trait Vcs: Send + Sync {
         expected: Option<&CommitId>,
         to: &CommitId,
     ) -> Result<RecordsAdvance, VcsError>;
+
+    /// Publish `commit` as the new tip of `remote`'s records branch, a
+    /// fast-forward of the tip it was built on: a remote whose records branch
+    /// holds anything else is [`RecordsPublish::RemoteMoved`], and one that
+    /// refuses the branch is [`RecordsPublish::Rejected`]. A remote that
+    /// cannot be reached is an error. No other ref of the remote is written.
+    fn publish_records(
+        &self,
+        repo: &Path,
+        remote: &RemoteHandle,
+        commit: &CommitId,
+    ) -> Result<RecordsPublish, VcsError>;
 
     /// Every file of `commit`'s tree.
     fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError>;

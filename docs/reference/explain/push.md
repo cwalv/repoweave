@@ -113,7 +113,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PushJsonOutput",
-  "description": "Top-level envelope for `rwv push --json`.\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, sorted by repo path; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
+  "description": "Top-level envelope for `rwv push --json`.\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, sorted by repo path; the branch's record and the project-repo record follow, in that order. Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
   "type": "object",
   "required": [
     "$schema",
@@ -139,7 +139,7 @@ Schema:
       }
     },
     "reported": {
-      "description": "Each repo push judged and went past without pushing it: a branch behind its push branch, or one whose upstream is gone, with that state's choices.",
+      "description": "Each repo push judged and went past without refusing it: a branch behind its push branch, one whose upstream is gone, a merge whose unmerged pin a later lock waived, with that state's choices.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"
@@ -403,7 +403,7 @@ Schema:
       }
     },
     "PushOutcomeOutput": {
-      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.",
+      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, and the record of the branch `records-published` and `records-rejected`, making each distinguishable from member-repo records in the same flat `outcomes` array.",
       "oneOf": [
         {
           "description": "Member repo was pushed successfully.",
@@ -476,6 +476,78 @@ Schema:
             },
             "path": {
               "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The branch's record, and the drops this machine had made, reached the remote the project branch publishes to.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "dropped",
+            "kind",
+            "path",
+            "project"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "dropped": {
+              "description": "The entries the publish removed from the remote's records.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "records-published"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The remote refused its records branch. For the remote's default branch recorded as `declared` the project branch was published all the same.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path",
+            "project",
+            "withheld"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "records-rejected"
+              ]
+            },
+            "message": {
+              "description": "What the remote answered.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "withheld": {
+              "description": "Whether the project branch was withheld because of it.",
+              "type": "boolean"
             }
           }
         },
