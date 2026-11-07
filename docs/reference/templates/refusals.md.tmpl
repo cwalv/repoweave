@@ -857,6 +857,28 @@ it there.
 
 **Where this sits.** [Symlinks as structure](../explanation/joints/symlinks-as-structure.md).
 
+### `stale-lock`
+
+**Condition.** `rwv sync` or `rwv sync-to` found a member whose checkout is not
+at the commit the lock it reads pins for it, or for which the lock has no entry.
+
+**Why.** Sync takes in another workspace's committed lock and relocks from its
+own checkouts. A tip that differs from its pin means the lock the replay reads
+and the commits the replay carries disagree: a primary source whose lock is
+behind its HEAD would hand on commits no pin records, and a checkout behind or
+diverged from its pin would be moved or relocked over commits nobody chose to
+drop.
+
+**Exits.** `rwv status` and `rwv doctor` judge the same condition per member as
+a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
+`rwv lock --commit` records a checkout that is ahead of its pin;
+`rwv lock --repo <repo> --commit` records one that is behind or has diverged, by
+name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
+for one. `--allow-stale-lock` skips the check.
+
+**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
+[Lock as derived](../explanation/joints/lock-as-derived.md).
+
 ### `state-claim-held`
 
 **Condition.** A peer process holds the state-file claim past the wait budget.
@@ -1036,6 +1058,24 @@ the same string, so the address would stop identifying one checkout.
 
 **Exits.** Choose another name. [Formats](./formats.md) lists the excluded
 characters and the rule each one protects.
+
+### `unresolvable-lock-entry`
+
+**Condition.** `rwv sync` or `rwv sync-to` found a lock entry that names a
+revision this clone cannot resolve.
+
+**Why.** A lock written against history that was never fetched here, or
+rewritten or garbage-collected upstream, pins nothing the clone can compare its
+checkout with. The replay cannot tell whether the checkout is ahead of, behind
+or diverged from it, so it refuses rather than guess.
+
+**Exits.** `rwv fetch --repo <repo>` brings in the history that may hold the
+revision. If it is gone, `rwv lock --repo <repo> --commit` records the checkout's
+commit by name, or `rwv member pin <repo> <rev> --commit` pins another.
+`rwv status` and `rwv doctor` judge the same condition as [`pin`](./doctor-findings.md#pin)
+`unreachable`.
+
+**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unresolvable-repo-source`
 

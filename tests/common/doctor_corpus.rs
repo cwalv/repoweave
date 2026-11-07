@@ -24,7 +24,7 @@
 
 use repoweave::check::{
     AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind, IndexDriftKind,
-    OrphanedSavepointKind, PermissionsKind, PlacementConvergence, ProvenanceKind,
+    OrphanedSavepointKind, PermissionsKind, PinKind, PlacementConvergence, ProvenanceKind,
     RegistrationDirectoryKind, ReplayExclusionKind, SubmoduleCommitKind, UnparseableProjectKind,
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
@@ -96,6 +96,13 @@ pub fn rev() -> ResolvedRevisionId {
     ResolvedRevisionId::from_canonical(commit(), None)
 }
 
+pub fn other_rev() -> ResolvedRevisionId {
+    ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
+        None,
+    )
+}
+
 pub fn path(p: &str) -> PathBuf {
     PathBuf::from(p)
 }
@@ -116,8 +123,17 @@ pub fn case_token(v: &CheckViolation) -> String {
             PermissionsKind::ReadOnlyMember => "member-permissions/read-only-member".into(),
         },
         CheckViolation::RoleDisagreement { .. } => "role-disagreement".into(),
-        CheckViolation::StaleLock { .. } => "stale-lock".into(),
-        CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
+        CheckViolation::Pin { sub_kind, .. } => {
+            let tail = match sub_kind {
+                PinKind::None => "none",
+                PinKind::Unreachable => "unreachable",
+                PinKind::Behind => "behind",
+                PinKind::Ahead => "ahead",
+                PinKind::Unpinned => "unpinned",
+                PinKind::Diverged => "diverged",
+            };
+            format!("pin/{tail}")
+        }
         CheckViolation::WorkweaveDrift { kind, .. } => match kind {
             DriftKind::Missing => "workweave-drift/missing".into(),
             DriftKind::MissingUnfetched => "workweave-drift/missing-unfetched".into(),
@@ -153,7 +169,6 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable".into(),
         CheckViolation::ProjectlessDir { .. } => "projectless-dir".into(),
         CheckViolation::UnnameableProject { .. } => "unnameable-project".into(),
-        CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
         CheckViolation::LockPinnedByName { .. } => "lock-pinned-by-name".into(),
         CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
@@ -280,18 +295,53 @@ pub fn corpus() -> Vec<CheckViolation> {
                 (ProjectName::new("fourth").unwrap(), Role::Dependency),
             ],
         },
-        CheckViolation::StaleLock {
+        CheckViolation::Pin {
             project: project(),
             repo: repo(),
-            locked: rev(),
-            actual: ResolvedRevisionId::from_canonical(
-                repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
-                None,
-            ),
+            sub_kind: PinKind::None,
+            locked: None,
+            actual: None,
+            listed: Vec::new(),
         },
-        CheckViolation::IncompleteLock {
+        CheckViolation::Pin {
             project: project(),
             repo: repo(),
+            sub_kind: PinKind::Unreachable,
+            locked: None,
+            actual: None,
+            listed: Vec::new(),
+        },
+        CheckViolation::Pin {
+            project: project(),
+            repo: repo(),
+            sub_kind: PinKind::Behind,
+            locked: Some(rev()),
+            actual: Some(other_rev()),
+            listed: Vec::new(),
+        },
+        CheckViolation::Pin {
+            project: project(),
+            repo: repo(),
+            sub_kind: PinKind::Ahead,
+            locked: Some(rev()),
+            actual: Some(other_rev()),
+            listed: Vec::new(),
+        },
+        CheckViolation::Pin {
+            project: project(),
+            repo: repo(),
+            sub_kind: PinKind::Unpinned,
+            locked: Some(rev()),
+            actual: Some(other_rev()),
+            listed: vec!["bbbbbbbbbbbb a commit nothing else holds".into()],
+        },
+        CheckViolation::Pin {
+            project: project(),
+            repo: repo(),
+            sub_kind: PinKind::Diverged,
+            locked: Some(rev()),
+            actual: Some(other_rev()),
+            listed: Vec::new(),
         },
         CheckViolation::MemberPermissions {
             workweave: Some(workweave()),
@@ -402,10 +452,6 @@ pub fn corpus() -> Vec<CheckViolation> {
             error: "'bad--name' is not a valid project name: contains `--` or starts/ends \
                     with `-`, ambiguous against the `--` that joins project to workweave."
                 .into(),
-        },
-        CheckViolation::UnresolvableLockEntry {
-            project: project(),
-            repo: repo(),
         },
         CheckViolation::LockPinnedByName {
             project: project(),

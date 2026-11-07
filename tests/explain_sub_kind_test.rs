@@ -242,7 +242,7 @@ fn a_sub_kind_with_no_entry_of_its_own_reaches_its_kinds_entry() {
 fn a_sub_kind_its_kind_does_not_carry_reaches_nothing() {
     for name in [
         "index-drift/live-edits",
-        "stale-lock/safe-to-fix",
+        "pin/safe-to-fix",
         "member-permissions/safe-to-fix",
         "index-drift/",
     ] {

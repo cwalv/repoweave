@@ -249,7 +249,8 @@ fn a_token_shared_with_a_finding_keeps_its_one_entry_on_the_findings_page() {
     let shared = tokens_shared_with_a_finding();
     assert!(
         shared.len() >= 15
-            && shared.contains("stale-lock")
+            && shared.contains("dangling-active-project")
+            && shared.contains("pin")
             && shared.contains("unparseable-project"),
         "the shared set read {} tokens, too few to be the whole overlap: {shared:?}",
         shared.len()
@@ -280,7 +281,8 @@ fn a_token_shared_with_a_finding_keeps_its_one_entry_on_the_findings_page() {
 fn a_seeded_duplicate_of_a_shared_entry_is_reported() {
     let shared = tokens_shared_with_a_finding();
     for (seed, heading) in [
-        ("stale-lock", "###"),
+        ("dangling-active-project", "###"),
+        ("pin", "###"),
         ("unparseable-project", "###"),
         ("dangling-parent", "####"),
     ] {
@@ -479,7 +481,7 @@ fn a_kind_shared_with_a_finding_has_exactly_one_entry_and_explain_resolves_it() 
         .collect();
     assert_eq!(
         shared,
-        ["alignment", "unparseable-project"],
+        ["alignment", "pin", "unparseable-project"],
         "the kinds doctor also reports"
     );
 

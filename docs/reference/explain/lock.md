@@ -83,11 +83,13 @@ gives it a pin.
 
 ### Stale-lock relationship
 
-A "stale lock" (`rwv doctor` violation `stale-lock`) means the current repo
+A checkout that does not stand at its pin (`rwv doctor` finding `pin`,
+sub-kinds `ahead`, `unpinned`, `behind` and `diverged`) means the current repo
 HEADs no longer match what `rwv.lock` records. Running `rwv lock` clears it for
 a checkout ahead of its pin; one behind or diverged is cleared by `rwv lock
 --repo <repo>` (record the checkout) or `rwv update` (move the checkout to the
-pin).
+pin). A member the lock has no entry for is `pin` `none`, and `rwv lock` gives it
+none.
 
 `rwv doctor --locked` is the scriptable precondition check: zero exit iff
 every repo tip matches the lock.

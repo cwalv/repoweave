@@ -471,7 +471,7 @@ fn moved_inputs(
 /// What keeps that from being a hole is that no route from such an edit to a
 /// quiet doctor avoids moving the lock. Uncommitted, the member reports
 /// `working-tree-drift`; committed, its HEAD leaves the lock behind and the
-/// project reports `stale-lock`; and the `rwv lock` that settles either one
+/// project reports `pin`; and the `rwv lock` that settles either one
 /// moves an input recorded here, at which point the staleness axis fires.
 /// Hashing every member manifest would grow the ledger with membership,
 /// re-hash every member on every doctor run, and still miss an edit to a

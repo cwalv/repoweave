@@ -1723,12 +1723,12 @@ fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
     let mut contradicted = repair_bindings();
     contradicted.push((
         "refreshed the stale lock",
-        Binding::Findings(&["stale-lock"]),
+        Binding::Findings(&["lock-pinned-by-name"]),
     ));
     let gaps = repair_arm_gaps(&seeded, &contradicted, &register);
     assert!(
         gaps.iter()
-            .any(|g| g.contains("stale-lock") && g.contains("Report-only")),
+            .any(|g| g.contains("lock-pinned-by-name") && g.contains("Report-only")),
         "a repair arm bound to a report-only finding must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -1737,12 +1737,12 @@ fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
     let mut typoed = repair_bindings();
     typoed.push((
         "refreshed the stale lock",
-        Binding::Findings(&["stale-lok"]),
+        Binding::Findings(&["lock-pinned-by-nam"]),
     ));
     let gaps = repair_arm_gaps(&seeded, &typoed, &register);
     assert!(
         gaps.iter()
-            .any(|g| g.contains("stale-lok") && g.contains("does not carry")),
+            .any(|g| g.contains("lock-pinned-by-nam") && g.contains("does not carry")),
         "a bound token missing from the register must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -1751,7 +1751,7 @@ fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
     let mut stale = repair_bindings();
     stale.push((
         "a message no arm prints",
-        Binding::Findings(&["stale-lock"]),
+        Binding::Findings(&["lock-pinned-by-name"]),
     ));
     let gaps = repair_arm_gaps(CHECK_RS, &stale, &register);
     assert!(

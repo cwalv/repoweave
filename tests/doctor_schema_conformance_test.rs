@@ -86,17 +86,27 @@ fn workweave() -> WorkweaveId {
 fn corpus() -> Vec<CheckViolation> {
     vec![
         CheckViolation::OrphanedClone { path: repo() },
-        CheckViolation::StaleLock {
+        CheckViolation::Pin {
             project: project(),
             repo: repo(),
-            locked: ResolvedRevisionId::from_canonical(
+            sub_kind: repoweave::check::PinKind::Behind,
+            locked: Some(ResolvedRevisionId::from_canonical(
                 repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
                 None,
-            ),
-            actual: ResolvedRevisionId::from_canonical(
+            )),
+            actual: Some(ResolvedRevisionId::from_canonical(
                 repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
                 None,
-            ),
+            )),
+            listed: Vec::new(),
+        },
+        CheckViolation::Pin {
+            project: project(),
+            repo: repo(),
+            sub_kind: repoweave::check::PinKind::None,
+            locked: None,
+            actual: None,
+            listed: Vec::new(),
         },
         CheckViolation::WorkweaveDrift {
             workweave: Some(workweave()),

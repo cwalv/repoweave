@@ -1,4 +1,4 @@
-//! `rwv doctor --locked` and the pipeline's `stale-lock` violation both compare
+//! `rwv doctor --locked` and the pipeline's `pin` violation both compare
 //! a repo's tip against its `rwv.lock` entry, and neither reads the other. What
 //! keeps them from drifting apart is measured here.
 //!
@@ -14,8 +14,8 @@
 //! - `--locked` walks the raw lock, so a lock entry whose repo is absent from
 //!   disk is one of its findings. The pipeline's freshness comparison walks the
 //!   resolved lock, which `LockFile::resolve_versions` builds by dropping
-//!   exactly those entries, and `find_violations` is pure — it cannot re-read
-//!   disk to recover them, so no `stale-lock` is reachable there. Its coverage
+//!   exactly those entries, and `scan_pins` reads what the world load read — it
+//!   cannot re-read disk to recover them, so no `pin` is reachable there. Its coverage
 //!   check reads the raw lock and finds the entry, so it stays quiet too. The
 //!   divergence is structural, not a spelling difference, and the second test
 //!   pins the whole finding set on that fixture so either side changing shows up
@@ -196,7 +196,7 @@ fn kinds(violations: &[Value]) -> Vec<String> {
 /// distinct display form. A surface that switched to the other one would still
 /// satisfy every assertion that checks one surface alone.
 #[test]
-fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
+fn locked_and_pin_agree_on_the_revisions_they_report() {
     let tmp = common::tempdir().unwrap();
     let (root, project_dir) = make_workspace(tmp.path());
 
@@ -231,13 +231,13 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
     let stale = violations_for(&doc, DRIFTED);
     assert_eq!(
         kinds(&stale),
-        vec!["lock-pinned-by-name".to_owned(), "stale-lock".to_owned()],
-        "the drifted repo's violations must be `stale-lock` and the tag it pins; got:\n{doc}"
+        vec!["lock-pinned-by-name".to_owned(), "pin".to_owned()],
+        "the drifted repo's violations must be `pin` and the tag it pins; got:\n{doc}"
     );
     let stale = stale
         .iter()
-        .find(|v| v["kind"] == "stale-lock")
-        .expect("a stale-lock record");
+        .find(|v| v["kind"] == "pin")
+        .expect("a pin record");
     let json_actual = stale.get("actual").and_then(|v| v.as_str()).unwrap();
     let json_locked = stale.get("locked").and_then(|v| v.as_str()).unwrap();
 
@@ -245,7 +245,7 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
     assert_eq!(
         (locked_tip.clone(), locked_lock.clone()),
         (shown(json_actual), shown(json_locked)),
-        "`--locked` and `stale-lock` must name the same tip and the same lock \
+        "`--locked` and `pin` must name the same tip and the same lock \
          revision, abbreviated in text; `--locked` said tip={locked_tip} \
          lock={locked_lock}, the pipeline said actual={json_actual} locked={json_locked}"
     );
@@ -269,8 +269,8 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
 /// A lock entry whose repo is absent from disk is `--locked`'s finding and the
 /// pipeline's silence, and the silence is deliberate.
 ///
-/// `resolve_versions` drops the entry before `find_violations` runs, so no
-/// `stale-lock` is reachable for it. The role is `reference`, which is exempt
+/// `resolve_versions` drops the entry before `scan_pins` runs, so no
+/// `pin` is reachable for it. The role is `reference`, which is exempt
 /// from `dangling-reference` because a reference clone is allowed to be absent.
 /// Coverage reads the raw lock, which carries the entry, so it is quiet — a
 /// coverage check reading the resolved lock instead would call the entry missing
@@ -349,8 +349,8 @@ fn locked_reports_an_absent_lock_entry_the_pipeline_stays_quiet_about() {
     );
     assert_eq!(
         kinds(&violations_for(&doc, UNLOCKED)),
-        vec!["incomplete-lock".to_owned()],
-        "the same repo without a lock entry is what `incomplete-lock` is for, \
+        vec!["pin".to_owned()],
+        "the same repo without a lock entry is what `pin` `none` is for, \
          so the silence above is about this lock and not a dead check; got:\n{doc}"
     );
 }

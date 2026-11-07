@@ -226,10 +226,11 @@ Get a weave-wide JSON report (all projects, orphan detection enabled):
 rwv doctor --all --json
 ```
 
-Find every stale lock and the paths involved (weave-wide):
+Find every member whose checkout does not stand at its pin, and the paths
+involved (weave-wide):
 
 ```
-rwv doctor --all --json | jq '.violations[] | select(.kind == "stale-lock")'
+rwv doctor --all --json | jq '.violations[] | select(.kind == "pin")'
 ```
 
 Repair every finding marked Auto-fixable, safe drift (index trees that match

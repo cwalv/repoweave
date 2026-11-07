@@ -1041,10 +1041,13 @@ pub fn doctor_findings(cwd: impl AsRef<std::path::Path>) -> Vec<String> {
         .expect("violations is an array")
         .iter()
         .map(|v| {
-            let sub_kind = v["sub_kind"]
-                .as_object()
-                .and_then(|o| o.keys().next().cloned())
-                .unwrap_or_default();
+            let sub_kind = match &v["sub_kind"] {
+                serde_json::Value::String(tag) => tag.clone(),
+                serde_json::Value::Object(fields) => {
+                    fields.keys().next().cloned().unwrap_or_default()
+                }
+                _ => String::new(),
+            };
             format!(
                 "{} {sub_kind} {}",
                 v["kind"].as_str().unwrap_or_default(),
@@ -1064,7 +1067,7 @@ pub fn assert_no_new_findings(cwd: &std::path::Path, before: &[String]) {
         .into_iter()
         .filter(|f| {
             !before.contains(f)
-                && !f.starts_with("incomplete-lock")
+                && !f.starts_with("pin none ")
                 && !f.starts_with("provenance placement-disagreement")
         })
         .collect();

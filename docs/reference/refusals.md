@@ -60,6 +60,7 @@ A kind that `rwv doctor` also reports has its one entry, states and choices
 included, on [Doctor findings](./doctor-findings.md):
 
 - [`unparseable-project`](./doctor-findings.md#unparseable-project)
+- [`pin`](./doctor-findings.md#pin)
 - [`alignment`](./doctor-findings.md#alignment)
 
 The others follow.
@@ -194,55 +195,6 @@ The others follow.
 |---|---|---|---|---|
 | `withheld` | C7: publish it (again) | `rwv push` | here | adds only |
 | `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-
-### `pin`
-
-**Condition.** A commit a lock pins is not there to be at: the lock has no entry for a member, or pins a commit that no ref in the clone reaches; or a verb would delete, move or overwrite the last ref that reaches a commit some project's live lock pins.
-
-**Why.** A lock pins each member at a commit so that a fresh clone can build the project. With no entry there is nothing to reproduce, and a commit no ref reaches is one the remotes this clone has fetched no longer hold; the member is checked out on its declared branch at the tip of the remote's branch instead, so the weave is usable, and the lock is left as it was for you to settle. Removing the last ref that reaches a pinned commit leaves the pin unreachable: no clone can fetch it, and the lock describes a state nobody can recreate. A pin is live in every project of the weave, not only the one the verb runs in, because a member's clone is shared.
-
-**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: pin <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
-
-| State | Means | Refused by |
-|---|---|---|
-| `behind` | the checkout's commit is an ancestor of the commit the lock pins: the lock records commits the checkout lacks | `rwv push`; `rwv status` reports it |
-| `ahead` | the checkout holds commits beyond the commit the lock pins, and each is pushed or pinned by another live lock, which the facts name; the commits are published with `rwv push` only where none is pushed yet | `rwv status` reports it; `rwv push` reports it and goes on |
-| `unpinned` | the checkout holds the commits listed beyond the commit the lock pins, which no remote-tracking branch and no live lock reaches | `rwv push`; `rwv status` reports it |
-| `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch, or where it was found | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv lock`, `rwv update` and `rwv status` report it |
-| `diverged` | neither the checkout's commit nor the commit the lock pins is an ancestor of the other | `rwv push`; `rwv status` reports it |
-| `not on declared branch` | the lock pins a commit that neither the member's declared branch nor its upstream reaches, so the checkout sits detached at the pin | `rwv member pin`, for a commit that neither reaches; `rwv update` and `rwv status` report it |
-| `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv status` reports it |
-| `off remote` | a live lock pins a commit that no remote-tracking branch of the member reaches after the pruning fetch, listed with the locks that pin it. Choices print only in a workspace whose checked-out branch's lock holds the pin: a feature's offers publishing it, a declared branch's offers pinning another commit; elsewhere the state is a fact and offers waiting | nothing refuses; `rwv fetch` and `rwv pull` report it |
-| `backwards` | recording the commit the checkout is at would move the pin to one that does not descend from the pinned commit: it is behind the pin or has diverged from it, or the pinned commit is in no ref here | `rwv lock`, for a member `--repo` does not name; `rwv update --remote` |
-| `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
-
-**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
-
-| State | Choice | Spelled | Where | Keeps work because |
-|---|---|---|---|---|
-| `behind` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
-| `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
-| `ahead` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
-| `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `unpinned` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
-| `none` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `none` | C1: take in theirs | `rwv update --remote --repo <m> --commit` | any workspace | fast-forward only |
-| `diverged` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
-| `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
-| `not on declared branch` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `unreachable` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `unreachable` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `off remote` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `off remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
-| `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `backwards` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
-| `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
-| `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Reconcile repos](../how-to/reconcile-repos.md); [Destructive operations](../explanation/destructive-operations.md).
 
 ### `target`
 
@@ -1075,6 +1027,28 @@ it there.
 
 **Where this sits.** [Symlinks as structure](../explanation/joints/symlinks-as-structure.md).
 
+### `stale-lock`
+
+**Condition.** `rwv sync` or `rwv sync-to` found a member whose checkout is not
+at the commit the lock it reads pins for it, or for which the lock has no entry.
+
+**Why.** Sync takes in another workspace's committed lock and relocks from its
+own checkouts. A tip that differs from its pin means the lock the replay reads
+and the commits the replay carries disagree: a primary source whose lock is
+behind its HEAD would hand on commits no pin records, and a checkout behind or
+diverged from its pin would be moved or relocked over commits nobody chose to
+drop.
+
+**Exits.** `rwv status` and `rwv doctor` judge the same condition per member as
+a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
+`rwv lock --commit` records a checkout that is ahead of its pin;
+`rwv lock --repo <repo> --commit` records one that is behind or has diverged, by
+name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
+for one. `--allow-stale-lock` skips the check.
+
+**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
+[Lock as derived](../explanation/joints/lock-as-derived.md).
+
 ### `state-claim-held`
 
 **Condition.** A peer process holds the state-file claim past the wait budget.
@@ -1254,6 +1228,24 @@ the same string, so the address would stop identifying one checkout.
 
 **Exits.** Choose another name. [Formats](./formats.md) lists the excluded
 characters and the rule each one protects.
+
+### `unresolvable-lock-entry`
+
+**Condition.** `rwv sync` or `rwv sync-to` found a lock entry that names a
+revision this clone cannot resolve.
+
+**Why.** A lock written against history that was never fetched here, or
+rewritten or garbage-collected upstream, pins nothing the clone can compare its
+checkout with. The replay cannot tell whether the checkout is ahead of, behind
+or diverged from it, so it refuses rather than guess.
+
+**Exits.** `rwv fetch --repo <repo>` brings in the history that may hold the
+revision. If it is gone, `rwv lock --repo <repo> --commit` records the checkout's
+commit by name, or `rwv member pin <repo> <rev> --commit` pins another.
+`rwv status` and `rwv doctor` judge the same condition as [`pin`](./doctor-findings.md#pin)
+`unreachable`.
+
+**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unresolvable-repo-source`
 

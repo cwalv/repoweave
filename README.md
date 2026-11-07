@@ -124,7 +124,7 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv member set-role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
 | `rwv member set-recurse-submodules <repo> <true\|false>` | Say whether new checkouts of a repo populate its submodules, and update ecosystem workspace files |
 | `rwv lock` | Record repo HEADs as `rwv.lock`'s pins, moving a pin forward only: a repo with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
-| `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
+| `rwv doctor` | Convention enforcement: orphans, dangling refs, pins that disagree with their checkouts, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
 | `rwv log [<range>] [--against <W>]` | Run the VCS's log in every repo for a range in its own syntax. `--against <W>` lists the commits HEAD holds beyond weave branch `<W>`'s pins, per repo, with `--diff` for the diff; `--json` for machine-readable output |
 | `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |

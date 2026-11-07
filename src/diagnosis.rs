@@ -224,8 +224,16 @@ impl Axis {
             | Self::PushBranch
             | Self::Name
             | Self::Publish
-            | Self::Pin
             | Self::Target => None,
+            Self::Pin => Some(Finding::of(
+                crate::check::ViolationKind::Pin,
+                crate::check::PinKind::ALL.map(|sub_kind| SubKindRow {
+                    token: crate::wire_token::wire_token(&sub_kind),
+                    severity: sub_kind.severity(),
+                    fix: sub_kind.fix_disposition(),
+                    entry: sub_kind.entry(),
+                }),
+            )),
             Self::Alignment => Some(Finding::of(
                 crate::check::ViolationKind::Alignment,
                 crate::check::AlignmentKind::ALL.map(|sub_kind| SubKindRow {
@@ -2773,15 +2781,22 @@ mod tests {
                 finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
             assert_eq!(listed, carried, "{axis:?}");
         }
-        assert_eq!(with_finding, 2);
+        assert_eq!(with_finding, 3);
     }
 
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry), (Axis::Alignment, alignment)] = &entries[..] else {
-            panic!("the two axes with a finding yield the two entries: {entries:?}");
+        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::Alignment, alignment)] =
+            &entries[..]
+        else {
+            panic!("the three axes with a finding yield the three entries: {entries:?}");
         };
+        assert!(pin.starts_with("### `pin`\n"), "{pin}");
+        assert!(
+            pin.contains("\n#### `behind`\n\n**Error. Report-only.** "),
+            "{pin}"
+        );
         assert!(alignment.starts_with("### `alignment`\n"), "{alignment}");
         assert!(
             alignment.contains("\n#### `on-branch`\n\n**Warning. Report-only.** "),
@@ -2796,10 +2811,13 @@ mod tests {
             entry.contains("\n#### `malformed`\n\n**Error. Report-only.** "),
             "{entry}"
         );
-        assert!(
-            !kind_entries_markdown(crate::manifest::VcsType::Git).contains("unparseable-project"),
-            "the refusals page holds no entry for a kind the findings page holds"
-        );
+        let refusals = kind_entries_markdown(crate::manifest::VcsType::Git);
+        for token in ["unparseable-project", "### `pin`", "### `alignment`"] {
+            assert!(
+                !refusals.contains(token),
+                "the refusals page holds no entry for a kind the findings page holds: {token}"
+            );
+        }
     }
 
     #[test]

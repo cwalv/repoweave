@@ -596,7 +596,7 @@ fn check_locked_missing_on_disk_reported_as_drift() {
 /// If the lock pins a SHA the local clone has never seen, `resolve_versions`
 /// can't resolve it. Previously this signal was silently dropped (the lock
 /// entry stayed raw, `find_violations` either ignored it or emitted a false
-/// StaleLock). Now: an `Error`-severity issue saying "lock references unknown
+/// `pin` finding). Now: an `Error`-severity issue saying "lock references unknown
 /// revision". Doctor is the diagnostic of last resort — this is the place
 /// that most needs to know when resolution failed.
 #[test]
@@ -1030,7 +1030,7 @@ fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
 //
 // These tests exercise the JSON wire shape end-to-end. They:
 //   - construct a workspace fixture per CheckViolation variant where possible
-//     (orphaned-clone, dangling-reference, stale-lock, missing-replay-exclusion);
+//     (orphaned-clone, dangling-reference, pin, missing-replay-exclusion);
 //   - drive the remaining variants (workweave-drift, index-drift,
 //     working-tree-drift) directly through
 //     `ViolationOutput::from_violation` so the wire shape is fully covered
@@ -1202,7 +1202,7 @@ mod doctor_json {
     }
 
     #[test]
-    fn json_stale_lock_variant() {
+    fn json_pin_unpinned_variant() {
         let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
@@ -1225,7 +1225,7 @@ mod doctor_json {
         // resolves successfully but doesn't match HEAD.
         //
         // Easiest path: write the lock pinned to a SHA equal to all zeroes
-        // (unresolvable -> would be dropped). To produce StaleLock we need a
+        // (unresolvable -> would be dropped). To produce a stale pin we need a
         // resolvable lock that differs from HEAD. Tag a phantom commit:
         //   - make a second commit
         //   - tag the first commit as v0.0.0 (resolves)
@@ -1243,8 +1243,12 @@ mod doctor_json {
         let (parsed, _) = run_doctor_json(&root);
         let entry = entries(&parsed)
             .iter()
-            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("stale-lock"))
-            .unwrap_or_else(|| panic!("no stale-lock entry in {parsed}"));
+            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("pin"))
+            .unwrap_or_else(|| panic!("no pin entry in {parsed}"));
+        assert_eq!(
+            entry.get("sub_kind").and_then(|s| s.as_str()),
+            Some("unpinned")
+        );
         assert_eq!(entry.get("path").and_then(|s| s.as_str()), Some(repo_path));
         assert_eq!(
             entry.get("project").and_then(|s| s.as_str()),
@@ -1261,7 +1265,7 @@ mod doctor_json {
     }
 
     #[test]
-    fn json_incomplete_lock_variant() {
+    fn json_pin_none_variant() {
         let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
@@ -1285,8 +1289,9 @@ mod doctor_json {
         let (parsed, _) = run_doctor_json(&root);
         let entry = entries(&parsed)
             .iter()
-            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("incomplete-lock"))
-            .unwrap_or_else(|| panic!("no incomplete-lock entry in {parsed}"));
+            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("pin"))
+            .unwrap_or_else(|| panic!("no pin entry in {parsed}"));
+        assert_eq!(entry.get("sub_kind").and_then(|s| s.as_str()), Some("none"));
         assert_eq!(entry.get("path").and_then(|s| s.as_str()), Some(repo_path));
         assert_eq!(
             entry.get("project").and_then(|s| s.as_str()),
@@ -1494,17 +1499,19 @@ mod doctor_json {
             CheckViolation::OrphanedClone {
                 path: RepoPath::new("github/a/b").expect("known-safe literal"),
             },
-            CheckViolation::StaleLock {
+            CheckViolation::Pin {
                 project: ProjectName::new("p").unwrap(),
                 repo: RepoPath::new("github/c/d").expect("known-safe literal"),
-                locked: ResolvedRevisionId::from_canonical(
+                sub_kind: repoweave::check::PinKind::Behind,
+                locked: Some(ResolvedRevisionId::from_canonical(
                     repoweave::vcs::CommitId::parse(&"d".repeat(40)).unwrap(),
                     None,
-                ),
-                actual: ResolvedRevisionId::from_canonical(
+                )),
+                actual: Some(ResolvedRevisionId::from_canonical(
                     repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
                     None,
-                ),
+                )),
+                listed: Vec::new(),
             },
             CheckViolation::MissingReplayExclusion {
                 project: ProjectName::new("p").unwrap(),
@@ -1537,10 +1544,7 @@ mod doctor_json {
             arr[0].get("kind").and_then(|s| s.as_str()),
             Some("orphaned-clone")
         );
-        assert_eq!(
-            arr[1].get("kind").and_then(|s| s.as_str()),
-            Some("stale-lock")
-        );
+        assert_eq!(arr[1].get("kind").and_then(|s| s.as_str()), Some("pin"));
         assert_eq!(
             arr[2].get("kind").and_then(|s| s.as_str()),
             Some("missing-replay-exclusion")
@@ -1596,17 +1600,16 @@ mod doctor_json {
             absolute_path: String,
             roles: Vec<WireProjectRole>,
         },
-        StaleLock {
+        Pin {
             path: String,
             absolute_path: String,
             project: String,
-            locked: String,
-            actual: String,
-        },
-        IncompleteLock {
-            path: String,
-            absolute_path: String,
-            project: String,
+            sub_kind: String,
+            #[serde(default)]
+            locked: Option<String>,
+            #[serde(default)]
+            actual: Option<String>,
+            listed: Vec<String>,
         },
         WorkweaveDrift {
             path: String,
@@ -1658,11 +1661,6 @@ mod doctor_json {
             absolute_path: String,
             derived: String,
             error: String,
-        },
-        UnresolvableLockEntry {
-            path: String,
-            absolute_path: String,
-            project: String,
         },
         LockPinnedByName {
             path: String,
@@ -2359,7 +2357,7 @@ fn all_flag_reports_orphan_even_with_active_project() {
     );
 }
 
-/// Default `rwv doctor` does NOT report stale locks from a non-active project
+/// Default `rwv doctor` does NOT report pins that disagree with their checkouts from a non-active project
 /// when an active project is set.
 #[test]
 fn default_scope_no_cross_project_stale_lock() {
@@ -2407,14 +2405,14 @@ fn default_scope_no_cross_project_stale_lock() {
         .arg("doctor")
         .current_dir(&root)
         .assert()
-        .success() // alpha is clean; beta's stale lock must be invisible
+        .success() // alpha is clean; beta's pin must be invisible
         .get_output()
         .stdout
         .clone();
     let stdout = String::from_utf8_lossy(&out);
     assert!(
-        !stdout.contains("stale lock"),
-        "default scope must not report stale lock from non-active project; got:\n{stdout}"
+        !stdout.contains("[error: pin/"),
+        "default scope must not report a pin from non-active project; got:\n{stdout}"
     );
     assert!(
         !stdout.contains("beta"),
@@ -2422,10 +2420,10 @@ fn default_scope_no_cross_project_stale_lock() {
     );
 }
 
-/// `rwv doctor --all` DOES report stale locks (or unresolvable-lock errors)
+/// `rwv doctor --all` DOES report pins that disagree with their checkouts
 /// from all projects, not just the active one.
 #[test]
-fn all_flag_reports_cross_project_stale_lock() {
+fn all_flag_reports_cross_project_pin() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -2460,19 +2458,19 @@ fn all_flag_reports_cross_project_stale_lock() {
 
     set_active_project(&root, "alpha");
 
-    // --all should surface beta's stale-lock issue.
+    // --all should surface beta's pin finding.
     let out = rwv_cmd()
         .args(["doctor", "--all"])
         .current_dir(&root)
         .assert()
-        .failure() // stale lock is an error
+        .failure() // a pin that disagrees with its checkout is an error
         .get_output()
         .stdout
         .clone();
     let stdout = String::from_utf8_lossy(&out);
     assert!(
-        stdout.contains("stale lock") || stdout.contains("beta"),
-        "--all must surface beta's stale lock from non-active project; got:\n{stdout}"
+        stdout.contains("[error: pin/") && stdout.contains("beta"),
+        "--all must surface beta's pin from non-active project; got:\n{stdout}"
     );
 }
 

@@ -1,4 +1,4 @@
-//! Convention checks: orphaned clones, dangling refs, stale locks, index drift, working-tree drift, etc.
+//! Convention checks: orphaned clones, dangling refs, pins that disagree with their checkouts, index drift, working-tree drift, etc.
 //!
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
@@ -67,28 +67,26 @@ pub enum CheckViolation {
         roles: Vec<(ProjectName, Role)>,
     },
 
-    /// A project's `rwv.lock` doesn't match current HEAD SHAs.
+    /// A member's checkout does not stand at the commit a project's lock pins
+    /// for it, or the lock pins it at no commit that can be stood at.
     ///
-    /// Reachable only for an entry the *resolved* lock carries, so this is not
-    /// the whole of lock freshness: an entry whose repo is absent from disk is
-    /// dropped before [`find_violations`] runs and is reported by
-    /// [`run_check_locked`] instead. Both surfaces must name the same two
-    /// revisions in the same spelling for every entry both of them see.
-    StaleLock {
+    /// Raised for an entry the *resolved* lock carries, for a manifest member
+    /// the raw lock has no entry for, and for an entry the clone cannot
+    /// resolve. An entry whose repo is absent from disk is dropped before the
+    /// scan runs and is reported by [`run_check_locked`] instead; both
+    /// surfaces name the same two revisions in the same spelling for every
+    /// entry both of them see.
+    Pin {
         project: ProjectName,
         repo: RepoPath,
-        locked: ResolvedRevisionId,
-        actual: ResolvedRevisionId,
-    },
-
-    /// An `rwv.toml` entry with no corresponding `rwv.lock` entry. This is a
-    /// coverage gap, not a freshness one — the lock is missing the repo
-    /// entirely rather than pinning it to a stale revision. Only checked
-    /// when the project has a lock file at all; a project with no lock yet
-    /// is a separate, unlocked state.
-    IncompleteLock {
-        project: ProjectName,
-        repo: RepoPath,
+        sub_kind: PinKind,
+        /// The commit the lock pins, for the sub-kinds that compare it with
+        /// the checkout's.
+        locked: Option<ResolvedRevisionId>,
+        /// The commit the checkout is at, for the same sub-kinds.
+        actual: Option<ResolvedRevisionId>,
+        /// The commits only the checkout holds, for `unpinned`.
+        listed: Vec<String>,
     },
 
     /// A workweave without the worktree a member its `rwv.lock` pins needs —
@@ -181,13 +179,6 @@ pub enum CheckViolation {
         dir: PathBuf,
         derived: String,
         error: String,
-    },
-
-    /// An `rwv.lock` entry naming a revision the local clone cannot resolve —
-    /// a lock written against history this clone has never fetched.
-    UnresolvableLockEntry {
-        project: ProjectName,
-        repo: RepoPath,
     },
 
     /// An `rwv.lock` entry that names a tag or branch where a commit id
@@ -666,8 +657,6 @@ impl CheckViolation {
             | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
             | CheckViolation::RoleDisagreement { .. }
-            | CheckViolation::StaleLock { .. }
-            | CheckViolation::IncompleteLock { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::CargoVersionSkew { .. }
@@ -679,7 +668,6 @@ impl CheckViolation {
             | CheckViolation::ProjectsDirUnreadable { .. }
             | CheckViolation::ProjectlessDir { .. }
             | CheckViolation::UnnameableProject { .. }
-            | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::LockPinnedByName { .. }
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
@@ -694,6 +682,7 @@ impl CheckViolation {
             | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
+            CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
                 ReplayExclusionKind::Absent
                 | ReplayExclusionKind::LegacySpelling
@@ -777,11 +766,8 @@ impl CheckViolation {
             CheckViolation::OrphanedClone { .. }
             | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
-            | CheckViolation::StaleLock { .. }
-            | CheckViolation::IncompleteLock { .. }
             | CheckViolation::HeadUnreadable { .. }
             | CheckViolation::ProjectsDirUnreadable { .. }
-            | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::UnreadableActiveProject { .. }
@@ -818,6 +804,7 @@ impl CheckViolation {
             | CheckViolation::PhantomMergeDriver { .. } => Warning,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
+            CheckViolation::Pin { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Extra => Warning,
                 DriftKind::Missing
@@ -844,8 +831,7 @@ impl CheckViolation {
             CheckViolation::DanglingReference { .. } => ViolationKind::DanglingReference,
             CheckViolation::MemberPermissions { .. } => ViolationKind::MemberPermissions,
             CheckViolation::RoleDisagreement { .. } => ViolationKind::RoleDisagreement,
-            CheckViolation::StaleLock { .. } => ViolationKind::StaleLock,
-            CheckViolation::IncompleteLock { .. } => ViolationKind::IncompleteLock,
+            CheckViolation::Pin { .. } => ViolationKind::Pin,
             CheckViolation::WorkweaveDrift { .. } => ViolationKind::WorkweaveDrift,
             CheckViolation::IndexDrift { .. } => ViolationKind::IndexDrift,
             CheckViolation::WorkingTreeDrift { .. } => ViolationKind::WorkingTreeDrift,
@@ -863,7 +849,6 @@ impl CheckViolation {
             CheckViolation::ProjectsDirUnreadable { .. } => ViolationKind::ProjectsDirUnreadable,
             CheckViolation::ProjectlessDir { .. } => ViolationKind::ProjectlessDir,
             CheckViolation::UnnameableProject { .. } => ViolationKind::UnnameableProject,
-            CheckViolation::UnresolvableLockEntry { .. } => ViolationKind::UnresolvableLockEntry,
             CheckViolation::LockPinnedByName { .. } => ViolationKind::LockPinnedByName,
             CheckViolation::LegacyManifestFormat { .. } => ViolationKind::LegacyManifestFormat,
             CheckViolation::DanglingActiveProject { .. } => ViolationKind::DanglingActiveProject,
@@ -913,8 +898,7 @@ pub enum ViolationKind {
     DanglingReference,
     MemberPermissions,
     RoleDisagreement,
-    StaleLock,
-    IncompleteLock,
+    Pin,
     WorkweaveDrift,
     IndexDrift,
     WorkingTreeDrift,
@@ -926,7 +910,6 @@ pub enum ViolationKind {
     ProjectsDirUnreadable,
     ProjectlessDir,
     UnnameableProject,
-    UnresolvableLockEntry,
     LockPinnedByName,
     LegacyManifestFormat,
     DanglingActiveProject,
@@ -955,14 +938,13 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 42] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
         Self::MemberPermissions,
         Self::RoleDisagreement,
-        Self::StaleLock,
-        Self::IncompleteLock,
+        Self::Pin,
         Self::WorkweaveDrift,
         Self::IndexDrift,
         Self::WorkingTreeDrift,
@@ -974,7 +956,6 @@ impl ViolationKind {
         Self::ProjectsDirUnreadable,
         Self::ProjectlessDir,
         Self::UnnameableProject,
-        Self::UnresolvableLockEntry,
         Self::LockPinnedByName,
         Self::LegacyManifestFormat,
         Self::DanglingActiveProject,
@@ -1063,6 +1044,98 @@ impl UnparseableProjectKind {
             Self::PreSchema
         } else {
             Self::Malformed
+        }
+    }
+}
+
+/// How a member's pin stands against its checkout, or whether it has one.
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PinKind {
+    /// The lock has a file but no entry for the member.
+    None,
+    /// The lock pins a commit this clone cannot resolve.
+    Unreachable,
+    /// The checkout is at an ancestor of the pin.
+    Behind,
+    /// The checkout holds commits beyond the pin, each pushed or pinned by
+    /// another project's live lock.
+    Ahead,
+    /// The checkout holds commits beyond the pin that nothing else holds.
+    Unpinned,
+    /// Neither the checkout nor the pin is an ancestor of the other.
+    Diverged,
+}
+
+impl PinKind {
+    pub const ALL: [Self; 6] = [
+        Self::None,
+        Self::Unreachable,
+        Self::Behind,
+        Self::Ahead,
+        Self::Unpinned,
+        Self::Diverged,
+    ];
+
+    pub fn severity(self) -> crate::integration::Severity {
+        crate::integration::Severity::Error
+    }
+
+    pub fn fix_disposition(self) -> FixDisposition {
+        FixDisposition::ReportOnly
+    }
+
+    pub fn state(self) -> crate::diagnosis::State {
+        use crate::diagnosis::State;
+        match self {
+            Self::None => State::PinNone,
+            Self::Unreachable => State::PinUnreachable,
+            Self::Behind => State::PinBehind,
+            Self::Ahead => State::PinAhead,
+            Self::Unpinned => State::PinUnpinned,
+            Self::Diverged => State::PinDiverged,
+        }
+    }
+
+    pub fn entry(self) -> &'static str {
+        match self {
+            Self::None => {
+                "The lock has no entry for a member the manifest lists. Only raised for a \
+                 project that has a lock file; a project with no lock yet is a separate, \
+                 unlocked state. **What to do:** `rwv member pin <repo> <rev> --commit` gives \
+                 the member its pin, or `rwv update --remote --repo <repo> --commit` pins its \
+                 upstream's tip. `rwv lock` gives a member no first pin."
+            }
+            Self::Unreachable => {
+                "The lock pins a commit this clone cannot resolve: a lock written against \
+                 history that was never fetched here. The entry is kept as a finding rather \
+                 than dropped, because dropping it would leave the repo with no pin to \
+                 compare against, which reads as healthy. **What to do:** `rwv fetch` brings \
+                 in the history that may hold it, or `rwv member pin <repo> <rev>` pins a \
+                 reachable commit if the lock is the stale side."
+            }
+            Self::Behind => {
+                "The checkout is at an ancestor of its pin: the lock records commits the \
+                 checkout lacks. **What to do:** `rwv update` moves the checkout to the pin, \
+                 or `rwv lock --repo <repo>` records the checkout's commit by name, moving \
+                 the pin back."
+            }
+            Self::Ahead => {
+                "The checkout holds commits beyond its pin, and each is pushed or pinned by \
+                 another project's live lock. **What to do:** `rwv lock` records the \
+                 checkout's commit."
+            }
+            Self::Unpinned => {
+                "The checkout holds commits beyond its pin that no remote-tracking branch \
+                 and no live lock reaches, listed: nothing but this checkout holds them. \
+                 **What to do:** `rwv lock --commit` records them."
+            }
+            Self::Diverged => {
+                "Neither the checkout nor its pin is an ancestor of the other. **What to \
+                 do:** `rwv lock --repo <repo>` records the checkout's commit by name, \
+                 `rwv member pin <repo> <rev>` pins a commit you choose, or `rwv update` \
+                 moves the checkout to the pin once its own commits are kept on a branch."
+            }
         }
     }
 }
@@ -1888,17 +1961,20 @@ pub enum ViolationOutput {
         /// Every project listing the clone, with the role it declares.
         roles: Vec<ProjectRoleOutput>,
     },
-    StaleLock {
+    Pin {
         path: String,
         absolute_path: WirePath,
         project: ProjectName,
-        locked: String,
-        actual: String,
-    },
-    IncompleteLock {
-        path: String,
-        absolute_path: WirePath,
-        project: ProjectName,
+        #[serde(rename = "sub_kind")]
+        sub_kind: PinKind,
+        /// The commit the lock pins; absent for `none` and `unreachable`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        locked: Option<String>,
+        /// The commit the checkout is at; absent for `none` and `unreachable`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        actual: Option<String>,
+        /// The commits only the checkout holds; empty unless `unpinned`.
+        listed: Vec<String>,
     },
     WorkweaveDrift {
         path: String,
@@ -1959,11 +2035,6 @@ pub enum ViolationOutput {
         absolute_path: WirePath,
         derived: String,
         error: String,
-    },
-    UnresolvableLockEntry {
-        path: String,
-        absolute_path: WirePath,
-        project: ProjectName,
     },
     LockPinnedByName {
         path: String,
@@ -2296,22 +2367,21 @@ impl ViolationOutput {
                     })
                     .collect(),
             },
-            CheckViolation::StaleLock {
+            CheckViolation::Pin {
                 project,
                 repo,
+                sub_kind,
                 locked,
                 actual,
-            } => Self::StaleLock {
+                listed,
+            } => Self::Pin {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
                 project: project.clone(),
-                locked: locked.display_str().to_owned(),
-                actual: actual.display_str().to_owned(),
-            },
-            CheckViolation::IncompleteLock { project, repo } => Self::IncompleteLock {
-                absolute_path: abs(workspace_dir, &repo),
-                path: repo.to_string(),
-                project: project.clone(),
+                sub_kind,
+                locked: locked.map(|rev| rev.display_str().to_owned()),
+                actual: actual.map(|rev| rev.display_str().to_owned()),
+                listed,
             },
             CheckViolation::WorkweaveDrift {
                 workweave,
@@ -2392,13 +2462,6 @@ impl ViolationOutput {
                 derived,
                 error,
             },
-            CheckViolation::UnresolvableLockEntry { project, repo } => {
-                Self::UnresolvableLockEntry {
-                    absolute_path: abs(workspace_dir, &repo),
-                    path: repo.to_string(),
-                    project: project.clone(),
-                }
-            }
             CheckViolation::LockPinnedByName {
                 project,
                 repo,
@@ -4951,6 +5014,91 @@ fn scan_locks_pinned_by_name(projects: &[Project]) -> Vec<CheckViolation> {
         .collect()
 }
 
+/// A `pin` finding for each member of a project with a lock whose checkout
+/// does not stand at the commit that lock pins for it, and for each member the
+/// lock has no entry for.
+///
+/// Coverage reads the raw lock, because "does the lock name this repo" is a
+/// question about the file and not about what resolved: an entry whose repo is
+/// absent from disk, or whose revision will not resolve, is dropped from the
+/// resolved lock and would read as no entry at all. Freshness reads the
+/// resolved lock, so tag-form, branch-form and SHA-form pins compare as the
+/// commits they name. A project with no lock file is a separate, unlocked
+/// state and earns no finding.
+fn scan_pins(ctx: &crate::workspace::WorkspaceContext, world: &DoctorWorld) -> Vec<CheckViolation> {
+    let input = &world.input;
+    let mut live = None;
+    let mut found = Vec::new();
+    for project in &input.projects {
+        let Some(raw) = &project.lock else {
+            continue;
+        };
+        let pin = |repo: &RepoPath, sub_kind: PinKind| CheckViolation::Pin {
+            project: project.name.clone(),
+            repo: repo.clone(),
+            sub_kind,
+            locked: None,
+            actual: None,
+            listed: Vec::new(),
+        };
+        for repo in project.manifest.iter_repo_paths() {
+            if !raw.contains_repo(repo) {
+                found.push(pin(repo, PinKind::None));
+            }
+        }
+        for (project_name, repo) in &world.lock_resolve_failures {
+            if project_name == &project.name {
+                found.push(pin(repo, PinKind::Unreachable));
+            }
+        }
+        let Some(resolved) = input.resolved_locks.get(&project.name) else {
+            continue;
+        };
+        for (repo, entry) in resolved.iter_entries() {
+            let Some(head) = input.head_revisions.get(repo) else {
+                continue;
+            };
+            if &entry.version == head {
+                continue;
+            }
+            let dir = world.workspace_dir.join(repo.as_path());
+            let vcs = crate::vcs::vcs_for(entry.vcs_type);
+            let live = live.get_or_insert_with(|| {
+                crate::pins::live_pins(ctx.primary_path()).unwrap_or_default()
+            });
+            let held = live.get(repo).map(Vec::as_slice).unwrap_or_default();
+            let Ok(standing) =
+                crate::pins::standing(vcs.as_ref(), &dir, head, &entry.version, held)
+            else {
+                continue;
+            };
+            let (sub_kind, listed) = match standing {
+                crate::pins::Standing::At => continue,
+                crate::pins::Standing::Behind { .. } => (PinKind::Behind, Vec::new()),
+                crate::pins::Standing::Diverged => (PinKind::Diverged, Vec::new()),
+                crate::pins::Standing::Ahead(_) => (PinKind::Ahead, Vec::new()),
+                crate::pins::Standing::Unpinned(beyond) => (
+                    PinKind::Unpinned,
+                    beyond
+                        .unpinned
+                        .iter()
+                        .map(|c| format!("{} {}", c.id.short(), c.subject))
+                        .collect(),
+                ),
+            };
+            found.push(CheckViolation::Pin {
+                project: project.name.clone(),
+                repo: repo.clone(),
+                sub_kind,
+                locked: Some(entry.version.clone()),
+                actual: Some(head.clone()),
+                listed,
+            });
+        }
+    }
+    found
+}
+
 /// A `role-disagreement` finding for each canonical clone of the primary that
 /// the projects in scope list and the projects listing it disagree on, when
 /// doctor runs in the primary. Every project listing the clone is named, in
@@ -5803,45 +5951,6 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                 });
             }
         }
-
-        // Compare lock entries against resolved HEADs. The lock entries
-        // are pulled from `input.resolved_locks` (built by the caller via
-        // `LockFile::resolve_versions`), so equality is purely a
-        // canonical-SHA comparison — the raw-vs-resolved confusion that
-        // produced the historical B3/B6 bugs is now a compile-time
-        // impossibility.
-        if let Some(lock) = input.resolved_locks.get(&project.name) {
-            for (repo_path, lock_entry) in lock.iter_entries() {
-                if let Some(actual_rev) = input.head_revisions.get(repo_path) {
-                    if &lock_entry.version != actual_rev {
-                        violations.push(CheckViolation::StaleLock {
-                            project: project.name.clone(),
-                            repo: repo_path.clone(),
-                            locked: lock_entry.version.clone(),
-                            actual: actual_rev.clone(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Coverage: every manifest repo should have a lock entry. Distinct
-        // from the freshness comparison above — a repo absent from the lock is
-        // invisible to it — and answered against the raw lock. Two states make
-        // `resolve_versions` drop an entry: its repo is absent from disk, or
-        // its revision will not resolve in this clone. Against the resolved
-        // lock both read as no entry at all, and earn a finding whose remedy
-        // is to write a line `rwv.lock` already carries.
-        if let Some(lock) = &project.lock {
-            for repo_path in project.manifest.iter_repo_paths() {
-                if !lock.contains_repo(repo_path) {
-                    violations.push(CheckViolation::IncompleteLock {
-                        project: project.name.clone(),
-                        repo: repo_path.clone(),
-                    });
-                }
-            }
-        }
     }
 
     violations
@@ -6119,22 +6228,53 @@ impl CheckViolation {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            CheckViolation::StaleLock {
+            CheckViolation::Pin {
                 project,
                 repo,
+                sub_kind,
                 locked,
                 actual,
-            } => format!(
-                "stale lock in {project}: {repo} locked={} actual={}; \
-                     run `rwv lock --repo {repo}` to record the checkout's commit, or \
-                     `rwv update` to move the checkout to the pin",
-                locked.short_display(),
-                actual.short_display(),
-            ),
-            CheckViolation::IncompleteLock { project, repo } => format!(
-                "incomplete lock in {project}: {repo} has no rwv.lock entry; \
-                     pin it with `rwv member pin {repo} <rev> --commit`"
-            ),
+                listed,
+            } => {
+                let compared = match (locked, actual) {
+                    (Some(locked), Some(actual)) => format!(
+                        "locked={} actual={}",
+                        locked.short_display(),
+                        actual.short_display()
+                    ),
+                    _ => String::new(),
+                };
+                match sub_kind {
+                    PinKind::None => format!(
+                        "{project}: {repo} has no rwv.lock entry; pin it with `rwv member \
+                         pin {repo} <rev> --commit`"
+                    ),
+                    PinKind::Unreachable => format!(
+                        "{project}: lock references unknown revision for {repo}; `rwv fetch` \
+                         brings in the history that may hold it, or pin another commit with \
+                         `rwv member pin {repo} <rev>`"
+                    ),
+                    PinKind::Behind => format!(
+                        "{project}: {repo} {compared}; the checkout is behind its pin: `rwv \
+                         update` moves it to the pin, or `rwv lock --repo {repo}` records the \
+                         checkout's commit by name"
+                    ),
+                    PinKind::Ahead => format!(
+                        "{project}: {repo} {compared}; the checkout is ahead of its pin: \
+                         `rwv lock` records its commit"
+                    ),
+                    PinKind::Unpinned => format!(
+                        "{project}: {repo} {compared}; the checkout holds commits nothing \
+                         else holds beyond its pin ({}): `rwv lock --commit` records them",
+                        listed.join("; ")
+                    ),
+                    PinKind::Diverged => format!(
+                        "{project}: {repo} {compared}; the checkout has diverged from its \
+                         pin: `rwv lock --repo {repo}` records its commit by name, or `rwv \
+                         update` moves it to the pin"
+                    ),
+                }
+            }
             CheckViolation::WorkweaveDrift {
                 workweave,
                 kind,
@@ -6287,11 +6427,6 @@ impl CheckViolation {
                      name rwv accepts",
                 dir.display(),
                 Manifest::FILE_NAME,
-            ),
-            CheckViolation::UnresolvableLockEntry { project, repo } => format!(
-                "{project}: lock references unknown revision for {repo}; \
-                     `rwv fetch` brings in the history that may hold it, or pin another \
-                     commit with `rwv member pin {repo} <rev>`"
             ),
             CheckViolation::LockPinnedByName {
                 project,
@@ -7126,7 +7261,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// entry (exit 1), `Ok(false)` if all match (exit 0).
 ///
 /// Total over the **raw** lock, which is what separates it from the pipeline's
-/// [`CheckViolation::StaleLock`] rather than making it a second spelling of it:
+/// [`CheckViolation::Pin`] rather than making it a second spelling of it:
 /// an entry whose repo is absent from disk gets a verdict here and is
 /// unreachable there, because [`crate::manifest::LockFile::resolve_versions`]
 /// drops it and [`find_violations`] has no disk to re-read. Where both surfaces
@@ -8255,7 +8390,7 @@ pub enum Verdict {
 /// How much of the weave a doctor run looks at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// The active project: stale locks, dangling references and integration
+    /// The active project: pins, dangling references and integration
     /// hooks are scoped to it, and orphan detection is skipped (a repo absent
     /// from the active project may belong to another). A workspace with no
     /// active project has nothing to narrow to and is scanned weave-wide.
@@ -8816,6 +8951,7 @@ fn collect_doctor_violations(
     });
     violations.extend(leftovers);
     violations.extend(scan_locks_pinned_by_name(&input.projects));
+    violations.extend(scan_pins(ctx, world));
 
     match primary_pointer(ctx.primary_path()) {
         Some(PointerContent::Selects(active_name)) => {
@@ -9151,12 +9287,6 @@ fn collect_doctor_violations(
             error: error.clone(),
         });
     }
-    for (project, repo) in &world.lock_resolve_failures {
-        violations.push(CheckViolation::UnresolvableLockEntry {
-            project: project.clone(),
-            repo: repo.clone(),
-        });
-    }
     if let Some((path, error)) = &world.projects_dir_read_error {
         violations.push(CheckViolation::ProjectsDirUnreadable {
             path: path.clone(),
@@ -9180,9 +9310,10 @@ fn collect_doctor_violations(
     if matches!(ctx.checkout, Checkout::Workweave { .. }) {
         let is_gap = |repo: &RepoPath| member_gaps.iter().any(|gap| &gap.repo == repo);
         violations.retain(|v| match v {
-            CheckViolation::DanglingReference { repo, .. }
-            | CheckViolation::StaleLock { repo, .. }
-            | CheckViolation::UnresolvableLockEntry { repo, .. } => !is_gap(repo),
+            CheckViolation::DanglingReference { repo, .. } => !is_gap(repo),
+            CheckViolation::Pin { repo, sub_kind, .. } if *sub_kind != PinKind::None => {
+                !is_gap(repo)
+            }
             _ => true,
         });
     }

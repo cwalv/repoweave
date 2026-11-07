@@ -106,11 +106,11 @@ fn a_file_url_member_is_clean_immediately_after_add() {
 /// dropped out of every scan.
 ///
 /// A vanished `dangling-reference` is consistent with both, so this drives a
-/// finding that only fires for a repo the scan found: `stale-lock` compares
+/// finding that only fires for a repo the scan found: `pin` compares
 /// the lock against a HEAD read from the on-disk repos, and skips any member
 /// with no HEAD recorded.
 #[test]
-fn a_file_url_member_reports_stale_lock_when_it_drifts() {
+fn a_file_url_member_reports_a_pin_when_it_drifts() {
     let tmp = common::tempdir().unwrap();
     let (ws, _origin) = weave_with_a_file_url_member(&tmp);
 
@@ -119,7 +119,7 @@ fn a_file_url_member_reports_stale_lock_when_it_drifts() {
 
     let findings = doctor_findings(&ws, &[]);
     assert!(
-        findings.contains(&("stale-lock".to_owned(), "local/acme/widgets".to_owned())),
+        findings.contains(&("pin".to_owned(), "local/acme/widgets".to_owned())),
         "a drifted local/ member must be compared against its lock, got: {findings:?}"
     );
 }

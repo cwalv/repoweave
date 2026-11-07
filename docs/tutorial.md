@@ -138,7 +138,7 @@ mkdir ~/work-ci && cd ~/work-ci
 rwv clone chatly/web-app
 ```
 
-The exit status tells a CI job whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned (`rwv.lock` has no entry for it) or its pinned commit is unreachable. A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv clone`, and this check exits non-zero for it. A stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
+The exit status tells a CI job whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned (`rwv.lock` has no entry for it) or its pinned commit is unreachable. A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv clone`, and this check exits non-zero for it. A checkout that does not stand at its pin is reported by `rwv doctor` as [`pin`](reference/doctor-findings.md#pin).
 
 ## Where to go next
 
