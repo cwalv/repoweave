@@ -14,6 +14,15 @@ not on disk is reported as skipped; `rwv update` clones it. A `--role` or
 project repo out. Run in a workweave, `fetch` fetches the canonical clones the
 workweave's worktrees share.
 
+### A member's url remote
+
+A member's clone needs a remote that has the member's `url`. When it has none,
+`fetch` adds one before fetching, named by the url's owner segment. When that
+name is already a remote with another url, `fetch` refuses before it adds or
+fetches anything: `name` `taken`, naming the remote and both urls. The choice
+printed beneath it configures where the repo pushes and pulls; `rwv explain
+name` has the page.
+
 ### One fetch at a time per object store
 
 An rwv that fetches into an object store holds that store's fetch claim, and

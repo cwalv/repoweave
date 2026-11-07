@@ -21,7 +21,7 @@ In a typical project, repos under your organization (e.g., `github/chatly/*` for
 
 Role label for a fork relationship. Changes ideally flow back upstream via PR, but local patches are acceptable.
 
-**URL is your writable fork.** The manifest `url` field must point at your personal or team fork — the repo you have push access to. `rwv` clones that URL to `origin` and treats `fork` identically to `owned` for clone, push, and fetch.
+**URL is your writable fork.** The manifest `url` field must point at your personal or team fork — the repo you have push access to. `rwv` clones that URL and treats `fork` identically to `owned` for clone, push, and fetch.
 
 **The path may name either.** The manifest key is a placement, not a claim about ownership. `rwv member add https://github.com/me/my-fork.git --role fork` places at `github/me/my-fork`; an entry keyed on the upstream's coordinates against a fork URL — the arrangement the [formats](./formats.md) example shows — is equally valid. `rwv doctor` does not report the difference for a `fork`-role entry.
 
@@ -32,7 +32,7 @@ cd github/chatly/engine.io
 git remote add upstream https://github.com/socketio/engine.io.git
 ```
 
-**Push policy.** `rwv push` pushes `fork` repos the same as `owned` repos (to `origin`).
+**Push policy.** `rwv push` pushes `fork` repos the same as `owned` repos (to each branch's push target).
 
 ### `dependency`
 

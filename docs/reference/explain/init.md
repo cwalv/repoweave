@@ -45,8 +45,9 @@ project directory inside the existing workspace.
 7. Configures replay-exclusion for `rwv.lock` (`.gitattributes`) and
    plants the durable `merge.rwv-ours.*` git config so `rwv sync` rebases
    correctly from the first commit.
-8. If `--provider` is given, adds a git remote named `origin` using the
-   registry's clone URL pattern.
+8. If `--provider` is given, adds a git remote using the registry's clone URL
+   pattern and records it as the project repo's url remote, the remote `rwv
+   push` publishes the project repo to.
 9. Authors the integration files the empty manifest implies into
    `projects/<name>/`.
 10. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).

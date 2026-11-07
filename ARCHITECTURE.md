@@ -499,17 +499,22 @@ serializable mirror, `VcsErrorOutput`, for `--json`.
 **What the seam holds by compiler, and what it does not.** No production frame
 outside `git.rs` spawns git or assembles its argv: `git_command` is private to
 the module, and the only `Command::new("git")` elsewhere in `src/` are two
-`#[cfg(test)]` fixtures in `sync.rs`. The remote name is held the same way — the
-constant is private and no trait method accepts one — so core can neither spell
-it nor be handed a parameter to spell it into. Inside `git.rs`, a path reaches
-argv only as a `GitArg`: `git_command` returns a `GitCommand`
-(`src/git/argv.rs`) that keeps its `Command` private and takes arguments as an
-`Argv`, whose text slot refuses a `&Path` and whose path slot takes only a
-`GitArg`, which `GitArg::from_path` alone makes. What is not mechanized is a
-path turned into a `&str` by hand and given to a text slot, and git
-vocabulary in *operator text*: four message sites in core still write `origin`
-as a literal, three of them inside recovery advice that names a git command as
-well. The published contract for this seam, and that residue in full, is
+`#[cfg(test)]` fixtures in `sync.rs`. A remote is held the same way — it crosses
+the seam as a `RemoteHandle`, which only a backend constructs and which
+displays but does not give its name back, and no trait method accepts text for
+one — so core can neither spell a remote nor be handed a parameter to spell it
+into. It reaches one by the role that resolves to it: `Vcs::url_remote`,
+`project_url_remote`, `push_target`, `home_remote` and `upstream`
+(`tests/clone_url_compile_fail_test.rs` pins the absence of a way in). Inside
+`git.rs`, a path reaches argv only as a `GitArg`: `git_command` returns a
+`GitCommand` (`src/git/argv.rs`) that keeps its `Command` private and takes
+arguments as an `Argv`, whose text slot refuses a `&Path` and whose path slot
+takes only a `GitArg`, which `GitArg::from_path` alone makes. What is not
+mechanized is a path turned into a `&str` by hand and given to a text slot, and
+git vocabulary in *operator text*: one message site in core still writes
+`origin` as a literal, the doctor's rendering of the `origin-url-mismatch`
+finding, whose wire `kind` carries the word too. The published contract for
+this seam, and that residue in full, is
 [`docs/explanation/joints/vcs-as-seam.md`](docs/explanation/joints/vcs-as-seam.md).
 
 ### 6.2 `Integration`

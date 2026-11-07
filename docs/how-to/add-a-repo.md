@@ -6,7 +6,7 @@ Clone a repository into the weave, register it in the active workspace's `rwv.to
 rwv member add https://github.com/example/some-lib.git --role dependency
 ```
 
-`rwv member add` clones the repository to its canonical path under the weave root (`github/example/some-lib/`), populates `branch = "<branch>"` from the remote's default branch (`origin/HEAD`), writes the entry to the active workspace's `rwv.toml`, regenerates managed ecosystem files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`), and runs integration install hooks in the primary weave. When invoked from inside a workweave, it writes to that workweave's `rwv.toml` and creates the member worktree there.
+`rwv member add` clones the repository to its canonical path under the weave root (`github/example/some-lib/`), populates `branch = "<branch>"` from the remote's default branch, writes the entry to the active workspace's `rwv.toml`, regenerates managed ecosystem files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`), and runs integration install hooks in the primary weave. When invoked from inside a workweave, it writes to that workweave's `rwv.toml` and creates the member worktree there.
 
 If you already added the entry to `rwv.toml` by hand, running `rwv member add <url>` with the matching URL finishes the setup: it clones the repository if missing, creates the worktree when run inside a workweave, and regenerates integration files.
 
@@ -83,7 +83,7 @@ rwv member add github/chatly/auth --new
 rwv member add local/chatly/auth --new --param root=/srv/repos
 ```
 
-- **Hosted registries (`github`, `gitlab`, `bitbucket`):** `rwv` initializes the repository at `github/chatly/auth/` and sets `origin` to the minted URL without contacting the network. Create the remote repository on the forge when you are ready to push.
+- **Hosted registries (`github`, `gitlab`, `bitbucket`):** `rwv` initializes the repository at `github/chatly/auth/` and adds a remote with the minted URL without contacting the network. Create the remote repository on the forge when you are ready to push.
 - **`local` registry:** Requires `--param root=<dir>` naming an existing directory outside the weave. A relative `<dir>` resolves against the directory you run `rwv` in (or the `-C`/`-w` directory), and the manifest records the absolute path. `rwv` initializes a bare repository at `<root>/<owner>/<repo>` and clones the member from it so `git push -u origin` works immediately. Parameters can also be passed as one JSON object, with the bare registry name as the address: `rwv member add local --new --params-json '{"root":"/srv/repos","owner":"chatly","repo":"auth"}'`. Each parameter may come from only one place, so the address shorthand, `--param`, and `--params-json` cannot name the same one.
 
 In both cases, `rwv member add --new` populates `branch = "<branch>"` from the new repository's initial `HEAD` branch (for example, `"main"`), defaults `role` to `"owned"`, and updates ecosystem workspace files. The new repository has no commits yet: until you make its first commit, `rwv lock` refuses (its message ends "make an initial commit, then re-run rwv lock") and `rwv doctor` reports an error for it.
@@ -100,7 +100,7 @@ rwv member add --adopt github/example/some-lib --role dependency
 
 A relative path resolves against the directory you run `rwv` in, so from `github/example/` the same clone is `rwv member add --adopt some-lib`; the member path recorded is always its position under the weave root. `rwv member add --adopt` skips the network clone, reads `origin` and its default branch to populate `url` and `branch`, and updates `rwv.toml` and integration files. With no clone at that path it refuses with `no-clone-to-adopt`.
 
-Passing the URL instead also skips the clone when the clone at the placement already has that URL as its `origin`. When its `origin` names a different repository, `rwv member add <url>` refuses with `foreign-clone-at-placement` and writes nothing; the message names `rwv member add --adopt <path>` to register the clone under the URL it records. A directory or file at the placement that is not a clone refuses with `non-clone-at-placement`; move it aside and re-run.
+Passing the URL instead also skips the clone when the clone at the placement already has a remote with that URL. When none of its remotes names that repository, `rwv member add <url>` refuses with `foreign-clone-at-placement` and writes nothing; the message names `rwv member add --adopt <path>` to register the clone under the URL it records. A directory or file at the placement that is not a clone refuses with `non-clone-at-placement`; move it aside and re-run.
 
 If the *project repository* itself already exists on a remote and carries an `rwv.toml`, adopt it into `projects/<name>/` with `rwv init --adopt` and then materialize its member repositories:
 

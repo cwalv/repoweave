@@ -46,10 +46,10 @@ reflects the shared-clone topology: member repos are global infrastructure,
 with `git worktree` providing per-workweave isolation. (See
 `rwv explain workweave` for the workweave topology model.)
 
-If a clone already exists on disk at the canonical path and its origin names
-the same repository, `add` skips the network clone and registers it. A clone
-of anything else refuses (`foreign-clone-at-placement`), naming `rwv member add
---adopt <path>` to register it under its own origin. A directory (empty or
+If a clone already exists on disk at the canonical path and one of its remotes
+names the same repository, `add` skips the network clone and registers it. A
+clone of anything else refuses (`foreign-clone-at-placement`), naming `rwv
+member add --adopt <path>` to register it under its own remote. A directory (empty or
 not) or file at the placement that is not a clone refuses
 (`non-clone-at-placement`); so does one at the workweave's own placement when
 `add` or `add --adopt` runs from a workweave.
@@ -84,8 +84,8 @@ weave root; a relative path resolves against the directory rwv runs in (or the
 `-C`/`-w` directory). The member path recorded is the clone's position under
 the weave root containing it. From a workweave, a path inside the workweave
 names the member at that position, and the clone registered is the primary's
-clone there. `add` reads the URL from the clone's `origin` remote and
-registers it without a network clone. A path that holds no clone refuses
+clone there. `add` reads the URL from the clone's only remote (a clone with
+several refuses, `no-remote-url`) and registers it without a network clone. A path that holds no clone refuses
 (`no-clone-to-adopt`); a path under no weave root refuses
 (`adopt-path-outside-weave`); a workweave path holding a clone that is not a
 worktree of the primary's refuses (`foreign-clone-in-workweave`).

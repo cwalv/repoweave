@@ -41,6 +41,13 @@ disclosure the in-flight refusal makes on a conflicting mutation — `status`
 surfaces it read-only, so a clean `git status` in every repo is not mistaken
 for "no op in progress".
 
+Below the table, one `push-branch` line prints for each member whose
+checked-out branch stands apart from the branch it publishes to, with that
+state's choices: `behind`, `ahead`, `diverged`, `gone`, `foreign upstream` or
+`no push target`. A `gone` line prints only while the branch holds commits no
+remote-tracking branch reaches, and lists them. The lines read refs as last
+fetched.
+
 Under `--json`, output is the envelope:
 
 ```
@@ -48,6 +55,7 @@ Under `--json`, output is the envelope:
   "$schema": "<url>",
   "repos": [ { "path": "...", ... }, ... ],
   "unreadable_projects": [ { "project": "...", "error": "..." } ],
+  "judged": [ { "path": "...", "axis": "push-branch", "state": "behind", "choices": [ ... ] } ],
   "op": { "id": "...", "verb": "sync", "phase": "replay", ... }
 }
 ```
@@ -58,6 +66,11 @@ The `$schema` URL points to the committed schema artifact. Each element of
 (`ok`/`ahead`/`behind`/`diverged`/`no-lock`/`unknown`/`missing`/`unreachable`),
 `mid_op` (`mid-rebase`/`mid-merge`/`mid-cherry-pick`/`mid-bisect`, or `null`),
 `role`, `url`, `project`.
+
+`judged` carries the `push-branch` lines above as the table's generated
+choices: each element has the repo's `path`, the `axis` and `state` it was
+judged on, its `facts` and its `choices`. Empty, not absent, when no member
+stands apart.
 
 `unreadable_projects` lists each project whose `rwv.toml` or `rwv.lock` did
 not load, with the load `error` naming the file and line; none of its repos is

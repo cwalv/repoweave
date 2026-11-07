@@ -536,14 +536,16 @@ has a branch and the first push if it has none.
 
 ### `no-remote-url`
 
-**Condition.** `rwv member add --adopt` names a clone with no conventional remote
-(`origin`, for git) to read a URL from, or one that records it as a relative
-path.
+**Condition.** `rwv member add --adopt` names a clone with no remote to read a
+URL from, one with several remotes (the URL to record is a choice among them),
+or one whose remote records a relative path.
 
 **Why.** The manifest records where a repo comes from. A clone with no remote
-has no origin to record, and an invented one would not fetch. git reads a
-relative path from each checkout's own directory, so it names no one remote to
-record.
+has no origin to record, and an invented one would not fetch. A clone with
+several remotes would have rwv pick one for you: name the URL instead
+(`rwv member add <url>`, for a clone at that URL's placement), or remove the
+remotes that are not the member's. git reads a relative path from each
+checkout's own directory, so it names no one remote to record.
 
 **Exits.** Add the remote to the clone, or give it an absolute URL
 (`git -C <path> remote set-url origin <url>`), and re-run; or move the clone

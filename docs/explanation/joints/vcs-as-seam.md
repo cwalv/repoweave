@@ -75,44 +75,47 @@ back: the abstraction belongs in the Vcs trait.
 
 ## Worked examples
 
-### (a) `Vcs::resolve_branch_on_remote`, and the parameter it does not take
+### (a) Remote roles, and the parameter the seam does not take
 
-**Concept:** "look up branch X on the remote this repo publishes to."
-The trait owns the qualifier; rwv core never spells a remote name.
+**Concept:** "act on the remote that plays this role." A repo can have
+several remotes, and rwv acts on each for a different reason, so the trait
+resolves a role to an opaque `RemoteHandle`. rwv core holds the handle and
+gives it back to the methods that act on it (`fetch_remote`,
+`resolve_branch_on_remote`, `remote_default_branch`, `push_ref`); it never
+spells a remote name.
 
-`Vcs::clone_repo` and `Vcs::resolve_branch_on_remote` are the two
-methods that own the convention: the git impl clones with the remote
-named `origin` and qualifies a branch lookup as `origin/<branch>`.
+The roles are:
 
-**And the convention is not a variant a caller selects.** Naming the
-remote arrived as a second clone method beside a `clone_repo` that left
-the name to git — which resolves `clone.defaultRemoteName` from the
-operator's own config. Three callers stayed on the plain one, so an
-operator who had set that key got clones rwv made and then could not
-read back: the remote exists under their name, and every later
-`remote_url` / `add_remote` / set-head lookup asks for rwv's. A
-choice between "named by the backend" and "named by whoever ran the
-command" is not optionality either — no caller here wants the second,
-and the seam's own rule says the backend decides. So the two methods
-are one: `clone_repo` names the remote, and no spelling of "clone" opts
-out of the convention.
+| Role | What it is |
+|---|---|
+| **Url remote** of a member | the remote that has the member's `url`. `Vcs::url_remote` finds it by the url, however the clone spells it; a clone that lacks it gets one before a verb fetches, named by the url's owner segment (a repo with no remote yet takes the VCS's first name). A name another url already holds refuses as `name` taken. |
+| **Url remote** of the project repo | the remote `rwv clone`, `rwv init --adopt` or `rwv init --provider` created it with, recorded in the clone's own configuration; else its only remote while it has exactly one; else none. The project has no member url to find it by. |
+| **Push target** | where a branch publishes, in the VCS's own order: the branch's push remote, the repo's default push remote, the remote the branch takes in from, and last the url remote. A branch with none has no push target. |
+| **Home remote** | where a new branch is taken from: the remote the operator configured for it, else the url remote. |
+| **Upstream**, **push branch** | the remote branch a branch takes in from, and the same-named branch on its push target. |
 
-**Why this is the seam shape.** Before the refactor the
-`origin/<branch>` qualifier was spelled out at several call sites in rwv
-core, and the fork convention lived on the manifest's `Role` type, as a
-method handing back the literal strings `"upstream"` and `"origin"` from
-a domain type. Moving both behind trait methods means:
+`Vcs::relation` reads where a branch tip stands to another by ancestry
+(even, behind, ahead, diverged), and `Vcs::reached_by_remote` whether a
+remote's tracking branches reach a commit.
 
-- rwv core never spells `origin` directly.
-- The remote convention is decided once, in the VCS impl.
-- A different VCS impl can choose a different convention (jj's `default`
-  / hg's `default-push`) without rwv core caring.
+**A handle is not a name.** `RemoteHandle` has no constructor outside the
+backends and no way to read its name back as text; it displays, for the
+message that has to say which remote a verb acted on. A remote git called
+`origin`, `upstream`, or whatever the operator's `clone.defaultRemoteName`
+chose is addressed the same way, so no name is special and a clone keeps the
+name git gave it.
 
-There is no bare-branch fallback in the trait surface: when the
-conventional remote doesn't have the branch, the trait returns
-`VcsError::RevisionNotFound`, not the local branch tip. This prevents
-the silent "we advanced to the local working state instead of the
-remote target" failure mode.
+**Why this is the seam shape.** A remote name spelled at a call site puts one
+VCS's convention into core, and makes every clone whose remote is named
+otherwise one rwv cannot read back. Resolving roles at the seam decides each
+convention once, in the VCS impl; a different VCS can resolve the same roles
+by its own means (jj's `default` or hg's `default-push`) without core
+noticing.
+
+There is no bare-branch fallback in the trait surface: when the remote does
+not have the branch, the trait returns `VcsError::RevisionNotFound`, not the
+local branch tip. This prevents the silent "we advanced to the local working
+state instead of the remote target" failure mode.
 
 **What this example teaches second, and the reason it is first.** A seam
 invites carrying a domain value across it "in case" a backend wants it. The
@@ -132,9 +135,9 @@ methods take no role, and the two tempting alternatives are both wrong:
   fossil starting to move.
 
 So the seam's rule is simple: the remote name is entirely the backend's
-business, selected by nothing on the domain side. A backend that genuinely
-needs to route by role gets the parameter in the same change that gives it
-a reader.
+business. Core selects a remote by the role it plays, never by name and never
+by a manifest role. A backend that genuinely needs to route by manifest role
+gets the parameter in the same change that gives it a reader.
 
 ### (b) `Vcs::conflict_resolution_hint`
 
@@ -268,14 +271,14 @@ in a project the report had called clean.
 
 ### (d) `Vcs::push_ref`
 
-**Concept:** push a named ref to the repo's conventional remote. For
-git, `git push origin <ref>`.
+**Concept:** push a named ref to the remote it publishes to, its push
+target. For git, `git push <remote> <ref>`.
 
 The impl owns the mechanism:
 
-- The remote name.
 - The force-push flag spelling.
 - The argument shape `git push <remote> <ref>`.
+- The order a push target is found in (`Vcs::push_target`).
 
 And what it explicitly does **not** own: the choice of which ref to
 publish. The predecessor read the current branch inside the impl, which
@@ -283,7 +286,8 @@ put a policy decision — *what does publishing this repo mean?* — inside
 the git wrapper, where no caller could see it and a detached HEAD
 surfaced as a raw command failure from three layers down. `push_ref`
 takes the ref as a `PublishRef`, a value only the push verb can
-construct, so the decision is made once at the publish gate and the
+construct, and the remote as the handle `push_target` resolved, so the
+decision is made once at the publish gate and the
 refusal for a detached checkout is stated there, in the verb's own
 voice. What that gate *should* choose for a detached checkout is still
 open; the signature only makes the choice visible.
@@ -296,9 +300,9 @@ precondition — but never invokes git directly.
 push-loop draft constructed `git push` argument strings inline. Per the
 verbs design discussion ("refs come from the manifest, not from
 `git push` argument parsing"), the right shape was a trait method whose
-contract names the *intent* ("publish this ref on the repo's
-conventional remote") and hides the *mechanism* (`git push origin <ref>`
-or some entirely different command on another VCS).
+contract names the *intent* ("publish this ref on its push target") and
+hides the *mechanism* (`git push <remote> <ref>` or some entirely
+different command on another VCS).
 
 Which repos get pushed at all is verb policy, and the trait cannot see
 it: the plan-time default scope (owned + fork; dependency and reference
@@ -331,15 +335,13 @@ reviewer should read a green build as having already answered them.
    names the helper to call instead. These three gate rules stop at the
    first test module, under any name: a `#[cfg(test)]` module may build
    a concrete backend.
-5. **Naming the remote.** Two halves, both the compiler's. The constant
-   holding the name is private to `src/git.rs`, so a `use` of it from
-   core is `error[E0603]`; and no method on the `Vcs` trait accepts a
-   remote name, so there is no parameter for a caller to spell one into.
-   rwv manages one remote per clone: core reaches it through the methods
-   that act on it — clone, push, resolve, add, read-URL — and renders
-   its name, when a message needs it, through
-   `Vcs::conventional_remote_name`, which answers for whichever backend
-   the frame was given.
+5. **Naming the remote.** Two halves, both the compiler's. A remote
+   crosses the seam as a `RemoteHandle`, which only a backend constructs
+   and which gives its name to nobody but a message; and no method on the
+   `Vcs` trait accepts text for a remote, so there is no parameter for a
+   caller to spell one into. Core reaches a remote through the role that
+   resolves to it — url remote, push target, home remote — and renders its
+   name, when a message needs it, by displaying the handle.
 
 `scripts/ci-local.sh` runs the gate. It fails naming the file, the line
 and which bypass it is.
@@ -349,23 +351,23 @@ carries git's vocabulary across the seam:
 
 - **A remote name, in operator text.** Item 5 closes every path that
   *acts* on a remote; it does not close the sentences that *mention*
-  one. That residue is one site.
+  one. Those display the handle the verb resolved, which reads as the
+  backend names it.
 
   A hand-written census of these mentions undercounts in one shape: it
   records the sites someone went looking for, and misses the ones in
-  messages whose subject is something else — `rwv update`'s
-  non-fast-forward refusal ("a branch carrying commits origin has not
-  seen") and `rwv update --remote`'s ("diverged from the tip origin is on")
-  among them. Those name the remote through `Vcs::conventional_remote_name`.
+  messages whose subject is something else — `rwv update --remote`'s
+  non-fast-forward refusal ("diverged from the tip origin is on") among
+  them. That one names the member's url remote.
 
-  The hints telling the operator that `origin/HEAD` is unset belong to
+  The hints telling the operator that a remote's `HEAD` is unset belong to
   the third item in this list rather than this one: they spell git
-  commands such as `git remote set-head origin -a`, and respelling the
+  commands such as `git remote set-head <remote> -a`, and respelling the
   remote name alone would leave the commands standing. They come from
   `Vcs::remote_default_branch_repair_hint`, and for a clone `rwv member add`
-  just made from `Vcs::clone_default_branch_repair_hint`, each carrying
-  the name and the command together because owning one without the other
-  leaves a message half across the seam.
+  just made from `Vcs::clone_default_branch_repair_hint`, each given the
+  handle and carrying the name and the command together because owning one
+  without the other leaves a message half across the seam.
 
   The one remaining site is the doctor finding, whose wire `kind` carries
   the word too — the case below.

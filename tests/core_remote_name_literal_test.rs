@@ -1,12 +1,12 @@
-//! rwv core does not spell the conventional remote's name.
+//! rwv core does not spell a remote's name.
 //!
-//! The seam's rule is that the backend decides what the remote is called and
-//! core reaches it through the methods that act on it, rendering the name —
-//! when a message needs one — through `Vcs::conventional_remote_name`. The
-//! compiler closes every path that *acts* on a remote: the name's constant is
-//! private to `src/git.rs`, and no trait method takes a remote name. It cannot
-//! close the sentences that *mention* one, because a string literal is not a
-//! path the type system can refuse.
+//! The seam's rule is that the backend decides what a remote is called and
+//! core reaches it through the role that resolves to it, rendering the name —
+//! when a message needs one — by displaying the `RemoteHandle` it was given.
+//! The compiler closes every path that *acts* on a remote: a handle has no
+//! constructor outside the backend, and no trait method takes a remote name as
+//! text. It cannot close the sentences that *mention* one, because a string
+//! literal is not a path the type system can refuse.
 //!
 //! **Why this is structural rather than behavioral.** A message that spelled
 //! `origin` in core and one that got it from the backend render byte-identical
@@ -36,9 +36,9 @@ use common::src_scan;
 /// whole point of having a seam.
 const BACKEND_MODULE: &str = "git.rs";
 
-/// The name the git backend uses. Written here rather than imported because
-/// the constant holding it is private to the backend — which is the property
-/// this test exists to keep true.
+/// The name git gives a repo's first remote. Written here rather than imported
+/// because the backend holds it privately — which is the property this test
+/// exists to keep true.
 const CONVENTIONAL_REMOTE_NAME: &str = "origin";
 
 /// A site core is allowed to spell the name at, and why.
@@ -92,7 +92,7 @@ fn is_word_byte(b: u8) -> bool {
 }
 
 #[test]
-fn core_does_not_spell_the_conventional_remote_name() {
+fn core_does_not_spell_a_remote_name() {
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for line in src_scan::production_lines() {
         if line.file == BACKEND_MODULE || !spells_the_remote_name(&line.text) {
@@ -131,10 +131,10 @@ fn core_does_not_spell_the_conventional_remote_name() {
 
     assert!(
         failures.is_empty(),
-        "rwv core must not spell the conventional remote's name. Render it \
-         through `Vcs::conventional_remote_name`, or move the sentence behind \
-         a trait method that composes it — the way the repair advice for an \
-         unset remote default branch is composed.\n\n{}",
+        "rwv core must not spell a remote's name. Display the `RemoteHandle` \
+         the verb resolved, or move the sentence behind a trait method that \
+         composes it — the way the repair advice for an unset remote default \
+         branch is composed.\n\n{}",
         failures.join("\n\n")
     );
 }

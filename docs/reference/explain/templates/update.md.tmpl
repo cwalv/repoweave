@@ -81,7 +81,7 @@ revision (see the reconcile-repos how-to).
 
 A newly cloned repo is *born* on that same branch, positioned at the lock
 revision rather than at the remote tip — so bringing up a weave from a lock that
-is behind `origin` leaves every member attached, not detached.
+is behind its remote leaves every member attached, not detached.
 
 ### Submodules
 
@@ -106,7 +106,7 @@ relate that branch to the lock, and only in the direction the lock justifies:
 
 - **Not a fast-forward.** The pin is not a descendant of the branch tip —
   materializing an older lock does this, and so does a branch carrying commits
-  `origin` has never seen. Taking the pin would either rewind the branch or
+  its remote has never seen. Taking the pin would either rewind the branch or
   abandon it, so `update` refuses.
 - **On some other branch.** The checkout is on a branch that is not the local
   counterpart of `branch` — an operator's personal branch. `update` names both
@@ -382,7 +382,7 @@ rwv update --remote --repo github/acme/server --commit
 - *no active project* — the weave holds zero or several projects and none is
   active; pass `--project <name>` or run `rwv activate <name>`.
 - *aligning … is not a fast-forward* — the pin is not a descendant of the branch
-  tip (an older lock, or a branch carrying commits `origin` does not have).
+  tip (an older lock, or a branch carrying commits its remote does not have).
   Reconcile the branch with the pin yourself and re-run, or pass
   `--detach-checkouts` to materialize the pin on a detached HEAD.
 - *is on branch 'X', which is not the local counterpart of …* — the checkout is

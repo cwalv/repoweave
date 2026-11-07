@@ -64,7 +64,7 @@ Any other key in an entry is rejected, naming it. `version` and `submodules`, th
 
 `branch` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
-- **`rwv member add <url>`** populates `branch` from the remote's default branch (`origin/HEAD`), and `rwv member add --new` from the branch the new repo is on.
+- **`rwv member add <url>`** populates `branch` from the remote's default branch, and `rwv member add --new` from the branch the new repo is on.
 - A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv member add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
 - **`rwv update --remote`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
 - **`rwv clone`** and **`rwv update`** check a new clone out on the local counterpart of the branch `branch` names, and `rwv update` refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.

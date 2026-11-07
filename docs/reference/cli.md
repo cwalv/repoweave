@@ -107,6 +107,8 @@ A clone that left any member exits with status `3` ([Exit status](#exit-status))
 
 The pruning fetch of every remote of every repo in the project: the project repo and each member present on disk. It brings branches and tags into each object store, drops the remote-tracking branches a remote no longer has, and reports what moved. It moves no local branch, no checkout and no lock.
 
+A member's clone that lacks its url remote (the remote that has the member's `url`) gets one before the fetch, named by the url's owner segment. When that name already holds another url, the run refuses before it adds or fetches anything: `name` `taken`, naming the remote and both urls, with the choice to configure where the repo pushes and pulls.
+
 A repo's fetch holds the claim on its object store, so fetches into one store run one at a time and parallel seats wait on each other instead of failing on a ref lock. A remote-tracking branch that moved to a tip not descending from the old one is `rewritten`, and its old tip is kept as a superseded tip under `refs/rwv/superseded/`. A branch the remote deleted is `pruned`, which supersedes nothing. A member not on disk is reported `skipped`; `rwv update` clones it. A repo whose remote could not be completed is `unconfirmed`, the cause named, and the run exits 1 with `partial-run-aborted` after trying every repo.
 
 | Flag | Effect |
@@ -250,11 +252,11 @@ Passing both `--regenerate-drifted` and `--adopt-drifted` is refused. The bare r
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
-Create a new project repo at `projects/<name>/` with an empty `rwv.toml`, configure `rwv.lock merge=rwv-ours` in `.gitattributes` and the `merge.rwv-ours` git driver in the project repo's config (checked by `rwv doctor` as `missing-replay-exclusion` and `missing-merge-driver-config`), author the integration files an empty manifest implies (`<name>.code-workspace` with the default integrations), and activate the project. A new project starts with nothing for `rwv doctor` to report. With `--provider`, configures the project repo's remote URL.
+Create a new project repo at `projects/<name>/` with an empty `rwv.toml`, configure `rwv.lock merge=rwv-ours` in `.gitattributes` and the `merge.rwv-ours` git driver in the project repo's config (checked by `rwv doctor` as `missing-replay-exclusion` and `missing-merge-driver-config`), author the integration files an empty manifest implies (`<name>.code-workspace` with the default integrations), and activate the project. A new project starts with nothing for `rwv doctor` to report. With `--provider`, adds a remote with the project repo's URL and records it as the project repo's url remote.
 
 When invoked in an **empty directory**, `init` bootstraps that directory as a weave root (no pre-existing `rwv.toml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
 
-With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo), and runs the adopted project's install hooks as it activates it. It authors no integration file: the adopted project's members are not on disk until `rwv fetch`, and `rwv doctor --fix` regenerates once they are. `--no-materialize` skips those hooks; without `--adopt` it is a usage error (exit 2), since a new project has no members for a hook to act on.
+With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo), records the remote the clone made as the project repo's url remote, and runs the adopted project's install hooks as it activates it. It authors no integration file: the adopted project's members are not on disk until `rwv fetch`, and `rwv doctor --fix` regenerates once they are. `--no-materialize` skips those hooks; without `--adopt` it is a usage error (exit 2), since a new project has no members for a hook to act on.
 
 ### `rwv member`
 
@@ -267,7 +269,7 @@ Clone a repo (if not present), register it in the target project's `rwv.toml`, s
 The positional argument has one spelling per meaning:
 
 - **A URL** (`https://…`, `git@…`, `file://` for a local remote) or **registry shorthand** (`github/owner/repo`) clones from that remote.
-- **`--adopt <path>`** registers the clone already at `<path>` under the weave root, reading its URL from its `origin` remote. A relative `<path>` resolves against the directory `rwv` runs in (or the `-C`/`-w` directory), symlinks in it are followed, and the member path recorded is the position of the location it leads to under the weave root containing it; from a workweave, a path inside the workweave names the primary's clone at the same position. No clone there (a bare repo counts as none) refuses with `no-clone-to-adopt`; a location under no weave root refuses with `adopt-path-outside-weave`; a workweave path holding a clone that is not a worktree of the primary's refuses with `foreign-clone-in-workweave`.
+- **`--adopt <path>`** registers the clone already at `<path>` under the weave root, reading its URL from its remote. A clone with several remotes refuses with `no-remote-url`, since the URL to record is a choice among them: remove the others, or name the URL (`rwv member add <url>`) when the clone sits at that URL's placement. A relative `<path>` resolves against the directory `rwv` runs in (or the `-C`/`-w` directory), symlinks in it are followed, and the member path recorded is the position of the location it leads to under the weave root containing it; from a workweave, a path inside the workweave names the primary's clone at the same position. No clone there (a bare repo counts as none) refuses with `no-clone-to-adopt`; a location under no weave root refuses with `adopt-path-outside-weave`; a workweave path holding a clone that is not a worktree of the primary's refuses with `foreign-clone-in-workweave`.
 - **`--new <address>`** creates a repo; see below.
 - **Anything else** — a plain path, relative or absolute — refuses with `unresolvable-repo-source`, naming both the `file://` and the `--adopt` spelling. A URL-shaped argument no registry can place (`https://example.com`) refuses with `no-matching-registry`.
 
@@ -284,7 +286,7 @@ The positional argument has one spelling per meaning:
 
 `rwv member add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
 
-**A clone already at the placement.** When the URL's placement already holds a git clone, `member add` registers it only if its `origin` URL is equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no `origin`, refuses with `foreign-clone-at-placement`, naming `rwv member add --adopt <path>`; nothing is written. Anything at the placement that is not a clone (a directory, empty or not, or a file) refuses with `non-clone-at-placement`, naming it; so does one at the workweave's own placement when `member add` or `member add --adopt` runs from a workweave.
+**A clone already at the placement.** When the URL's placement already holds a git clone, `member add` registers it only if one of its remotes has a URL equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no remote, refuses with `foreign-clone-at-placement`, naming `rwv member add --adopt <path>`; nothing is written. Anything at the placement that is not a clone (a directory, empty or not, or a file) refuses with `non-clone-at-placement`, naming it; so does one at the workweave's own placement when `member add` or `member add --adopt` runs from a workweave.
 
 **Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognize, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 
@@ -387,10 +389,13 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 
 **Preconditions** (evaluated in this order, before any network call, under `--dry-run` too):
 - **Primary weave only** — refused inside a workweave (`push-from-workweave`); land work into primary with `rwv sync-to` first.
-- **Project repo branch** — `projects/<project>` must be on the branch its remote declares as default (`origin/HEAD`), whatever that branch is called. With `origin/HEAD` unset push refuses rather than guess (`no-remote-default-branch`, naming `git remote set-head origin -a`); a detached or unborn HEAD refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
+- **Project repo branch** — `projects/<project>` must be on the branch that the remote it publishes to declares as default, whatever that branch is called. With that remote's `HEAD` unset push refuses rather than guess (`no-remote-default-branch`, naming the `git remote set-head` that records it); a detached or unborn HEAD refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
 - **Committed project state** — the project repo has no staged or unstaged change to a tracked file, and `rwv.toml` and `rwv.lock` are tracked (`edits`). Push publishes the project repo's last commit, so commit first: `rwv lock --commit` when only those two files are uncommitted. Other untracked files pass.
 - **Lock agreement** — every member repo's HEAD must match the committed `rwv.lock` entry (`lock-state-mismatch`).
 - **Pushable member branches** — every repo in the plan must be on a branch (`unpushable-repo-branch`).
+- **Where each branch publishes** — every branch goes to its push target, found in git's order: the branch's `pushRemote`, `remote.pushDefault`, the remote the branch takes in from, and last the repo's url remote (a member's, the remote that has its `url`; the project repo's, the one it was created with, else its only remote). A branch with none has no push target, and one that takes in from a branch of another name has a foreign upstream; either refuses as `push-branch` (`no push target`, `foreign upstream`) with the choice to configure where it pushes, and so does a branch that has diverged from its push branch while holding commits of its own (`push-branch` `diverged`, the commits listed). Every refusal is reported before anything is pushed. `--force` waives the divergence refusal and the `behind` skip below, as a force-push always has.
+
+Two states complete instead of refusing, and `push` prints each under its repo and leaves the repo unpushed. A branch behind its push branch is `push-branch` `behind`, with the choice to take it in (`rwv update --remote --repo <m>`). A branch whose upstream the remote deleted is `push-branch` `gone`, listing the commits only it holds, and is pushed only when `--repo` or `--role` names the repo.
 
 | Flag | Effect |
 |---|---|
@@ -401,7 +406,7 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 | `--dry-run` | Print the push plan without executing |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`--json` emits the envelope `{"$schema": "...", "outcomes": [...], "refused": [...]}`. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. When a member's push is rejected, the project repo is withheld: `refused` lists each such member as `publish` `withheld`. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "outcomes": [...], "refused": [...], "reported": [...]}`, `reported` holding the repos judged and left unpushed. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. When a member's push is rejected, the project repo is withheld: `refused` lists each such member as `publish` `withheld`. See [JSON envelope convention](#--json-envelope-convention).
 
 See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
@@ -461,6 +466,8 @@ Show per-repo state for the CWD workspace.
 | mid-op | `mid-rebase` / `mid-merge` / `mid-cherry-pick` / `mid-bisect` when the repo is stopped in that operation; absent otherwise |
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each record includes `lock_pinned_by_name` (`true` when an older or hand-edited `rwv.lock` entry holds a tag or branch name rather than a 40-character hex commit SHA; `rwv lock` rewrites it to a commit SHA). See [JSON envelope convention](#--json-envelope-convention).
+
+Below the table, `status` prints one `push-branch` line for each member whose checked-out branch stands apart from the branch it publishes to, with that state's choices: `behind` (take it in with `rwv update --remote --repo <m>`), `ahead` (`rwv push --repo <m>`), `diverged`, `gone`, `foreign upstream` and `no push target`. A `gone` line appears only while the branch holds commits no remote-tracking branch reaches, and lists them: a branch whose upstream was deleted after its work landed is not marked. It reads refs as last fetched, so `rwv fetch` first. `--json` carries the same lines as `judged`, each with its `axis`, `state`, `facts` and `choices`; the array is empty when no member stands apart.
 
 A `missing` relation names a clone directory that has vanished; the repair is [`rwv update`](#rwv-update-), which clones the member again, run from the weave root (see `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; `rwv update` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, [`rwv fetch`](#rwv-fetch-) or `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 

@@ -201,7 +201,8 @@ pub enum RefusalKind {
     RepoNotInManifest,
     /// The clone `--delete` would destroy is referenced by other projects.
     SharedCloneReferenced,
-    /// The local clone has no conventional remote to read a URL from.
+    /// The local clone has no remote, or several, or one that records a
+    /// relative path: no one URL to read.
     NoRemoteUrl,
     /// `--adopt` names a path that holds no clone.
     NoCloneToAdopt,

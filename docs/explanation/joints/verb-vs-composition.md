@@ -160,7 +160,7 @@ the project repo last; refuses on lock mismatch.
 - *Per-repo policy from role?* Yes — `dependency` and `reference` repos
   are excluded from the default push scope: they return 403 against
   upstreams the operator doesn't own. Fork repos
-  push just like owned repos; both use `origin`.
+  push just like owned repos; both publish to each branch's push target.
 - *Cross-repo ordering?* Yes — project repo last. The committed lock
   must never reference unpushed manifest SHAs (otherwise
   collaborators' `rwv clone` hits "object missing" against

@@ -33,6 +33,19 @@ rwv push --repo github/acme/dep     # push one specific dep
 rwv push --role owned --role fork   # explicit; same as the bare default
 ```
 
+**Where each branch goes.** A branch publishes to its push target, found in
+git's order: its `pushRemote`, `remote.pushDefault`, the remote it takes in
+from, and last the repo's url remote (a member's: the remote that has its
+`url`; the project repo's: the one it was created with, else its only remote).
+Before anything is pushed, `push` judges each branch on the `push-branch` kind
+and refuses the ones that cannot publish: `no push target`, `foreign upstream`
+(it takes in from a branch of another name), and `diverged` while it holds
+commits of its own. Two states complete instead: a branch `behind` its push
+branch is left unpushed with the choice to take it in, and a branch whose
+upstream the remote deleted (`gone`) is left unpushed unless `--repo` or
+`--role` names its repo. `--force` waives the divergence refusal and the
+`behind` skip.
+
 Agents call `rwv push --json` to get machine-readable per-repo outcomes so
 they can react to partial failures without parsing human-readable text.
 
@@ -86,7 +99,9 @@ records carry a `message` field with the free-form error from the git push.
 choices as `rwv explain <axis>` lists them: the project repo's `edits` when it
 has uncommitted changes, before anything is pushed; and each member whose
 push the remote rejected, as `publish` `withheld`, when the project repo was
-not pushed because of it. It is empty, not absent, otherwise.
+not pushed because of it. It is empty, not absent, otherwise. `reported`
+lists the repos judged `behind` or `gone` and left unpushed, with their
+choices; it is empty when none was.
 
 Schema:
 
@@ -590,6 +605,11 @@ rwv push -j 4
   since push publishes the project repo's last commit. Run the choice printed
   beneath it (`rwv lock --commit` when only `rwv.toml` or `rwv.lock` is
   uncommitted, the VCS's commit or stash otherwise) and re-run.
+- *`push-branch no push target`* — the branch has no remote to publish to: none
+  is configured for it and the repo has no url remote. Run a choice printed
+  beneath it (configure its push remote, or add the remote).
+- *`push-branch diverged`* — the branch and its push branch each hold commits
+  the other lacks, and the branch's own are listed. Take theirs in first.
 - *lock-state mismatch* — one or more member repos' HEAD differs from the
   recorded lock SHA. Run `rwv lock --commit` to record each repo's HEAD in
   the lock, or move the repo's branch to its lock commit without detaching

@@ -40,7 +40,7 @@ rwv materialize
 
 ## Commit and publish the project repository
 
-`projects/web-app/` is an ordinary git repository. `rwv lock --commit` commits `rwv.lock`, plus `rwv.toml` when it has uncommitted changes, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set `origin/HEAD`, which `rwv push` requires before it publishes the project repo:
+`projects/web-app/` is an ordinary git repository. `rwv lock --commit` commits `rwv.lock`, plus `rwv.toml` when it has uncommitted changes, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set its `HEAD`, which `rwv push` requires before it publishes the project repo:
 
 ```bash
 git -C projects/web-app add -A
@@ -49,6 +49,8 @@ git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
 git -C projects/web-app push -u origin main
 git -C projects/web-app remote set-head origin main
 ```
+
+`rwv push` publishes the project repo to its url remote: the remote `rwv init --provider`, `rwv init --adopt` or `rwv clone` created it with, else its only remote. With several remotes and none recorded, a branch that has no push remote of its own has no push target, and `rwv push` refuses it (`push-branch` `no push target`) before pushing anything.
 
 Teammates and CI can now clone and materialize the entire workspace with one command:
 

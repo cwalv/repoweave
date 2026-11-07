@@ -877,8 +877,8 @@ enum PushOutcome {
     Failed(String),
 }
 
-/// Per-repo worker: push one manifest entry on its current branch via the
-/// conventional remote. All user-facing output is routed through
+/// Per-repo worker: push one manifest entry on its current branch to its
+/// push target. All user-facing output is routed through
 /// `reporter`, which prefixes `[<repo>]` and serializes writes under
 /// `-j > 1`; under `-j 1` the reporter is a no-prefix passthrough that
 /// matches the pre-`-j` serial output exactly.
