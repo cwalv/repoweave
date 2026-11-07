@@ -17,13 +17,14 @@ fn the_harness_can_delete_and_create_without_consent() {
     let (compiled, stderr) = compile(
         r#"
         use repoweave::activate::ActivateOptions;
+        use repoweave::deletion::RemoteDeletes;
         use repoweave::manifest::{ProjectName, WorkweaveName};
         use repoweave::workweave::{
             create_workweave, delete_workweave, CreateWorkweave, DirtySource,
         };
         use std::path::Path;
         pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = delete_workweave(ws, p, n, None, None, None);
+            let _ = delete_workweave(ws, p, n, None, None, None, &RemoteDeletes::default());
         }
         pub fn create(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
             let _ = create_workweave(CreateWorkweave {
@@ -48,11 +49,13 @@ fn delete_does_not_take_a_bool_for_discarding_uncommitted_work() {
         "E0308",
         "discarding uncommitted work takes a DiscardUncommittedConsent, not true",
         r#"
+        use repoweave::deletion::RemoteDeletes;
+        use repoweave::deletion::RemoteDeletes;
         use repoweave::manifest::{ProjectName, WorkweaveName};
         use repoweave::workweave::delete_workweave;
         use std::path::Path;
         pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = delete_workweave(ws, p, n, None, true, None);
+            let _ = delete_workweave(ws, p, n, None, true, None, &RemoteDeletes::default());
         }
         "#,
     );

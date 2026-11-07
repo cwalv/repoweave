@@ -23,11 +23,10 @@
 //! a `BTreeMap<String, _>`.
 
 use repoweave::check::{
-    AlignmentKind, BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind,
-    DriftKind, IndexDriftKind, OrphanedSavepointKind, PermissionsKind, PlacementConvergence,
-    ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind, SubmoduleCommitKind,
-    UnparseableProjectKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
-    WorkweaveTreeIntegrityKind,
+    AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind, IndexDriftKind,
+    OrphanedSavepointKind, PermissionsKind, PlacementConvergence, ProvenanceKind,
+    RegistrationDirectoryKind, ReplayExclusionKind, SubmoduleCommitKind, UnparseableProjectKind,
+    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -217,29 +216,6 @@ pub fn case_token(v: &CheckViolation) -> String {
             };
             format!("clone-topology/{tail}")
         }
-        CheckViolation::BranchDiscipline { sub_kind, .. } => {
-            let tail = match sub_kind {
-                BranchDisciplineKind::UnrecordedEphemeralBranch { .. } => {
-                    "unrecorded-ephemeral-branch"
-                }
-                BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. } => {
-                    "canonical-holds-live-workweave-ref"
-                }
-                BranchDisciplineKind::CanonicalHoldsLeakedRef { .. } => {
-                    "canonical-holds-leaked-ref"
-                }
-                BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => {
-                    "stale-ephemeral-branch-safe"
-                }
-                BranchDisciplineKind::StaleEphemeralBranchLive { .. } => {
-                    "stale-ephemeral-branch-live"
-                }
-                BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => {
-                    "stale-ephemeral-branch-unowned"
-                }
-            };
-            format!("branch-discipline/{tail}")
-        }
         CheckViolation::Alignment { sub_kind, .. } => {
             let tail = match sub_kind {
                 AlignmentKind::OnBranch => "on-branch",
@@ -266,8 +242,6 @@ pub fn case_token(v: &CheckViolation) -> String {
                 "dead-op-lease/owner-op-id-mismatch".into()
             }
         },
-        CheckViolation::DanglingRefReceipt { .. } => "dangling-ref-receipt".into(),
-        CheckViolation::PreFlatRefReceipt { .. } => "pre-flat-ref-receipt".into(),
         CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
             OrphanedSavepointKind::Redundant => "orphaned-savepoint/redundant".into(),
             OrphanedSavepointKind::Live => "orphaned-savepoint/live".into(),
@@ -658,26 +632,6 @@ pub fn corpus() -> Vec<CheckViolation> {
                 actual_store_path: path("/other/.git"),
             },
         },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::UnrecordedEphemeralBranch {
-                branch: "proj--feat-a".into(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
-                actual_branch: "proj--feat-a".into(),
-                workweave: workweave(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::CanonicalHoldsLeakedRef {
-                actual_branch: "proj--gone".into(),
-                project: project(),
-            },
-        },
         CheckViolation::Alignment {
             repo_path: path("/ws/github/acme/repo"),
             project: project(),
@@ -720,27 +674,6 @@ pub fn corpus() -> Vec<CheckViolation> {
             branch: None,
             listed: Vec::new(),
         },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::StaleEphemeralBranchSafe {
-                branch: "proj--gone".into(),
-                project: project(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::StaleEphemeralBranchLive {
-                branch: "proj--gone".into(),
-                project: project(),
-                tip_sha: commit(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::StaleEphemeralBranchUnowned {
-                branch: "proj--gone".into(),
-            },
-        },
         CheckViolation::StaleWorktreeRegistration {
             workweave: Some(workweave()),
             repo: repo(),
@@ -773,16 +706,6 @@ pub fn corpus() -> Vec<CheckViolation> {
                 owner_op_id: "op-2".into(),
             },
             created_at: Some("2026-01-01T00:00:00Z".into()),
-        },
-        CheckViolation::DanglingRefReceipt {
-            project: project(),
-            store_path: path("/ws/github/acme/repo"),
-            ref_name: "proj--feat-a".into(),
-        },
-        CheckViolation::PreFlatRefReceipt {
-            project: project(),
-            store_path: path("/ws/github/acme/repo"),
-            ref_name: "proj--feat-a/main".into(),
         },
         CheckViolation::OrphanedSavepoint {
             workweave: Some(workweave()),

@@ -842,18 +842,34 @@ pub fn run() -> anyhow::Result<()> {
                     WorkweaveAction::Delete {
                         name,
                         discard_uncommitted,
-                        discard_unmerged_commits,
+                        discard_unlanded,
+                        delete_remote,
+                        delete_remote_unlanded,
+                        json,
                         project,
                     } => {
                         let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
-                        crate::workweave::delete_workweave(
+                        let project = ctx.require_active_project_on_disk()?;
+                        let deletion = crate::workweave::delete_workweave(
                             ctx.primary_path(),
-                            ctx.require_active_project_on_disk()?,
+                            project,
                             &WorkweaveName::new(name)?,
                             None,
                             consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
-                            consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits),
+                            consent::DiscardUnlandedConsent::from_flag(discard_unlanded),
+                            &crate::deletion::RemoteDeletes {
+                                landed: delete_remote,
+                                unlanded: delete_remote_unlanded,
+                            },
                         )?;
+                        crate::workweave::report_deletion(
+                            &deletion,
+                            project,
+                            OutputMode::from_flag(json),
+                        )?;
+                        if deletion.left_something() {
+                            return Err(crate::exit_status::CompletedWithRemainder.into());
+                        }
                     }
                     WorkweaveAction::Create {
                         name,
@@ -1043,6 +1059,34 @@ pub fn run() -> anyhow::Result<()> {
                     project.map(crate::manifest::ProjectName::new).transpose()?;
                 let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
                 crate::branch::run_list(&ctx, OutputMode::from_flag(json))?;
+            }
+            BranchAction::Delete {
+                branch,
+                target,
+                discard_unlanded,
+                delete_remote,
+                delete_remote_unlanded,
+                json,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::branch::run_delete(
+                    &ctx,
+                    crate::branch::Delete {
+                        branch,
+                        target,
+                        discard_unlanded: consent::DiscardUnlandedConsent::from_flag(
+                            discard_unlanded,
+                        ),
+                        remote_deletes: crate::deletion::RemoteDeletes {
+                            landed: delete_remote,
+                            unlanded: delete_remote_unlanded,
+                        },
+                    },
+                    OutputMode::from_flag(json),
+                )?;
             }
             BranchAction::SetMode {
                 words,

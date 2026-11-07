@@ -99,7 +99,7 @@ fn create_worktree_in_workweave(
         role,
         recurse_submodules,
         start.id().as_str(),
-        crate::workweave::ReceiptedBranch::Attach,
+        crate::workweave::BranchPolicy::Restore,
     )
     .with_context(|| {
         format!(
@@ -1317,7 +1317,6 @@ pub fn run_remove(
             vcs.as_ref(),
             ctx,
             &repo_path,
-            &project,
             crate::sync::RemovalCause::RemoveDelete,
         )?)
     } else {

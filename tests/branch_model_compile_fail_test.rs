@@ -121,14 +121,14 @@ fn the_comparison_cannot_be_laundered_through_as_str() {
 }
 
 #[test]
-fn an_owned_ref_has_no_as_str_either() {
+fn a_found_branch_has_no_as_str_either() {
     assert_fails_with(
         "E0599",
-        "a receipt is compared by a named predicate, not by string",
+        "a found branch is placed, never compared as a string",
         r#"
-        use repoweave::vcs::OwnedRef;
-        pub fn spell(owned: &OwnedRef) -> &str {
-            owned.as_str()
+        use repoweave::vcs::FoundBranch;
+        pub fn spell(found: &FoundBranch) -> &str {
+            found.as_str()
         }
         "#,
     );
@@ -190,39 +190,113 @@ fn an_attached_ref_cannot_be_constructed_by_hand() {
 }
 
 #[test]
-fn a_receipt_cannot_be_minted_outside_the_registry() {
-    assert_fails_with(
-        "E0624",
-        "ownership is by record; a receipt comes from the receipt store",
+fn a_destroy_proof_cannot_be_written_by_literal() {
+    // The fields are private to `vcs`, so the proof is not a value a caller
+    // can fill in: the only constructors run the check they certify. rustc
+    // reports a literal over private fields without an error code, so the
+    // refusal is pinned by its message.
+    let (compiled, stderr) = compile(
         r#"
-        use repoweave::vcs::{OwnedRef, RawRefName, ResolvedRevisionId};
+        use repoweave::vcs::{DestroyProof, RawRefName, Site};
         use std::path::PathBuf;
-        pub fn forge() -> OwnedRef {
-            OwnedRef::from_receipt(
-                PathBuf::from("/tmp/store"),
-                RawRefName::new("p--ww"),
-                ResolvedRevisionId::from_canonical("a".repeat(40), None),
-            )
+        pub fn forge() -> DestroyProof {
+            DestroyProof {
+                site: Site::Local,
+                store: PathBuf::from("/tmp/store"),
+                branch: RawRefName::new("main"),
+            }
+        }
+        "#,
+    );
+    assert!(!compiled, "a proof written by hand must not compile");
+    assert!(
+        stderr.contains("cannot construct `DestroyProof` with struct literal syntax"),
+        "a proof is the output of a check, not a struct a caller fills in; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_destroy_proof_has_no_readable_fields() {
+    assert_fails_with(
+        "E0616",
+        "the branch a proof is about is read through the seam, never off the proof",
+        r#"
+        use repoweave::vcs::DestroyProof;
+        pub fn peek(proof: &DestroyProof) {
+            let _ = &proof.tip;
         }
         "#,
     );
 }
 
 #[test]
-fn a_deletion_warrant_cannot_be_written_by_variant() {
+fn a_destroy_proof_cannot_be_written_by_variant() {
     // A `pub enum`'s variant constructors cannot be made private in Rust,
-    // so the warrant is an opaque struct over a private enum and the only
+    // so the proof is an opaque struct over a private enum and the only
     // constructors are checkers that RUN their check.
-    // E0223: `DeletionWarrant` is a struct, so `DeletionWarrant::Unmoved`
-    // does not name a variant at all — which is exactly the property a
-    // `pub enum` could not have provided.
+    // E0223: `DestroyProof` is a struct, so `DestroyProof::Landed` does not
+    // name a variant at all — which is exactly the property a `pub enum`
+    // could not have provided.
     assert_fails_with(
         "E0223",
-        "a warrant is the output of a check, not a value you fill in",
+        "a proof is the output of a check, not a value you fill in",
         r#"
-        use repoweave::vcs::DeletionWarrant;
-        pub fn forge() -> DeletionWarrant {
-            DeletionWarrant::Unmoved { recorded_tip: unimplemented!() }
+        use repoweave::vcs::DestroyProof;
+        pub fn forge() -> DestroyProof {
+            DestroyProof::Landed { onto: unimplemented!() }
+        }
+        "#,
+    );
+}
+
+#[test]
+fn the_one_way_to_a_landed_proof_runs_the_check() {
+    // Control for the probes around it: the legal route compiles.
+    let (compiled, stderr) = compile(
+        r#"
+        use repoweave::vcs::{DestroyProof, RawRefName, ResolvedRevisionId, Site, Vcs, VcsError};
+        use std::path::Path;
+        pub fn prove(
+            vcs: &dyn Vcs,
+            store: &Path,
+            branch: &RawRefName,
+            onto: &[ResolvedRevisionId],
+        ) -> Result<(), VcsError> {
+            if let Some(proof) = DestroyProof::landed(vcs, store, Site::Local, branch, onto)? {
+                vcs.delete_branch(proof)?;
+            }
+            Ok(())
+        }
+        "#,
+    );
+    assert!(compiled, "control snippet must compile; got:\n{stderr}");
+}
+
+#[test]
+fn a_backup_proof_needs_the_operators_consent() {
+    assert_fails_with(
+        "E0061",
+        "keeping a backup and then destroying is the operator's named override",
+        r#"
+        use repoweave::vcs::{DestroyProof, RawRefName, Site, Vcs};
+        use std::path::Path;
+        pub fn discard(vcs: &dyn Vcs, store: &Path, branch: &RawRefName) {
+            let _ = DestroyProof::backed_up(vcs, store, Site::Local, branch);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_backup_proof_does_not_take_a_bool_for_consent() {
+    assert_fails_with(
+        "E0308",
+        "consent is a token the flag module mints, not true",
+        r#"
+        use repoweave::vcs::{DestroyProof, RawRefName, Site, Vcs};
+        use std::path::Path;
+        pub fn discard(vcs: &dyn Vcs, store: &Path, branch: &RawRefName) {
+            let _ = DestroyProof::backed_up(vcs, store, Site::Local, branch, true);
         }
         "#,
     );
@@ -259,11 +333,11 @@ fn a_listed_name_cannot_be_deleted() {
     // prefix-glob loop that destroyed a whole set can only report.
     assert_fails_with(
         "E0308",
-        "a RawRefName is not a receipt",
+        "a RawRefName is not a proof",
         r#"
-        use repoweave::vcs::{DeletionWarrant, RawRefName, Vcs};
-        pub fn destroy(vcs: &dyn Vcs, name: &RawRefName, w: DeletionWarrant) {
-            let _ = vcs.delete_owned_ref(name, w);
+        use repoweave::vcs::{RawRefName, Vcs};
+        pub fn destroy(vcs: &dyn Vcs, name: RawRefName) {
+            let _ = vcs.delete_branch(name);
         }
         "#,
     );
@@ -273,25 +347,55 @@ fn a_listed_name_cannot_be_deleted() {
 fn a_requested_name_cannot_be_deleted() {
     assert_fails_with(
         "E0308",
-        "asking for a name is not owning one",
+        "asking for a name is not proving it safe to lose",
         r#"
-        use repoweave::vcs::{DeletionWarrant, EphemeralRefName, Vcs};
-        pub fn destroy(vcs: &dyn Vcs, name: &EphemeralRefName, w: DeletionWarrant) {
-            let _ = vcs.delete_owned_ref(name, w);
+        use repoweave::vcs::{EphemeralRefName, Vcs};
+        pub fn destroy(vcs: &dyn Vcs, name: EphemeralRefName) {
+            let _ = vcs.delete_branch(name);
         }
         "#,
     );
 }
 
 #[test]
-fn a_receipt_alone_is_not_enough_to_delete() {
+fn a_delete_without_a_proof_does_not_compile() {
     assert_fails_with(
         "E0061",
-        "the receipt says it is mine; the warrant says it is safe to lose",
+        "a destroy takes the proof and nothing else, so it cannot be spelled without one",
         r#"
-        use repoweave::vcs::{OwnedRef, Vcs};
-        pub fn destroy(vcs: &dyn Vcs, owned: &OwnedRef) {
-            let _ = vcs.delete_owned_ref(owned);
+        use repoweave::vcs::Vcs;
+        pub fn destroy(vcs: &dyn Vcs) {
+            let _ = vcs.delete_branch();
+        }
+        "#,
+    );
+}
+
+#[test]
+fn there_is_no_destroy_that_takes_a_name() {
+    assert_fails_with(
+        "E0599",
+        "the raw half of a destroy is not on the seam, so no caller can reach it",
+        r#"
+        use repoweave::vcs::{RawRefName, Vcs};
+        use std::path::Path;
+        pub fn destroy(vcs: &dyn Vcs, store: &Path, name: &RawRefName) {
+            let _ = vcs.destroy_local_ref(store, name);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_birth_takes_the_branch_found_not_a_name() {
+    assert_fails_with(
+        "E0308",
+        "a worktree is placed on a FoundBranch, which carries its store and start point",
+        r#"
+        use repoweave::vcs::{RawRefName, Vcs};
+        use std::path::Path;
+        pub fn birth(vcs: &dyn Vcs, name: &RawRefName, dest: &Path) {
+            let _ = vcs.create_worktree_on(name, dest);
         }
         "#,
     );
@@ -422,9 +526,9 @@ fn the_flag_mint_is_not_reachable_from_outside_the_cli_module() {
         "E0624",
         "consent is minted from a named flag, at dispatch, and nowhere else",
         r#"
-        use repoweave::cli::consent::DiscardUnmergedConsent;
-        pub fn mint() -> Option<DiscardUnmergedConsent> {
-            DiscardUnmergedConsent::from_flag(true)
+        use repoweave::cli::consent::DiscardUnlandedConsent;
+        pub fn mint() -> Option<DiscardUnlandedConsent> {
+            DiscardUnlandedConsent::from_flag(true)
         }
         "#,
     );
@@ -443,7 +547,7 @@ fn the_flag_mint_is_not_reachable_from_outside_the_cli_module() {
 // plain-private and `pub(crate)` that would), so an external probe
 // demonstrating this also demonstrates the in-crate claim: no module of
 // `repoweave` other than `cli::consent` — not `vcs.rs`, not `fetch.rs` — can
-// write `DiscardUnmergedConsent(())` by hand either.
+// write `DiscardUnlandedConsent(())` by hand either.
 
 #[test]
 fn a_departure_cannot_be_forged_by_tuple_literal() {
@@ -460,14 +564,14 @@ fn a_departure_cannot_be_forged_by_tuple_literal() {
 }
 
 #[test]
-fn a_discard_unmerged_consent_cannot_be_forged_by_tuple_literal() {
+fn a_discard_unlanded_consent_cannot_be_forged_by_tuple_literal() {
     assert_fails_with(
         "E0423",
         "the field is private to cli::consent; only from_flag/granted can produce one",
         r#"
-        use repoweave::cli::consent::DiscardUnmergedConsent;
-        pub fn forge() -> DiscardUnmergedConsent {
-            DiscardUnmergedConsent(())
+        use repoweave::cli::consent::DiscardUnlandedConsent;
+        pub fn forge() -> DiscardUnlandedConsent {
+            DiscardUnlandedConsent(())
         }
         "#,
     );

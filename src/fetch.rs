@@ -173,7 +173,20 @@ pub(crate) fn pruning_fetch(
         if let Some(absent) = add {
             vcs.add_url_remote(dir, absent)?;
         }
-        vcs.fetch_pruning(claim, dir).map_err(anyhow::Error::from)
+        vcs.fetch_pruning(claim, dir, None)
+            .map_err(anyhow::Error::from)
+    })
+}
+
+/// A pruning fetch of only the remotes `remotes` names.
+pub(crate) fn pruning_fetch_of(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    remotes: &[crate::vcs::RemoteHandle],
+) -> anyhow::Result<PruningFetch> {
+    FetchClaim::hold(vcs, dir, |claim| {
+        vcs.fetch_pruning(claim, dir, Some(remotes))
+            .map_err(anyhow::Error::from)
     })
 }
 

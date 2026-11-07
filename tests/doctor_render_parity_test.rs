@@ -2,12 +2,12 @@
 //! report and the `--json` wire format — and this file pins the two against
 //! each other in both directions.
 //!
-//! The regression it exists for: `scan_pre_flat_receipts` had exactly two call
-//! sites, the text path and its own `--fix` helper. The JSON path called its
-//! own collection function, which never named the scan, so
-//! `rwv doctor --json` emitted zero `pre-flat-ref-receipt` findings while the
-//! text report listed them. The convention that text is a subset of JSON held
-//! in reverse and nothing noticed, because the convention was prose.
+//! The regression it exists for: a scan once had exactly two call sites, the
+//! text path and its own `--fix` helper. The JSON path called its own
+//! collection function, which never named the scan, so `rwv doctor --json`
+//! emitted none of that finding while the text report listed them. The
+//! convention that text is a subset of JSON held in reverse and nothing
+//! noticed, because the convention was prose.
 //!
 //! Two ways to lose a finding, on each of the two channels `rwv doctor`
 //! carries them on — `CheckViolation` for its own scans, `Issue` for what an
@@ -60,7 +60,6 @@ use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token, 
 use common::src_scan;
 use repoweave::check::CheckViolation;
 use repoweave::integration::{Issue, IssueKind};
-use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -168,7 +167,7 @@ fn the_parity_check_reports_a_json_renderer_that_drops_a_kind() {
     // The reported regression, planted: a collector reachable from the text
     // path and not the JSON one shows up here as a kind --json cannot produce.
     let holed = |v: CheckViolation| {
-        if matches!(v, CheckViolation::PreFlatRefReceipt { .. }) {
+        if matches!(v, CheckViolation::LegacyWorkweaveIndex { .. }) {
             return false;
         }
         renders_as_json(v)
@@ -176,7 +175,7 @@ fn the_parity_check_reports_a_json_renderer_that_drops_a_kind() {
     let gaps = parity_gaps(&renders_as_text, &holed, JSON_ONLY_BY_DESIGN);
     assert!(
         gaps.contains(
-            &"pre-flat-ref-receipt: the text report renders it, --json does not".to_string()
+            &"legacy-workweave-index: the text report renders it, --json does not".to_string()
         ),
         "a --json renderer that drops a kind must be reported; got:\n  {}",
         gaps.join("\n  ")
@@ -472,7 +471,7 @@ fn the_reachability_walk_actually_reads_the_source() {
         found.len()
     );
     assert!(
-        found.iter().any(|c| c == "scan_pre_flat_receipts"),
+        found.iter().any(|c| c == "scan_alignment"),
         "the scan this file exists for must be among the collectors: {found:?}"
     );
     let reached = reachable_from(&fns, PIPELINE);
@@ -487,17 +486,13 @@ fn the_reachability_walk_actually_reads_the_source() {
 // Instrument 3: the reported bug, end to end
 // ---------------------------------------------------------------------------
 
-/// A receipt whose recorded name carries a `/` segment, in a workspace where
-/// no workweave mints that name. Both renderers must report it.
+/// A workweave index with no `receipts` key, in a workspace with one project.
+/// Both renderers must report it.
 ///
 /// This is the fixture the regression was found on. The two instruments above
 /// reason about renderers and about the source; this one runs the binary.
 #[test]
-fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
-    use repoweave::git::git_vcs;
-    use repoweave::vcs::{EphemeralRefName, LegacyEphemeralRefName, RawRefName};
-    use repoweave::workweave_index::RefRegistry;
-
+fn a_legacy_index_reaches_both_the_report_and_the_wire_format() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(ws.join("github")).unwrap();
@@ -507,48 +502,13 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
         "[repositories]\n",
     )
     .unwrap();
-
-    let canonical = ws.join("github").join("acme").join("repo");
-    std::fs::create_dir_all(&canonical).unwrap();
-    let git_in = |args: &[&str]| {
-        let out = common::git()
-            .args(args)
-            .current_dir(&canonical)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    };
-    git_in(&["init", "--initial-branch=main", "-q"]);
-    git_in(&["config", "user.email", "test@test"]);
-    git_in(&["config", "user.name", "Test"]);
-    std::fs::write(canonical.join("README.md"), "init\n").unwrap();
-    git_in(&["add", "README.md"]);
-    git_in(&["commit", "-q", "-m", "init"]);
-
-    // No workweave `ghost` on disk, so nothing mints `myproj--ghost/main`.
-    git_in(&["branch", "myproj--ghost/main", "main"]);
-
-    let proj = ProjectName::new("myproj").unwrap();
-    let flat = EphemeralRefName::mint(
-        &WorkweaveId {
-            project: proj.clone(),
-            name: WorkweaveName::new("ghost").unwrap(),
-        }
-        .flat(),
-    );
-    let observed = RawRefName::new("myproj--ghost/main");
-    let legacy = LegacyEphemeralRefName::claim(&flat, &observed).unwrap();
-    let tip = git_vcs()
-        .resolve_local_branch_tip(&canonical, &observed)
-        .unwrap()
-        .expect("the pre-flat branch exists");
-    RefRegistry::for_project(&ws, &proj)
-        .adopt_legacy(&canonical, legacy, tip)
-        .expect("receipt recorded");
+    std::fs::write(
+        ws.join("projects")
+            .join("myproj")
+            .join(".rwv-workweave-index"),
+        r#"{"container":"/c","workweaves":{}}"#,
+    )
+    .unwrap();
 
     let text = common::rwv()
         .args(["doctor", "--all"])
@@ -557,7 +517,7 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
         .unwrap();
     let text_stdout = String::from_utf8_lossy(&text.stdout).into_owned();
     assert!(
-        text_stdout.contains("myproj--ghost/main") && text_stdout.contains("carries a `/` segment"),
+        text_stdout.contains(".rwv-workweave-index") && text_stdout.contains("receipts"),
         "the text report must carry the finding; got:\n{text_stdout}"
     );
 
@@ -576,20 +536,9 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
         .filter_map(|v| v["kind"].as_str())
         .collect();
     assert!(
-        kinds.contains(&"pre-flat-ref-receipt"),
+        kinds.contains(&"legacy-workweave-index"),
         "`doctor --json` must emit the finding the text report shows; kinds were \
          {kinds:?}, document:\n{json_stdout}"
-    );
-
-    let recorded = doc["violations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["kind"] == "pre-flat-ref-receipt")
-        .expect("the finding is in the document");
-    assert_eq!(
-        recorded["ref_name"], "myproj--ghost/main",
-        "and it must name the receipt, not just the kind: {recorded}"
     );
 }
 

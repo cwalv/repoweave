@@ -6,15 +6,15 @@ use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange,
     BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
-    DerivedContentPolicy, DerivedContentResolution, DiffBeyond, DiscardOutcome, FileChange, Force,
-    ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName, MemberBirth,
-    MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeListing, RawRefName,
-    RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsSite, RefOrigin,
-    RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle,
-    RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, ReplayExclusionState, ResolvedEndpoint,
-    ResolvedRevisionId, SavepointListing, SubmoduleBirth, SubmoduleCheckout, TrackedFile,
-    TrackedFileKind, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
+    FileChange, Force, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
+    LocalRefName, MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef,
+    RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
+    RecordsSite, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
+    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
+    ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
+    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Upstream,
+    UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -1719,13 +1719,21 @@ impl Vcs for GitVcs {
         url_remote: Option<&RemoteHandle>,
     ) -> Result<Option<RemoteHandle>, VcsError> {
         self.verify_attachment(on)?;
-        let branch = on.to_string();
+        self.push_target_of(on.repo(), &RawRefName::new(on.to_string()), url_remote)
+    }
+
+    fn push_target_of(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
         for key in [
             format!("branch.{branch}.pushRemote"),
             "remote.pushDefault".to_owned(),
             format!("branch.{branch}.remote"),
         ] {
-            if let Some(name) = Self::config_get(on.repo(), &key)? {
+            if let Some(name) = Self::config_get(repo, &key)? {
                 if name != "." {
                     return Ok(Some(RemoteHandle::new(name)));
                 }
@@ -1920,6 +1928,7 @@ impl Vcs for GitVcs {
         &self,
         _claim: &crate::fetch_claim::FetchClaim,
         repo: &Path,
+        only: Option<&[RemoteHandle]>,
     ) -> Result<PruningFetch, VcsError> {
         let repo = Self::work_dir_for_store(repo);
         let repo = repo.as_path();
@@ -1927,7 +1936,12 @@ impl Vcs for GitVcs {
         let mut log = String::new();
         let mut unconfirmed = Vec::new();
         let remotes = Self::run_trimmed(["remote"], repo)?;
-        for remote in remotes.lines().map(str::trim).filter(|r| !r.is_empty()) {
+        let wanted = |remote: &str| only.is_none_or(|only| only.iter().any(|r| r.name() == remote));
+        for remote in remotes
+            .lines()
+            .map(str::trim)
+            .filter(|r| !r.is_empty() && wanted(r))
+        {
             match Self::run_logged(["fetch", "--tags", "--prune", remote], repo) {
                 Ok(report) => log.push_str(&report),
                 Err(VcsError::CommandFailed { stderr, .. }) => {
@@ -3308,6 +3322,44 @@ impl Vcs for GitVcs {
         Ok(listing)
     }
 
+    fn file_versions(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        path: &Path,
+    ) -> Result<Vec<String>, VcsError> {
+        let file = GitArg::from_path(path, "file path")?;
+        let listing = Self::run(
+            [
+                "log",
+                "--raw",
+                "--no-abbrev",
+                "--no-renames",
+                "--format=",
+                tip.id().as_str(),
+                "--",
+                file.as_str(),
+            ],
+            repo,
+        )?;
+        let mut blobs: Vec<&str> = Vec::new();
+        for line in listing.lines() {
+            let Some((meta, _)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some(new) = meta.split_whitespace().nth(3) else {
+                continue;
+            };
+            if new.bytes().any(|b| b != b'0') && !blobs.contains(&new) {
+                blobs.push(new);
+            }
+        }
+        blobs
+            .into_iter()
+            .map(|blob| Self::run(["cat-file", "blob", blob], repo))
+            .collect()
+    }
+
     fn read_file_at_revision(
         &self,
         repo: &Path,
@@ -3579,30 +3631,54 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
-        let store = Self::work_dir_for_store(store);
-        Self::run_awaiting_peers(["branch", "-D", name.as_str()], &store)?;
-        Ok(())
-    }
-
-    fn rename_local_ref(
-        &self,
-        store: &Path,
-        from: &RawRefName,
-        to: &RawRefName,
-    ) -> Result<(), VcsError> {
-        let store = Self::work_dir_for_store(store);
-        // `-m`, never `-M`. The uppercase form renames *over* an existing
-        // branch, which destroys that branch's ref with neither receipt nor
-        // warrant; the lowercase form refuses, which is the behavior the
-        // trait's contract requires. git also refuses the D/F direction on
-        // its own ("cannot lock ref"), so a leftover `p--w/other` blocks the
-        // rename rather than being silently swept up.
-        //
-        // Run from the store's work dir, not from the worktree whose HEAD is
-        // on `from`: `git branch -m` updates the HEAD of every worktree that
-        // pointed at the old name, wherever it is run.
-        Self::run(["branch", "-m", from.as_str(), to.as_str()], &store)?;
+    fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError> {
+        let store = Self::work_dir_for_store(proof.store());
+        let branch = proof.branch();
+        let tip = proof.tip().id().as_str();
+        match proof.site() {
+            Site::Local => {
+                if let Some(checkout) = self.checkouts_of_branch(&store, branch)?.first() {
+                    return Err(VcsError::CommandFailed {
+                        args: vec![
+                            "update-ref".to_owned(),
+                            "-d".to_owned(),
+                            local_branch(branch.as_str()),
+                        ],
+                        repo: store,
+                        stderr: format!(
+                            "branch '{branch}' is checked out at {}",
+                            checkout.display()
+                        ),
+                    });
+                }
+                Self::run_awaiting_peers(
+                    ["update-ref", "-d", &local_branch(branch.as_str()), tip],
+                    &store,
+                )?;
+                match Self::run(
+                    ["config", "--remove-section", &format!("branch.{branch}")],
+                    &store,
+                ) {
+                    Err(VcsError::CommandFailed { stderr, .. })
+                        if stderr.contains("no such section") => {}
+                    other => {
+                        other?;
+                    }
+                }
+            }
+            Site::Remote(remote) => {
+                let ref_name = local_branch(branch.as_str());
+                Self::run(
+                    [
+                        "push",
+                        &format!("--force-with-lease={ref_name}:{tip}"),
+                        remote.name(),
+                        &format!(":{ref_name}"),
+                    ],
+                    &store,
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -5036,10 +5112,10 @@ impl GitVcs {
 
 #[cfg(test)]
 mod branch_model_tests {
-    //! Receipts, warrants, and consent-gated attachment changes.
+    //! Proofs, and consent-gated attachment changes.
     //!
     //! These live in-crate because the types they exercise are minted by
-    //! crate-internal producers: a receipt comes from the registry, a
+    //! crate-internal producers: a destroy proof by a check that runs here, a
     //! consent token from the flag module. That is the point — an
     //! integration test *cannot* forge them, which is the invariant.
     //!
@@ -5048,11 +5124,11 @@ mod branch_model_tests {
 
     use super::*;
     use crate::cli::consent::{
-        DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent,
+        DiscardLocalCommitsConsent, DiscardUnlandedConsent, ForcePushConsent,
     };
     use crate::op_state::OpId;
     use crate::vcs::{
-        DeletionWarrant, DiscardWarrant, OwnedRef, RawRefName, TrackingRef, VcsErrorKind,
+        DestroyProof, DiscardWarrant, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind,
     };
 
     /// A local branch name, obtained the only way one can be: through the
@@ -5129,10 +5205,8 @@ mod branch_model_tests {
         GitVcs.head_revision(p).unwrap()
     }
 
-    /// A receipt as the registry would persist one: store, name, and the
-    /// tip the ref was recorded at.
-    fn receipt(store: &Path, name: &str, at: &ResolvedRevisionId) -> OwnedRef {
-        OwnedRef::from_receipt(store.to_path_buf(), RawRefName::new(name), at.clone())
+    fn found(store: &Path, name: &str, at: &ResolvedRevisionId) -> FoundBranch {
+        FoundBranch::named(store.to_path_buf(), name, at.clone())
     }
 
     /// A worktree destination that does not exist yet, inside its own temp
@@ -5153,13 +5227,11 @@ mod branch_model_tests {
         let start = GitVcs.head_revision(store.path()).unwrap();
         let (_dest_home, dest) = worktree_dest();
 
-        let born = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
-            .unwrap()
-            .expect("this call created the ref");
+        let origin = GitVcs
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
+            .unwrap();
 
-        assert_eq!(born.name().as_str(), "p--ww");
-        assert_eq!(born.at(), &start);
+        assert_eq!(origin, RefOrigin::Authored);
         // Which ref is this checkout on?
         assert_eq!(
             GitVcs.head_attachment(&dest).unwrap().to_string(),
@@ -5171,8 +5243,7 @@ mod branch_model_tests {
     fn create_worktree_on_adopts_a_pre_existing_ref_without_destroying_it() {
         // The shipped retry force-deleted the branch and re-created it,
         // which destroyed a ref on nothing but a name match. A DESTROY
-        // needs a receipt and a warrant; this path has neither, so it must
-        // adopt.
+        // needs a proof; this path has none, so it must adopt.
         let store = repo();
         let start = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
@@ -5181,11 +5252,11 @@ mod branch_model_tests {
         git(store.path(), &["checkout", "main"]);
 
         let (_dest_home, dest) = worktree_dest();
-        let born = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+        let origin = GitVcs
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .unwrap();
 
-        assert!(born.is_none(), "adopted, not authored");
+        assert_eq!(origin, RefOrigin::Adopted);
         assert_eq!(
             GitVcs.head_attachment(&dest).unwrap().to_string(),
             "on branch 'p--ww'"
@@ -5209,7 +5280,7 @@ mod branch_model_tests {
 
         let (_dest_home, dest) = worktree_dest();
         GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .unwrap();
 
         assert_eq!(
@@ -5254,7 +5325,7 @@ mod branch_model_tests {
         plant_silent_refusing_hook(store.path());
 
         let err = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .expect_err("the hook refused, so the add failed");
 
         let VcsError::HookRejected { stderr, .. } = &err else {
@@ -5278,11 +5349,11 @@ mod branch_model_tests {
         let (_dest_home, dest) = worktree_dest();
 
         GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .expect("first add succeeds and registers dest");
 
         let err = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww2", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww2", &start), &dest)
             .expect_err("the destination is taken, so the second add failed");
 
         assert!(
@@ -5305,7 +5376,7 @@ mod branch_model_tests {
         std::fs::write(dest.join("occupant"), "in the way").unwrap();
 
         let err = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .expect_err("the destination is occupied, so the add failed");
 
         assert!(
@@ -5320,123 +5391,200 @@ mod branch_model_tests {
     }
 
     // -----------------------------------------------------------------------
-    // DESTROY: receipt + warrant
+    // DESTROY: a proof
     // -----------------------------------------------------------------------
 
+    fn main_name() -> RawRefName {
+        RawRefName::new("main")
+    }
+
+    fn ww() -> RawRefName {
+        RawRefName::new("p--ww")
+    }
+
+    fn landed_on(
+        store: &Path,
+        branch: &RawRefName,
+        onto: &ResolvedRevisionId,
+    ) -> Option<DestroyProof> {
+        DestroyProof::landed(
+            &GitVcs,
+            store,
+            Site::Local,
+            branch,
+            std::slice::from_ref(onto),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn unmoved_holds_only_while_the_ref_is_where_the_receipt_recorded_it() {
+    fn a_branch_nothing_was_committed_on_is_landed_on_where_it_started() {
         let store = repo();
-        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        let start = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
-        let r = receipt(store.path(), "p--ww", &recorded);
 
-        assert!(
-            DeletionWarrant::unmoved(&GitVcs, &r).is_some(),
-            "tip still equals the recorded tip"
-        );
+        assert!(landed_on(store.path(), &ww(), &start).is_some());
 
-        // Someone commits on it. The branch is no longer stale, and the
-        // warrant that licensed deleting a stale branch evaporates.
         git(store.path(), &["checkout", "p--ww"]);
         commit(store.path(), "work");
         git(store.path(), &["checkout", "main"]);
-        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
+        assert!(landed_on(store.path(), &ww(), &start).is_none());
     }
 
     #[test]
-    fn unmoved_is_none_for_a_receipt_whose_ref_does_not_exist() {
+    fn landed_is_none_for_a_branch_that_does_not_exist() {
         let store = repo();
-        let recorded = GitVcs.head_revision(store.path()).unwrap();
-        let r = receipt(store.path(), "never-created", &recorded);
-        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        assert!(landed_on(store.path(), &RawRefName::new("never-created"), &start).is_none());
     }
 
     #[test]
-    fn merged_holds_exactly_when_the_tip_is_reachable_from_the_baseline() {
+    fn landed_holds_exactly_when_the_tip_is_reachable_from_a_name_that_outlives_it() {
         let store = repo();
-        let base = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
-        let r = receipt(store.path(), "p--ww", &base);
 
-        // main advances past the branch: the branch's tip is an ancestor.
         let advanced = commit(store.path(), "later");
-        assert!(DeletionWarrant::merged(&GitVcs, &r, &advanced).is_some());
+        assert!(landed_on(store.path(), &ww(), &advanced).is_some());
 
-        // The branch gains a commit the baseline does not have.
         git(store.path(), &["checkout", "p--ww"]);
         commit(store.path(), "branch-only");
         git(store.path(), &["checkout", "main"]);
-        assert!(DeletionWarrant::merged(&GitVcs, &r, &advanced).is_none());
+        assert!(landed_on(store.path(), &ww(), &advanced).is_none());
     }
 
     #[test]
-    fn delete_owned_ref_destroys_the_ref_the_receipt_names() {
+    fn landed_on_any_of_several_names_is_enough() {
         let store = repo();
-        let recorded = GitVcs.head_revision(store.path()).unwrap();
-        git(store.path(), &["branch", "p--ww"]);
-        let r = receipt(store.path(), "p--ww", &recorded);
+        let base = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["checkout", "-b", "p--ww"]);
+        let work = commit(store.path(), "work");
+        git(store.path(), &["checkout", "main"]);
+        let elsewhere = commit(store.path(), "elsewhere");
 
-        let warrant = DeletionWarrant::unmoved(&GitVcs, &r).expect("unmoved");
-        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+        let proof = DestroyProof::landed(
+            &GitVcs,
+            store.path(),
+            Site::Local,
+            &ww(),
+            &[base, elsewhere, work.clone()],
+        )
+        .unwrap()
+        .expect("the branch's own tip is among the names");
+        assert!(proof.describe().starts_with("landed on "));
+    }
+
+    #[test]
+    fn delete_branch_destroys_the_branch_the_proof_names() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        git(store.path(), &["config", "branch.p--ww.remote", "origin"]);
+        git(
+            store.path(),
+            &["config", "branch.p--ww.merge", "refs/heads/p--ww"],
+        );
+
+        let proof = landed_on(store.path(), &ww(), &start).expect("landed");
+        GitVcs.delete_branch(proof).unwrap();
 
         assert!(GitVcs
-            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .resolve_local_branch_tip(store.path(), &ww())
             .unwrap()
             .is_none());
         assert!(
             GitVcs
-                .resolve_local_branch_tip(store.path(), &RawRefName::new("main"))
+                .resolve_local_branch_tip(store.path(), &main_name())
                 .unwrap()
                 .is_some(),
             "nothing else was touched"
         );
+        let config = git_command()
+            .args(["config", "--get-regexp", "^branch\\.p--ww"])
+            .current_dir(store.path())
+            .output()
+            .unwrap();
+        assert!(
+            !config.status.success(),
+            "the branch's config section goes with it: {}",
+            String::from_utf8_lossy(&config.stdout)
+        );
     }
 
     #[test]
-    fn a_receipt_keyed_to_a_git_dir_still_names_a_workable_repo() {
-        // Receipts are keyed by canonical store, which `store_of`
-        // reports as `<clone>/.git` — not the working directory.
+    fn a_proof_keyed_to_a_git_dir_still_names_a_workable_repo() {
         let store = repo();
-        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        let start = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
-        let r = receipt(&store.path().join(".git"), "p--ww", &recorded);
 
-        let warrant = DeletionWarrant::unmoved(&GitVcs, &r).expect("unmoved via .git path");
-        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+        let proof = landed_on(&store.path().join(".git"), &ww(), &start).expect("landed");
+        GitVcs.delete_branch(proof).unwrap();
         assert!(GitVcs
-            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .resolve_local_branch_tip(store.path(), &ww())
             .unwrap()
             .is_none());
     }
 
     #[test]
-    fn an_unmerged_ref_is_destroyed_only_on_the_operator_s_say_so_and_kept_as_a_backup() {
+    fn a_branch_that_moved_since_its_proof_is_not_deleted() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let proof = landed_on(store.path(), &ww(), &start).expect("landed");
+
+        git(store.path(), &["checkout", "p--ww"]);
+        let work = commit(store.path(), "committed after the check");
+        git(store.path(), &["checkout", "main"]);
+
+        GitVcs
+            .delete_branch(proof)
+            .expect_err("the branch is no longer the one the proof is about");
+        assert_eq!(
+            GitVcs
+                .resolve_local_branch_tip(store.path(), &ww())
+                .unwrap(),
+            Some(work)
+        );
+    }
+
+    #[test]
+    fn a_checked_out_branch_is_not_deleted() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let proof = landed_on(store.path(), &main_name(), &start).expect("landed");
+
+        let err = GitVcs
+            .delete_branch(proof)
+            .expect_err("main is checked out here");
+        assert!(format!("{err}").contains("checked out"), "{err}");
+        assert!(GitVcs
+            .resolve_local_branch_tip(store.path(), &main_name())
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn an_unlanded_branch_is_destroyed_only_on_the_operator_s_say_so_and_kept_as_a_backup() {
         let store = repo();
         let base = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
         git(store.path(), &["checkout", "p--ww"]);
-        let work = commit(store.path(), "unmerged-work");
+        let work = commit(store.path(), "unlanded-work");
         git(store.path(), &["checkout", "main"]);
-        let r = receipt(store.path(), "p--ww", &base);
 
-        // Neither structural warrant holds: the ref moved, and its tip is
-        // not reachable from the baseline.
-        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
-        assert!(DeletionWarrant::merged(&GitVcs, &r, &base).is_none());
+        assert!(landed_on(store.path(), &ww(), &base).is_none());
 
-        // The named override is the only remaining route, and it is a
-        // token the operator has to have produced.
-        let warrant =
-            DeletionWarrant::operator_discarded(&GitVcs, &r, DiscardUnmergedConsent::granted())
-                .unwrap();
-        let kept = warrant
-            .backup()
-            .expect("rests on a backup")
-            .backup()
-            .clone();
-        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+        let proof = DestroyProof::backed_up(
+            &GitVcs,
+            store.path(),
+            Site::Local,
+            &ww(),
+            DiscardUnlandedConsent::granted(),
+        )
+        .unwrap();
+        let kept = proof.backup().expect("rests on a backup").backup().clone();
+        GitVcs.delete_branch(proof).unwrap();
         assert!(GitVcs
-            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .resolve_local_branch_tip(store.path(), &ww())
             .unwrap()
             .is_none());
 
@@ -5447,7 +5595,7 @@ mod branch_model_tests {
         assert_eq!(
             listed.iter().map(|l| &l.backup).collect::<Vec<_>>(),
             vec![&kept],
-            "the discarded tip stays reachable through the backup the warrant rests on"
+            "the discarded tip stays reachable through the backup the proof rests on"
         );
         assert_eq!(
             listed[0]
@@ -5460,26 +5608,94 @@ mod branch_model_tests {
     }
 
     #[test]
-    fn a_warrant_says_which_check_licensed_the_destroy() {
+    fn a_proof_says_what_licensed_the_destroy() {
         let store = repo();
         let base = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
-        let r = receipt(store.path(), "p--ww", &base);
 
-        let discarded =
-            DeletionWarrant::operator_discarded(&GitVcs, &r, DiscardUnmergedConsent::granted())
-                .unwrap();
+        let backed_up = DestroyProof::backed_up(
+            &GitVcs,
+            store.path(),
+            Site::Local,
+            &ww(),
+            DiscardUnlandedConsent::granted(),
+        )
+        .unwrap();
         assert_eq!(
-            discarded.describe(),
+            backed_up.describe(),
             format!(
-                "operator passed --discard-unmerged-commits; kept as backup {}",
-                discarded.backup().unwrap().backup().name
+                "kept as backup {}",
+                backed_up.backup().unwrap().backup().name
             )
         );
-        assert!(DeletionWarrant::unmoved(&GitVcs, &r)
+        assert!(landed_on(store.path(), &ww(), &base)
             .unwrap()
             .backup()
             .is_none());
+    }
+
+    fn published_and_landed() -> (tempfile::TempDir, PathBuf, PathBuf, DestroyProof) {
+        let (tmp, clone, bare) = clone_of_bare_origin();
+        git(&clone, &["checkout", "-b", "p--ww"]);
+        commit(&clone, "published");
+        git(&clone, &["push", "origin", "p--ww"]);
+        git(&clone, &["checkout", "main"]);
+        git(&clone, &["merge", "--ff-only", "p--ww"]);
+        let main_tip = GitVcs.head_revision(&clone).unwrap();
+        let proof =
+            DestroyProof::landed(&GitVcs, &clone, Site::Remote(origin()), &ww(), &[main_tip])
+                .unwrap()
+                .expect("the remote copy is reached by main");
+        (tmp, clone, bare, proof)
+    }
+
+    fn remote_has(bare: &Path, branch: &str) -> bool {
+        git_command()
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ])
+            .current_dir(bare)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+
+    #[test]
+    fn a_landed_remote_branch_is_deleted_and_its_tracking_ref_goes() {
+        let (_tmp, clone, bare, proof) = published_and_landed();
+        GitVcs.delete_branch(proof).unwrap();
+        assert!(!remote_has(&bare, "p--ww"));
+        assert!(GitVcs.remote_copies(&clone, &ww()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_remote_branch_that_moved_since_its_proof_is_not_deleted() {
+        let (_tmp, clone, bare, proof) = published_and_landed();
+        let other = crate::tempdir().unwrap();
+        git(other.path(), &["clone", bare.to_str().unwrap(), "pusher"]);
+        let pusher = other.path().join("pusher");
+        git(&pusher, &["config", "user.email", "t@t"]);
+        git(&pusher, &["config", "user.name", "T"]);
+        git(&pusher, &["checkout", "p--ww"]);
+        commit(&pusher, "pushed meanwhile");
+        git(&pusher, &["push", "origin", "p--ww"]);
+
+        GitVcs
+            .delete_branch(proof)
+            .expect_err("the remote moved since the proof was made");
+        assert!(remote_has(&bare, "p--ww"));
+
+        git(&clone, &["fetch", "origin"]);
+        let main_tip = GitVcs.head_revision(&clone).unwrap();
+        assert!(
+            DestroyProof::landed(&GitVcs, &clone, Site::Remote(origin()), &ww(), &[main_tip])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -5494,7 +5710,7 @@ mod branch_model_tests {
         std::fs::write(dest.join("in-the-way"), "x").unwrap();
 
         let err = GitVcs
-            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .create_worktree_on(&found(store.path(), "p--ww", &start), &dest)
             .unwrap_err();
         assert!(
             format!("{err}").contains("already exists"),
@@ -5506,10 +5722,7 @@ mod branch_model_tests {
         );
         // git writes the ref before it checks the destination, so a residual
         // `p--ww` at the start point is expected. What matters is that it is
-        // at the start point and NOT destroyed on the way out: the receipt
-        // for it was persisted before this call, so a recorded ref with no
-        // worktree is reconcilable, while an unwarranted delete is not
-        // recoverable at all.
+        // at the start point and NOT destroyed on the way out.
         if let Some(tip) = GitVcs
             .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
             .unwrap()
@@ -6313,7 +6526,7 @@ mod population_tests {
     //! `ls-tree` lists, what `cat-file` holds, what `checkout-index` writes.
 
     use super::*;
-    use crate::vcs::OwnedRef;
+    use crate::vcs::FoundBranch;
     use std::collections::BTreeMap;
 
     static GIT: GitVcs = GitVcs;
@@ -6393,15 +6606,15 @@ mod population_tests {
         )
     }
 
-    fn receipt(repo: &Path, name: &str) -> OwnedRef {
-        OwnedRef::from_receipt(repo.join(".git"), RawRefName::new(name), head(repo))
+    fn found(repo: &Path, name: &str) -> FoundBranch {
+        FoundBranch::named(repo.join(".git"), name, head(repo))
     }
 
     /// A workspace of `repo` with nothing written, on a branch of its own.
     fn unpopulated(repo: &Path, name: &str) -> PathBuf {
         let dest = repo.with_file_name(name);
         population()
-            .create_unpopulated_worktree_on(&receipt(repo, name), &dest)
+            .create_unpopulated_worktree_on(&found(repo, name), &dest)
             .unwrap();
         dest
     }
@@ -6409,7 +6622,7 @@ mod population_tests {
     /// A workspace of `repo` git checked out itself.
     fn checked_out(repo: &Path, name: &str) -> PathBuf {
         let dest = repo.with_file_name(name);
-        GIT.create_worktree_on(&receipt(repo, name), &dest).unwrap();
+        GIT.create_worktree_on(&found(repo, name), &dest).unwrap();
         dest
     }
 
@@ -6488,10 +6701,10 @@ mod population_tests {
         let dest = repo.with_file_name("w");
 
         let born = population()
-            .create_unpopulated_worktree_on(&receipt(repo, "p--w"), &dest)
+            .create_unpopulated_worktree_on(&found(repo, "p--w"), &dest)
             .unwrap();
 
-        assert_eq!(born.map(|b| b.at().clone()), Some(head(repo)));
+        assert_eq!(born, RefOrigin::Authored);
         let on_disk: Vec<_> = std::fs::read_dir(&dest)
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -6516,10 +6729,10 @@ mod population_tests {
         git(repo, &["commit", "-q", "-am", "moved"]);
 
         let born = population()
-            .create_unpopulated_worktree_on(&receipt(repo, "p--w"), &repo.with_file_name("w"))
+            .create_unpopulated_worktree_on(&found(repo, "p--w"), &repo.with_file_name("w"))
             .unwrap();
 
-        assert_eq!(born, None);
+        assert_eq!(born, RefOrigin::Adopted);
         assert_eq!(git(repo, &["rev-parse", "p--w"]), before);
     }
 
@@ -7205,7 +7418,17 @@ mod peer_registration_tests {
         git(&fx.store, &["branch", "spare"]);
         let finishing = fx.leave_peer_unwritten(LATER);
 
-        let destroyed = GitVcs.destroy_local_ref(&fx.store, &RawRefName::new("spare"));
+        let head = GitVcs.head_revision(&fx.store).unwrap();
+        let proof = DestroyProof::landed(
+            &GitVcs,
+            &fx.store,
+            Site::Local,
+            &RawRefName::new("spare"),
+            &[head],
+        )
+        .unwrap()
+        .expect("spare sits where the repo's head does");
+        let destroyed = GitVcs.delete_branch(proof);
         finishing.join().unwrap();
 
         destroyed.expect("the peer finished within the wait");

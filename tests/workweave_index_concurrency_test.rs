@@ -1,18 +1,11 @@
-//! Two `rwv` processes creating workweaves in one project keep every
-//! ownership receipt.
+//! Two `rwv` processes creating workweaves in one project keep every index
+//! entry.
 //!
-//! The defect: the index is mutated by reading the whole file, appending, and
-//! publishing the whole file back. A losing writer's receipt is gone and its
-//! `rwv workweave create` still exits zero. What is lost is not bookkeeping —
-//! under R2 a ref with no receipt is not rwv's, permanently, so the branch that
-//! create just made can never be destroyed by any verb. `workweave delete`
-//! then removes the directory and leaves the branch behind; from that point no
-//! doctor class names it, because the class that would is scoped to the
-//! pre-flat mint shape and production mints flat.
-//!
-//! **Measured before it was fixed, in the production topology.** Two
-//! concurrent `rwv workweave create` invocations dropped at least one receipt
-//! in nine runs out of ten. Not a corner: it is what a fleet of agents does.
+//! The index is mutated by reading the whole file, adding an entry, and
+//! publishing the whole file back. Without the claim a losing writer's entry
+//! is gone, its `rwv workweave create` still exits zero, and the workweave it
+//! made is on disk but unlisted: `workweave list` and `workweave delete`
+//! cannot name it.
 //!
 //! **Processes, not threads.** An in-process mutex satisfies a threaded drive
 //! while leaving the reachable topology — two `rwv` invocations against one
@@ -29,19 +22,19 @@
 //! holder is the test and releases only after every child has exited.
 //!
 //! **Convergence is the other half.** With no claim held, N concurrent
-//! recorders all succeed and all N receipts are kept. That holds under every
+//! recorders all succeed and all N entries are kept. That holds under every
 //! interleaving for a correct index; the exclusion pin carries the proof that
 //! it is the claim, not luck, that makes it hold.
 //!
 //! The `rwv workweave create` drive below runs the reachable topology end to
-//! end and asserts the same property of its outcome: no branch is left without
-//! a receipt.
+//! end and asserts the same property of its outcome: every workweave it made
+//! is listed.
 
 mod common;
 
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
-use repoweave::workweave_index::RefRegistry;
+use repoweave::path_spelling::CanonicalPath;
+use repoweave::workweave_index::record_workweave;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -62,11 +55,12 @@ const MEMBER: &str = "github/acme/lib";
 const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
 const INDEX_FILE: &str = ".rwv-workweave-index";
 
-/// Not a test: the child half of the receipt drive. Inert in an ordinary suite
+/// Not a test: the child half of the recorder drive. Inert in an ordinary suite
 /// run — without [`CHILD_ROOT`] set it returns immediately. It records one
-/// receipt and writes `ok`, or `refused <kind token>` when the record refuses.
+/// workweave and writes `ok`, or `refused <kind token>` when the record
+/// refuses.
 #[test]
-fn receipt_child() {
+fn recorder_child() {
     let Ok(root) = std::env::var(CHILD_ROOT) else {
         return;
     };
@@ -75,21 +69,13 @@ fn receipt_child() {
     let results = std::env::var(CHILD_RESULTS).expect("a child records its result");
 
     let project = ProjectName::new(PROJECT).expect("project name");
-    let mut registry = RefRegistry::for_project(Path::new(&root), &project);
-    let minted = EphemeralRefName::mint(
-        &repoweave::manifest::WorkweaveId {
-            project: project.clone(),
-            name: WorkweaveName::new(&name).expect("ww name"),
-        }
-        .flat(),
-    );
-    let at = ResolvedRevisionId::from_canonical(
-        repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
-        None,
-    );
-
-    let outcome = match registry.record_created(Path::new(&store), minted, at) {
-        Ok(_) => "ok".to_string(),
+    let outcome = match record_workweave(
+        Path::new(&root),
+        &project,
+        &WorkweaveName::new(&name).expect("ww name"),
+        CanonicalPath::of(Path::new(&store)),
+    ) {
+        Ok(()) => "ok".to_string(),
         Err(e) => match repoweave::refusal::kind_of(&e) {
             Some(kind) => format!("refused {}", kind.token()),
             None => format!("failed {e:#}"),
@@ -101,7 +87,7 @@ fn receipt_child() {
 
 fn recorder(root: &Path, store: &Path, results: &Path, name: &str) -> Command {
     let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
-    cmd.args(["--exact", "receipt_child", "--test-threads=1"]);
+    cmd.args(["--exact", "recorder_child", "--test-threads=1"]);
     cmd.env(CHILD_ROOT, root);
     cmd.env(CHILD_STORE, store);
     cmd.env(CHILD_RESULTS, results);
@@ -123,7 +109,7 @@ fn seat(i: usize) -> String {
 }
 
 /// A primary root with `projects/<PROJECT>/` holding a current-shape index,
-/// plus a directory the receipts key their store to.
+/// plus a directory the recorded workweaves point at.
 fn seeded_primary(tmp: &Path, tag: &str) -> (PathBuf, PathBuf) {
     let root = tmp.join(tag);
     let project_dir = root.join("projects").join(PROJECT);
@@ -141,7 +127,7 @@ fn seeded_primary(tmp: &Path, tag: &str) -> (PathBuf, PathBuf) {
     (root, store)
 }
 
-fn receipt_names(root: &Path) -> Vec<String> {
+fn recorded_workweaves(root: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(
         root.join("projects")
             .join(PROJECT)
@@ -149,11 +135,11 @@ fn receipt_names(root: &Path) -> Vec<String> {
     )
     .expect("index readable");
     let value: serde_json::Value = serde_json::from_str(&text).expect("index parses");
-    value["receipts"]
-        .as_array()
-        .expect("a current-shape index has a receipts array")
-        .iter()
-        .map(|r| r["name"].as_str().expect("receipt name").to_string())
+    value["workweaves"]
+        .as_object()
+        .expect("an index has a workweaves map")
+        .keys()
+        .cloned()
         .collect()
 }
 
@@ -219,19 +205,19 @@ fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
 }
 
 #[test]
-fn concurrent_recorders_keep_every_receipt() {
+fn concurrent_recorders_keep_every_entry() {
     let tmp = common::tempdir().expect("tempdir");
     let (root, store) = seeded_primary(tmp.path(), "concurrent");
     let results = tmp.path().join("results");
     std::fs::create_dir_all(&results).expect("results dir");
     let outcomes = run_recorders(&root, &store, &results);
     assert_eq!(outcomes, vec!["ok".to_string(); N]);
-    let kept = receipt_names(&root);
+    let kept = recorded_workweaves(&root);
     assert_eq!(
         kept.len(),
         N,
-        "every concurrent receipt must survive: a whole-file publish that lost \
-         one returns Ok, and the ref it named is then disowned for good. \
+        "every concurrent entry must survive: a whole-file publish that lost \
+         one returns Ok, and the workweave it named is then unlisted. \
          Kept {kept:?}"
     );
 }
@@ -260,65 +246,13 @@ fn rwv_at(bin: &Path, root: &Path, args: &[&str]) -> Command {
     cmd
 }
 
-/// Ephemeral branches this project minted in `repo`.
-fn minted_branches(repo: &Path) -> Vec<String> {
-    common::git_in(repo, &["branch", "--format=%(refname:short)"])
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|b| b.starts_with(&format!("{PROJECT}--")))
-        .collect()
-}
-
-/// Every `(store, name)` pair the index records — the receipt's full key.
-/// One create mints N receipts sharing one name, distinguished only by
-/// store, so a name-keyed read lets a surviving peer answer for a lost one.
-fn recorded_receipts(root: &Path) -> Vec<(std::path::PathBuf, String)> {
-    let text = std::fs::read_to_string(
-        root.join("projects")
-            .join(PROJECT)
-            .join(".rwv-workweave-index"),
-    )
-    .expect("index readable");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("index parses");
-    value["receipts"]
-        .as_array()
-        .expect("a current-shape index has a receipts array")
-        .iter()
-        .map(|r| {
-            (
-                std::path::PathBuf::from(r["store"].as_str().expect("receipt store")),
-                r["name"].as_str().expect("receipt name").to_string(),
-            )
-        })
-        .collect()
-}
-
-/// Every minted branch that no receipt covers — the state R2 disowns for good.
-fn unreceipted(root: &Path) -> Vec<String> {
-    let held = recorded_receipts(root);
-    let mut orphans = Vec::new();
-    for repo in [MEMBER, &format!("projects/{PROJECT}")] {
-        let store =
-            repoweave::path_spelling::resolve(&root.join(repo)).expect("minted repo store exists");
-        for branch in minted_branches(&root.join(repo)) {
-            let covered = held.iter().any(|(s, n)| {
-                *n == branch && repoweave::path_spelling::resolve(s).is_ok_and(|c| c == store)
-            });
-            if !covered {
-                orphans.push(format!("{repo}:{branch}"));
-            }
-        }
-    }
-    orphans
-}
-
 /// The production drive: `rwv workweave create` twice at once, in one project.
 ///
 /// This is the reachable topology. `create` reaches no op-state check, so
-/// nothing anywhere refuses to let the two overlap, and each one records a
-/// receipt per repo into the one shared index.
+/// nothing anywhere refuses to let the two overlap, and each one records its
+/// workweave into the one shared index.
 #[test]
-fn two_concurrent_creates_leave_no_branch_without_a_receipt() {
+fn two_concurrent_creates_list_both_workweaves() {
     let bin = assert_cmd::cargo::cargo_bin("rwv");
 
     // Control: the same two creates, one after the other.
@@ -339,10 +273,10 @@ fn two_concurrent_creates_leave_no_branch_without_a_receipt() {
         );
     }
     assert_eq!(
-        unreceipted(&serial_ws.workspace),
-        Vec::<String>::new(),
-        "the serial drive must leave no branch unreceipted; if it does, the \
-         concurrent result below is not about concurrency"
+        recorded_workweaves(&serial_ws.workspace),
+        vec!["alpha".to_string(), "beta".to_string()],
+        "the serial drive must list both; if it does not, the concurrent \
+         result below is not about concurrency"
     );
 
     // Drive: both creates in flight together.
@@ -372,18 +306,10 @@ fn two_concurrent_creates_leave_no_branch_without_a_receipt() {
         );
     }
 
-    let branches = minted_branches(&ws.workspace.join(MEMBER));
     assert_eq!(
-        branches.len(),
-        2,
-        "both creates must have minted their branch, or this drive is not \
-         measuring what it claims: {branches:?}"
-    );
-    assert_eq!(
-        unreceipted(&ws.workspace),
-        Vec::<String>::new(),
-        "a branch with no receipt is not rwv's, permanently: no verb will \
-         reclaim it, `workweave delete` leaves it behind, and once the \
-         directory is gone no doctor class names it. Both creates exited zero"
+        recorded_workweaves(&ws.workspace),
+        vec!["alpha".to_string(), "beta".to_string()],
+        "a workweave the index lost is on disk but unlisted: `workweave list` \
+         and `workweave delete` cannot name it. Both creates exited zero"
     );
 }

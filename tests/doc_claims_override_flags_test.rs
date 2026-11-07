@@ -250,7 +250,7 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
 /// `--discard-unmerged-commits` alone must still refuse on the dirty
 /// worktree: it waives the diverged-history refusal, not the uncommitted one.
 #[test]
-fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
+fn workweave_delete_discard_unlanded_does_not_waive_uncommitted() {
     let tmp = common::tempdir().unwrap();
     let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-b");

@@ -2497,28 +2497,22 @@ pub use root_identity::{PrimaryIdentity, WeaveRootIdentity, WorkweaveIdentity};
 
 /// The index-side counterpart of the legacy-marker check in
 /// [`WorkweaveMarker::read`]: does `(primary_root, project)`'s workweave
-/// index predate ref-ownership receipts?
+/// index lack the `receipts` key?
 ///
 /// Two legacy shapes migrate in the same `rwv doctor --fix` pass and each is
 /// detected where it lives — the marker's YAML-or-missing-`parent:` shape
-/// above, the index's missing `receipts` field here. `Some(path)` is the
-/// file to migrate, and
-/// [`crate::workweave_index::RefRegistry::migrate_legacy_index`] is what
-/// migrates it; the pass then records a receipt per ref it adopts or
-/// renames, receipt-first like every other arm.
+/// above, the index's missing `receipts` key here. `Some(path)` is the file to
+/// migrate, and [`crate::workweave_index::migrate_legacy_index`] is what
+/// migrates it.
 ///
 /// The two detections differ in one deliberate way. A legacy *marker* is
 /// refused at read: nothing downstream can proceed without knowing the
-/// workweave's parent. A legacy *index* is reported, not refused, because
-/// the migration pass has to be able to read the index it is about to
-/// migrate — and because an unmigrated index fails closed on its own
-/// (no receipts, so nothing is destroyable under R2). The verbs that must
-/// refuse are the ones that write refs, and they refuse at the registry
-/// (`RefRegistry::record_created`), which is the last point before an
-/// unowned ref would be created.
+/// workweave's parent. A legacy *index* is reported, not refused, because the
+/// migration pass has to be able to read the index it is about to migrate;
+/// `workweave create` refuses against it.
 ///
 /// `None` when the index is current, or when there is no index file at all
-/// — an absent file records no workweaves, so there is no field to migrate.
+/// — an absent file records no workweaves, so there is no key to migrate.
 pub fn pending_index_migration(
     primary_root: &Path,
     project: &ProjectName,
@@ -2526,7 +2520,7 @@ pub fn pending_index_migration(
     let Some(index) = crate::workweave_index::read(primary_root, project)? else {
         return Ok(None);
     };
-    if index.has_receipt_registry() {
+    if !index.is_legacy() {
         return Ok(None);
     }
     Ok(Some(crate::workweave_index::index_path(

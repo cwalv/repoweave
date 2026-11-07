@@ -1610,6 +1610,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
+                survivors: Vec::new(),
                 // Fresh run: the absent shape of the `resumed` disclosure.
                 resumed: None,
                 outcomes: sync_outcomes(true),
@@ -1628,6 +1629,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: None,
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
+                survivors: Vec::new(),
                 // Resumed at replay (the common interruption, a step-1
                 // conflict): replay re-ran, so outcomes carries every repo.
                 resumed: Some(OpPhase::Replay),
@@ -1651,6 +1653,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
+                survivors: Vec::new(),
                 resumed: Some(OpPhase::Relock),
                 outcomes: Vec::new(),
                 placements: Vec::new(),
@@ -1668,6 +1671,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
+                survivors: Vec::new(),
                 resumed: Some(OpPhase::AdvanceTarget),
                 outcomes: Vec::new(),
                 placements: placements(),
@@ -1685,6 +1689,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
+                survivors: Vec::new(),
                 resumed: Some(OpPhase::Retire),
                 outcomes: Vec::new(),
                 placements: Vec::new(),

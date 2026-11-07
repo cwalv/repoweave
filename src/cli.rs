@@ -168,7 +168,7 @@ pub enum Commands {
         action: MemberAction,
     },
 
-    /// Record how a weave branch is used, or list the weave branches with their records
+    /// Record how a weave branch is used, list the weave branches with their records, or delete one
     #[command(arg_required_else_help = true)]
     Branch {
         #[command(subcommand)]
@@ -591,6 +591,33 @@ pub enum BranchAction {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Delete a weave branch and the branches that belong to it, by the deletion rule: each is deleted when everything on it has landed on the branch it lands into and no live lock pins a commit only it reaches; the rest survive, listed with why, and the exit status is 3. A declared branch never belongs
+    ///
+    /// The branch it lands into is the record's target, or `--target`, which
+    /// a branch that is not a feature needs. A branch checked out anywhere is
+    /// refused, and so is one other branches' records land into.
+    Delete {
+        /// The branch to delete; it may exist only on a remote, as last fetched
+        branch: String,
+        /// The branch whose commits count as having landed; the record's target when omitted
+        #[arg(long, value_name = "T")]
+        target: Option<String>,
+        /// Also delete a branch that has not landed, after keeping its tip as a backup. Confirms the work merged elsewhere or abandoned; lifts only that clause of the rule
+        #[arg(long)]
+        discard_unlanded: bool,
+        /// Also delete each push branch of what belongs that has landed on the target's remote-tracking branch
+        #[arg(long)]
+        delete_remote: bool,
+        /// Also delete this repo's push branch, landed or not, after keeping its tip as a backup. The repo is its workspace-relative path, or `projects/<name>` for the project repo; repeat the flag per repo. Needs `--discard-unlanded`
+        #[arg(long, value_name = "REPO", requires = "discard_unlanded")]
+        delete_remote_unlanded: Vec<crate::manifest::RepoOperand>,
+        /// Emit one `{ "$schema": ..., "deleted": [...], "survivors": [...] }` JSON envelope. See `rwv explain branch`.
+        #[arg(long)]
+        json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -709,7 +736,7 @@ pub enum WorkweaveAction {
         /// path). Use `--replace-existing` for explicit rebuild scenarios.
         /// Refuses if the existing workweave has uncommitted or unmerged
         /// work — destroy that explicitly with `workweave delete
-        /// --discard-uncommitted --discard-unmerged-commits`.
+        /// --discard-uncommitted --discard-unlanded`.
         #[arg(long)]
         replace_existing: bool,
         /// Workspace to fork the new workweave from: `primary`, a bare
@@ -756,20 +783,34 @@ pub enum WorkweaveAction {
         #[arg(long)]
         no_materialize: bool,
     },
-    /// Delete a workweave
+    /// Delete a workweave, and the branches that belong to it by the deletion rule. A branch that has not landed survives, listed with why, and the exit status is 3
     Delete {
         /// Workweave name
         name: String,
-        /// Delete even if a worktree has uncommitted changes. Without this
-        /// flag, deletion refuses and names the dirty paths.
+        /// Delete even if a worktree has uncommitted changes, keeping them as
+        /// a backup first. Without this flag, deletion refuses and names the
+        /// dirty paths.
         #[arg(long)]
         discard_uncommitted: bool,
-        /// Delete even if a worktree holds commits not merged into the
-        /// parent weave. Without this flag, deletion refuses and names the
-        /// diverged repos. Together with `--discard-uncommitted` this is the
-        /// `git branch -D` contract, which discards both.
+        /// Delete even if a detached HEAD holds commits no branch reaches, and
+        /// delete a branch of the workweave that has not landed, keeping each
+        /// as a backup first. Without this flag, deletion refuses the
+        /// detached commits and the rule keeps the branch.
         #[arg(long)]
-        discard_unmerged_commits: bool,
+        discard_unlanded: bool,
+        /// Also delete each push branch of what belongs to the workweave that
+        /// has landed on the target's remote-tracking branch
+        #[arg(long)]
+        delete_remote: bool,
+        /// Also delete this repo's push branch, landed or not, after keeping
+        /// its tip as a backup. The repo is its workspace-relative path, or
+        /// `projects/<name>` for the project repo; repeat the flag per repo.
+        /// Needs `--discard-unlanded`
+        #[arg(long, value_name = "REPO", requires = "discard_unlanded")]
+        delete_remote_unlanded: Vec<crate::manifest::RepoOperand>,
+        /// Emit one `{ "$schema": ..., "discarded": {...}, "deleted": [...], "survivors": [...] }` JSON envelope. See `rwv explain workweave`.
+        #[arg(long)]
+        json: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

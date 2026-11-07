@@ -748,6 +748,10 @@ pub struct SyncToJsonOutput {
     /// passed, when retire refused, and when retire was skipped (the op is
     /// rooted in the primary weave, where there is no workweave to delete).
     pub retired: bool,
+    /// The branches of the retired workweave the deletion rule kept, and why.
+    /// Absent when it kept none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub survivors: Vec<crate::deletion::Survivor>,
     /// The phase the interrupted op had reached when `--continue` resumed it;
     /// absent on a fresh run. Presence encodes "this envelope describes a
     /// resumed op".
@@ -1796,7 +1800,7 @@ fn materialize_missing_repo(
                 entry.role,
                 entry.recurse_submodules,
                 start,
-                crate::workweave::ReceiptedBranch::Attach,
+                crate::workweave::BranchPolicy::Restore,
             )?
             .files);
         }
@@ -1833,16 +1837,13 @@ fn judge_store_checkouts(
     repo_path: &RepoPath,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let registered = vcs
-        .list_worktrees(store)
-        .with_context(|| {
-            format!(
-                "{repo_path}: cannot enumerate the worktrees registered against {}; \
+    let registered = vcs.list_worktrees(store).with_context(|| {
+        format!(
+            "{repo_path}: cannot enumerate the worktrees registered against {}; \
                  refusing to destroy a store whose claims could not be read",
-                store.display()
-            )
-        })
-        .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
+            store.display()
+        )
+    })?;
     // `worktree list` includes the store's own main worktree. Compare
     // canonicalized: the registration records a resolved path, and the
     // store path here is built by joining onto the workspace root, which
@@ -1857,28 +1858,41 @@ fn judge_store_checkouts(
     }
     let recorded = recorded_workweaves(primary_root)?;
     for checkout in live {
-        let at = CanonicalPath::of(checkout);
-        let judged = match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
-            Some((workweave, dir)) => State::CheckoutInAnotherWorkspace
-                .of(repo_path)
-                .subject(workweave.flat())
-                .listing([checkout.display()])
-                .bind("<project>", &workweave.project)
-                .bind("<ww>", &workweave.name)
-                .bind_place("<other>", dir.as_path()),
-            None => State::CheckoutInRawWorktree
-                .of(repo_path)
-                .listing([checkout.display()])
-                .checkout(store)
-                .bind("<worktree>", checkout.display()),
-        };
-        report.add(judged.judge(vcs));
+        report.add(judge_checkout(vcs, repo_path, checkout, store, &recorded));
     }
     Ok(())
 }
 
+/// One live checkout derived from `store`, judged on the `checkout` axis: in
+/// another workspace when a recorded workweave holds it, else in a raw
+/// worktree.
+pub(crate) fn judge_checkout(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    checkout: &Path,
+    store: &Path,
+    recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
+) -> crate::diagnosis::Judged {
+    let at = CanonicalPath::of(checkout);
+    match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
+        Some((workweave, dir)) => State::CheckoutInAnotherWorkspace
+            .of(repo)
+            .subject(workweave.flat())
+            .listing([checkout.display()])
+            .bind("<project>", &workweave.project)
+            .bind("<ww>", &workweave.name)
+            .bind_place("<other>", dir.as_path()),
+        None => State::CheckoutInRawWorktree
+            .of(repo)
+            .listing([checkout.display()])
+            .checkout(store)
+            .bind("<worktree>", checkout.display()),
+    }
+    .judge(vcs)
+}
+
 /// Every workweave the primary's projects record, with its directory.
-fn recorded_workweaves(
+pub(crate) fn recorded_workweaves(
     primary_root: &Path,
 ) -> anyhow::Result<Vec<(crate::manifest::WorkweaveId, CanonicalPath)>> {
     let mut out = Vec::new();
@@ -1899,59 +1913,6 @@ fn recorded_workweaves(
     Ok(out)
 }
 
-/// R4, second half: refuse while a receipt keyed to `store` stands. A standing
-/// receipt says rwv still accounts for a ref in there; destroying the store
-/// would strand it with nothing left to retract it against. Fail-closed on
-/// receipts that could not be read. A prune reads `project`'s receipts; a
-/// `remove --delete` reads every project's, since a clone is shared by path and
-/// another project's workweave can hold a ref in it.
-fn refuse_standing_receipts(
-    store: &Path,
-    primary_root: &Path,
-    project: &ProjectName,
-    repo_path: &RepoPath,
-    cause: RemovalCause,
-) -> anyhow::Result<()> {
-    let (dropped, rerun) = (cause.situation(), cause.rerun());
-    let projects = match cause {
-        RemovalCause::DroppedFromLock => vec![project.clone()],
-        RemovalCause::RemoveDelete => crate::workspace::discover_projects(primary_root),
-    };
-    let mut standing: Vec<String> = Vec::new();
-    for owner in &projects {
-        let receipts = crate::workweave_index::RefRegistry::for_project(primary_root, owner)
-            .list_for_store(store)
-            .with_context(|| {
-                format!(
-                    "{repo_path}: cannot read project `{owner}`'s ownership receipts for {}; \
-                     refusing to destroy a store whose claims could not be read",
-                    store.display()
-                )
-            })
-            .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
-        standing.extend(
-            receipts
-                .iter()
-                .map(|r| format!("ownership receipt for branch {r} (project {owner})")),
-        );
-    }
-    if !standing.is_empty() {
-        crate::refuse!(
-            RefusalKind::StoreStillClaimed,
-            "{repo_path}: {dropped}, but rwv still holds ownership receipts for \
-             refs in {}:\n  {}\n\
-             \n\
-             Each receipt must be retracted through its own ref delete — with a receipt \
-             and a warrant — before the store itself may be destroyed. Delete the \
-             workweaves that own these refs (`rwv workweave delete <name>`), \
-             then {rerun}.",
-            store.display(),
-            standing.join("\n  "),
-        );
-    }
-    Ok(())
-}
-
 /// Conservatively remove a repo's worktree/clone after it has been dropped
 /// from the lock. Refuses (and warns) if the worktree has uncommitted changes
 /// or local-only commits (branch tip differs from canonical HEAD in workweave;
@@ -1965,27 +1926,16 @@ fn refuse_standing_receipts(
 /// because the divergence comparison that would say whether its objects exist
 /// anywhere else has nothing to run against.
 ///
-/// The local-only refusal in the primary arm stays exactly as it is: it is
-/// incidentally the only thing that has been keeping `remove_dir_all` off a
-/// live workweave's object store, so excluding recorded rwv refs from its
-/// predicate would remove that protection. Unblocking prune is not a payoff
-/// of ownership-by-receipt. What R2 adds here is [`judge_store_checkouts`]
-/// and [`refuse_standing_receipts`] in *front* of the destroy, not a
-/// relaxation behind it.
+/// The local-only refusal in the primary arm is what keeps `remove_dir_all`
+/// off a live workweave's object store; [`judge_store_checkouts`] stands in
+/// *front* of the destroy as well.
 fn prune_dropped_repo(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
-    project_name: &ProjectName,
 ) -> anyhow::Result<()> {
-    plan_checkout_removal(
-        vcs,
-        ctx,
-        repo_path,
-        project_name,
-        RemovalCause::DroppedFromLock,
-    )?
-    .perform(vcs, repo_path)
+    plan_checkout_removal(vcs, ctx, repo_path, RemovalCause::DroppedFromLock)?
+        .perform(vcs, repo_path)
 }
 
 /// What is removing a checkout, as a refusal of that removal tells it.
@@ -2039,7 +1989,6 @@ enum Removal {
     /// primary weave, released from it the way deleting the workweave would.
     RegisteredWorktree {
         checkout: crate::workweave::WorkweaveCheckout,
-        registry: crate::workweave_index::RefRegistry,
         releaser: crate::workweave::Releaser,
     },
     /// A workspace linked into a store elsewhere; only its working tree goes.
@@ -2056,20 +2005,9 @@ impl CheckoutRemoval {
     pub(crate) fn perform(self, vcs: &dyn Vcs, repo_path: &RepoPath) -> anyhow::Result<()> {
         match self.0 {
             Removal::Absent => {}
-            Removal::RegisteredWorktree {
-                checkout,
-                mut registry,
-                releaser,
-            } => {
-                crate::workweave::release_checkout(
-                    vcs,
-                    &mut registry,
-                    &checkout,
-                    repo_path.as_str(),
-                    None,
-                    releaser,
-                )
-                .with_context(|| format!("worktree remove for {repo_path} failed"))?;
+            Removal::RegisteredWorktree { checkout, releaser } => {
+                crate::workweave::release_checkout(vcs, &checkout, repo_path.as_str(), releaser)
+                    .with_context(|| format!("worktree remove for {repo_path} failed"))?;
             }
             Removal::LinkedWorkspace(dest) | Removal::Store(dest) => {
                 std::fs::remove_dir_all(&dest)
@@ -2086,7 +2024,6 @@ pub(crate) fn plan_checkout_removal(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
-    project_name: &ProjectName,
     cause: RemovalCause,
 ) -> anyhow::Result<CheckoutRemoval> {
     let dropped = cause.situation();
@@ -2142,7 +2079,7 @@ pub(crate) fn plan_checkout_removal(
                     project: project.clone(),
                     name: name.require(dir.as_path(), project)?.clone(),
                 };
-                let store = crate::workweave::receipt_store_for(vcs, &canonical);
+                let store = crate::workweave::store_behind(vcs, &canonical);
                 Ok(CheckoutRemoval(Removal::RegisteredWorktree {
                     checkout: crate::workweave::WorkweaveCheckout::of_live_workweave(
                         vcs,
@@ -2152,10 +2089,6 @@ pub(crate) fn plan_checkout_removal(
                         store,
                         dest,
                         &repo_path.as_path(),
-                    ),
-                    registry: crate::workweave_index::RefRegistry::for_project(
-                        ctx.primary_path(),
-                        project,
                     ),
                     releaser: cause.releaser(),
                 }))
@@ -2201,15 +2134,6 @@ pub(crate) fn plan_checkout_removal(
             }
         }
         Checkout::Primary { .. } => {
-            if let RemovalCause::RemoveDelete = cause {
-                refuse_standing_receipts(
-                    &dest,
-                    ctx.primary_path(),
-                    project_name,
-                    repo_path,
-                    cause,
-                )?;
-            }
             // Primary: refuse if local-only branches with unique commits exist.
             // Conservative — any branch with commits not on origin is grounds.
             let any_local_only = match vcs.list_local_branch_names(&dest) {
@@ -2289,17 +2213,7 @@ pub(crate) fn plan_checkout_removal(
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
-            // of this repo is registered in. R4 gates it: its checkouts were
-            // judged above, its receipts here.
-            if let RemovalCause::DroppedFromLock = cause {
-                refuse_standing_receipts(
-                    &dest,
-                    ctx.primary_path(),
-                    project_name,
-                    repo_path,
-                    cause,
-                )?;
-            }
+            // of this repo is registered in. Its checkouts were judged above.
             Ok(CheckoutRemoval(Removal::Store(dest)))
         }
     }
@@ -2435,6 +2349,7 @@ pub struct OpCoordinates {
 /// the operator passed.
 pub struct RetiredWorkweave {
     name: WorkweaveName,
+    deletion: crate::workweave::WorkweaveDeletion,
 }
 
 impl RetiredWorkweave {
@@ -2613,6 +2528,9 @@ struct OpContext<'a> {
     /// exactly then.
     discard_local_commits: Option<DiscardLocalCommitsConsent>,
     retire: bool,
+    /// Set when retire removed the workweave and the deletion rule kept
+    /// branches of it.
+    retire_left: std::sync::atomic::AtomicBool,
     jobs: usize,
     handler: &'a dyn OutputHandler,
     /// The CWD project repo's backend. One per invocation, because the
@@ -2929,7 +2847,11 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 cleanup(ctx)?;
                 ctx.handler.record_complete();
                 announce_completion(ctx);
-                return fail_on_stranded_checkouts(ctx.verb, &stranded);
+                fail_on_stranded_checkouts(ctx.verb, &stranded)?;
+                if ctx.retire_left.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(crate::exit_status::CompletedWithRemainder.into());
+                }
+                return Ok(());
             }
         }
     }
@@ -3833,6 +3755,7 @@ fn guard_and_mark<'a>(
         strategy,
         discard_local_commits,
         retire,
+        retire_left: std::sync::atomic::AtomicBool::new(false),
         jobs,
         handler,
         project_vcs,
@@ -4151,6 +4074,7 @@ fn load_continuing_context<'a>(
         strategy,
         discard_local_commits,
         retire: record.retire,
+        retire_left: std::sync::atomic::AtomicBool::new(false),
         jobs: 1,
         handler,
         project_vcs,
@@ -5564,25 +5488,21 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if replayed.manifest.contains_repo(repo_path) || !checkout.exists() {
             continue;
         }
-        let member = match prune_dropped_repo(
-            vcs_for(entry.vcs_type).as_ref(),
-            &ctx.cwd_ctx,
-            repo_path,
-            &ctx.cwd_project_name,
-        ) {
-            Ok(()) => {
-                if emit_text {
-                    outln!("  {repo_path}: pruned (dropped from lock)");
+        let member =
+            match prune_dropped_repo(vcs_for(entry.vcs_type).as_ref(), &ctx.cwd_ctx, repo_path) {
+                Ok(()) => {
+                    if emit_text {
+                        outln!("  {repo_path}: pruned (dropped from lock)");
+                    }
+                    MemberOutput::pruned(repo_path, &checkout)
                 }
-                MemberOutput::pruned(repo_path, &checkout)
-            }
-            Err(e) => {
-                if emit_text {
-                    eprintln!("  {repo_path}: prune skipped: {e:#}");
+                Err(e) => {
+                    if emit_text {
+                        eprintln!("  {repo_path}: prune skipped: {e:#}");
+                    }
+                    MemberOutput::prune_refused(repo_path, &checkout, &e)
                 }
-                MemberOutput::prune_refused(repo_path, &checkout, &e)
-            }
-        };
+            };
         ctx.handler.record_member(member);
     }
 
@@ -5931,7 +5851,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         entry.role,
                         entry.recurse_submodules,
                         cwd_tip.id().as_str(),
-                        crate::workweave::ReceiptedBranch::Attach,
+                        crate::workweave::BranchPolicy::Restore,
                     )
                 }) {
                     Ok(born) => {
@@ -6092,7 +6012,6 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         Checkout::Workweave {
             dir, name, project, ..
         } => {
-            refuse_retiring_unpruned_checkouts(&stranded_checkouts(ctx)?)?;
             let retired = retire_workweave_after_sync_to(
                 ctx.project_vcs.as_ref(),
                 &ctx.cwd_ctx,
@@ -6100,9 +6019,15 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 name.require(dir.as_path(), project)?,
                 project,
                 &ctx.cwd_project_dir,
-                &ctx.dest_workspace_dir,
             )?;
             eprintln!("retired workweave {}", retired.name().as_str());
+            if emit_text {
+                retired.deletion.print();
+            }
+            if retired.deletion.left_something() {
+                ctx.retire_left
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             ctx.handler.record_retired(&retired);
             Ok(())
         }
@@ -6113,39 +6038,6 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Ok(())
         }
     }
-}
-
-/// Deleting the workweave would destroy a checkout replay refused to prune for
-/// what it holds. The set is the one the op's completion reports, so a
-/// `--continue` at retire weighs the same checkouts the first run did.
-fn refuse_retiring_unpruned_checkouts(stranded: &[RepoPath]) -> anyhow::Result<()> {
-    if stranded.is_empty() {
-        return Ok(());
-    }
-    let n = stranded.len();
-    let (s, it, holds) = if n == 1 {
-        ("", "it", "holds")
-    } else {
-        ("s", "them", "hold")
-    };
-    crate::refuse!(
-        RefusalKind::RetireUnprunedCheckout,
-        "--retire: replay could not prune {n} member checkout{s} the manifest no longer \
-         names, and deleting the workweave would destroy what {it} {holds}; refusing to \
-         delete:\n  {list}\n\
-         \n\
-         Save what you need from {it} (commit and push it, or copy it out) or discard it, \
-         then remove {it} by hand and run:\n\
-           {resume}   # re-runs the retire check\n\
-         \n\
-         To roll back the entire op: `rwv abort`.",
-        list = stranded
-            .iter()
-            .map(RepoPath::as_str)
-            .collect::<Vec<_>>()
-            .join("\n  "),
-        resume = op_state::resume_command(op_state::OpVerb::SyncTo),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -6379,19 +6271,10 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
 /// `rwv sync-to --retire` post-sync-to cleanup.
 ///
-/// Verify that the just-completed sync-to brought CWD's manifest repos into
-/// alignment with the target's, and that no worktree has uncommitted changes,
-/// then delete the workweave. Bails (preserving the workweave) on any
-/// mismatch so the operator can fix and re-run.
-///
-/// We deliberately compare **manifest repo tips** rather than project repo
-/// tips. The project repo's post-sync state can diverge from the target by
-/// exactly the auto-relock commit Phase 3 writes; that commit is purely
-/// derived — the parent will regenerate it on its next sync — so refusing on
-/// project-tip inequality would refuse every retire, even the happy path the
-/// spec describes. Manifest tip equality is the honest "work has converged"
-/// signal: Phase 2 advances both sides to the same SHAs, so post-sync the
-/// manifest repos should be byte-equal.
+/// Verify that no worktree has uncommitted changes, then delete the
+/// workweave and apply the deletion rule to its branches. Bails (preserving
+/// the workweave) on dirt so the operator can fix and re-run; a branch that
+/// has not landed is kept by the rule and reported, not a refusal.
 ///
 /// The [`RetiredWorkweave`] returned is the only evidence a retire happened:
 /// every path that does not reach the delete returns `Err`, and the primary
@@ -6403,7 +6286,6 @@ fn retire_workweave_after_sync_to(
     workweave_name: &WorkweaveName,
     project: &crate::manifest::ProjectName,
     cwd_project_dir: &Path,
-    target_workspace_dir: &Path,
 ) -> anyhow::Result<RetiredWorkweave> {
     let resume = op_state::resume_command(op_state::OpVerb::SyncTo);
 
@@ -6411,61 +6293,6 @@ fn retire_workweave_after_sync_to(
     let manifest_path = cwd_project_dir.join(Manifest::FILE_NAME);
     let manifest =
         Manifest::from_path(&manifest_path).context("--retire: failed to reload manifest")?;
-
-    // Compare each manifest repo's HEAD in CWD vs. target. After a successful
-    // sync-to, step 3 has fast-forwarded the target's repos to CWD's tips, so
-    // both sides should be at the same SHAs. We compare against the target
-    // workspace directory (which sync-to already advanced in step 3).
-    let target_root = target_workspace_dir;
-
-    let mut diverged: Vec<String> = Vec::new();
-    for (repo_path, entry) in manifest.iter_entries() {
-        let vcs = vcs_for(entry.vcs_type);
-        let cwd_repo = workweave_dir.join(repo_path.as_path());
-        let target_repo = target_root.join(repo_path.as_path());
-        if !cwd_repo.exists() || !target_repo.exists() {
-            // Missing on one side — leave the workweave alone; this is
-            // unusual enough that the operator should look.
-            diverged.push(format!("{}: missing on one side", repo_path.as_str()));
-            continue;
-        }
-        let cwd_head = vcs
-            .head_revision(&cwd_repo)
-            .with_context(|| format!("--retire: read CWD head for {}", repo_path))?;
-        let target_head = vcs
-            .head_revision(&target_repo)
-            .with_context(|| format!("--retire: read target head for {}", repo_path))?;
-        if cwd_head != target_head {
-            // The check stays equality-only — equal-or-refuse is the right
-            // conservatism for a gate that deletes a workspace. The verdict is
-            // reported so the operator knows which way to reconcile.
-            let verdict =
-                match Containment::observe(vcs.as_ref(), &cwd_repo, &cwd_head, &target_head) {
-                    Some(c) => format!(" — CWD is {}", c.describe("the target")),
-                    None => String::new(),
-                };
-            diverged.push(format!(
-                "{}: CWD={} target={}{verdict}",
-                repo_path.as_str(),
-                cwd_head.id().short(),
-                target_head.id().short()
-            ));
-        }
-    }
-
-    if !diverged.is_empty() {
-        crate::refuse!(
-            RefusalKind::RetireNotConverged,
-            "--retire: workweave's member repos differ from target after sync-to; \
-             refusing to delete:\n  {diverged}\n\
-             \n\
-             To reconcile: sync the divergent repo(s), then run:\n\
-               {resume}   # re-runs the retire check\n\
-             \n\
-             To roll back the entire op: `rwv abort`.",
-            diverged = diverged.join("\n  "),
-        );
-    }
 
     // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
     let mut dirty = crate::workweave::judge_dirty_checkouts(
@@ -6481,17 +6308,17 @@ fn retire_workweave_after_sync_to(
     ));
     dirty.into_result()?;
 
-    crate::workweave::delete_workweave_for_retire(
+    let deletion = crate::workweave::delete_workweave_for_retire(
         ctx.primary_path(),
         project,
         workweave_name,
         workweave_dir,
-        &CanonicalPath::of(target_workspace_dir),
     )
     .context("--retire: workweave delete failed")?;
 
     Ok(RetiredWorkweave {
         name: workweave_name.clone(),
+        deletion,
     })
 }
 
@@ -7645,7 +7472,6 @@ mod tests {
     use super::*;
     use crate::git::git_vcs;
     use crate::path_spelling::resolve;
-    use crate::vcs::EphemeralRefName;
 
     #[test]
     fn settling_speaks_when_nothing_handles_the_run_and_when_the_handler_does() {
@@ -8271,18 +8097,16 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // judge_store_checkouts, refuse_standing_receipts — R4, in front of the
-    // store destroy
+    // judge_store_checkouts — in front of the store destroy
     // -----------------------------------------------------------------------
 
-    /// A canonical store plus the primary root and project name its receipt
-    /// registry is keyed by.
-    fn store_fixture(tmp: &Path) -> (PathBuf, PathBuf, ProjectName) {
+    /// A canonical store plus the primary root and project name.
+    fn store_fixture(tmp: &Path) -> (PathBuf, PathBuf) {
         let primary = tmp.join("weave");
         std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
         let store = primary.join("github/example/server");
         init_repo(&store);
-        (store, primary, ProjectName::new("web-app").unwrap())
+        (store, primary)
     }
 
     fn dropped() -> RepoPath {
@@ -8297,27 +8121,19 @@ mod tests {
     }
 
     #[test]
-    fn a_store_nothing_claims_judges_no_checkout_and_no_receipt() {
+    fn a_store_nothing_claims_judges_no_checkout() {
         // The control: without it the refusals below could be passing on a
         // fixture that can never be unclaimed.
         let tmp = crate::tempdir().unwrap();
-        let (store, primary, project) = store_fixture(tmp.path());
+        let (store, primary) = store_fixture(tmp.path());
 
         assert!(judged_checkouts(&store, &primary).unwrap().is_empty());
-        refuse_standing_receipts(
-            &store,
-            &primary,
-            &project,
-            &dropped(),
-            RemovalCause::DroppedFromLock,
-        )
-        .expect("no receipts standing");
     }
 
     #[test]
     fn a_registered_worktree_no_workweave_records_is_judged_a_raw_worktree() {
         let tmp = crate::tempdir().unwrap();
-        let (store, primary, _project) = store_fixture(tmp.path());
+        let (store, primary) = store_fixture(tmp.path());
 
         // `git worktree add` writes its administration into the canonical
         // store, so `remove_dir_all` on the store takes this checkout's refdb
@@ -8345,59 +8161,6 @@ mod tests {
             "the worktree is listed:\n{out}"
         );
         assert!(out.ends_with("\nrwv explain checkout\n"), "{out}");
-    }
-
-    #[test]
-    fn refuse_standing_receipts_refuses_while_a_receipt_stands() {
-        let tmp = crate::tempdir().unwrap();
-        let (store, primary, project) = store_fixture(tmp.path());
-        let at = git_vcs().head_revision(&store).unwrap();
-
-        let mut registry = crate::workweave_index::RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(
-                &store,
-                EphemeralRefName::mint(
-                    &crate::manifest::WorkweaveId {
-                        project: project.clone(),
-                        name: WorkweaveName::new("hotfix").unwrap(),
-                    }
-                    .flat(),
-                ),
-                at,
-            )
-            .unwrap();
-
-        let err = refuse_standing_receipts(
-            &store,
-            &primary,
-            &project,
-            &dropped(),
-            RemovalCause::DroppedFromLock,
-        )
-        .expect_err("a standing receipt is rwv still accounting for a ref in there");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("still holds ownership receipts"),
-            "the refusal must name the receipts, not the registrations; got:\n{msg}"
-        );
-        assert!(
-            msg.contains("web-app--hotfix"),
-            "the refusal must name the ref whose receipt stands; got:\n{msg}"
-        );
-
-        // R4 is satisfied by retraction, not by ignoring the receipt.
-        registry
-            .retract(&store, &crate::vcs::RawRefName::new("web-app--hotfix"))
-            .unwrap();
-        refuse_standing_receipts(
-            &store,
-            &primary,
-            &project,
-            &dropped(),
-            RemovalCause::DroppedFromLock,
-        )
-        .expect("with the receipt retracted the store is unclaimed");
     }
 
     #[test]
@@ -8452,9 +8215,9 @@ mod tests {
         // The control. Without it, the two refusals below could be reporting
         // a fixture that can never be pruned rather than a gate that fired.
         let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
-        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect("nothing claims this store");
         assert!(
             !store.exists(),
@@ -8470,7 +8233,7 @@ mod tests {
         // local-only branch: the shipped predicate passes and R4 is the only
         // thing left standing between the live workweave and the delete.
         let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
         let live = tmp.path().join("live-workweave");
         git(
@@ -8478,7 +8241,7 @@ mod tests {
             &["worktree", "add", "--detach", live.to_str().unwrap()],
         );
 
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a store a live workweave is registered against is claimed");
         let judged: Vec<State> = crate::diagnosis::report_of(&err)
             .map(|r| r.lines().iter().map(|j| j.state()).collect())
@@ -8509,7 +8272,7 @@ mod tests {
             &store,
             &["worktree", "remove", "--force", live.to_str().unwrap()],
         );
-        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect("with the live worktree gone the store is unclaimed");
         assert!(
             !store.exists(),
@@ -8518,66 +8281,11 @@ mod tests {
     }
 
     #[test]
-    fn prune_dropped_repo_refuses_until_the_receipts_are_retracted() {
-        let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
-        let at = git_vcs().head_revision(&store).unwrap();
-
-        let mut registry =
-            crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
-        registry
-            .record_created(
-                &store,
-                EphemeralRefName::mint(
-                    &crate::manifest::WorkweaveId {
-                        project: project.clone(),
-                        name: WorkweaveName::new("feat").unwrap(),
-                    }
-                    .flat(),
-                ),
-                at,
-            )
-            .unwrap();
-
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
-            .expect_err("rwv still accounts for a ref in this store");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("still holds ownership receipts"),
-            "R4's receipt arm must be what refused; got:\n{msg}"
-        );
-        assert!(
-            store.exists(),
-            "a refused prune must leave the store on disk"
-        );
-
-        // Retraction is the only thing that clears it — R4 is satisfied by
-        // having run the per-ref discipline dry, not by skipping it.
-        registry
-            .retract(&store, &crate::vcs::RawRefName::new("web-app--feat"))
-            .unwrap();
-        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
-            .expect("with every receipt retracted the store is unclaimed");
-        assert!(
-            !store.exists(),
-            "once nothing claims the store, prune removes it"
-        );
-    }
-
-    #[test]
-    fn prune_dropped_repo_does_not_exempt_a_recorded_ref_from_the_local_only_refusal() {
-        // Recorded rwv refs are deliberately NOT excluded
-        // from the local-only predicate. That refusal is incidentally the
-        // only thing that has been keeping `remove_dir_all` off a live
-        // workweave's object store, so ownership-by-receipt buys no
-        // exemption from it — unblocking prune is not a payoff of R2.
-        //
+    fn prune_dropped_repo_refuses_a_store_holding_a_branch_only_it_has() {
         // This is the E1 scenario: a workweave holding a commit that exists
-        // nowhere else. It must refuse *because of the unique commit*, with
-        // a receipt on file, not in spite of one.
+        // nowhere else. It must refuse *because of the unique commit*.
         let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
-        let at = git_vcs().head_revision(&store).unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
         // The branch holds the unique commit with no checkout of it left, so
         // the store's checkouts pass and the local-only scan is what decides.
@@ -8587,26 +8295,11 @@ mod tests {
         let unique = commit(&store, "only-here");
         git(&store, &["switch", "main"]);
 
-        crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project)
-            .record_created(
-                &store,
-                EphemeralRefName::mint(
-                    &crate::manifest::WorkweaveId {
-                        project: project.clone(),
-                        name: WorkweaveName::new("feat").unwrap(),
-                    }
-                    .flat(),
-                ),
-                at,
-            )
-            .unwrap();
-
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a store holding a commit that exists nowhere else is not prunable");
         assert!(
             format!("{err:#}").contains("local-only commits"),
-            "the shipped local-only refusal must still fire on a ref rwv holds a \
-             receipt for; got:\n{err:#}"
+            "the local-only refusal must fire; got:\n{err:#}"
         );
         assert_eq!(
             git(&store, &["rev-parse", "web-app--feat"]),
@@ -8618,11 +8311,11 @@ mod tests {
     #[test]
     fn prune_dropped_repo_refuses_unpushed_work_when_a_tag_shares_the_branch_name() {
         let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
         let unpushed = commit(&store, "only-here");
         git(&store, &["tag", "main", "refs/remotes/origin/main"]);
 
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a store holding an unpushed commit is not prunable");
 
         assert!(
@@ -8645,7 +8338,7 @@ mod tests {
         // has to refuse — read as "nothing unpushed" it clears the branch and
         // hands the store to the delete.
         let tmp = crate::tempdir().unwrap();
-        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
         // A loose ref file wins over the packed-refs entry the clone wrote.
         let dangling = store.join(".git/refs/remotes/origin/main");
@@ -8659,7 +8352,7 @@ mod tests {
              under test is never reached"
         );
 
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a count git could not take is not evidence that nothing is unpushed");
         let msg = format!("{err:#}");
         assert!(
@@ -8733,7 +8426,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let origin = tmp.path().join("origin");
         init_repo(&origin);
-        let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
+        let (ctx, checkout, _project) = workweave_without_primary_canonical(tmp.path());
         git(
             tmp.path(),
             &[
@@ -8748,7 +8441,7 @@ mod tests {
         );
         let tip = git_vcs().head_revision(&checkout).unwrap();
 
-        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a checkout that IS the store is not a working tree to delete");
         let msg = format!("{err:#}");
         assert!(
@@ -8778,7 +8471,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let store = tmp.path().join("elsewhere/server");
         init_repo(&store);
-        let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
+        let (ctx, checkout, _project) = workweave_without_primary_canonical(tmp.path());
         git(
             &store,
             &["worktree", "add", "--detach", checkout.to_str().unwrap()],
@@ -8788,7 +8481,7 @@ mod tests {
             "the fixture must be a linked workspace, not a standalone clone"
         );
 
-        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect("a linked workspace is a working tree, and pruning it is what this arm is for");
         assert!(
             !checkout.exists(),
@@ -8801,14 +8494,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // materialize_missing_repo — phase 3 births through the chokepoint, so a
-    // name rwv holds no receipt for is refused rather than claimed (R2)
-    //
-    // Sync is the one production writer that used to re-implement birth as a
-    // bare `record_created` + `create_worktree_on`. That skipped the
-    // (receipt, ref) classification entirely: whatever sat at the minted name
-    // got a receipt minted over it, and ownership-by-record then made the
-    // operator's branch rwv's to destroy on the next workweave delete.
+    // materialize_missing_repo — phase 3 births through the chokepoint, which
+    // puts the checkout on the workweave's branch where that branch stands
     // -----------------------------------------------------------------------
 
     /// A workweave whose primary holds the canonical clone and whose own
@@ -8875,23 +8562,9 @@ mod tests {
         (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }
 
-    /// The receipt phase 3 wrote for this workweave's ephemeral ref, if any.
-    fn materialized_receipt(
-        ctx: &WorkspaceContext,
-        canonical: &Path,
-        project: &ProjectName,
-    ) -> Option<crate::vcs::OwnedRef> {
-        crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project)
-            .lookup(
-                &crate::workweave::receipt_store_for(crate::git::git_vcs().as_ref(), canonical),
-                &crate::vcs::RawRefName::new("web-app--feat"),
-            )
-            .expect("the receipt store is readable")
-    }
-
     #[test]
-    fn materialize_missing_repo_authors_the_ref_and_records_it() {
-        // The control. Without it the refusal below could be passing on a
+    fn materialize_missing_repo_authors_the_branch() {
+        // The control. Without it the attach below could be passing on a
         // fixture that can never materialize anything at all.
         let tmp = crate::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
@@ -8911,29 +8584,25 @@ mod tests {
             checkout.join(".git").is_file(),
             "the materialized repo must be a linked workspace on the ephemeral ref"
         );
-        assert!(
-            materialized_receipt(&ctx, &canonical, &project).is_some(),
-            "the receipt is what makes a sync-materialized worktree visible to \
-             `workweave delete`, which ranges over the recorded set"
+        assert_eq!(
+            git(&canonical, &["rev-parse", "web-app--feat"]),
+            git(&canonical, &["rev-parse", "main"]),
+            "the branch is created at the revision asked for"
         );
     }
 
     #[test]
-    fn materialize_missing_repo_refuses_a_pre_existing_branch_it_holds_no_receipt_for() {
-        // R2's refusal arm: a ref that merely *looks* like rwv's is not rwv's,
-        // so it is neither adopted into a receipt nor destroyed. If this test
-        // ever goes green on a materialize that SUCCEEDS, the operator's
-        // branch has just become rwv's to delete.
+    fn materialize_missing_repo_attaches_a_pre_existing_branch_where_it_stands() {
+        // The workweave's own branch survived its checkout: the member is put
+        // back on it, commits and all, and nothing moves or deletes it.
         let tmp = crate::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
 
-        // The operator's own branch, sitting at the name rwv would mint, and
-        // carrying a commit that exists nowhere else.
         git(&canonical, &["checkout", "-b", "web-app--feat"]);
         let operator_tip = commit(&canonical, "operators-work");
         git(&canonical, &["checkout", "main"]);
 
-        let err = materialize_missing_repo(
+        materialize_missing_repo(
             git_vcs().as_ref(),
             &ctx,
             &dropped(),
@@ -8941,24 +8610,20 @@ mod tests {
             "main",
             &project,
         )
-        .expect_err("a branch rwv holds no receipt for is not rwv's to reuse");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("rwv holds no ownership receipt for it"),
-            "the unowned-ref arm must be what refused — not a worktree-add failure \
-             downstream of a receipt that was already minted; got:\n{msg}"
-        );
-        assert!(
-            materialized_receipt(&ctx, &canonical, &project).is_none(),
-            "no receipt may be minted over a branch rwv did not create: the receipt \
-             is what a later delete reads as authorization to destroy it"
+        .expect("the branch is the workweave's, so the member is put back on it");
+
+        let checkout = ctx.active_path().join(dropped().as_path());
+        assert_eq!(
+            git_vcs().head_revision(&checkout).unwrap(),
+            operator_tip,
+            "the checkout stands at the branch's own tip"
         );
         assert_eq!(
             git_vcs()
                 .resolve_revision(&canonical, "web-app--feat")
                 .unwrap(),
             operator_tip,
-            "the operator's branch must survive the refusal at its own tip"
+            "the branch survives at its own tip"
         );
     }
 

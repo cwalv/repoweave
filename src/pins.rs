@@ -24,6 +24,8 @@ const LISTED_COMMITS_CAP: usize = 20;
 pub(crate) struct LivePin {
     pub(crate) commit: CommitId,
     pub(crate) project: ProjectName,
+    /// The project branch whose lock holds it.
+    pub(crate) branch: String,
     /// The project and branch whose lock holds it, as an operator reads them.
     pub(crate) held_by: String,
 }
@@ -66,6 +68,7 @@ pub(crate) fn live_pins(primary: &Path) -> anyhow::Result<BTreeMap<RepoPath, Vec
                     pins.entry(path.clone()).or_default().push(LivePin {
                         commit,
                         project: project.clone(),
+                        branch: branch.label.clone(),
                         held_by: format!("{project} {}", branch.label),
                     });
                 }

@@ -11,8 +11,8 @@
 use crate::manifest::{RepoPath, Role};
 use crate::path_spelling::CanonicalPath;
 use crate::vcs::{
-    BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, SubmoduleCheckout,
-    TrackedFile, Vcs, VcsError, WorkspacePopulation,
+    FoundBranch, RecordedSubmodule, RefOrigin, ResolvedRevisionId, SubmoduleBirth,
+    SubmoduleCheckout, TrackedFile, Vcs, VcsError, WorkspacePopulation,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -99,9 +99,8 @@ fn may_link(role: Role, backend_declares: bool, source_is_reference: bool) -> bo
 
 /// What creating a workspace with shared files came to.
 pub(crate) struct Populated {
-    /// What [`Vcs::create_worktree_on`] would have answered: `Some` iff this
-    /// call authored the ref.
-    pub(crate) created: Result<Option<BornRef>, VcsError>,
+    /// What [`Vcs::create_worktree_on`] would have answered.
+    pub(crate) created: Result<RefOrigin, VcsError>,
     /// How the workspace's files were placed once it existed. `Ok(None)` for a
     /// backend that answers no population questions, or a creation that
     /// failed.
@@ -113,21 +112,21 @@ pub(crate) struct Populated {
 /// from it and the rest written by the backend.
 pub(crate) fn create_worktree_populated(
     vcs: &dyn Vcs,
-    owned: &OwnedRef,
+    found: &FoundBranch,
     dest: &Path,
     role: Role,
     fs: &dyn FilePrimitives,
 ) -> Populated {
     let Some(population) = vcs.population() else {
         return Populated {
-            created: vcs.create_worktree_on(owned, dest),
+            created: vcs.create_worktree_on(found, dest),
             filled: Ok(None),
         };
     };
-    let created = population.create_unpopulated_worktree_on(owned, dest);
+    let created = population.create_unpopulated_worktree_on(found, dest);
     let filled = match &created {
         Ok(_) => {
-            let sources = sources(vcs, dest, owned.created_at());
+            let sources = sources(vcs, dest, found.start());
             fill(population, dest, role, &sources, fs).map(Some)
         }
         Err(_) => Ok(None),
@@ -894,7 +893,6 @@ mod tests {
     use crate::git::{git_command_in_test, git_vcs, under_both_line_endings, LineEndings};
     use crate::manifest::Manifest;
     use crate::path_spelling::resolve;
-    use crate::vcs::RawRefName;
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = git_command_in_test()
@@ -1029,10 +1027,9 @@ mod tests {
             fs: &dyn FilePrimitives,
         ) -> (PathBuf, FilePlacement) {
             let dest = self.root.join(name);
-            let owned =
-                OwnedRef::from_receipt(self.store.join(".git"), RawRefName::new(name), at.clone());
-            let populated = create_worktree_populated(git_vcs().as_ref(), &owned, &dest, role, fs);
-            assert!(populated.created.unwrap().is_some());
+            let found = FoundBranch::named(self.store.join(".git"), name, at.clone());
+            let populated = create_worktree_populated(git_vcs().as_ref(), &found, &dest, role, fs);
+            assert_eq!(populated.created.unwrap(), RefOrigin::Authored);
             (
                 dest,
                 populated.filled.unwrap().expect("git answers population"),
@@ -1424,9 +1421,9 @@ mod tests {
     #[test]
     fn a_backend_without_population_creates_the_worktree_itself() {
         let fake = crate::vcs::testing::FakeVcs::new();
-        let owned = OwnedRef::from_receipt(
+        let found = FoundBranch::named(
             PathBuf::from("/store"),
-            RawRefName::new("p--w"),
+            "p--w",
             ResolvedRevisionId::from_canonical(
                 crate::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
                 None,
@@ -1435,13 +1432,13 @@ mod tests {
 
         let populated = create_worktree_populated(
             &fake,
-            &owned,
+            &found,
             Path::new("/dest"),
             Role::Reference,
             &FakePrimitives::default(),
         );
 
-        assert!(populated.created.unwrap().is_some());
+        assert_eq!(populated.created.unwrap(), RefOrigin::Authored);
         assert!(populated.filled.unwrap().is_none());
         assert_eq!(
             fake.calls(),

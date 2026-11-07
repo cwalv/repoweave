@@ -31,34 +31,15 @@
 //!   "workweaves": {
 //!     "hotfix": "/abs/path/to/.workweaves/myproj--hotfix"
 //!   },
-//!   "receipts": [
-//!     {
-//!       "store": "/abs/path/to/weave/github/acme/server",
-//!       "name": "myproj--hotfix",
-//!       "created_at": "1f0c…40 hex"
-//!     }
-//!   ]
+//!   "receipts": []
 //! }
 //! ```
 //!
-//! ## The ownership-receipt registry
-//!
-//! `receipts` is the [`RefRegistry`] — the store behind R2 of the branch
-//! model: *rwv may only destroy a ref it recorded creating*. It is homed
-//! here, in the primary's
-//! project checkout, and **not** in the workweave's `.rwv-workweave`
-//! marker, because the refs outlive the workweave directory: `workweave
-//! delete` runs `remove_dir_all` over the directory, so a marker-homed
-//! receipt would die with the very directory whose leftover refs it exists
-//! to account for.
-//!
-//! Receipts are keyed by **(canonical store, ref name)**. Same name, two
-//! stores, two receipts — one workweave's repos each get an ephemeral ref
-//! of the same name in different object stores, and they are different
-//! refs.
-//!
-//! Durability is part of the contract, not an implementation detail; see
-//! [`write()`] and [`RefRegistry::record_created`].
+//! `receipts` is always written empty. An index an earlier release wrote may
+//! carry entries there; they are read past and never acted on, and the next
+//! write drops them. An index with no `receipts` key at all is a legacy
+//! index: `workweave create` refuses against it, and `rwv doctor --fix`
+//! gives it the key.
 //!
 //! ## Advisory, validated before use
 //!
@@ -85,9 +66,6 @@ use crate::manifest::{ProjectName, WorkweaveName};
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::state_file::{StateFile, StatePath};
-use crate::vcs::{
-    CommitId, EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
-};
 use crate::workspace::project_dir;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -111,12 +89,9 @@ pub(crate) const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
 /// absolute so that per-workweave placement overrides (a `--dir` on create)
 /// remain resolvable without re-consulting the container.
 ///
-/// `receipts` — the ownership receipts of [`RefRegistry`]. `None` means the
-/// file was written before the registry existed (a **legacy index**), which
-/// is a distinct state from "registry present, nothing recorded yet"
-/// (`Some(vec![])`): the first needs the migration hook, the second is a
-/// fresh workspace with no ephemeral refs. Keeping them distinct is why the
-/// field is an `Option` rather than a plain `Vec` with `#[serde(default)]`.
+/// `receipts` — present and empty in every index this build writes; absent in
+/// a legacy index, which is a distinct state that
+/// [`WorkweaveIndex::is_legacy`] reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkweaveIndex {
     /// Absolute container directory for new workweaves in this project.
@@ -124,70 +99,46 @@ pub struct WorkweaveIndex {
     /// Recorded `name → absolute path` entries.
     #[serde(default)]
     pub workweaves: BTreeMap<WorkweaveName, CanonicalPath>,
-    /// Ownership receipts. Private: [`RefRegistry`] is the only thing that
-    /// may add or remove one — a receipt written any other way would be an
-    /// ownership claim nobody checked, which is what R2 exists to prevent.
-    /// Read access is [`WorkweaveIndex::has_receipt_registry`] and the
-    /// registry's own accessors.
     #[serde(default)]
-    receipts: Option<Vec<RefReceipt>>,
+    receipts: Option<NoReceipts>,
+}
+
+/// What an index's `receipts` holds: nothing. Any entries an earlier release
+/// wrote are read past, and the key is written back as an empty list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NoReceipts;
+
+impl Serialize for NoReceipts {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        serializer.serialize_seq(Some(0))?.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for NoReceipts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Self)
+    }
 }
 
 impl WorkweaveIndex {
     /// Construct an empty index with `container` as the recorded container.
-    ///
-    /// The receipt registry is present-and-empty, not absent: an index this
-    /// build wrote is not a legacy index, and
-    /// [`WorkweaveIndex::has_receipt_registry`] must not claim otherwise.
     pub fn new(container: CanonicalPath) -> Self {
         Self {
             container,
             workweaves: BTreeMap::new(),
-            receipts: Some(Vec::new()),
+            receipts: Some(NoReceipts),
         }
     }
 
-    /// Whether this index carries the ownership-receipt registry at all.
-    ///
-    /// `false` for an index written before the registry existed. Such an
-    /// index must be migrated before rwv may create or destroy refs for this
-    /// project — see
-    /// [`crate::workspace::pending_index_migration`] for the operator-facing
-    /// hook and [`RefRegistry::migrate_legacy_index`] for the migration
-    /// itself.
-    pub fn has_receipt_registry(&self) -> bool {
-        self.receipts.is_some()
+    /// Whether this index has no `receipts` key: it was written before the
+    /// key existed, and must be migrated before a workweave is created in
+    /// this project — see [`crate::workspace::pending_index_migration`] for
+    /// the operator-facing hook and [`migrate_legacy_index`] for the
+    /// migration itself.
+    pub fn is_legacy(&self) -> bool {
+        self.receipts.is_none()
     }
-}
-
-/// One ownership receipt: "rwv created ref `name` in store `store`, at
-/// revision `created_at`".
-///
-/// The key — `(store, name)` — is stored **structurally**, as two fields,
-/// never as one joined string. A ref name may contain `/` and a store path
-/// may contain almost any byte, so every separator available for a
-/// composite key is legal inside at least one half of a real key: `("/a/b",
-/// "c")` and `("/a", "b/c")` would collide under a `/` join. Two different
-/// receipts must never be able to answer for each other — that is the whole
-/// content of R2.
-///
-/// `created_at` is held as written and parsed into a [`CommitId`] when the
-/// receipt is used, not when the index loads: one corrupt receipt is refused
-/// by the verb that needs it, rather than making every other workweave's
-/// placement and receipts in the same file unreadable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct RefReceipt {
-    /// Absolute path of the canonical store the ref lives in.
-    ///
-    /// Absolute, like `container` and the `workweaves` values in this same
-    /// file: the index is machine-local (dotted, ignored, never committed),
-    /// and a receipt has to name a path the VCS can be pointed at — every
-    /// consumer of [`OwnedRef::store`] hands it straight to a `Vcs` method.
-    store: CanonicalPath,
-    /// The recorded ref name, as written into the store.
-    name: RawRefName,
-    /// The canonical commit id the ref was created at.
-    created_at: String,
 }
 
 /// Where the index file for `(primary_root, project)` lives.
@@ -229,9 +180,7 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
 /// Atomically and **durably** write `index` for `(primary_root, project)`.
 ///
 /// This is one write path for the whole file, and it is the durable one (see
-/// [`crate::durable_file`]). A separate fast-but-lossy path for the placement
-/// entries — which could live with last-writer-wins — would only be a way for
-/// an ownership receipt to end up on the wrong one.
+/// [`crate::durable_file`]).
 ///
 /// If `projects/<project>/` does not exist yet the write fails with an
 /// actionable error rather than silently succeeding into an unowned parent.
@@ -259,19 +208,11 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
 
 /// An exclusive claim on one project's index, released when it drops.
 ///
-/// The placement entries could live with last-writer-wins: a dropped entry
-/// is re-adopted by doctor's container scan. A dropped **receipt** cannot be
-/// re-adopted — under R2 a ref with no receipt is not rwv's, permanently — so
-/// a whole-snapshot write that lost one disowns a live ref, and every doctor
-/// class then goes quiet on it once the workweave directory is gone.
-///
 /// Two concurrent `rwv` processes creating workweaves in the same project
-/// produce exactly that write, and in a fleet they are not a corner case:
-/// without this claim, two such invocations drop at least one receipt in nine
-/// runs out of ten, both exiting zero. `link(2)` onto an already-written inode
-/// is the exclusion, and it holds one winner across threads as well as across
-/// processes — so the per-repo fan-out that lands every repo's receipt in this
-/// one index needs nothing further.
+/// each read the index and write it back whole, so without this claim the
+/// second write drops the first's entry. `link(2)` onto an already-written
+/// inode is the exclusion, and it holds one winner across threads as well as
+/// across processes.
 ///
 /// A crash between acquisition and release leaves the claim behind and every
 /// later write to this index refuses until someone removes it — the cost of
@@ -437,21 +378,19 @@ pub fn record_workweave(
 /// Read the index, or seed a fresh one when the file does not exist.
 ///
 /// Bootstrap seeds the container with the compiled-in default so the next
-/// create's default lands in the same place.
-///
-/// A seeded index is **not** a legacy index — see
-/// [`WorkweaveIndex::has_receipt_registry`]. An absent file records no
-/// workweaves, so it has no refs whose ownership the legacy-index migration
-/// could have missed; the refs of a workweave that predates the index file
-/// entirely are reached by that pass's per-repo arms, which enumerate refs
-/// per store rather than reading this file.
+/// create's default lands in the same place. A legacy index is refused,
+/// naming the command that migrates it.
 fn read_or_seed(claim: &IndexClaim) -> anyhow::Result<WorkweaveIndex> {
-    if let Some(idx) = read_for_edit(claim)? {
-        return Ok(idx);
+    match read_for_edit(claim)? {
+        Some(idx) if idx.is_legacy() => Err(legacy_index_error(&index_path(
+            &claim.primary_root,
+            &claim.project,
+        ))),
+        Some(idx) => Ok(idx),
+        None => Ok(WorkweaveIndex::new(CanonicalPath::of(&default_container(
+            &claim.primary_root,
+        )))),
     }
-    Ok(WorkweaveIndex::new(CanonicalPath::of(&default_container(
-        &claim.primary_root,
-    ))))
 }
 
 /// Remove a workweave entry from the index. No-op if the entry (or the index
@@ -491,410 +430,32 @@ pub fn lookup_raw(
     Ok(read(primary_root, project)?.and_then(|idx| idx.workweaves.get(name).cloned()))
 }
 
-// ---------------------------------------------------------------------------
-// RefRegistry — the ownership-receipt store
-// ---------------------------------------------------------------------------
-
-/// The ownership receipts for one `(primary, project)` pair: the answer to
-/// "is this ref rwv's to destroy?".
-///
-/// R2 makes ownership a matter of **record**, not of name shape. A ref that
-/// merely looks like one of rwv's is not rwv's; a ref rwv holds a persisted
-/// receipt for is. This type is where that record lives, and
-/// [`RefRegistry::record_created`] is the sole producer of [`OwnedRef`] —
-/// the receipt value every DESTROY in the branch model has to be holding.
-///
-/// ## Receipt-first, and what that costs
-///
-/// `record_created` persists the receipt **durably, before** the caller
-/// creates the ref it describes. That ordering binds every path that creates
-/// a ref. The two crash windows are therefore not symmetric, deliberately:
-///
-/// - Crash after the receipt, before the ref: a **dangling receipt**. It
-///   names a ref that does not exist, authorizes nothing (no
-///   [`crate::vcs::DeletionWarrant`] can be built against an absent ref),
-///   and a later pass retracts it. Benign.
-/// - Crash after the ref, before the receipt: an **unreceipted ref**. Under
-///   R2 it is not rwv's, forever — nothing can ever clean it up. This is
-///   the state the ordering exists to make unreachable.
-///
-/// ## No cached state
-///
-/// Every method re-reads the file. `rwv` has no daemon, sibling workweaves
-/// write this same index, and a registry holding a snapshot would write
-/// back a whole stale file — silently retracting receipts another process
-/// recorded in between. `&mut self` on the writers marks them as writers;
-/// it does not mean there is a buffer to flush.
-///
-/// ## What this type deliberately does not decide
-///
-/// [`RefRegistry::retract`] is policy-free: it removes a record and asks
-/// for no warrant. Which callers may retract, whether a store-destroy
-/// retracts per-ref (each with its own warrant) or in bulk under one
-/// consent, and whether receipts are ever reclaimed, all stay open. Putting
-/// a warrant parameter here would answer them by implementation.
-///
-/// # Only a minted name can become an owned one
-///
-/// ```no_run
-/// use repoweave::manifest::{ProjectName, WorkweaveName};
-/// use repoweave::vcs::{CommitId, EphemeralRefName, ResolvedRevisionId};
-/// use repoweave::workweave_index::RefRegistry;
-/// use std::path::Path;
-/// let project = ProjectName::new("p").unwrap();
-/// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
-/// let id = repoweave::manifest::WorkweaveId { project: project.clone(), name: WorkweaveName::new("ww").unwrap() };
-/// let name = EphemeralRefName::mint(&id.flat());
-/// let at = ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap());
-/// let _ = registry.record_created(Path::new("/ws/store"), name, at);
-/// ```
-///
-/// A name that was merely *observed* — a listing entry, a flag argument —
-/// cannot be recorded as created, because recording it would mint the
-/// receipt that authorizes destroying it:
-///
-/// ```compile_fail
-/// use repoweave::manifest::ProjectName;
-/// use repoweave::vcs::{CommitId, RawRefName, ResolvedRevisionId};
-/// use repoweave::workweave_index::RefRegistry;
-/// use std::path::Path;
-/// let project = ProjectName::new("p").unwrap();
-/// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
-/// let at = ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap());
-/// let _ = registry.record_created(Path::new("/ws/store"), RawRefName::new("p--ww"), at);
-/// ```
-///
-/// # A receipt cannot be written around the registry
-///
-/// ```no_run
-/// use repoweave::path_spelling::CanonicalPath;
-/// use repoweave::workweave_index::WorkweaveIndex;
-/// use std::path::Path;
-/// let _index = WorkweaveIndex::new(CanonicalPath::of(Path::new("/container")));
-/// ```
-///
-/// ```compile_fail
-/// use repoweave::path_spelling::CanonicalPath;
-/// use repoweave::workweave_index::WorkweaveIndex;
-/// use std::path::Path;
-/// let _index = WorkweaveIndex {
-///     container: CanonicalPath::of(Path::new("/container")),
-///     workweaves: Default::default(),
-///     receipts: None,
-/// };
-/// ```
-pub struct RefRegistry {
-    primary_root: PathBuf,
-    project: ProjectName,
-}
-
-impl RefRegistry {
-    /// A registry handle for `(primary_root, project)`.
-    ///
-    /// Cheap and infallible: it records where to look, and touches nothing
-    /// until a method is called.
-    pub fn for_project(primary_root: &Path, project: &ProjectName) -> Self {
-        Self {
-            primary_root: primary_root.to_path_buf(),
-            project: project.clone(),
+/// Give a legacy index its `receipts` key. Returns whether the index needed
+/// migrating. Idempotent, and no write on an index that already has the key.
+pub fn migrate_legacy_index(primary_root: &Path, project: &ProjectName) -> anyhow::Result<bool> {
+    IndexClaim::hold(primary_root, project, |claim| {
+        let Some(mut index) = read_for_edit(claim)? else {
+            return Ok(false);
+        };
+        if !index.is_legacy() {
+            return Ok(false);
         }
-    }
-
-    /// Persist a receipt for `name` in `store`, then hand back the
-    /// [`OwnedRef`] that proves it.
-    ///
-    /// The receipt is on disk — fsynced, file and directory — by the time
-    /// this returns, so the caller may create the ref immediately after.
-    /// Creating it *first* inverts the ordering and is the one thing this
-    /// API exists to prevent.
-    ///
-    /// **Idempotent per key.** If a receipt already exists for
-    /// `(store, name)` it is returned unchanged and `created_at` is
-    /// ignored — no write happens at all. Two reasons, both load-bearing:
-    ///
-    /// - The legacy-index migration must be re-runnable over its own partial
-    ///   output, and its adopt arm reaches the same end state only if
-    ///   re-recording is a no-op.
-    /// - Overwriting `created_at` with a freshly observed tip would forge
-    ///   an [`Unmoved`](crate::vcs::DeletionWarrant::unmoved) warrant: the
-    ///   check compares the ref's tip against the recorded one, so
-    ///   re-recording a ref that has *moved* (operator commits on it) would
-    ///   certify it as untouched and authorize destroying that work. A
-    ///   caller that genuinely re-creates a ref retracts the old receipt as
-    ///   part of destroying the old ref, then records anew.
-    ///
-    /// # Errors
-    ///
-    /// - The store does not exist. A receipt names the store a ref is about
-    ///   to be created in; if that store cannot be resolved there is
-    ///   nothing to key the receipt to, and a receipt under an unresolvable
-    ///   key would be unfindable by the DESTROY that needs it later.
-    /// - The index is a legacy index (no registry field). Recording into it
-    ///   would erase the only signal that the migration has not run, leaving
-    ///   every pre-existing ref permanently disowned. Run
-    ///   [`RefRegistry::migrate_legacy_index`] first.
-    /// - The write failed. It returns a `Result` rather than a bare
-    ///   `OwnedRef` because a receipt that failed to persist must not be able
-    ///   to look like one that did — handing back the receipt anyway is
-    ///   exactly the unreceipted-ref state.
-    pub fn record_created(
-        &mut self,
-        store: &Path,
-        name: EphemeralRefName,
-        created_at: ResolvedRevisionId,
-    ) -> anyhow::Result<OwnedRef> {
-        self.persist_receipt(store, name.to_raw(), created_at)
-    }
-
-    /// Adopt a pre-flat ref into a receipt.
-    ///
-    /// The migration's only route from an observation to ownership, and the
-    /// narrowness is the point: a [`LegacyEphemeralRefName`] exists only for a
-    /// ref that sits under the namespace a **live** workweave mints, and its
-    /// sole consumer is the rename that gives that ref its flat name. A
-    /// rename is a DESTROY of the old name plus a birth, and a
-    /// DESTROY needs a receipt — this is that receipt, and rwv genuinely did
-    /// create the ref, before receipts existed to say so.
-    ///
-    /// Recording the tip **as observed** is what makes
-    /// [`DeletionWarrant::unmoved`](crate::vcs::DeletionWarrant::unmoved) hold
-    /// for the rename a moment later, and — because
-    /// [`record_created`](Self::record_created)'s no-op-on-existing rule
-    /// applies here too — what keeps a re-run after a crash from re-stamping
-    /// `created_at` over a tip the operator has since moved.
-    pub fn adopt_legacy(
-        &mut self,
-        store: &Path,
-        name: LegacyEphemeralRefName,
-        observed_tip: ResolvedRevisionId,
-    ) -> anyhow::Result<OwnedRef> {
-        self.persist_receipt(store, name.to_raw(), observed_tip)
-    }
-
-    /// The shared body of [`record_created`](Self::record_created) and
-    /// [`adopt_legacy`](Self::adopt_legacy).
-    ///
-    /// Private and taking a [`RawRefName`]: the two public routes differ only
-    /// in *which* names they will accept, and that difference is carried by
-    /// their argument types. Keeping the durability and idempotency rules in
-    /// one body means a second recording route cannot quietly acquire
-    /// different ones.
-    fn persist_receipt(
-        &mut self,
-        store: &Path,
-        raw_name: RawRefName,
-        created_at: ResolvedRevisionId,
-    ) -> anyhow::Result<OwnedRef> {
-        let key_store = CanonicalPath::existing(store).with_context(|| {
-            format!(
-                "cannot record an ownership receipt for {}: the store does not exist",
-                store.display()
-            )
-        })?;
-
-        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
-            let mut index = read_or_seed(claim)?;
-            let receipts = index
-                .receipts
-                .as_mut()
-                .ok_or_else(|| self.legacy_index_error())?;
-
-            if let Some(existing) = receipts
-                .iter()
-                .find(|r| r.store == key_store && r.name == raw_name)
-            {
-                return existing.to_owned_ref(&self.index_path());
-            }
-
-            receipts.push(RefReceipt {
-                store: key_store.clone(),
-                name: raw_name.clone(),
-                created_at: created_at.id().as_str().to_owned(),
-            });
-            write(claim, &index)?;
-
-            Ok(OwnedRef::from_receipt(
-                key_store.into_path_buf(),
-                raw_name,
-                created_at,
-            ))
-        })
-    }
-
-    /// The receipt for `(store, name)`, if rwv holds one.
-    ///
-    /// `None` means "not rwv's" — the ref may well exist; nothing here
-    /// asks. A legacy index also reads as `None`: it holds no receipts, so
-    /// no ref in it is destroyable, which is the fail-closed direction.
-    pub fn lookup(&self, store: &Path, name: &RawRefName) -> anyhow::Result<Option<OwnedRef>> {
-        let Some(index) = read(&self.primary_root, &self.project)? else {
-            return Ok(None);
-        };
-        let Some(receipts) = index.receipts.as_ref() else {
-            return Ok(None);
-        };
-        let key_store = CanonicalPath::of(store);
-        receipts
-            .iter()
-            .find(|r| r.store == key_store && &r.name == name)
-            .map(|r| r.to_owned_ref(&self.index_path()))
-            .transpose()
-    }
-
-    /// Every receipt keyed to `store`.
-    ///
-    /// R4's precondition for destroying a whole store is that each of these
-    /// has been retracted; this is how a caller enumerates them. Ordered as
-    /// recorded.
-    pub fn list_for_store(&self, store: &Path) -> anyhow::Result<Vec<OwnedRef>> {
-        let key_store = CanonicalPath::of(store);
-        self.list_matching(|r| r.store == key_store)
-    }
-
-    /// Every receipt in this project's registry, across stores.
-    ///
-    /// What a doctor pass walks to find receipts whose ref never appeared.
-    pub fn list_all(&self) -> anyhow::Result<Vec<OwnedRef>> {
-        self.list_matching(|_| true)
-    }
-
-    /// Drop the receipt for `(store, name)`. Returns whether one was
-    /// there.
-    ///
-    /// The retraction **primitive** — R4 requires retraction before a store
-    /// may be destroyed, and a dangling receipt (the benign residue of a
-    /// crash between the receipt and the ref) is cleaned up with this. It
-    /// takes no warrant on purpose: what consent a retraction needs is
-    /// undecided, and a warrant parameter would decide it by implementation.
-    ///
-    /// Idempotent, and it does not write when there is nothing to remove —
-    /// so retracting into a legacy index cannot quietly create the registry
-    /// field and hide that the migration is still pending.
-    pub fn retract(&mut self, store: &Path, name: &RawRefName) -> anyhow::Result<bool> {
-        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
-            let Some(mut index) = read_for_edit(claim)? else {
-                return Ok(false);
-            };
-            let Some(receipts) = index.receipts.as_mut() else {
-                return Ok(false);
-            };
-            let key_store = CanonicalPath::of(store);
-            let before = receipts.len();
-            receipts.retain(|r| !(r.store == key_store && &r.name == name));
-            if receipts.len() == before {
-                return Ok(false);
-            }
-            write(claim, &index)?;
-            Ok(true)
-        })
-    }
-
-    /// Give a legacy index an empty receipt registry.
-    ///
-    /// The migration pass runs this first, then records a receipt per ref
-    /// it adopts or renames; the receipt-first ordering is what makes the
-    /// pass re-runnable after a crash at any point in it.
-    ///
-    /// Returns whether the index needed migrating. Idempotent, and a no-op
-    /// (no write) on an index that already has the field.
-    ///
-    /// Adding the field is not itself an ownership claim: it produces an
-    /// *empty* registry, so every pre-existing ref stays unowned until an
-    /// arm of the pass records it explicitly.
-    ///
-    /// MIGRATORY arm: adds the receipts field to indexes written by rwv <=
-    /// v0.15.0. Expires LAST of the branch-model migration arms — it is
-    /// the precondition the others record through — and drops with them
-    /// once every owned weave's health floor records a clean doctor at the
-    /// version that removes them (see [`crate::health_floor`]).
-    pub fn migrate_legacy_index(&mut self) -> anyhow::Result<bool> {
-        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
-            let Some(mut index) = read_for_edit(claim)? else {
-                // No file: nothing recorded, nothing legacy. The next write
-                // seeds a current-shape index.
-                return Ok(false);
-            };
-            if index.receipts.is_some() {
-                return Ok(false);
-            }
-            index.receipts = Some(Vec::new());
-            write(claim, &index)?;
-            Ok(true)
-        })
-    }
-
-    /// The index file this registry reads and writes.
-    fn index_path(&self) -> StatePath {
-        index_path(&self.primary_root, &self.project)
-    }
-
-    /// Receipts passing `keep`, as receipts.
-    fn list_matching(&self, keep: impl Fn(&RefReceipt) -> bool) -> anyhow::Result<Vec<OwnedRef>> {
-        let Some(index) = read(&self.primary_root, &self.project)? else {
-            return Ok(Vec::new());
-        };
-        let Some(receipts) = index.receipts.as_ref() else {
-            return Ok(Vec::new());
-        };
-        let path = self.index_path();
-        receipts
-            .iter()
-            .filter(|r| keep(r))
-            .map(|r| r.to_owned_ref(&path))
-            .collect()
-    }
-
-    /// The refusal an unmigrated index earns, shaped like the legacy-marker
-    /// refusal in [`crate::workspace::WorkweaveMarker::read`]: name the
-    /// file, name the command.
-    fn legacy_index_error(&self) -> anyhow::Error {
-        legacy_index_error(&self.index_path())
-    }
+        index.receipts = Some(NoReceipts);
+        write(claim, &index)?;
+        Ok(true)
+    })
 }
 
 /// The refusal a legacy index earns, in the shape the legacy-*marker*
 /// refusal already uses: name the file, name the command that fixes it.
-///
-/// Free function rather than a method so the wording has one home; the
-/// detection side lives at [`crate::workspace::pending_index_migration`],
-/// next to the marker check it mirrors.
 fn legacy_index_error(path: &StatePath) -> anyhow::Error {
     crate::refusal::refusal(
         RefusalKind::LegacyWorkweaveIndex,
         format!(
-            "{path} is a legacy workweave index written before ref-ownership receipts \
-             existed (no `receipts` field). Run `rwv doctor --fix` to migrate it \
-             before creating or destroying refs in this project."
+            "{path} is a legacy workweave index (no `receipts` key). Run \
+             `rwv doctor --fix` to migrate it before creating a workweave in this project."
         ),
     )
-}
-
-impl RefReceipt {
-    /// Re-derive the receipt value, validating the stored revision.
-    ///
-    /// `path` is the index file, for the error: a malformed `created_at` is
-    /// a corrupt receipt, and the alternative to refusing is handing out an
-    /// [`OwnedRef`] whose recorded tip is not a commit id — which every
-    /// warrant check would then compare against and silently never match.
-    fn to_owned_ref(&self, path: &StatePath) -> anyhow::Result<OwnedRef> {
-        let created_at = CommitId::parse(&self.created_at)
-            .map(ResolvedRevisionId::from)
-            .map_err(|_| {
-                crate::refusal::refusal(
-                    RefusalKind::ReceiptRevisionUncanonical,
-                    format!(
-                        "{path}: ownership receipt for '{}' records '{}' as its created-at \
-                         revision, which is not a canonical commit id",
-                        self.name, self.created_at
-                    ),
-                )
-            })?;
-        Ok(OwnedRef::from_receipt(
-            self.store.as_path().to_path_buf(),
-            self.name.clone(),
-            created_at,
-        ))
-    }
 }
 
 /// Ensure the project repo's ignore-surface excludes `.rwv-workweave-index`.
@@ -1025,31 +586,12 @@ mod tests {
         ProjectName::new(name).unwrap()
     }
 
-    /// A canonical store directory under `weave`, canonicalized so tests
-    /// compare against the same spelling [`RefRegistry::record_created`]
-    /// records (temp roots are symlinked on some platforms).
+    /// A canonical store directory under `weave`, canonicalized (temp roots
+    /// are symlinked on some platforms).
     fn make_store(weave: &Path, rel: &str) -> PathBuf {
         let p = weave.join(rel);
         std::fs::create_dir_all(&p).unwrap();
         CanonicalPath::existing(&p).unwrap().into_path_buf()
-    }
-
-    /// A distinct canonical revision per `hex` character.
-    fn rev(hex: char) -> ResolvedRevisionId {
-        ResolvedRevisionId::from_canonical(
-            crate::vcs::CommitId::parse(&hex.to_string().repeat(40)).unwrap(),
-            None,
-        )
-    }
-
-    fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
-        EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new(workweave).unwrap(),
-            }
-            .flat(),
-        )
     }
 
     /// A finished write holds the claim only while it runs. Left behind, it
@@ -1121,9 +663,9 @@ mod tests {
     /// The decided behavior for a claim whose holder died: later writes
     /// refuse, after a bounded wait, naming the file to remove. Waiting
     /// forever hangs the verb; treating an old claim as abandoned publishes
-    /// over a holder that is merely slow, which is the receipt loss this
-    /// claim exists to prevent; failing instantly makes ordinary contention
-    /// look like a fault.
+    /// over a holder that is merely slow, which is the lost entry this claim
+    /// exists to prevent; failing instantly makes ordinary contention look
+    /// like a fault.
     #[test]
     fn an_abandoned_claim_refuses_later_writes_and_names_what_to_remove() {
         let tmp = crate::tempdir().unwrap();
@@ -1450,305 +992,41 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // RefRegistry — receipts
+    // Receipts: a key that is written empty
     // -----------------------------------------------------------------
 
-    /// The benign crash window: the receipt is persisted, then the process
-    /// dies before the ref is created.
-    ///
-    /// "Crash" here is what the tree's crash tests already mean by it (see
-    /// `tests/crash_matrix_test.rs`): the on-disk state a kill at that
-    /// point leaves behind — the receipt written, the ref never created —
-    /// re-read through a **fresh registry handle**, which is all a new
-    /// process would have.
-    #[test]
-    fn crash_after_the_receipt_and_before_the_ref_leaves_a_retractable_receipt() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let owned = registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-        assert_eq!(owned.store(), store.as_path());
-        // <- the ref would be created here; the process dies instead.
-        drop(registry);
-
-        let recovered = RefRegistry::for_project(&primary, &project)
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .expect("the receipt outlives the crash");
-        assert_eq!(recovered.created_at(), &rev('a'));
-        assert_eq!(recovered.store(), store.as_path());
-
-        // Dangling, and retractable: the whole reason this window is the
-        // benign one.
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        assert!(registry
-            .retract(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap());
-        assert!(registry
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .is_none());
-        assert!(
-            !registry
-                .retract(&store, &RawRefName::new("web-app--hotfix"))
-                .unwrap(),
-            "retraction is idempotent"
-        );
+    fn name(text: &str) -> WorkweaveName {
+        WorkweaveName::new(text).unwrap()
     }
 
-    /// The forbidden crash window, from the registry's side: a ref that
-    /// exists without a receipt is not rwv's, and no amount of asking by
-    /// name changes that.
-    ///
-    /// The ref-exists half of this needs a real store; it is pinned in
-    /// `tests/ref_registry_test.rs`. What is pinned here is that a receipt
-    /// recorded for a *different* workweave in the same store does not
-    /// answer for this name — ownership is per exact name, not per prefix.
+    /// Concurrent creators each add their own entry; every entry has to be
+    /// there afterwards.
     #[test]
-    fn a_name_with_no_receipt_of_its_own_is_not_owned() {
+    fn concurrent_writers_lose_nothing() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-
-        for unowned in [
-            "web-app--feature",  // a sibling workweave's ref
-            "web-app",           // the prefix alone
-            "web-app--hotfix/x", // the legacy segmented shape
-            "main",
-        ] {
-            assert!(
-                registry
-                    .lookup(&store, &RawRefName::new(unowned))
-                    .unwrap()
-                    .is_none(),
-                "'{unowned}' has no receipt and must not be owned"
-            );
-        }
-    }
-
-    /// One name, two stores, two refs. The key is the pair.
-    #[test]
-    fn receipts_key_on_the_store_as_well_as_the_name() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let server = make_store(tmp.path(), "weave/github/acme/server");
-        let client = make_store(tmp.path(), "weave/github/acme/client");
-
-        let name = ephemeral(&project, "hotfix");
-        let raw = name.to_raw();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&server, name.clone(), rev('a'))
-            .unwrap();
-        registry.record_created(&client, name, rev('b')).unwrap();
-
-        let from_server = registry.lookup(&server, &raw).unwrap().unwrap();
-        let from_client = registry.lookup(&client, &raw).unwrap().unwrap();
-        assert_eq!(from_server.created_at(), &rev('a'));
-        assert_eq!(from_client.created_at(), &rev('b'));
-        assert_ne!(from_server, from_client);
-
-        assert_eq!(registry.list_for_store(&server).unwrap().len(), 1);
-        assert_eq!(registry.list_all().unwrap().len(), 2);
-
-        // Retracting one store's receipt leaves the other's alone — R4
-        // retracts per store, and a name-keyed retraction would empty both.
-        assert!(registry.retract(&server, &raw).unwrap());
-        assert!(registry.lookup(&server, &raw).unwrap().is_none());
-        assert_eq!(
-            registry
-                .lookup(&client, &raw)
-                .unwrap()
-                .unwrap()
-                .created_at(),
-            &rev('b')
-        );
-        assert!(registry.list_for_store(&server).unwrap().is_empty());
-    }
-
-    /// A per-repo loop fanned out across threads records one receipt per
-    /// store into one file. Every one of them has to be there afterwards: a
-    /// receipt lost to a read-modify-write race disowns a live ref, and
-    /// nothing downstream can recover it.
-    #[test]
-    fn concurrent_receipt_writers_lose_nothing() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let stores: Vec<PathBuf> = (0..8)
-            .map(|i| make_store(tmp.path(), &format!("weave/github/acme/repo{i}")))
-            .collect();
 
         std::thread::scope(|scope| {
-            for (i, store) in stores.iter().enumerate() {
-                let project = &project;
-                let primary = &primary;
+            for i in 0..8 {
+                let (project, primary) = (&project, &primary);
                 scope.spawn(move || {
-                    RefRegistry::for_project(primary, project)
-                        .record_created(store, ephemeral(project, &format!("ww{i}")), rev('a'))
-                        .unwrap();
+                    record_workweave(
+                        primary,
+                        project,
+                        &name(&format!("ww{i}")),
+                        CanonicalPath::of(Path::new(&format!("/c/web-app--ww{i}"))),
+                    )
+                    .unwrap();
                 });
             }
         });
 
-        let registry = RefRegistry::for_project(&primary, &project);
-        assert_eq!(registry.list_all().unwrap().len(), stores.len());
-        for (i, store) in stores.iter().enumerate() {
-            assert!(
-                registry
-                    .lookup(store, &RawRefName::new(format!("web-app--ww{i}")))
-                    .unwrap()
-                    .is_some(),
-                "receipt for repo{i} was dropped"
-            );
-        }
+        let index = read(&primary, &project).unwrap().unwrap();
+        assert_eq!(index.workweaves.len(), 8, "an entry was dropped");
     }
 
-    /// The receipt has to be readable after `workweave delete`'s
-    /// `remove_dir_all`, because the refs it accounts for are exactly the
-    /// ones that directory left behind.
-    #[test]
-    fn receipts_outlive_the_workweave_directory() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        // A workweave directory, marker and all, of the shape `workweave
-        // delete` destroys.
-        let workweave = tmp.path().join(".workweaves/web-app--hotfix");
-        std::fs::create_dir_all(&workweave).unwrap();
-        std::fs::write(workweave.join(".rwv-workweave"), "primary: /ws\n").unwrap();
-        record_workweave(
-            &primary,
-            &project,
-            &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
-            CanonicalPath::of(&workweave),
-        )
-        .unwrap();
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-
-        std::fs::remove_dir_all(&workweave).unwrap();
-        assert!(
-            !workweave.join(".rwv-workweave").exists(),
-            "the marker is gone — a marker-homed receipt would have gone with it"
-        );
-
-        let survivor = registry
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .expect("the receipt is homed in the primary, not in the workweave");
-        assert_eq!(survivor.created_at(), &rev('a'));
-    }
-
-    /// Re-recording must not relabel a ref that has moved: the recorded tip
-    /// is what `DeletionWarrant::unmoved` compares against, so overwriting
-    /// it with a fresh observation would certify operator commits as
-    /// "untouched since rwv created it" and authorize destroying them.
-    #[test]
-    fn re_recording_keeps_the_first_created_at() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let first = registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-        // The ref has since moved (operator commits); a naive retry records
-        // the ref's *current* tip.
-        let second = registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('c'))
-            .unwrap();
-
-        assert_eq!(first.created_at(), &rev('a'));
-        assert_eq!(
-            second.created_at(),
-            &rev('a'),
-            "the recorded tip is the one rwv created the ref at"
-        );
-        assert_eq!(registry.list_all().unwrap().len(), 1, "no duplicate key");
-    }
-
-    #[test]
-    fn recording_against_a_store_that_is_not_there_refuses() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let absent = tmp.path().join("weave/github/acme/ghost");
-
-        let err = RefRegistry::for_project(&primary, &project)
-            .record_created(&absent, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("the store does not exist") && msg.contains("ghost"),
-            "refusal must name the store: {msg}"
-        );
-        assert!(
-            read(&primary, &project).unwrap().is_none(),
-            "a refused receipt writes nothing"
-        );
-    }
-
-    /// The registry shares its file with the placement entries, so an
-    /// unrelated index write must carry the receipts through.
-    #[test]
-    fn an_unrelated_index_write_preserves_receipts() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-
-        record_workweave(
-            &primary,
-            &project,
-            &crate::manifest::WorkweaveName::new("other").unwrap(),
-            CanonicalPath::of(Path::new("/x/web-app--other")),
-        )
-        .unwrap();
-        set_container(
-            &primary,
-            &project,
-            CanonicalPath::of(Path::new("/new-container")),
-        )
-        .unwrap();
-        forget_workweave(
-            &primary,
-            &project,
-            &crate::manifest::WorkweaveName::new("other").unwrap(),
-        )
-        .unwrap();
-
-        assert!(registry
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .is_some());
-    }
-
-    /// Write a legacy index: current shape minus the registry field.
+    /// Write a legacy index: current shape minus the `receipts` key.
     fn write_legacy_index(primary: &Path, project: &ProjectName) {
         index_path(primary, project)
             .publish(
@@ -1758,17 +1036,20 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_index_refuses_a_receipt_and_names_the_fix() {
+    fn a_legacy_index_refuses_a_new_workweave_and_names_the_fix() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
         write_legacy_index(&primary, &project);
 
         let before = index_path(&primary, &project).read_to_string().unwrap();
-        let err = RefRegistry::for_project(&primary, &project)
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap_err();
+        let err = record_workweave(
+            &primary,
+            &project,
+            &name("other"),
+            CanonicalPath::of(Path::new("/x/web-app--other")),
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains(INDEX_FILENAME),
@@ -1778,76 +1059,41 @@ mod tests {
             msg.contains("rwv doctor --fix"),
             "refusal names the command: {msg}"
         );
-
         assert_eq!(
             index_path(&primary, &project).read_to_string().unwrap(),
             before,
-            "a refused record must not half-migrate the index — the missing \
-             field is the only signal the migration has not run"
+            "a refused record must not half-migrate the index"
         );
-        // Fails closed meanwhile: an unmigrated index owns nothing.
-        assert!(RefRegistry::for_project(&primary, &project)
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .is_none());
     }
 
     #[test]
-    fn retracting_against_a_legacy_index_does_not_migrate_it() {
+    fn migrating_a_legacy_index_adds_the_key_and_keeps_placements() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
         write_legacy_index(&primary, &project);
 
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        assert!(!registry
-            .retract(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap());
-        assert!(!read(&primary, &project)
-            .unwrap()
-            .unwrap()
-            .has_receipt_registry());
-    }
-
-    #[test]
-    fn migrating_a_legacy_index_adds_an_empty_registry_and_keeps_placements() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-        write_legacy_index(&primary, &project);
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        assert!(!read(&primary, &project)
-            .unwrap()
-            .unwrap()
-            .has_receipt_registry());
-        assert!(registry.migrate_legacy_index().unwrap());
+        assert!(read(&primary, &project).unwrap().unwrap().is_legacy());
+        assert!(migrate_legacy_index(&primary, &project).unwrap());
 
         let migrated = read(&primary, &project).unwrap().unwrap();
-        assert!(migrated.has_receipt_registry());
+        assert!(!migrated.is_legacy());
         assert_eq!(
             migrated.container,
             CanonicalPath::of(Path::new("/abs/container"))
         );
-        assert!(migrated
-            .workweaves
-            .contains_key(&crate::manifest::WorkweaveName::new("hotfix").unwrap()));
+        assert!(migrated.workweaves.contains_key(&name("hotfix")));
         assert!(
-            registry.list_all().unwrap().is_empty(),
-            "migration adds the field, never an ownership claim"
-        );
-
-        assert!(
-            !registry.migrate_legacy_index().unwrap(),
+            !migrate_legacy_index(&primary, &project).unwrap(),
             "migration is idempotent"
         );
-        // And the pass can now do its job.
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-        assert_eq!(registry.list_all().unwrap().len(), 1);
+        record_workweave(
+            &primary,
+            &project,
+            &name("other"),
+            CanonicalPath::of(Path::new("/x/web-app--other")),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1859,106 +1105,65 @@ mod tests {
         record_workweave(
             &primary,
             &project,
-            &crate::manifest::WorkweaveName::new("a").unwrap(),
+            &name("a"),
             CanonicalPath::of(Path::new("/x/web-app--a")),
         )
         .unwrap();
-        assert!(read(&primary, &project)
-            .unwrap()
-            .unwrap()
-            .has_receipt_registry());
-        assert!(!RefRegistry::for_project(&primary, &project)
-            .migrate_legacy_index()
-            .unwrap());
+        assert!(!read(&primary, &project).unwrap().unwrap().is_legacy());
+        assert!(!migrate_legacy_index(&primary, &project).unwrap());
     }
 
-    /// A receipt whose revision is not a canonical commit id is corrupt.
-    /// Refusing beats handing back an `OwnedRef` no warrant check could
-    /// ever match — that would read as "this ref moved" forever.
     #[test]
-    fn a_malformed_recorded_revision_is_refused_not_laundered() {
+    fn an_index_is_written_with_an_empty_receipts_list() {
+        let tmp = crate::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+
+        record_workweave(
+            &primary,
+            &project,
+            &name("a"),
+            CanonicalPath::of(Path::new("/x/web-app--a")),
+        )
+        .unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_str(&index_path(&primary, &project).read_to_string().unwrap())
+                .unwrap();
+        assert_eq!(written["receipts"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn receipts_an_earlier_release_wrote_are_read_past_and_dropped_by_the_next_write() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
-
         index_path(&primary, &project)
             .publish(
                 format!(
-                    r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":"HEAD~1"}}]}}"#,
-                    store.display().to_string()
-                )
-                .as_bytes(),
-            )
-            .unwrap();
-
-        let err = RefRegistry::for_project(&primary, &project)
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("HEAD~1") && msg.contains("canonical commit id"),
-            "refusal must name the bad value: {msg}"
-        );
-    }
-
-    /// The same store, spelled through a symlink, is the same store. A
-    /// receipt that could not be found again by an equivalent spelling
-    /// would strand the ref it accounts for.
-    #[test]
-    fn a_symlinked_spelling_finds_the_same_receipt() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let link = tmp.path().join("server-link");
-        crate::symlink::create(&store, &link, crate::symlink::LinkTarget::Directory).unwrap();
-
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
-
-        assert!(registry
-            .lookup(&link, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .is_some());
-        assert!(registry
-            .retract(&link, &RawRefName::new("web-app--hotfix"))
-            .unwrap());
-    }
-
-    /// The other direction of the same question: a receipt whose *recorded*
-    /// store is spelled non-canonically — a hand-edited index, or one
-    /// carried over from a writer that did not canonicalize — must still be
-    /// found by the canonical spelling. Losing it would strand the ref it
-    /// accounts for with no way to retract or destroy it.
-    #[test]
-    fn a_receipt_recorded_under_a_non_canonical_spelling_is_still_found() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
-
-        let link = tmp.path().join("server-link");
-        crate::symlink::create(&store, &link, crate::symlink::LinkTarget::Directory).unwrap();
-        index_path(&primary, &project)
-            .publish(
-                format!(
-                    r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":{:?}}}]}}"#,
-                    link.display().to_string(),
+                    r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":"{}"}}]}}"#,
+                    store.display().to_string(),
                     "a".repeat(40)
                 )
                 .as_bytes(),
             )
             .unwrap();
 
-        let found = RefRegistry::for_project(&primary, &project)
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
-            .unwrap()
-            .expect("the recorded spelling resolves to the queried store");
-        assert_eq!(found.created_at(), &rev('a'));
+        let index = read(&primary, &project).unwrap().unwrap();
+        assert!(!index.is_legacy(), "the key is there, whatever it holds");
+
+        record_workweave(
+            &primary,
+            &project,
+            &name("b"),
+            CanonicalPath::of(Path::new("/x/web-app--b")),
+        )
+        .unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&index_path(&primary, &project).read_to_string().unwrap())
+                .unwrap();
+        assert_eq!(written["receipts"], serde_json::json!([]));
     }
 
     /// Atomicity, pinned by the mechanism rather than by hoping: a
@@ -1967,8 +1172,6 @@ mod tests {
     /// in-place rewrite would keep the inode — and would be observable
     /// half-written.
     ///
-    /// Not gated because its subject is Unix — replace-by-rename is the invariant
-    /// the whole owned-file discipline rests on, and it holds on any platform.
     /// Gated because the INSTRUMENT is unverified: this proves the replacement by
     /// watching the inode change, and whether NTFS gives a renamed-over file a new
     /// file index is not something this repository can check. Ported on the
@@ -1981,18 +1184,24 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
         let path = index_path(&primary, &project);
 
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "a"), rev('a'))
-            .unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &name("a"),
+            CanonicalPath::of(Path::new("/x/web-app--a")),
+        )
+        .unwrap();
         let first_inode = path.symlink_metadata().unwrap().ino();
 
-        registry
-            .record_created(&store, ephemeral(&project, "b"), rev('b'))
-            .unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &name("b"),
+            CanonicalPath::of(Path::new("/x/web-app--b")),
+        )
+        .unwrap();
         assert_ne!(
             path.symlink_metadata().unwrap().ino(),
             first_inode,
@@ -2019,27 +1228,36 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-        let store = make_store(tmp.path(), "weave/github/acme/server");
 
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        registry
-            .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
-            .unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &name("hotfix"),
+            CanonicalPath::of(Path::new("/x/web-app--hotfix")),
+        )
+        .unwrap();
 
-        // Exactly what a kill between `write` and `rename` leaves.
         let orphan = primary
             .join("projects/web-app")
             .join(format!("{INDEX_FILENAME}.tmp.999999.0"));
         std::fs::write(&orphan, "{ this is a half-written file").unwrap();
 
-        assert!(registry
-            .lookup(&store, &RawRefName::new("web-app--hotfix"))
+        assert!(read(&primary, &project)
             .unwrap()
-            .is_some());
-        registry
-            .record_created(&store, ephemeral(&project, "second"), rev('b'))
-            .unwrap();
-        assert_eq!(registry.list_all().unwrap().len(), 2);
+            .unwrap()
+            .workweaves
+            .contains_key(&name("hotfix")));
+        record_workweave(
+            &primary,
+            &project,
+            &name("second"),
+            CanonicalPath::of(Path::new("/x/web-app--second")),
+        )
+        .unwrap();
+        assert_eq!(
+            read(&primary, &project).unwrap().unwrap().workweaves.len(),
+            2
+        );
         assert!(orphan.exists(), "the orphan is not this write's to reap");
     }
 }

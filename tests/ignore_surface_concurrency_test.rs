@@ -30,10 +30,10 @@
 
 mod common;
 
-use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::owned_state::stamp_owned_digest;
-use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
-use repoweave::workweave_index::RefRegistry;
+use repoweave::path_spelling::CanonicalPath;
+use repoweave::workweave_index::record_workweave;
 use std::io::Read;
 
 const PROJECT: &str = "web-app";
@@ -73,23 +73,13 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
     let mut held = std::fs::File::open(&exclude).expect("open handle on the surface");
 
     let project = ProjectName::new(PROJECT).expect("project name");
-    let mut registry = RefRegistry::for_project(&root, &project);
-    registry
-        .record_created(
-            &store,
-            EphemeralRefName::mint(
-                &WorkweaveId {
-                    project: project.clone(),
-                    name: WorkweaveName::new("seat").expect("name"),
-                }
-                .flat(),
-            ),
-            ResolvedRevisionId::from_canonical(
-                repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
-                None,
-            ),
-        )
-        .expect("the index write succeeds");
+    record_workweave(
+        &root,
+        &project,
+        &WorkweaveName::new("seat").expect("name"),
+        CanonicalPath::of(&store),
+    )
+    .expect("the index write succeeds");
     stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 4\n")
         .expect("the ledger stamp succeeds");
 

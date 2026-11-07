@@ -118,12 +118,15 @@ impl Axis {
             },
             Self::Name => &KindRow {
                 condition: "A name the verb was given cannot be used: another workweave \
-                            already holds it, it reads as a revision where a branch belongs, it \
-                            names nothing in a repo the verb read, or it is the name rwv keeps \
-                            its branch records under.",
+                            already holds it, a repo already has a branch of that name holding \
+                            commits, it reads as a revision where a branch belongs, it names \
+                            nothing in a repo the verb read, or it is the name rwv keeps its \
+                            branch records under.",
                 why: "A workweave name maps to one workweave; recording a second would make \
                       every later address ambiguous, and a delete would remove whichever was \
-                      found first. A member entry's `branch` declares the branch to track while \
+                      found first. A branch that already holds commits under the name a create \
+                      would give its checkout is work this create did not make, and starting \
+                      the new branch there or somewhere else would hide or lose it. A member entry's `branch` declares the branch to track while \
                       the lock records where you are, so a commit id or release tag there leaves \
                       nothing to track. A name that resolves to nothing has no tip to read, and \
                       reading another branch in its place would answer a question nobody asked. \
@@ -157,7 +160,9 @@ impl Axis {
             Self::Target => &KindRow {
                 condition: "A weave branch's record cannot be used: the branch has none, two \
                             writers recorded it differently, the entry does not read, its \
-                            target chain returns to it, or the branch it lands into is gone.",
+                            target chain returns to it, or the branch it lands into is gone; \
+                            or other branches' records land into it and a delete would strand \
+                            them.",
                 why: "A weave branch's record is the one statement of how it is used: as \
                       feature work onto a target, or as declared. Every verb that aligns \
                       members, locks, lands or publishes reads it, and rwv picks none for a \
@@ -324,6 +329,7 @@ pub enum State {
     PinNone,
     PinUnreachable,
     NameTaken,
+    NameExists,
     NameARevision,
     NameNoSuchBranch,
     NameReserved,
@@ -331,11 +337,13 @@ pub enum State {
     UnparseableProjectHere,
     UnparseableProjectMalformed,
     PinWouldBeUnreachable,
+    TargetNoTarget,
     TargetUnrecorded,
     TargetConflict,
     TargetUnreadable,
     TargetCycle,
     TargetGone,
+    TargetDependents,
     AlignmentAligned,
     AlignmentOnBranch,
     AlignmentOnBranchWithStrayCommits,
@@ -369,7 +377,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 42] = [
+    pub const ALL: [State; 45] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -392,17 +400,20 @@ impl State {
         Self::PinBackwards,
         Self::PinWouldBeUnreachable,
         Self::NameTaken,
+        Self::NameExists,
         Self::NameARevision,
         Self::NameNoSuchBranch,
         Self::NameReserved,
         Self::PublishWithheld,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
+        Self::TargetNoTarget,
         Self::TargetUnrecorded,
         Self::TargetConflict,
         Self::TargetUnreadable,
         Self::TargetCycle,
         Self::TargetGone,
+        Self::TargetDependents,
         Self::AlignmentAligned,
         Self::AlignmentOnBranch,
         Self::AlignmentOnBranchWithStrayCommits,
@@ -457,18 +468,22 @@ impl State {
             Self::CheckoutInAnotherWorkspace => &StateRow {
                 axis: Axis::Checkout,
                 name: "in another workspace",
-                means: "a workweave's checkout derives from the clone, named",
+                means: "a workweave's checkout derives from the clone, named; or the \
+                        branch is checked out there",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
-                             of a dropped member there",
+                             of a dropped member there; `rwv branch delete`, for a branch \
+                             checked out in another workspace",
                 offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
                 verb_offers: &[],
             },
             Self::CheckoutInRawWorktree => &StateRow {
                 axis: Axis::Checkout,
                 name: "in a raw worktree",
-                means: "a worktree no workweave records derives from the clone, named by path",
+                means: "a worktree no workweave records derives from the clone, named by \
+                        path; or the branch is checked out there",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
-                             of a dropped member there",
+                             of a dropped member there; `rwv branch delete`, for a branch \
+                             checked out in a raw worktree",
                 offers: &[Form::C16Raw],
                 verb_offers: &[],
             },
@@ -571,6 +586,18 @@ impl State {
                     ("init", Form::C17),
                 ],
             },
+            Self::NameExists => &StateRow {
+                axis: Axis::Name,
+                name: "exists",
+                means: "a repo already has a branch of the name the verb would give its \
+                        checkout, standing at a revision other than the one the verb would \
+                        start it at, which the line lists; it holds commits the verb did not \
+                        put there",
+                refused_by: "`rwv workweave create`, for the branch it mints in the project \
+                             repo and in each owned or fork member",
+                offers: &[],
+                verb_offers: &[("workweave create", Form::AnotherName)],
+            },
             Self::NameARevision => &StateRow {
                 axis: Axis::Name,
                 name: "a revision",
@@ -642,6 +669,16 @@ impl State {
                         listed with the locks that pin it",
                 refused_by: "`rwv backup drop` and `rwv backup prune`",
                 offers: &[Form::C7Push, Form::C27],
+                verb_offers: &[],
+            },
+            Self::TargetNoTarget => &StateRow {
+                axis: Axis::Target,
+                name: "no target",
+                means: "the branch's record is `declared`, so it names no branch the branch \
+                        lands into",
+                refused_by: "`rwv branch delete`, which needs the branch whose commits \
+                             should have landed, named with `--target`",
+                offers: &[Form::C12Feature],
                 verb_offers: &[],
             },
             Self::TargetUnrecorded => &StateRow {
@@ -854,6 +891,17 @@ impl State {
                 refused_by: "`rwv lock`, for a member `--repo` does not name; `rwv update \
                              --remote`",
                 offers: &[Form::C5LockRepo],
+                verb_offers: &[],
+            },
+            Self::TargetDependents => &StateRow {
+                axis: Axis::Target,
+                name: "dependents",
+                means: "another branch's record names this branch as the one it lands into, \
+                        one line for each such branch; deleting this one would leave that \
+                        record with no target",
+                refused_by: "`rwv branch delete`, `rwv workweave delete` and `rwv sync-to \
+                             --retire`",
+                offers: &[Form::C12Feature],
                 verb_offers: &[],
             },
             Self::TargetGone => &StateRow {
@@ -1439,7 +1487,7 @@ impl Form {
                 choice: C::C9,
                 steps: &[Rwv("rwv branch delete <W>")],
                 at: W::BranchNotCheckedOut,
-                shipped: false,
+                shipped: true,
             },
             Self::C9WorkweaveDelete => &FormRow {
                 choice: C::C9,

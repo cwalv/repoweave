@@ -29,7 +29,7 @@
 //!   adoption is a doctor act with the operator's consent.
 
 use crate::cli::consent::{
-    DiscardUncommittedConsent, DiscardUnmergedConsent, ReplaceExistingConsent,
+    DiscardUncommittedConsent, DiscardUnlandedConsent, ReplaceExistingConsent,
 };
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoPath, Role, SubmoduleRecursion, WorkweaveId, WorkweaveName,
@@ -39,14 +39,13 @@ use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
 use crate::vcs::{
-    project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
-    RegistrationPrune, ResolvedRevisionId, Vcs, VcsError,
+    project_vcs, vcs_for, DestroyProof, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
+    RegistrationPrune, ResolvedRevisionId, Site, Vcs, VcsError,
 };
 use crate::workspace::{
     project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
 };
 use crate::workweave_index;
-use crate::workweave_index::RefRegistry;
 use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
 
@@ -350,19 +349,8 @@ pub fn ensure_registered_workweave(
 /// `p--feat2` as a leftover of `p--feat`. The `/` is what makes the legacy
 /// form a *sub*-namespace rather than a longer sibling name.
 ///
-/// This is a predicate over an observation and grants nothing. Under R2
-/// matching here is not ownership — every DESTROY still goes through
-/// [`RefRegistry::lookup`]; this only decides which unowned names are worth
-/// telling the operator about.
-///
 /// The minted side is brought to the parse boundary with
-/// [`EphemeralRefName::to_raw`], not with `to_string()`. Both spell the same
-/// characters, so this is not a bug fix — it is keeping the one legal
-/// conversion distinct from the rendering. `Display` is what an
-/// `EphemeralRefName` offers a human; laundering that rendering into a string
-/// in order to compare it with an observed name is precisely what removing
-/// `as_str()` prevents, and a comparison written that way keeps compiling if
-/// the two notions ever diverge.
+/// [`EphemeralRefName::to_raw`], not with `to_string()`.
 fn is_this_workweaves_namespace(observed: &RawRefName, flat: &EphemeralRefName) -> bool {
     let flat = flat.to_raw();
     observed == &flat
@@ -479,32 +467,39 @@ fn orphan_prune_pairs(
         .collect()
 }
 
-/// What one create attempt did to the ref its receipt names.
+/// What one create attempt did to the branch it was placed on.
 ///
 /// Rollback must not destroy a branch this create merely **adopted**:
-/// force-deleting one takes a unique commit with it. The distinction is
-/// [`Vcs::create_worktree_on`]'s return value, and this enum is where the
-/// call site parks it.
+/// deleting one takes a unique commit with it. The distinction is
+/// [`Vcs::create_worktree_on`]'s answer, and this enum is where the call site
+/// parks it.
 enum RefBirth {
-    /// `create_worktree_on` returned a [`BornRef`]: this call wrote the ref.
-    Authored(BornRef),
-    /// The birth call returned `Err` after the pre-flight had established
-    /// that no branch of this name existed. `git worktree add -b` writes the
-    /// branch *before* it runs post-checkout hooks, so a hook-rejected add
-    /// leaves the ref behind; anything now at that name was written by this
-    /// attempt. No `BornRef` exists to prove it — the proof is the pre-flight
-    /// plus the `Unmoved` warrant rollback still has to obtain.
+    /// `create_worktree_on` answered [`RefOrigin::Authored`]: this call wrote
+    /// the ref.
+    Authored,
+    /// The birth call returned `Err`. `git worktree add -b` writes the branch
+    /// *before* it runs post-checkout hooks, so a hook-rejected add leaves the
+    /// ref behind; whatever stands at the name now is at the start point or
+    /// absent.
     AuthoredOrAbsent,
-    /// `create_worktree_on` returned `None`: it adopted a branch that was
-    /// already there. **Never** this create's to destroy — only the
-    /// receipt this attempt wrote is retracted.
+    /// A branch of that name was already there. **Never** this create's to
+    /// destroy.
     Adopted,
 }
 
-/// One repo's ref state for rollback: the receipt rwv persisted, and what
-/// the birth call did with it.
+impl From<RefOrigin> for RefBirth {
+    fn from(origin: RefOrigin) -> Self {
+        match origin {
+            RefOrigin::Authored => Self::Authored,
+            RefOrigin::Adopted => Self::Adopted,
+        }
+    }
+}
+
+/// One repo's branch state for rollback: the branch the create placed the
+/// checkout on, and what the birth call did with it.
 struct RefAttempt {
-    owned: OwnedRef,
+    found: FoundBranch,
     birth: RefBirth,
 }
 
@@ -547,17 +542,12 @@ struct CreateRollbackGuard {
     vcs: Box<dyn Vcs>,
     /// The top-level workweave directory created for this attempt.
     workweave_dir: PathBuf,
-    /// The primary weave and project the ownership receipts are keyed to.
-    /// Rollback needs a [`RefRegistry`] handle: a DESTROY takes a receipt
-    /// (R2) and a warrant (R3), neither of which a `(repo, name)` pair is.
-    primary_root: PathBuf,
-    project: ProjectName,
     /// Pairs of `(repo_abs, worktree_dest)` for every worktree that was
     /// successfully registered during this create attempt.
     registered_worktrees: Vec<(PathBuf, PathBuf)>,
-    /// Every ref this attempt wrote a receipt for, with what the birth call
-    /// then did. Resolved on rollback AFTER worktree removal (so the branch
-    /// is no longer checked out when the DESTROY runs).
+    /// Every branch this attempt placed a checkout on, with what the birth
+    /// call then did. Resolved on rollback AFTER worktree removal (so the
+    /// branch is no longer checked out when the DESTROY runs).
     ref_attempts: Vec<RefAttempt>,
     /// Repos where a worktree creation was attempted (success or failure).
     /// On rollback, `git worktree prune` is run in each of these repos after
@@ -571,17 +561,10 @@ struct CreateRollbackGuard {
 }
 
 impl CreateRollbackGuard {
-    fn new(
-        vcs: Box<dyn Vcs>,
-        workweave_dir: PathBuf,
-        primary_root: &Path,
-        project: &ProjectName,
-    ) -> Self {
+    fn new(vcs: Box<dyn Vcs>, workweave_dir: PathBuf) -> Self {
         Self {
             vcs,
             workweave_dir,
-            primary_root: primary_root.to_path_buf(),
-            project: project.clone(),
             registered_worktrees: Vec::new(),
             ref_attempts: Vec::new(),
             prune_on_rollback: Vec::new(),
@@ -605,17 +588,13 @@ impl CreateRollbackGuard {
         self.prune_on_rollback.push(repo_abs);
     }
 
-    /// Record what the birth call did with the receipt this attempt wrote.
+    /// Record what the birth call did with the branch.
     ///
     /// Call this AFTER `create_worktree_on` returns, with whatever it
-    /// returned — including on the `Err` path, where [`RefBirth::AuthoredOrAbsent`]
-    /// is the honest verdict. The old shape recorded the *intended* name
-    /// before the call and unconditionally force-deleted it on the way out;
-    /// under R2 there is nothing to record before the call, because the
-    /// receipt (written by the registry, before the ref) is what a rollback
-    /// destroy has to be holding.
-    fn record_ref_attempt(&mut self, owned: OwnedRef, birth: RefBirth) {
-        self.ref_attempts.push(RefAttempt { owned, birth });
+    /// returned — including on the `Err` path, where
+    /// [`RefBirth::AuthoredOrAbsent`] is the honest verdict.
+    fn record_ref_attempt(&mut self, found: FoundBranch, birth: RefBirth) {
+        self.ref_attempts.push(RefAttempt { found, birth });
     }
 
     /// Commit the create — disable rollback. Call this only after
@@ -720,102 +699,66 @@ impl CreateRollbackGuard {
         failures
     }
 
-    /// Destroy the refs **this create authored** and retract their receipts.
+    /// Destroy the refs **this create authored**.
     ///
-    /// Every destroy here is a full R2+R3 DESTROY: the receipt comes from the
-    /// registry and the warrant is [`DeletionWarrant::unmoved`], which re-reads
-    /// the ref and returns `Some` only while its tip is still the one the
-    /// receipt records. So the three ways this attempt's ref can look at
-    /// rollback time are separated rather than collapsed:
+    /// Every destroy here holds a landed proof against the revision the
+    /// create started the branch at, which [`DestroyProof::landed`] checks by
+    /// ancestry. So the three ways this attempt's ref can look at rollback
+    /// time are separated rather than collapsed:
     ///
-    /// - present at the recorded tip → destroy it, then retract the receipt
-    ///   (that order: a crash between the two leaves a dangling receipt, which
-    ///   authorizes nothing, rather than an unreceipted ref, which R2 disowns
-    ///   forever);
+    /// - present and reached by the start point → destroy it;
     /// - absent (the birth never reached the ref write) → nothing to destroy;
-    ///   retract the dangling receipt;
-    /// - present at a *different* tip → something has committed on it since.
-    ///   Leave the ref **and** the receipt alone and tell the operator. This
-    ///   is the case the old unconditional `branch -D` destroyed silently.
+    /// - present and carrying a commit the start point does not reach →
+    ///   something has committed on it since. Leave it and tell the operator.
     ///
     /// An [`RefBirth::Adopted`] ref is never destroyed at all, whatever its
     /// tip: this create did not write it.
     fn undo_ref_births(&self) -> Vec<String> {
         let vcs = self.vcs.as_ref();
-        let mut registry = RefRegistry::for_project(&self.primary_root, &self.project);
         let mut failures: Vec<String> = Vec::new();
 
         for attempt in &self.ref_attempts {
-            let owned = &attempt.owned;
-            let store = owned.store().to_path_buf();
-
             if matches!(attempt.birth, RefBirth::Adopted) {
-                // Not ours: retract only the claim this attempt made.
-                if let Err(e) = registry.retract(&store, owned.name()) {
-                    eprintln!(
-                        "rwv workweave rollback: warning: could not retract the ownership \
-                         receipt for adopted branch {owned} in {}: {e:#}",
-                        store.display()
-                    );
-                }
                 continue;
             }
-
-            match DeletionWarrant::unmoved(vcs, owned) {
-                Some(warrant) => {
-                    if let Err(e) = vcs.delete_owned_ref(owned, warrant) {
+            let found = &attempt.found;
+            let store = found.store().to_path_buf();
+            match DestroyProof::landed(
+                vcs,
+                &store,
+                Site::Local,
+                found.name(),
+                std::slice::from_ref(found.start()),
+            ) {
+                Ok(Some(proof)) => {
+                    if let Err(e) = vcs.delete_branch(proof) {
                         eprintln!(
                             "rwv workweave rollback: warning: could not delete ephemeral \
-                             branch {owned} in {}: {e:#}",
+                             branch {found} in {}: {e:#}",
                             store.display()
                         );
                         failures.push(format!(
-                            "branch {owned} in {repo} — delete manually with: \
-                             git -C {repo} branch -D {owned}",
+                            "branch {found} in {repo} — delete manually with: \
+                             git -C {repo} branch -D {found}",
                             repo = store.display(),
                         ));
-                        continue;
-                    }
-                    if let Err(e) = registry.retract(&store, owned.name()) {
-                        eprintln!(
-                            "rwv workweave rollback: warning: branch {owned} deleted but its \
-                             ownership receipt could not be retracted ({e:#}); run \
-                             `rwv doctor --fix`"
-                        );
                     }
                 }
-                None => match vcs.resolve_local_branch_tip(&store, owned.name()) {
-                    Ok(None) => {
-                        // The birth never reached the ref write. Dangling
-                        // receipt — benign, and this is the pass that clears it.
-                        if let Err(e) = registry.retract(&store, owned.name()) {
-                            eprintln!(
-                                "rwv workweave rollback: warning: could not retract the \
-                                 dangling ownership receipt for {owned} in {}: {e:#}",
-                                store.display()
-                            );
-                        }
-                    }
-                    _ => {
-                        // The revision this attempt put the ref at. With a
-                        // `BornRef` that is the birth's own record; without
-                        // one — the failed-birth case — the receipt is the
-                        // only witness, and it records the start point the
-                        // birth was asked for.
-                        let born_at = match &attempt.birth {
-                            RefBirth::Authored(born) => born.at(),
-                            _ => owned.created_at(),
-                        };
-                        failures.push(format!(
-                            "branch {owned} in {repo} moved off the revision rwv created it \
-                             at ({at}); left in place with its receipt — inspect it with \
-                             `git -C {repo} log {owned}` and delete it by hand if it holds \
-                             nothing",
-                            repo = store.display(),
-                            at = born_at.display_str(),
-                        ))
-                    }
+                Ok(None) => match vcs.resolve_local_branch_tip(&store, found.name()) {
+                    Ok(None) => {}
+                    _ => failures.push(format!(
+                        "branch {found} in {repo} holds commits past the revision rwv created \
+                         it at ({at}); left in place — inspect it with \
+                         `git -C {repo} log {found}` and delete it by hand if it holds \
+                         nothing",
+                        repo = store.display(),
+                        at = found.start().display_str(),
+                    )),
                 },
+                Err(e) => failures.push(format!(
+                    "branch {found} in {repo} could not be checked: {e:#}",
+                    repo = store.display(),
+                )),
             }
         }
 
@@ -867,7 +810,7 @@ impl Drop for CreateRollbackGuard {
             }
         }
 
-        // 4. Undo the ref births of this attempt — same receipt-and-warrant
+        // 4. Undo the ref births of this attempt — same landed-proof
         //    discipline as the explicit path; see `undo_ref_births`.
         //    Runs AFTER removing the workweave dir (step 2) and pruning stale
         //    worktree registrations (step 3).
@@ -1027,31 +970,30 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 /// whether the birth call itself failed.
 ///
 /// The two are separate because they fail at different moments. Anything that
-/// goes wrong *before* the receipt is written is a plain `Err` from
+/// goes wrong *before* the branch is placed is a plain `Err` from
 /// [`birth_ephemeral_worktree`] — nothing was claimed, so there is nothing to
-/// roll back. Once the receipt exists the attempt is always reportable, and a
-/// failed birth rides back inside `failure` rather than losing the receipt
-/// with it.
+/// roll back. Once the birth is attempted the attempt is always reportable,
+/// and a failed birth rides back inside `failure` rather than losing the
+/// branch with it.
 pub(crate) struct BirthOutcome {
-    owned: OwnedRef,
+    found: FoundBranch,
     birth: RefBirth,
-    receipted: ReceiptedBranch,
     pub(crate) failure: Option<anyhow::Error>,
     /// How the born worktree's files were placed, when they were shared and
     /// the backend could say.
     pub(crate) placement: Option<FilePlacement>,
 }
 
-/// What a birth does with a branch of its name that an ownership receipt
-/// covers.
+/// What a birth does with a branch of its name that already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReceiptedBranch {
-    /// A workweave being created: a leftover still at its recorded tip is
-    /// replaced, and one that moved is refused.
-    Replace,
+pub(crate) enum BranchPolicy {
+    /// A workweave being created: a leftover branch standing at the start
+    /// point is the create's own partial result and is taken; one anywhere
+    /// else is refused.
+    Fresh,
     /// A workweave's own member being restored: the branch is checked out
     /// where it stands, never moved or deleted.
-    Attach,
+    Restore,
 }
 
 /// Where a born worktree's tracked files come from.
@@ -1064,52 +1006,24 @@ pub(crate) enum WorktreeFiles<'a> {
 }
 
 impl BirthOutcome {
-    /// Resolve the outcome here, for a caller with no rollback guard to hand
-    /// it to: a receipt survives only if this call authored the ref it names.
-    ///
-    /// An adopted ref is not this call's to hold a claim on, and with
-    /// no guard there is no later pass to notice — so the receipt is retracted
-    /// before the error returns, rather than being left standing over a branch
-    /// rwv did not create. A birth that *failed* keeps its receipt: the ref may
-    /// exist regardless, and under R2 only a receipt can authorize cleaning it
-    /// up later.
-    pub(crate) fn into_authored(self, registry: &mut RefRegistry) -> anyhow::Result<()> {
-        match self.birth {
-            RefBirth::Adopted if self.receipted == ReceiptedBranch::Attach => match self.failure {
-                Some(e) => Err(e),
-                None => Ok(()),
-            },
-            RefBirth::Adopted => {
-                let store = self.owned.store().to_path_buf();
-                registry.retract(&store, self.owned.name())?;
-                crate::refuse!(
-                    RefusalKind::UnownedBranchInNamespace,
-                    "branch `{owned}` already existed in {store}, so materializing it \
-                     adopted a ref rwv did not create. The ownership receipt has been \
-                     retracted — rwv does not claim a branch it did not author.\n\n\
-                     Rename or delete that branch yourself, then re-run.",
-                    owned = self.owned,
-                    store = store.display(),
-                )
-            }
-            RefBirth::Authored(_) | RefBirth::AuthoredOrAbsent => match self.failure {
-                Some(e) => Err(e),
-                None => Ok(()),
-            },
+    /// The birth's failure, when it had one.
+    pub(crate) fn into_result(self) -> anyhow::Result<()> {
+        match self.failure {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 }
 
-/// The canonical store a checkout's refs actually live in — the key every
-/// ownership receipt for that repo is recorded and looked up under.
+/// The canonical store a checkout's refs actually live in.
 ///
 /// `create` sees the *fork source* (`source_root/<repo>`, which is a linked
 /// worktree when forking from another workweave) and `delete` sees the
-/// workweave's own checkout; both must resolve to the same key or the receipt
-/// a create wrote is invisible to the delete that has to consume it. Resolving
+/// workweave's own checkout; both must resolve to the same store, or a branch
+/// a create made is invisible to the delete that has to judge it. Resolving
 /// through git's common-dir is what makes that true — the path each verb
 /// happens to hold is not.
-pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
+pub(crate) fn store_behind(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
     resolved_worktree_parent(vcs, checkout, checkout).into_path_buf()
 }
 
@@ -1173,9 +1087,9 @@ impl Materialized {
 /// A registration whose directory is gone is dropped first, unless it is
 /// locked. A dangling checkout keeps its files: they are registered in place.
 ///
-/// With [`ReceiptedBranch::Replace`] a surviving branch is not attached: the
-/// worktree must stand at `start`, so the branch is replaced as a workweave
-/// create would replace it, and refused if it moved.
+/// With [`BranchPolicy::Fresh`] a surviving branch is not attached: the
+/// worktree must stand at `start`, so a branch standing elsewhere is refused
+/// as a workweave create refuses it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn materialize_member(
     vcs: &dyn Vcs,
@@ -1187,7 +1101,7 @@ pub(crate) fn materialize_member(
     role: Role,
     recurse_submodules: SubmoduleRecursion,
     start: &str,
-    receipted: ReceiptedBranch,
+    policy: BranchPolicy,
 ) -> anyhow::Result<Materialized> {
     let canonical = primary_root.join(repo_path.as_path());
     if !canonical.exists() {
@@ -1258,12 +1172,11 @@ pub(crate) fn materialize_member(
         });
     }
 
-    let mut registry = RefRegistry::for_project(primary_root, project);
-    let store = receipt_store_for(vcs, &canonical);
+    let store = store_behind(vcs, &canonical);
     let raw = branch.to_raw();
-    let surviving = match receipted {
-        ReceiptedBranch::Attach => vcs.resolve_local_branch_tip(&store, &raw)?,
-        ReceiptedBranch::Replace => None,
+    let surviving = match policy {
+        BranchPolicy::Restore => vcs.resolve_local_branch_tip(&store, &raw)?,
+        BranchPolicy::Fresh => None,
     };
     let (at, relink) = match surviving {
         Some(tip) => (tip, Relink::Attached),
@@ -1274,33 +1187,23 @@ pub(crate) fn materialize_member(
         ),
     };
     let files = if in_place {
-        attach_in_place(
-            vcs,
-            &mut registry,
-            &store,
-            &canonical,
-            &dest,
-            &branch,
-            &at,
-            relink,
-        )
-        .with_context(|| format!("cannot relink {repo_path}"))?;
+        attach_in_place(vcs, &canonical, &dest, &branch, &at, relink)
+            .with_context(|| format!("cannot relink {repo_path}"))?;
         None
     } else {
         let outcome = birth_ephemeral_worktree(
             vcs,
-            &mut registry,
             &canonical,
             &dest,
             &branch,
             at.clone(),
             WorktreeFiles::Shared(&Filesystem, role),
-            receipted,
+            policy,
         )
         .with_context(|| format!("cannot materialize {repo_path}"))?;
         let files = outcome.placement;
         outcome
-            .into_authored(&mut registry)
+            .into_result()
             .with_context(|| format!("worktree add for {repo_path} failed"))?;
         files
     };
@@ -1315,13 +1218,9 @@ pub(crate) fn materialize_member(
 }
 
 /// Register the files standing at `dest` as a worktree on `branch`: attached
-/// at `at`, its tip, when it exists, created there under a fresh receipt
-/// otherwise. A branch rwv holds no receipt for is not rwv's to check out.
-#[allow(clippy::too_many_arguments)]
+/// at `at`, its tip, when it exists, created there otherwise.
 fn attach_in_place(
     vcs: &dyn Vcs,
-    registry: &mut RefRegistry,
-    store: &Path,
     canonical: &Path,
     dest: &Path,
     branch: &EphemeralRefName,
@@ -1329,27 +1228,10 @@ fn attach_in_place(
     relink: Relink,
 ) -> anyhow::Result<()> {
     let raw = branch.to_raw();
-    let receipt = registry.lookup(store, &raw)?;
     match relink {
-        Relink::Attached => {
-            if receipt.is_none() {
-                crate::refuse!(
-                    RefusalKind::UnownedBranchInNamespace,
-                    "branch `{branch}` exists in {} at {} and rwv holds no ownership receipt \
-                     for it, so it is not rwv's to check out.\n\n\
-                     Rename or delete that branch yourself, then re-run.",
-                    store.display(),
-                    at.display_str(),
-                );
-            }
-            vcs.register_worktree_in_place(canonical, dest, &raw, None)?;
-        }
+        Relink::Attached => vcs.register_worktree_in_place(canonical, dest, &raw, None)?,
         Relink::Created | Relink::Repaired => {
-            if receipt.is_some() {
-                registry.retract(store, &raw)?;
-            }
-            registry.record_created(store, branch.clone(), at.clone())?;
-            vcs.register_worktree_in_place(canonical, dest, &raw, Some(at))?;
+            vcs.register_worktree_in_place(canonical, dest, &raw, Some(at))?
         }
     }
     Ok(())
@@ -1414,7 +1296,7 @@ pub(crate) fn replace_standalone_member(
                 role,
                 recurse_submodules,
                 at.id().as_str(),
-                ReceiptedBranch::Replace,
+                BranchPolicy::Fresh,
             )
         });
     match born {
@@ -1569,50 +1451,39 @@ fn is_hook_rejection(e: &anyhow::Error) -> bool {
 }
 
 /// Materialize a worktree at `dest` on this workweave's ephemeral ref in the
-/// store behind `source_repo`, writing the ownership receipt first.
+/// store behind `source_repo`.
 ///
 /// The name is minted flat ([`EphemeralRefName::mint`]) and nothing observed
 /// feeds into it, so there is no third component for two call sites to
 /// derive differently.
 ///
-/// The ref begins at `start`, which is also what the receipt records:
-/// [`Vcs::create_worktree_on`] takes the start point from the receipt, so the
-/// two cannot disagree. It is the caller's because callers differ on it — a
-/// create forks the source checkout's HEAD, while a member a workweave lacks
-/// starts at the revision the verb giving it one aims it at.
+/// The ref begins at `start`. It is the caller's because callers differ on
+/// it — a create forks the source checkout's HEAD, while a member a workweave
+/// lacks starts at the revision the verb giving it one aims it at.
 ///
-/// # The four states of `(receipt, ref)`, and why none of them force-deletes
+/// # The states of the ref, and why none of them deletes it
 ///
 /// The shipped retry ran `git branch -D` on "already exists" and tried again,
-/// which destroyed a branch on nothing but a name match. Classifying first
-/// separates the cases the name collapsed:
+/// which destroyed a branch on nothing but a name match. A birth destroys
+/// nothing: it classifies first.
 ///
-/// - **no receipt, no ref** — the ordinary create.
-/// - **no receipt, ref present** — the name is taken by a ref rwv does not
-///   own. Refuse, naming the ref's tip and the start point this create wanted.
-///   R2: a ref that merely *looks* like rwv's is not rwv's, so it is neither
-///   adopted into a receipt nor destroyed.
-/// - **receipt, ref present at the recorded tip** — a stale leftover of a
-///   failed create, and the only case the shipped justification ever claimed.
-///   The [`DeletionWarrant::unmoved`] that proves it *runs* the comparison, so
-///   the claim is checked rather than asserted: destroy, retract, recreate.
-/// - **receipt, ref present at a different tip** — something committed on it.
-///   Refuse and name both tips.
-/// - **receipt, no ref** — a dangling receipt (crash between the receipt and
-///   the ref). Retract it and record afresh, so `created_at` describes the ref
-///   this call is about to write rather than a previous attempt's start point.
-#[allow(clippy::too_many_arguments)]
+/// - **absent** — the ordinary create.
+/// - **present at `start`** — the create's own partial result, left by an
+///   interrupted run of the same verb; taken, so re-running completes it.
+/// - **present anywhere else** — a branch holding commits this create did not
+///   put there. Refused under [`BranchPolicy::Fresh`], naming its tip; under
+///   [`BranchPolicy::Restore`] it is the branch the workweave's member was
+///   on, and the worktree is put on it where it stands.
 pub(crate) fn birth_ephemeral_worktree(
     vcs: &dyn Vcs,
-    registry: &mut RefRegistry,
     source_repo: &Path,
     dest: &Path,
     ephemeral: &EphemeralRefName,
     start: ResolvedRevisionId,
     files: WorktreeFiles<'_>,
-    receipted: ReceiptedBranch,
+    policy: BranchPolicy,
 ) -> anyhow::Result<BirthOutcome> {
-    let store = receipt_store_for(vcs, source_repo);
+    let store = store_behind(vcs, source_repo);
     let raw = ephemeral.to_raw();
 
     // Classify the D/F collision before asking git, so it surfaces as a
@@ -1646,62 +1517,31 @@ pub(crate) fn birth_ephemeral_worktree(
         );
     }
 
-    let existing_tip = vcs.resolve_local_branch_tip(&store, &raw)?;
-    match (registry.lookup(&store, &raw)?, &existing_tip) {
-        (None, Some(tip)) => crate::refuse!(
-            RefusalKind::UnownedBranchInNamespace,
-            "branch `{ephemeral}` already exists in {store} at {tip} and rwv holds no \
-             ownership receipt for it, so it is not rwv's to reuse or delete. This \
-             create would have started it at {start}.\n\n\
-             Rename or delete that branch yourself, or create the workweave under a \
-             different name.",
-            store = store.display(),
-            tip = tip.display_str(),
-            start = start.display_str(),
-        ),
-        (Some(_), Some(_)) if receipted == ReceiptedBranch::Attach => {}
-        (Some(recorded), Some(tip)) => match DeletionWarrant::unmoved(vcs, &recorded) {
-            Some(warrant) => {
-                // Stale leftover of a previous failed create: the ref is still
-                // exactly where rwv left it, so nothing has been added to it.
-                vcs.delete_owned_ref(&recorded, warrant)?;
-                registry.retract(&store, &raw)?;
+    if policy == BranchPolicy::Fresh {
+        if let Some(tip) = vcs.resolve_local_branch_tip(&store, &raw)? {
+            if tip != start {
+                return Err(crate::diagnosis::State::NameExists
+                    .of(store.display())
+                    .subject(ephemeral)
+                    .listing([format!(
+                        "at {}; this create would have started it at {}",
+                        tip.display_str(),
+                        start.display_str()
+                    )])
+                    .judge(vcs)
+                    .refused());
             }
-            None => crate::refuse!(
-                RefusalKind::OwnedBranchMoved,
-                "branch `{ephemeral}` in {store} is recorded as rwv's but has moved since \
-                 rwv created it: recorded at {recorded_tip}, now at {tip}. Refusing to \
-                 destroy it to make room for a new workweave.\n\n\
-                 Create the workweave under a different name, or keep those commits \
-                 under another branch name (`git -C {store} branch -m {ephemeral} \
-                 <new-name>`) and re-run. Deleting the branch instead discards them. The \
-                 create would have started the branch at {start}.",
-                store = store.display(),
-                recorded_tip = recorded.created_at().display_str(),
-                tip = tip.display_str(),
-                start = start.display_str(),
-            ),
-        },
-        (Some(_), None) => {
-            // Dangling receipt: retract so the fresh record's `created_at`
-            // describes the ref this call writes, not a previous attempt's.
-            registry.retract(&store, &raw)?;
         }
-        (None, None) => {}
     }
 
-    // Receipt first, durably, then the ref. A crash between the two
-    // leaves a dangling receipt (benign, retracted above on the next pass),
-    // never an unreceipted ref (permanently disowned under R2).
-    let owned = registry.record_created(&store, ephemeral.clone(), start)?;
-
+    let found = FoundBranch::minted(store, ephemeral, start);
     let populated = match files {
         WorktreeFiles::Written => crate::share::Populated {
-            created: vcs.create_worktree_on(&owned, dest),
+            created: vcs.create_worktree_on(&found, dest),
             filled: Ok(None),
         },
         WorktreeFiles::Shared(fs, role) => {
-            crate::share::create_worktree_populated(vcs, &owned, dest, role, fs)
+            crate::share::create_worktree_populated(vcs, &found, dest, role, fs)
         }
     };
     let (placement, filling_failed) = match populated.filled {
@@ -1709,14 +1549,12 @@ pub(crate) fn birth_ephemeral_worktree(
         Err(e) => (None, Some(e)),
     };
     let (birth, failure) = match populated.created {
-        Ok(Some(born)) => (RefBirth::Authored(born), filling_failed),
-        Ok(None) => (RefBirth::Adopted, filling_failed),
+        Ok(origin) => (RefBirth::from(origin), filling_failed),
         Err(e) => (RefBirth::AuthoredOrAbsent, Some(e.into())),
     };
     Ok(BirthOutcome {
-        owned,
+        found,
         birth,
-        receipted,
         failure,
         placement,
     })
@@ -2034,7 +1872,9 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     Some(&workweave_dir),
                     None,
                     None,
-                )?;
+                    &crate::deletion::RemoteDeletes::default(),
+                )?
+                .print();
             } else {
                 // No valid marker for this project, so delete_workweave
                 // cannot be used (it would load the wrong manifest).
@@ -2154,19 +1994,13 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // path (including `bail!` / `?` propagation). Tracks which repos got
     // worktrees added so orphan `.git/worktrees/` registrations can be pruned
     // in addition to removing the workweave directory.
-    let mut rollback = CreateRollbackGuard::new(
-        crate::vcs::project_vcs(),
-        workweave_dir.clone(),
-        primary_root,
-        project,
-    );
+    let mut rollback = CreateRollbackGuard::new(crate::vcs::project_vcs(), workweave_dir.clone());
 
     // The one ephemeral name this create uses, in every store it touches,
     // minted from the identity with nothing observed feeding in. Two repos of
     // one workweave live in different object stores, so one name per store is
     // enough.
     let ephemeral = EphemeralRefName::mint(&flat);
-    let mut registry = RefRegistry::for_project(primary_root, project);
 
     let workspace_lock = {
         let path = LockFile::path_in(&project_dir(source_root, project));
@@ -2200,11 +2034,10 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             // git has already written the `.git/worktrees/<name>` entry.
             rollback.record_attempted_repo(repo_abs.clone());
 
-            // Receipt first, then the ref — and the receipt is what a rollback
-            // DESTROY has to be holding, so nothing is "pre-recorded" by name
-            // any more. `birth_ephemeral_worktree` hands back what it claimed
-            // even when the birth call failed, which is the hook-failure case
-            // the old pre-recording existed for.
+            // `birth_ephemeral_worktree` hands back the branch it placed the
+            // checkout on even when the birth call failed, which is the
+            // hook-failure case: the rollback needs it to clear what the
+            // failed add left.
             if matches!(entry.role, Role::Dependency | Role::Reference) {
                 let started = pinned_start(&workspace_lock, vcs.as_ref(), &repo_abs, repo_path);
                 match started.and_then(|at| {
@@ -2227,18 +2060,17 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     .and_then(|start| {
                         birth_ephemeral_worktree(
                             vcs.as_ref(),
-                            &mut registry,
                             &repo_abs,
                             &worktree_dest,
                             &ephemeral,
                             start,
                             WorktreeFiles::Shared(&Filesystem, entry.role),
-                            ReceiptedBranch::Replace,
+                            BranchPolicy::Fresh,
                         )
                     }) {
                     Ok(outcome) => {
                         placement = outcome.placement;
-                        rollback.record_ref_attempt(outcome.owned, outcome.birth);
+                        rollback.record_ref_attempt(outcome.found, outcome.birth);
                         if let Some(e) = outcome.failure {
                             result = Err(e);
                         }
@@ -2336,7 +2168,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         // Record the project repo for the post-rollback prune pass BEFORE the
         // birth, for the same hook-failure reason as manifest repos above.
         // The project repo is an instance of the model, so this arm runs the
-        // identical receipt-first birth over the identical ephemeral name.
+        // identical birth over the identical ephemeral name.
         rollback.record_attempted_repo(project_dir.clone());
         let birth = match project_vcs
             .head_revision(&project_dir)
@@ -2344,18 +2176,17 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             .and_then(|start| {
                 birth_ephemeral_worktree(
                     project_vcs.as_ref(),
-                    &mut registry,
                     &project_dir,
                     &project_wt_dest,
                     &ephemeral,
                     start,
                     WorktreeFiles::Written,
-                    ReceiptedBranch::Replace,
+                    BranchPolicy::Fresh,
                 )
             }) {
             Ok(outcome) => {
                 let failure = outcome.failure;
-                rollback.record_ref_attempt(outcome.owned, outcome.birth);
+                rollback.record_ref_attempt(outcome.found, outcome.birth);
                 match failure {
                     Some(e) => Err(e),
                     None => Ok(()),
@@ -3428,14 +3259,13 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
     }
 }
 
-/// The baselines a `Merged` warrant for `rel` may be measured against, as
-/// tips, restricted to the ones sharing `store`'s object DAG.
+/// The baselines the branch a workweave left in a store may be measured
+/// against, as tips, restricted to the ones sharing `store`'s object DAG.
 ///
 /// An `is_ancestor` query whose operands live in different object DAGs is
 /// silently unsound (docs/explanation/joints/clone-topology.md), so a baseline
-/// whose canonical store differs is simply not a baseline here — the same refusal-to-vouch
-/// [`collect_diverged_paths`] makes, applied to the warrant that authorizes
-/// the deletion rather than to the precondition that permits the verb.
+/// whose canonical store differs is simply not a baseline here — the same
+/// refusal-to-vouch [`collect_diverged_paths`] makes.
 fn baseline_tips_in_store(
     vcs: &dyn Vcs,
     store: &Path,
@@ -3445,7 +3275,7 @@ fn baseline_tips_in_store(
     let mut tips = Vec::new();
     for base in baselines {
         let candidate = base.join(rel);
-        if !vcs.is_repo(&candidate) || receipt_store_for(vcs, &candidate) != store {
+        if !vcs.is_repo(&candidate) || store_behind(vcs, &candidate) != store {
             continue;
         }
         if let Ok(tip) = vcs.head_revision(&candidate) {
@@ -3455,136 +3285,37 @@ fn baseline_tips_in_store(
     tips
 }
 
-/// Destroy the refs rwv **recorded creating** in `store` for this workweave,
-/// and *report* every other branch in the workweave's namespace.
-///
-/// The merged-check and the deletion range over the same thing — the receipt
-/// — so a check that inspects one HEAD per repo cannot authorize a deletion
-/// that sweeps a whole prefix.
-///
-/// The listing pass is report-only **by type**. `list_branch_names_with_prefix`
-/// answers in [`RawRefName`]s, and no route leads from one of those to
-/// [`Vcs::delete_owned_ref`]; the only producer of the [`OwnedRef`] that
-/// method takes is [`RefRegistry::record_created`]. So a hand-made
-/// `my--feature/wip` is reported and left alone — not because a check
-/// remembered to skip it, but because nothing here can spell its deletion.
-///
-/// Receipts are retracted **after** the ref they describe is gone, never
-/// before: the reverse order would leave an unreceipted ref, which R2 disowns
-/// permanently. Retraction is what later lets R4 pass for `prune_dropped_repo`.
-#[allow(clippy::too_many_arguments)]
-fn retire_recorded_refs(
+/// Delete the branch a workweave was given in `store` when the baselines'
+/// checkouts reach it, and say so when they do not. Backups, pins and the
+/// branch it lands into are the deletion rule's; this is the lineage judgment
+/// of the verbs that take a checkout out of a store without having a weave
+/// branch to judge it by.
+fn retire_lineage_branch(
     vcs: &dyn Vcs,
-    registry: &mut RefRegistry,
     store: &Path,
     ephemeral: &EphemeralRefName,
     label: &str,
     baseline_tips: &[ResolvedRevisionId],
-    discard_unmerged: Option<DiscardUnmergedConsent>,
     releaser: Releaser,
 ) {
     let say = releaser.prefix();
     let raw = ephemeral.to_raw();
-    let receipt = registry.lookup(store, &raw);
-    let receipt_absent = matches!(receipt, Ok(None));
-    match receipt {
-        Ok(Some(owned)) => match vcs.resolve_local_branch_tip(store, &raw) {
-            Ok(None) => {
-                // Recorded, but the ref is already gone. Nothing to destroy;
-                // retract the dangling receipt so the store can later satisfy R4.
-                if let Err(e) = registry.retract(store, &raw) {
-                    eprintln!(
-                        "{say}warning: {label}: branch {owned} is already gone but its \
-                         ownership receipt could not be retracted ({e:#}); run \
-                         `rwv doctor --fix`"
-                    );
-                }
-            }
-            _ => {
-                let merged = baseline_tips
-                    .iter()
-                    .find_map(|baseline| DeletionWarrant::merged(vcs, &owned, baseline));
-                let warrant = match (merged, discard_unmerged) {
-                    (Some(warrant), _) => Some(warrant),
-                    (None, Some(consent)) => {
-                        match DeletionWarrant::operator_discarded(vcs, &owned, consent) {
-                            Ok(warrant) => Some(warrant),
-                            Err(e) => {
-                                eprintln!(
-                                    "{say}warning: {label}: could not keep branch {owned} as \
-                                     a backup before discarding it ({e:#}); left in place"
-                                );
-                                return;
-                            }
-                        }
-                    }
-                    (None, None) => None,
-                };
-                match warrant {
-                    Some(warrant) => {
-                        let why = warrant.describe();
-                        let kept = warrant.backup().map(|b| b.backup().name.to_string());
-                        match vcs.delete_owned_ref(&owned, warrant) {
-                            Ok(()) => {
-                                if let Some(name) = kept {
-                                    eprintln!(
-                                        "{say}backup: {label}: branch {owned} kept as {name} \
-                                         (`rwv backup list`)"
-                                    );
-                                }
-                                if let Err(e) = registry.retract(store, &raw) {
-                                    eprintln!(
-                                        "{say}warning: {label}: branch {owned} deleted \
-                                         ({why}) but its ownership receipt could not be \
-                                         retracted ({e:#}); run `rwv doctor --fix`"
-                                    );
-                                }
-                            }
-                            Err(e) => eprintln!(
-                                "{say}warning: {label}: could not delete branch {owned} \
-                                 ({why}): {e:#}"
-                            ),
-                        }
-                    }
-                    None => eprintln!(
-                        "{say}warning: {label}: branch {owned} is rwv's but holds commits no \
-                         baseline contains; left in place.{}",
-                        releaser.unmerged_remedy()
-                    ),
-                }
-            }
-        },
-        Ok(None) => {}
-        Err(e) => eprintln!(
-            "{say}warning: {label}: could not read the ownership receipts in {}: {e:#}",
-            store.display()
-        ),
-    }
-
-    // Report-only. Anything else still standing in this workweave's namespace
-    // is a ref rwv did not record creating, so under R2 it is not rwv's to
-    // delete — it is the operator's, and the only useful thing to do with it is
-    // say so. The recorded name is one of those only when the registry said so:
-    // kept above, or unreadable, it is not unrecorded.
-    match vcs.list_branch_names_with_prefix(store, raw.as_str()) {
-        Ok(observed) => {
-            for branch in observed {
-                if is_this_workweaves_namespace(&branch, ephemeral)
-                    && (branch != raw || receipt_absent)
-                {
-                    eprintln!(
-                        "{say}{label}: branch {branch} is not recorded as rwv's; left in place \
-                         (delete it yourself with `git -C {repo} branch -d {branch}` if you no \
-                         longer want it)",
-                        repo = store.display(),
-                    );
-                }
+    match DestroyProof::landed(vcs, store, Site::Local, &raw, baseline_tips) {
+        Ok(Some(proof)) => {
+            let why = proof.describe();
+            if let Err(e) = vcs.delete_branch(proof) {
+                eprintln!("{say}warning: {label}: could not delete branch {raw} ({why}): {e:#}");
             }
         }
-        Err(e) => eprintln!(
-            "{say}warning: {label}: could not list branches in {}: {e:#}",
-            store.display()
-        ),
+        Ok(None) => {
+            if matches!(vcs.resolve_local_branch_tip(store, &raw), Ok(Some(_))) {
+                eprintln!(
+                    "{say}left: {label}: branch {raw} holds commits no baseline contains; \
+                     left in place"
+                );
+            }
+        }
+        Err(e) => eprintln!("{say}warning: {label}: could not judge branch {raw}: {e:#}"),
     }
 }
 
@@ -3592,7 +3323,6 @@ fn retire_recorded_refs(
 /// the branch it retires there say it.
 #[derive(Clone, Copy)]
 pub(crate) enum Releaser {
-    Delete,
     Prune,
     Remove,
 }
@@ -3600,18 +3330,8 @@ pub(crate) enum Releaser {
 impl Releaser {
     fn prefix(self) -> &'static str {
         match self {
-            Self::Delete => "rwv workweave delete: ",
             Self::Prune => "  ",
             Self::Remove => "",
-        }
-    }
-
-    fn unmerged_remedy(self) -> &'static str {
-        match self {
-            Self::Delete => {
-                " Merge it, or re-run with --discard-unmerged-commits to consent to losing it."
-            }
-            Self::Prune | Self::Remove => "",
         }
     }
 }
@@ -3662,50 +3382,118 @@ impl WorkweaveCheckout {
 }
 
 /// Take one of a workweave's checkouts out of the store it links into: remove
-/// the worktree, drop its registration, and retire the branch the workweave
-/// was given in that store.
+/// the worktree, drop its registration, and delete the branch the workweave
+/// was given in that store when its baselines reach it.
 ///
-/// The ref pass runs whatever the removal did: a branch still held by a
-/// checkout that would not come off is reported by the retire, not skipped.
-/// The removal's own failure is what returns.
+/// The branch pass runs whatever the removal did: a branch still held by a
+/// checkout that would not come off is reported, not skipped. The removal's
+/// own failure is what returns.
 pub(crate) fn release_checkout(
     vcs: &dyn Vcs,
-    registry: &mut RefRegistry,
     checkout: &WorkweaveCheckout,
     label: &str,
-    discard_unmerged: Option<DiscardUnmergedConsent>,
     releaser: Releaser,
 ) -> Result<(), VcsError> {
-    let removed = if checkout.path.exists() {
-        vcs.remove_worktree(&checkout.store, &checkout.path)
-    } else {
-        Ok(())
-    };
-    let _ = vcs.worktree_prune(&checkout.store);
-    retire_recorded_refs(
+    let removed = remove_checkout(vcs, &checkout.store, &checkout.path);
+    retire_lineage_branch(
         vcs,
-        registry,
         &checkout.store,
         &checkout.ephemeral,
         label,
         &checkout.baseline_tips,
-        discard_unmerged,
         releaser,
     );
     removed
 }
 
-/// Delete a workweave: remove worktrees (including project repo) and delete
-/// the workweave directory.
+/// Remove the worktree at `path` from `store` and drop its registration.
+fn remove_checkout(vcs: &dyn Vcs, store: &Path, path: &Path) -> Result<(), VcsError> {
+    let removed = if path.exists() {
+        vcs.remove_worktree(store, path)
+    } else {
+        Ok(())
+    };
+    let _ = vcs.worktree_prune(store);
+    removed
+}
+
+/// What a workweave delete discarded, by kind. Each is kept as a backup first.
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
+pub struct Discarded {
+    /// Uncommitted edits, by repo.
+    pub edits: Vec<KeptWork>,
+    /// What a detached HEAD held that no branch reaches, by repo.
+    pub detached_commits: Vec<KeptWork>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub struct KeptWork {
+    pub repo: String,
+    /// The name `rwv backup drop` takes.
+    pub backup: String,
+}
+
+/// What `rwv workweave delete` did.
+#[derive(Debug, Clone, Default)]
+pub struct WorkweaveDeletion {
+    pub discarded: Discarded,
+    /// The deletion rule's outcome, when the workweave's aligned branch is a
+    /// feature.
+    pub rule: Option<crate::deletion::Outcome>,
+}
+
+impl WorkweaveDeletion {
+    pub fn left_something(&self) -> bool {
+        self.rule.as_ref().is_some_and(|r| r.left_something())
+    }
+
+    /// The branches the rule deleted after backing them up first.
+    pub fn unlanded_branches(&self) -> Vec<&crate::deletion::Deleted> {
+        self.rule
+            .iter()
+            .flat_map(|r| &r.deleted)
+            .filter(|d| d.backup.is_some())
+            .collect()
+    }
+
+    pub fn print(&self) {
+        for kept in &self.discarded.edits {
+            eprintln!(
+                "discarded edits: {} kept as backup {} (`rwv backup list`)",
+                kept.repo, kept.backup
+            );
+        }
+        for kept in &self.discarded.detached_commits {
+            eprintln!(
+                "discarded detached commits: {} kept as backup {} (`rwv backup list`)",
+                kept.repo, kept.backup
+            );
+        }
+        if let Some(rule) = &self.rule {
+            for deleted in self.unlanded_branches() {
+                eprintln!(
+                    "discarded unlanded branch: {} {} kept as backup {} (`rwv backup list`)",
+                    deleted.repo,
+                    deleted.branch,
+                    deleted.backup.as_deref().unwrap_or_default()
+                );
+            }
+            rule.print();
+        }
+    }
+}
+
+/// Delete a workweave: remove worktrees (including project repo), delete the
+/// workweave directory, and apply the deletion rule to its aligned branch when
+/// that is a feature.
 ///
 /// Refuses to delete a workweave with uncommitted changes (in the project
 /// worktree or any manifest-repo worktree) unless `discard_uncommitted` carries
-/// the operator's consent, and one holding commits not merged into its parent
-/// weave unless `discard_unmerged` does. Each error lists the paths so the
-/// operator knows what would have been lost. Only CLI dispatch can mint either
-/// token, so no other caller can waive either refusal. `discard_unmerged` is
-/// also the [`DeletionWarrant::operator_discarded`] warrant every unmerged
-/// ref's DESTROY needs.
+/// the operator's consent, and one with a detached HEAD holding commits no
+/// branch reaches unless `discard_unlanded` does; each is kept as a backup
+/// first. A branch of the workweave that has not landed is not a refusal: the
+/// rule keeps it, and `discard_unlanded` backs it up and deletes it. Only CLI
+/// dispatch can mint either token, so no other caller can waive either refusal.
 ///
 /// Independently of both waivers, refuses when any per-repo checkout in the
 /// workweave is itself a canonical store with foreign worktrees linked into
@@ -3728,8 +3516,9 @@ pub fn delete_workweave(
     name: &WorkweaveName,
     expected_dir: Option<&Path>,
     discard_uncommitted: Option<DiscardUncommittedConsent>,
-    discard_unmerged: Option<DiscardUnmergedConsent>,
-) -> anyhow::Result<()> {
+    discard_unlanded: Option<DiscardUnlandedConsent>,
+    remote_deletes: &crate::deletion::RemoteDeletes,
+) -> anyhow::Result<WorkweaveDeletion> {
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
     if let Some(expected) = expected_dir {
         let expected = CanonicalPath::of(expected);
@@ -3753,33 +3542,28 @@ pub fn delete_workweave(
         name,
         &workweave_dir,
         discard_uncommitted,
-        discard_unmerged,
+        discard_unlanded,
+        remote_deletes,
         Deleter::Operator,
     )
 }
 
-/// Which kinds of work a delete's discard flags consent to losing.
-#[derive(Clone, Copy)]
-struct DiscardsKept {
-    uncommitted: bool,
-    unmerged: bool,
-}
-
 /// Keep, as backups, the work in `workweave_dir`'s checkouts that the discard
-/// flags in `discards` consent to losing and nothing else preserves: each
-/// linked checkout's uncommitted edits, and what a detached HEAD holds that no
-/// branch reaches. A checkout that is its own store is removed with its refs,
-/// so a backup written there would keep nothing; the branch-tip backups are
-/// made where the workweave's branch is destroyed.
+/// flags consent to losing and nothing else preserves: each linked checkout's
+/// uncommitted edits, and what a detached HEAD holds that no branch reaches. A
+/// checkout that is its own store is removed with its refs, so a backup
+/// written there would keep nothing.
 fn keep_work_before_discarding(
     ws_root: &Path,
     workweave_dir: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    discards: DiscardsKept,
-) -> anyhow::Result<()> {
-    if !discards.uncommitted && !discards.unmerged {
-        return Ok(());
+    discard_uncommitted: bool,
+    discard_unlanded: bool,
+) -> anyhow::Result<Discarded> {
+    let mut discarded = Discarded::default();
+    if !discard_uncommitted && !discard_unlanded {
+        return Ok(discarded);
     }
     let project_vcs = project_vcs();
     let project_rel = project_rel_dir(project);
@@ -3810,26 +3594,185 @@ fn keep_work_before_discarding(
         {
             continue;
         }
-        let mut kept = Vec::new();
-        if discards.uncommitted {
-            kept.extend(vcs.backup_edits(&worktree).with_context(|| {
+        if discard_uncommitted {
+            if let Some(witness) = vcs.backup_edits(&worktree).with_context(|| {
                 format!("{label}: its uncommitted edits could not be kept as a backup")
-            })?);
+            })? {
+                discarded.edits.push(KeptWork {
+                    repo: label.clone(),
+                    backup: witness.backup().name.to_string(),
+                });
+            }
         }
-        if discards.unmerged {
-            kept.extend(vcs.backup_unpreserved_head(&worktree).with_context(|| {
+        if discard_unlanded {
+            if let Some(witness) = vcs.backup_unpreserved_head(&worktree).with_context(|| {
                 format!(
                     "{label}: the commits its detached HEAD holds could not be kept as a backup"
                 )
-            })?);
+            })? {
+                discarded.detached_commits.push(KeptWork {
+                    repo: label.clone(),
+                    backup: witness.backup().name.to_string(),
+                });
+            }
         }
-        for witness in kept {
-            eprintln!(
-                "{}backup: {label}: kept as {} (`rwv backup list`)",
-                Releaser::Delete.prefix(),
-                witness.backup().name
-            );
+    }
+    Ok(discarded)
+}
+
+/// The checkouts of `workweave_dir` whose HEAD is detached holding commits no
+/// branch or remote-tracking branch reaches, judged on the `alignment` axis.
+fn judge_detached_commits(
+    project_vcs: &dyn Vcs,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> anyhow::Result<crate::diagnosis::Report> {
+    let mut report = crate::diagnosis::Report::default();
+    let mut judge = |vcs: &dyn Vcs, label: String, worktree: PathBuf| -> anyhow::Result<()> {
+        if !worktree.exists() {
+            return Ok(());
         }
+        let crate::vcs::HeadObservation::Detached { at } = vcs.observe_head(&worktree)? else {
+            return Ok(());
+        };
+        let stray =
+            vcs.reached_by_no_branch(&worktree, &at, crate::vcs::RemoteTracking::Counted)?;
+        if stray.is_empty() {
+            return Ok(());
+        }
+        report.add(
+            crate::diagnosis::State::AlignmentDetachedUnpushed
+                .of(label)
+                .listing(
+                    stray
+                        .iter()
+                        .map(|c| format!("{} {}", c.id.short(), c.subject)),
+                )
+                .checkout(&worktree)
+                .judge(vcs),
+        );
+        Ok(())
+    };
+    judge(
+        project_vcs,
+        project_rel_path(project),
+        workweave_dir.join(project_rel_dir(project)),
+    )?;
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
+        judge(
+            checkout.vcs.as_ref(),
+            checkout.label(),
+            workweave_dir.join(checkout.repo_path.as_path()),
+        )?;
+    }
+    Ok(report)
+}
+
+/// The feature branch a workweave's deletion judges, and the branch it lands
+/// into: the branch its project checkout is aligned for, when its record is a
+/// feature's. A detached or declared workspace has none.
+fn feature_of(
+    ws_root: &Path,
+    project: &ProjectName,
+    workweave_dir: &Path,
+) -> anyhow::Result<Option<(crate::records::BranchName, crate::records::BranchName)>> {
+    let vcs = project_vcs();
+    let checkout = project_dir(workweave_dir, project);
+    if !vcs.is_repo(&checkout) {
+        return Ok(None);
+    }
+    let crate::alignment::WorkspaceState {
+        aligned: Some(crate::alignment::Aligned::Branch(aligned)),
+        ..
+    } = crate::alignment::read_state(vcs.as_ref(), &checkout)?.state
+    else {
+        return Ok(None);
+    };
+    let primary_project = project_dir(ws_root, project);
+    let branch = match crate::records::BranchName::parse(vcs.as_ref(), &aligned) {
+        Ok(branch) => branch,
+        Err(_) => return Ok(None),
+    };
+    let store = crate::records::Store::open(vcs.as_ref(), &primary_project)?;
+    let view = store.view()?;
+    match view.lookup(&branch) {
+        crate::records::Lookup::Value(crate::records::Record::Feature { target, .. }) => {
+            Ok(Some((branch, target)))
+        }
+        crate::records::Lookup::Value(crate::records::Record::Declared) => Ok(None),
+        lookup => Err(crate::branch::judge_lookup(
+            vcs.as_ref(),
+            &store,
+            project,
+            &primary_project,
+            &branch,
+            lookup,
+        )?
+        .refused()),
+    }
+}
+
+/// The envelope `rwv workweave delete --json` prints.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct WorkweaveDeleteJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub project: String,
+    pub discarded: DiscardedOutput,
+    /// The deletion rule's outcome; absent when the workweave's aligned
+    /// branch is not a feature.
+    #[serde(flatten)]
+    pub rule: Option<crate::deletion::Outcome>,
+}
+
+/// What a workweave delete discarded, by kind.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct DiscardedOutput {
+    pub edits: Vec<KeptWork>,
+    pub detached_commits: Vec<KeptWork>,
+    /// Branches that had not landed, each deleted after the backup named.
+    pub unlanded_branches: Vec<UnlandedBranch>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct UnlandedBranch {
+    pub repo: String,
+    pub branch: String,
+    pub backup: String,
+}
+
+pub const WORKWEAVE_DELETE_SCHEMA_URL: &str = crate::schema_url::schema_url!("workweave-delete");
+
+/// Print what a workweave delete did: by kind what it discarded, then the
+/// deletion rule's outcome.
+pub fn report_deletion(
+    deletion: &WorkweaveDeletion,
+    project: &ProjectName,
+    output: crate::parallel::OutputMode,
+) -> anyhow::Result<()> {
+    if output.is_json() {
+        let envelope = WorkweaveDeleteJsonOutput {
+            schema_url: WORKWEAVE_DELETE_SCHEMA_URL.to_owned(),
+            project: project.to_string(),
+            discarded: DiscardedOutput {
+                edits: deletion.discarded.edits.clone(),
+                detached_commits: deletion.discarded.detached_commits.clone(),
+                unlanded_branches: deletion
+                    .unlanded_branches()
+                    .into_iter()
+                    .map(|d| UnlandedBranch {
+                        repo: d.repo.clone(),
+                        branch: d.branch.clone(),
+                        backup: d.backup.clone().unwrap_or_default(),
+                    })
+                    .collect(),
+            },
+            rule: deletion.rule.clone(),
+        };
+        outln!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        deletion.print();
     }
     Ok(())
 }
@@ -3845,17 +3788,15 @@ fn keep_work_before_discarding(
 /// from cleaning up. The marker round-trip is still enforced inside
 /// `delete_workweave_inner_at`.
 ///
-/// `--retire` has no waiver flag, so it holds neither consent: uncommitted or
-/// unmerged work refuses. `target` is the workspace the op has just synced the
-/// workweave into, so it holds that work whether or not it is the recorded
-/// parent.
+/// `--retire` has no waiver flag, so it holds neither consent: uncommitted
+/// work and a detached HEAD holding unlanded commits refuse, and a branch
+/// that has not landed survives the rule.
 pub(crate) fn delete_workweave_for_retire(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
-    target: &CanonicalPath,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<WorkweaveDeletion> {
     delete_workweave_inner_at(
         ws_root,
         project,
@@ -3863,20 +3804,19 @@ pub(crate) fn delete_workweave_for_retire(
         workweave_dir,
         None,
         None,
-        Deleter::RetiringOp { target },
+        &crate::deletion::RemoteDeletes::default(),
+        Deleter::RetiringOp,
     )
 }
 
-/// Who deletes a workweave: whether an in-flight op record refuses the delete,
-/// and which workspaces besides the recorded parent and the primary hold its
-/// work.
-enum Deleter<'a> {
+/// Who deletes a workweave: whether an in-flight op record refuses the delete.
+enum Deleter {
     /// `rwv workweave delete`, which an op record in the workweave refuses.
     Operator,
-    /// The `sync-to --retire` op that has just synced the workweave into
-    /// `target`. It holds its record there until its own cleanup phase, after
+    /// The `sync-to --retire` op that has just synced the workweave into its
+    /// target. It holds its record there until its own cleanup phase, after
     /// the delete.
-    RetiringOp { target: &'a CanonicalPath },
+    RetiringOp,
 }
 
 /// Delete a workweave whose on-disk path is already known.
@@ -3890,30 +3830,26 @@ enum Deleter<'a> {
 ///
 /// The registry entry is still removed at the end (best effort), so a
 /// mid-crash resume that finds a pre-crash entry keeps the index in sync.
+#[allow(clippy::too_many_arguments)]
 fn delete_workweave_inner_at(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
     discard_uncommitted: Option<DiscardUncommittedConsent>,
-    discard_unmerged: Option<DiscardUnmergedConsent>,
-    deleter: Deleter<'_>,
-) -> anyhow::Result<()> {
+    discard_unlanded: Option<DiscardUnlandedConsent>,
+    remote_deletes: &crate::deletion::RemoteDeletes,
+    deleter: Deleter,
+) -> anyhow::Result<WorkweaveDeletion> {
     let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
     let workweave_dir = workweave_dir.to_path_buf();
-    let workweave_id = WorkweaveId {
-        project: project.clone(),
-        name: name.clone(),
-    };
-    let ephemeral = EphemeralRefName::mint(&workweave_id.flat());
-    let mut registry = RefRegistry::for_project(ws_root, project);
 
     refuse_symlinked_members(&workweave_dir, project)?;
 
     // Tier-0 topology precondition: refuse when a per-repo checkout inside
     // the workweave is itself a canonical store with foreign dependents.
-    // Runs before the dirty / unmerged checks (and is not bypassable by any
+    // Runs before the dirty / unlanded checks (and is not bypassable by any
     // override flag) because the hazard is to OTHER workspaces, not the
     // workweave's own work. See docs/explanation/joints/clone-topology.md and
     // docs/explanation/destructive-operations.md (precondition-or-stop).
@@ -3926,78 +3862,70 @@ fn delete_workweave_inner_at(
         )?;
     }
 
-    // Refuse before the dirty/unmerged checks so a mid-op delete reports the
+    // Refuse before the dirty/unlanded checks so a mid-op delete reports the
     // in-flight op. No override: `rwv abort` is the way to clear a stale record.
     if workweave_dir.exists() && matches!(deleter, Deleter::Operator) {
         crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()])?;
     }
 
-    // Safety checks: each refusal has its own waiver. Skipped when the
-    // workweave directory doesn't exist (nothing to lose).
+    // Every refusal is judged before anything changes.
+    let mut refusals = crate::diagnosis::Report::default();
     if discard_uncommitted.is_none() && workweave_dir.exists() {
-        judge_dirty_checkouts(
+        for line in judge_dirty_checkouts(
             project_vcs.as_ref(),
             &workweave_dir,
             project,
             &manifest,
             matches!(deleter, Deleter::Operator).then_some(name),
         )
-        .into_result()?;
+        .lines()
+        {
+            refusals.add(line.clone());
+        }
     }
-    // The baselines the per-ref `Merged` warrants are measured against, read
-    // while the workweave's marker still exists (it names the parent). Work
-    // counts as merged when its recorded parent, the primary weave, or the
-    // target a retiring op just synced it into contains it — nested
-    // workweaves land in their parent first.
-    let landed_into = match deleter {
-        Deleter::Operator => None,
-        Deleter::RetiringOp { target } => Some(target),
-    };
-    let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(ws_root), landed_into);
-
-    // Committed-but-unmerged work is just as lost as uncommitted work:
-    // the ephemeral-ref cleanup below destroys the only ref to those
-    // commits. This is the verb-level precondition; each destroy below
-    // additionally has to hold its own warrant (R3).
-    if discard_unmerged.is_none() && workweave_dir.exists() {
-        let diverged = collect_diverged_paths(
-            project_vcs.as_ref(),
-            &workweave_dir,
-            project,
-            &manifest,
-            &baselines,
-        );
-        if !diverged.is_empty() {
-            crate::refuse!(
-                RefusalKind::UnmergedCommits,
-                "workweave {} has commits not merged into {}; \
-                 refusing to delete without --discard-unmerged-commits:\n  {}",
-                name.as_str(),
-                baselines
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
-                diverged.join("\n  ")
+    if discard_unlanded.is_none() && workweave_dir.exists() {
+        let detached =
+            judge_detached_commits(project_vcs.as_ref(), &workweave_dir, project, &manifest)?;
+        if !detached.is_empty() {
+            for line in detached.lines() {
+                refusals.add(line.clone());
+            }
+            refusals.note(
+                "`--discard-unlanded` keeps these commits as a backup and removes the workweave",
             );
         }
     }
+    refusals.into_result()?;
+
+    let rule = match feature_of(ws_root, project, &workweave_dir)? {
+        Some((branch, target)) => Some(crate::deletion::Rule::open(crate::deletion::Request {
+            primary: ws_root,
+            project,
+            branch,
+            target,
+            discard_unlanded,
+            remote_deletes,
+            leaving: Some(&workweave_dir),
+            verb: "workweave delete",
+        })?),
+        None => None,
+    };
 
     // A discard flag consents to losing work, never to losing it with no
     // way back: what each consents to is kept as a backup before anything is
     // removed, and a backup that cannot be written stops the delete here.
-    if workweave_dir.exists() {
+    let discarded = if workweave_dir.exists() {
         keep_work_before_discarding(
             ws_root,
             &workweave_dir,
             project,
             &manifest,
-            DiscardsKept {
-                uncommitted: discard_uncommitted.is_some(),
-                unmerged: discard_unmerged.is_some(),
-            },
-        )?;
-    }
+            discard_uncommitted.is_some(),
+            discard_unlanded.is_some(),
+        )?
+    } else {
+        Discarded::default()
+    };
 
     // Strip the managed regions this checkout's integrations own before the
     // checkout is taken apart. The regions exist because this workweave
@@ -4047,22 +3975,7 @@ fn delete_workweave_inner_at(
             continue;
         }
 
-        let leaving = WorkweaveCheckout::new(
-            vcs.as_ref(),
-            repo_store.into_path_buf(),
-            worktree_path,
-            &workweave_id,
-            &baselines,
-            &repo_path.as_path(),
-        );
-        if let Err(e) = release_checkout(
-            vcs.as_ref(),
-            &mut registry,
-            &leaving,
-            &checkout.label(),
-            discard_unmerged,
-            Releaser::Delete,
-        ) {
+        if let Err(e) = remove_checkout(vcs.as_ref(), repo_store.as_path(), &worktree_path) {
             let msg = format!("{}: {e:#}", checkout.label());
             eprintln!("rwv workweave delete: error: {msg}");
             errors.push(msg);
@@ -4074,12 +3987,6 @@ fn delete_workweave_inner_at(
     // indicated by .git being a FILE (not a directory). If .git is a directory
     // (or absent), the workweave copy was a plain directory copy — just let
     // remove_dir_all below handle it.
-    //
-    // The project repo is an instance of the branch model, so the ref pass
-    // below is NOT nested inside the worktree-removal outcome. Under R2 both
-    // arms are the same operation over the same receipt set, so whether
-    // `.git` was a file and whether `remove_worktree` returned `Ok` do not
-    // change which receipts are owed a DESTROY.
     let project_rel = project_rel_dir(project);
     let project_dir_fallback = ws_root.join(&project_rel);
     let project_worktree = workweave_dir.join(&project_rel);
@@ -4093,29 +4000,12 @@ fn delete_workweave_inner_at(
     )
     .into_path_buf();
     if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
-        if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
+        if let Err(e) = remove_checkout(project_vcs.as_ref(), &project_store, &project_worktree) {
             let msg = format!("{}: {e:#}", project_rel_path(project));
             eprintln!("rwv workweave delete: error: {msg}");
             errors.push(msg);
         }
-        let _ = project_vcs.worktree_prune(&project_store);
     }
-    let project_baseline_tips = baseline_tips_in_store(
-        project_vcs.as_ref(),
-        &project_store,
-        &baselines,
-        &project_rel,
-    );
-    retire_recorded_refs(
-        project_vcs.as_ref(),
-        &mut registry,
-        &project_store,
-        &ephemeral,
-        &project_rel_path(project),
-        &project_baseline_tips,
-        discard_unmerged,
-        Releaser::Delete,
-    );
 
     // Remove the workweave directory itself. A process's working directory
     // is an open handle on Windows, and `sync-to --retire` drives this
@@ -4159,13 +4049,14 @@ fn delete_workweave_inner_at(
         );
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
+    if !errors.is_empty() {
         let total = manifest.len() + 1;
         let failed = errors.len();
         bail!("workweave delete completed with {failed} failure(s) out of {total} repo(s)")
     }
+
+    let rule = rule.map(crate::deletion::Rule::apply).transpose()?;
+    Ok(WorkweaveDeletion { discarded, rule })
 }
 
 /// List workweaves for `project` under `ws_root`'s primary.
@@ -4453,7 +4344,9 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                         Some(Path::new(&worktree_path)),
                         None,
                         None,
+                        &crate::deletion::RemoteDeletes::default(),
                     )
+                    .map(|deletion| deletion.print())
                 });
                 if let Err(e) = outcome {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e:#}");
@@ -4483,8 +4376,8 @@ mod tests {
     // Create rollback
     //
     // These drive the guard directly because the distinction it keys on —
-    // `create_worktree_on` returning a `BornRef` or not — is not observable
-    // from the CLI once create refuses an unowned name outright.
+    // `create_worktree_on` answering authored or adopted — is not observable
+    // from the CLI once create refuses a name held by commits it did not make.
     // -----------------------------------------------------------------------
 
     /// Run git in `dir`, panicking on failure.
@@ -4522,11 +4415,20 @@ mod tests {
     }
 
     /// A guard with nothing but the ref attempt under test recorded.
-    fn guard_for(primary: &Path, project: &ProjectName) -> CreateRollbackGuard {
-        let mut g =
-            CreateRollbackGuard::new(git_vcs(), primary.join("never-created"), primary, project);
+    fn guard_for(primary: &Path) -> CreateRollbackGuard {
+        let mut g = CreateRollbackGuard::new(git_vcs(), primary.join("never-created"));
         g.defuse(); // Drop must not re-run what the test drives explicitly.
         g
+    }
+
+    fn minted(project: &ProjectName) -> EphemeralRefName {
+        EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        )
     }
 
     #[test]
@@ -4542,7 +4444,7 @@ mod tests {
             Role::Owned,
             SubmoduleRecursion::Recurse,
             "main",
-            ReceiptedBranch::Attach,
+            BranchPolicy::Restore,
         )
         .err()
         .expect("a member with no canonical clone is refused");
@@ -4558,30 +4460,23 @@ mod tests {
     }
 
     #[test]
-    fn rollback_destroys_a_ref_this_create_authored_and_retracts_its_receipt() {
+    fn rollback_destroys_a_ref_this_create_authored() {
         let (_tmp, primary, project, store) = weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+        let name = minted(&project);
         let at = git_vcs().head_revision(&store).unwrap();
-        let owned = registry.record_created(&store, name.clone(), at).unwrap();
+        let found = FoundBranch::minted(store.clone(), &name, at);
 
-        // A real birth, so the `BornRef` is the one `create_worktree_on`
-        // produced rather than a value the test made up.
         let dest = primary.join("wt");
-        let born = git_vcs()
-            .create_worktree_on(&owned, &dest)
-            .unwrap()
-            .expect("a fresh name must be AUTHORED, not adopted");
+        let origin = git_vcs().create_worktree_on(&found, &dest).unwrap();
+        assert_eq!(
+            origin,
+            RefOrigin::Authored,
+            "a fresh name must be AUTHORED, not adopted"
+        );
         git_vcs().remove_worktree(&store, &dest).unwrap();
 
-        let mut g = guard_for(&primary, &project);
-        g.record_ref_attempt(owned, RefBirth::Authored(born));
+        let mut g = guard_for(&primary);
+        g.record_ref_attempt(found, RefBirth::from(origin));
         assert!(g.undo_ref_births().is_empty(), "the destroy should succeed");
 
         assert!(
@@ -4591,23 +4486,12 @@ mod tests {
                 .is_none(),
             "an authored ref must be destroyed on rollback"
         );
-        assert!(
-            registry.lookup(&store, &name.to_raw()).unwrap().is_none(),
-            "the receipt must be retracted with the ref it describes"
-        );
     }
 
     #[test]
     fn rollback_leaves_an_adopted_ref_alone() {
         let (_tmp, primary, project, store) = weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+        let name = minted(&project);
 
         // A branch that was already there, carrying a commit of its own.
         git(&store, &["checkout", "-b", &name.to_string()]);
@@ -4617,24 +4501,22 @@ mod tests {
         let their_tip = git(&store, &["rev-parse", &name.to_string()]);
         git(&store, &["checkout", "main"]);
 
-        // The receipt this create wrote before discovering it had adopted.
-        let owned = registry
-            .record_created(
-                &store,
-                name.clone(),
-                git_vcs().head_revision(&store).unwrap(),
-            )
-            .unwrap();
+        let found = FoundBranch::minted(
+            store.clone(),
+            &name,
+            git_vcs().head_revision(&store).unwrap(),
+        );
         let dest = primary.join("wt");
-        let born = git_vcs().create_worktree_on(&owned, &dest).unwrap();
-        assert!(
-            born.is_none(),
+        let origin = git_vcs().create_worktree_on(&found, &dest).unwrap();
+        assert_eq!(
+            origin,
+            RefOrigin::Adopted,
             "fixture: a name already in the store must be ADOPTED, not authored"
         );
         git_vcs().remove_worktree(&store, &dest).unwrap();
 
-        let mut g = guard_for(&primary, &project);
-        g.record_ref_attempt(owned, RefBirth::Adopted);
+        let mut g = guard_for(&primary);
+        g.record_ref_attempt(found, RefBirth::from(origin));
         assert!(g.undo_ref_births().is_empty());
 
         assert_eq!(
@@ -4642,42 +4524,29 @@ mod tests {
             their_tip,
             "a create that ADOPTED a branch must not destroy it on rollback"
         );
-        assert!(
-            registry.lookup(&store, &name.to_raw()).unwrap().is_none(),
-            "the claim this create made over a branch it did not author is retracted"
-        );
     }
 
     #[test]
     fn rollback_reports_a_ref_that_moved_instead_of_destroying_it() {
         let (_tmp, primary, project, store) = weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+        let name = minted(&project);
         let at = git_vcs().head_revision(&store).unwrap();
-        let owned = registry.record_created(&store, name.clone(), at).unwrap();
+        let found = FoundBranch::minted(store.clone(), &name, at);
 
         let dest = primary.join("wt");
-        let born = git_vcs()
-            .create_worktree_on(&owned, &dest)
-            .unwrap()
-            .expect("authored");
+        let origin = git_vcs().create_worktree_on(&found, &dest).unwrap();
+        assert_eq!(origin, RefOrigin::Authored);
 
-        // A commit lands on the ephemeral branch after its birth, so
-        // `DeletionWarrant::unmoved` can no longer be built for it.
+        // A commit lands on the ephemeral branch after its birth, so no
+        // landed proof against the start point can be made for it.
         std::fs::write(dest.join("later"), "committed after the birth").unwrap();
         git(&dest, &["add", "."]);
         git(&dest, &["commit", "-m", "later"]);
         let moved_tip = git(&store, &["rev-parse", &name.to_string()]);
         git_vcs().remove_worktree(&store, &dest).unwrap();
 
-        let mut g = guard_for(&primary, &project);
-        g.record_ref_attempt(owned, RefBirth::Authored(born));
+        let mut g = guard_for(&primary);
+        g.record_ref_attempt(found, RefBirth::from(origin));
         let failures = g.undo_ref_births();
 
         assert_eq!(
@@ -4686,17 +4555,13 @@ mod tests {
             "the moved ref must be reported: {failures:?}"
         );
         assert!(
-            failures[0].contains(&name.to_string()) && failures[0].contains("moved off"),
+            failures[0].contains(&name.to_string()) && failures[0].contains("holds commits past"),
             "the report must name the branch and why it was kept: {failures:?}"
         );
         assert_eq!(
             git(&store, &["rev-parse", &name.to_string()]),
             moved_tip,
             "a ref that moved since its birth must survive rollback"
-        );
-        assert!(
-            registry.lookup(&store, &name.to_raw()).unwrap().is_some(),
-            "its receipt survives too — the ref is still rwv's, just not safe to lose"
         );
     }
 
@@ -4855,14 +4720,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Receipt survival across the Vcs seam's failure arms
+    // A birth and a retire across the Vcs seam's failure arms
     //
     // Each of these turns on something a real repo will not do on request: a
     // ref appearing inside the interval between classification and birth, and
-    // a destroy that fails. What they pin is the same question in three
-    // answers — whether the ownership receipt survives — because a receipt
-    // that outlives a ref rwv did not author claims it, and one retracted
-    // over a ref that may exist disowns it permanently.
+    // a destroy that fails.
     //
     // Every scenario is paired with the setup that reaches a different arm
     // from the same double, so a fake that ignored its ref store would fail
@@ -4881,8 +4743,7 @@ mod tests {
     }
 
     /// A weave whose store is a plain directory, canonicalized: [`FakeVcs`]
-    /// keys refs on the path it is handed, and the receipt is keyed on the
-    /// canonical spelling.
+    /// keys refs on the path it is handed.
     fn fake_weave() -> (tempfile::TempDir, PathBuf, ProjectName, PathBuf) {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
@@ -4895,16 +4756,9 @@ mod tests {
     }
 
     #[test]
-    fn a_ref_born_inside_the_window_is_adopted_and_its_receipt_retracted() {
+    fn a_ref_born_inside_the_window_is_adopted() {
         let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+        let ephemeral = minted(&project);
         let raw = ephemeral.to_raw();
 
         let fake = FakeVcs::new();
@@ -4915,13 +4769,12 @@ mod tests {
 
         let outcome = birth_ephemeral_worktree(
             &fake,
-            &mut registry,
             &store,
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
-            ReceiptedBranch::Replace,
+            BranchPolicy::Fresh,
         )
         .unwrap();
 
@@ -4934,53 +4787,36 @@ mod tests {
             ],
             "no destroy and no refusal: classification ran first and found the name free"
         );
-        assert!(registry.lookup(&store, &raw).unwrap().is_some());
-
-        let err = outcome.into_authored(&mut registry).unwrap_err();
         assert!(
-            err.to_string().contains("adopted a ref rwv did not create"),
-            "unexpected error: {err}"
+            matches!(outcome.birth, RefBirth::Adopted),
+            "a ref that appeared inside the window is not this create's to destroy"
         );
-        assert!(
-            registry.lookup(&store, &raw).unwrap().is_none(),
-            "an adopted ref is not rwv's, so its receipt must not survive"
-        );
+        assert!(outcome.failure.is_none());
     }
 
     #[test]
     fn the_same_ref_standing_before_classification_refuses_instead() {
         let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
-        let raw = ephemeral.to_raw();
+        let ephemeral = minted(&project);
 
         let fake = FakeVcs::new();
-        fake.put_branch(&store, &raw, fake_rev('c'));
+        fake.put_branch(&store, &ephemeral.to_raw(), fake_rev('c'));
 
         let err = match birth_ephemeral_worktree(
             &fake,
-            &mut registry,
             &store,
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
-            ReceiptedBranch::Replace,
+            BranchPolicy::Fresh,
         ) {
             Err(e) => e,
-            Ok(_) => panic!("a ref rwv holds no receipt for must refuse, not be adopted"),
+            Ok(_) => panic!("a branch holding commits the create did not make must refuse"),
         };
 
-        assert!(
-            err.to_string().contains("rwv holds no ownership receipt"),
-            "unexpected error: {err}"
-        );
+        let report = crate::diagnosis::refused_output(&err);
+        assert_eq!(report.len(), 1, "{err:#}");
         assert_eq!(
             fake.calls(),
             vec![
@@ -4989,111 +4825,73 @@ mod tests {
             ],
             "the refusal must land before anything is written"
         );
-        assert!(registry.lookup(&store, &raw).unwrap().is_none());
+        assert_eq!(
+            fake.branch_tip(&store, &ephemeral.to_raw()),
+            Some(fake_rev('c')),
+            "the branch is untouched"
+        );
     }
 
     #[test]
-    fn a_create_over_a_receipted_branch_that_moved_names_the_exits_that_keep_it_first() {
+    fn a_create_over_its_own_partial_result_takes_it() {
         let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
-        registry
-            .record_created(&store, ephemeral.clone(), fake_rev('a'))
-            .unwrap();
+        let ephemeral = minted(&project);
         let fake = FakeVcs::new();
-        fake.put_branch(&store, &ephemeral.to_raw(), fake_rev('c'));
+        fake.put_branch(&store, &ephemeral.to_raw(), fake_rev('a'));
 
-        let err = match birth_ephemeral_worktree(
+        let outcome = birth_ephemeral_worktree(
             &fake,
-            &mut registry,
             &store,
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
-            ReceiptedBranch::Replace,
-        ) {
-            Err(e) => e.to_string(),
-            Ok(_) => panic!("a receipted branch that moved must refuse a create"),
-        };
-        let discards = err
-            .find("Deleting the branch instead discards them")
-            .unwrap_or_else(|| panic!("{err}"));
-        for exit in ["under a different name", "branch -m"] {
-            assert!(
-                err.find(exit).is_some_and(|at| at < discards),
-                "`{exit}` comes before deleting: {err}"
-            );
-        }
+            BranchPolicy::Fresh,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome.birth, RefBirth::Adopted));
+        assert!(outcome.failure.is_none());
+        assert!(
+            !fake.calls().contains(&VcsCall::DeleteBranch),
+            "taking the partial result deletes nothing"
+        );
     }
 
     #[test]
-    fn restoring_a_member_attaches_its_receipted_branch_where_it_stands() {
+    fn restoring_a_member_attaches_its_branch_where_it_stands() {
         let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+        let ephemeral = minted(&project);
         let raw = ephemeral.to_raw();
-        registry
-            .record_created(&store, ephemeral.clone(), fake_rev('a'))
-            .unwrap();
         let fake = FakeVcs::new();
         fake.put_branch(&store, &raw, fake_rev('c'));
 
         let outcome = birth_ephemeral_worktree(
             &fake,
-            &mut registry,
             &store,
             &primary.join("wt"),
             &ephemeral,
             fake_rev('c'),
             WorktreeFiles::Written,
-            ReceiptedBranch::Attach,
+            BranchPolicy::Restore,
         )
         .unwrap();
-        outcome.into_authored(&mut registry).unwrap();
+        outcome.into_result().unwrap();
 
         assert!(
-            !fake.calls().contains(&VcsCall::DestroyLocalRef),
+            !fake.calls().contains(&VcsCall::DeleteBranch),
             "restoring never deletes the branch"
         );
         assert_eq!(
             fake.resolve_local_branch_tip(&store, &raw).unwrap(),
             Some(fake_rev('c'))
         );
-        assert_eq!(
-            registry
-                .lookup(&store, &raw)
-                .unwrap()
-                .map(|r| r.created_at().clone()),
-            Some(fake_rev('a')),
-            "the receipt is the one rwv recorded, kept"
-        );
     }
 
     #[test]
-    fn a_birth_that_failed_keeps_its_receipt() {
+    fn a_birth_that_failed_reports_its_failure_and_leaves_the_branch_to_rollback() {
         let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
-        let raw = ephemeral.to_raw();
+        let ephemeral = minted(&project);
 
         let fake = FakeVcs::new();
         fake.fail_next(
@@ -5103,103 +4901,92 @@ mod tests {
 
         let outcome = birth_ephemeral_worktree(
             &fake,
-            &mut registry,
             &store,
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
-            ReceiptedBranch::Replace,
+            BranchPolicy::Fresh,
         )
         .unwrap();
         assert!(outcome.failure.is_some());
+        assert!(matches!(outcome.birth, RefBirth::AuthoredOrAbsent));
 
-        let err = outcome.into_authored(&mut registry).unwrap_err();
+        let err = outcome.into_result().unwrap_err();
         assert!(
             err.to_string().contains("is not a vcs repository"),
             "the birth's own failure must be what surfaces: {err}"
         );
-        assert!(
-            registry.lookup(&store, &raw).unwrap().is_some(),
-            "the ref may exist regardless, and only a receipt can authorize removing it later"
-        );
     }
 
     #[test]
-    fn a_destroy_that_failed_leaves_the_receipt_standing() {
-        let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+    fn a_lineage_branch_whose_delete_failed_is_left() {
+        let (_tmp, _primary, project, store) = fake_weave();
+        let ephemeral = minted(&project);
         let raw = ephemeral.to_raw();
-        registry
-            .record_created(&store, ephemeral.clone(), fake_rev('a'))
-            .unwrap();
 
         let fake = FakeVcs::new();
         fake.put_branch(&store, &raw, fake_rev('a'));
         fake.declare_ancestor(&fake_rev('a'), &fake_rev('b'));
-        fake.fail_next(VcsCall::DestroyLocalRef, VcsError::NotARepo(store.clone()));
+        fake.fail_next(VcsCall::DeleteBranch, VcsError::NotARepo(store.clone()));
 
-        retire_recorded_refs(
+        retire_lineage_branch(
             &fake,
-            &mut registry,
             &store,
             &ephemeral,
             "github/org/repo",
             &[fake_rev('b')],
-            None,
-            Releaser::Delete,
+            Releaser::Remove,
         );
 
         assert!(
             fake.branch_tip(&store, &raw).is_some(),
             "the destroy failed, so the ref is still there"
         );
-        assert!(
-            registry.lookup(&store, &raw).unwrap().is_some(),
-            "retracting over a ref that survived would disown it permanently"
-        );
     }
 
     #[test]
-    fn a_destroy_that_succeeded_retracts_the_receipt() {
-        let (_tmp, primary, project, store) = fake_weave();
-        let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(
-            &crate::manifest::WorkweaveId {
-                project: project.clone(),
-                name: WorkweaveName::new("ww").unwrap(),
-            }
-            .flat(),
-        );
+    fn a_lineage_branch_the_baselines_reach_is_deleted() {
+        let (_tmp, _primary, project, store) = fake_weave();
+        let ephemeral = minted(&project);
         let raw = ephemeral.to_raw();
-        registry
-            .record_created(&store, ephemeral.clone(), fake_rev('a'))
-            .unwrap();
 
         let fake = FakeVcs::new();
         fake.put_branch(&store, &raw, fake_rev('a'));
         fake.declare_ancestor(&fake_rev('a'), &fake_rev('b'));
 
-        retire_recorded_refs(
+        retire_lineage_branch(
             &fake,
-            &mut registry,
             &store,
             &ephemeral,
             "github/org/repo",
             &[fake_rev('b')],
-            None,
-            Releaser::Delete,
+            Releaser::Remove,
         );
 
         assert!(fake.branch_tip(&store, &raw).is_none());
-        assert!(registry.lookup(&store, &raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_lineage_branch_the_baselines_do_not_reach_is_kept() {
+        let (_tmp, _primary, project, store) = fake_weave();
+        let ephemeral = minted(&project);
+        let raw = ephemeral.to_raw();
+
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('a'));
+
+        retire_lineage_branch(
+            &fake,
+            &store,
+            &ephemeral,
+            "github/org/repo",
+            &[fake_rev('b')],
+            Releaser::Remove,
+        );
+
+        assert!(fake.branch_tip(&store, &raw).is_some());
+        assert!(!fake.calls().contains(&VcsCall::DeleteBranch));
     }
 
     // -----------------------------------------------------------------------

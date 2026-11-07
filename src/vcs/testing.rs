@@ -28,9 +28,8 @@ use std::sync::Mutex;
 /// registered under.
 ///
 /// Named for the *required* method rather than the provided wrapper above it:
-/// `create_worktree_on` and `delete_owned_ref` carry the receipts and warrants
-/// but delegate the VCS work, so those delegations are what a fake can
-/// intercept.
+/// `create_worktree_on` carries the found branch but delegates the VCS work,
+/// so that delegation is what a fake can intercept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum VcsCall {
     IsAncestor,
@@ -38,7 +37,7 @@ pub(crate) enum VcsCall {
     ResolveLocalBranchTip,
     MaterializeWorktreeOnRef,
     MaterializeUnpopulatedWorktreeOnRef,
-    DestroyLocalRef,
+    DeleteBranch,
     HoldsCommittedContent,
 }
 
@@ -251,7 +250,7 @@ impl Vcs for FakeVcs {
     /// for a path that is not a repo, and this double's refs live in a map
     /// keyed by the path a caller hands it rather than in an object store two
     /// paths could share — so no path it is given has one. That is what keeps
-    /// an ownership receipt keyed to the path under test.
+    /// a branch keyed to the path under test.
     ///
     /// It has no error channel, so nothing here can be failed or intercepted
     /// and it takes no [`VcsCall`]. A test that needs two checkouts to share a
@@ -288,12 +287,12 @@ impl Vcs for FakeVcs {
             .then_some(self as &dyn WorkspacePopulation)
     }
 
-    fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
-        self.enter(VcsCall::DestroyLocalRef)?;
+    fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError> {
+        self.enter(VcsCall::DeleteBranch)?;
         self.branches
             .lock()
             .unwrap()
-            .remove(&Self::key(store, name));
+            .remove(&Self::key(proof.store(), proof.branch()));
         Ok(())
     }
 
@@ -852,8 +851,27 @@ impl Vcs for FakeVcs {
         &self,
         _claim: &crate::fetch_claim::FetchClaim,
         _repo: &Path,
+        _only: Option<&[RemoteHandle]>,
     ) -> Result<PruningFetch, VcsError> {
         unsupported("fetch_pruning")
+    }
+
+    fn push_target_of(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+        _url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
+        unsupported("push_target_of")
+    }
+
+    fn file_versions(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _path: &Path,
+    ) -> Result<Vec<String>, VcsError> {
+        unsupported("file_versions")
     }
 
     fn refresh_index_to_head_if_safe(&self, _repo: &Path) {
@@ -992,15 +1010,6 @@ impl Vcs for FakeVcs {
 
     fn attach_head_to(&self, _repo: &Path, _name: &LocalRefName) -> Result<(), VcsError> {
         unsupported("attach_head_to")
-    }
-
-    fn rename_local_ref(
-        &self,
-        _store: &Path,
-        _from: &RawRefName,
-        _to: &RawRefName,
-    ) -> Result<(), VcsError> {
-        unsupported("rename_local_ref")
     }
 
     fn push_ref(
@@ -1187,7 +1196,7 @@ mod tests {
     fn dropping_with_a_scripted_failure_nothing_consumed_is_a_test_bug() {
         let fake = FakeVcs::new();
         fake.fail_next(
-            VcsCall::DestroyLocalRef,
+            VcsCall::DeleteBranch,
             VcsError::NotARepo(PathBuf::from("/store")),
         );
     }
@@ -1271,8 +1280,8 @@ mod tests {
         require::<FakeVcs>();
     }
 
-    fn receipt(name: &str, at: ResolvedRevisionId) -> OwnedRef {
-        OwnedRef::from_receipt(PathBuf::from("/store"), RawRefName::new(name), at)
+    fn found(name: &str, at: ResolvedRevisionId) -> FoundBranch {
+        FoundBranch::named(PathBuf::from("/store"), name, at)
     }
 
     #[test]
@@ -1285,7 +1294,7 @@ mod tests {
     fn an_unpopulated_create_authors_and_adopts_as_a_populated_one_does() {
         for unpopulated in [false, true] {
             let fake = FakeVcs::answering_population();
-            let create = |r: &OwnedRef, dest: &str| {
+            let create = |r: &FoundBranch, dest: &str| {
                 let dest = Path::new(dest);
                 if unpopulated {
                     fake.population()
@@ -1296,9 +1305,14 @@ mod tests {
                 }
             };
 
-            let born = create(&receipt("p--w", rev('b')), "/one").unwrap();
-            assert_eq!(born.map(|b| b.at().clone()), Some(rev('b')));
-            assert_eq!(create(&receipt("p--w", rev('c')), "/two").unwrap(), None);
+            assert_eq!(
+                create(&found("p--w", rev('b')), "/one").unwrap(),
+                RefOrigin::Authored
+            );
+            assert_eq!(
+                create(&found("p--w", rev('c')), "/two").unwrap(),
+                RefOrigin::Adopted
+            );
             assert_eq!(
                 fake.branch_tip(Path::new("/store"), &RawRefName::new("p--w")),
                 Some(rev('b')),
@@ -1325,7 +1339,7 @@ mod tests {
         let created = fake
             .population()
             .unwrap()
-            .create_unpopulated_worktree_on(&receipt("p--w", rev('b')), Path::new("/one"));
+            .create_unpopulated_worktree_on(&found("p--w", rev('b')), Path::new("/one"));
 
         assert!(created.is_err());
         assert_eq!(

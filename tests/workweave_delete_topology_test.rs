@@ -492,6 +492,7 @@ fn delete_from_outside_leaves_the_process_cwd_alone() {
         None,
         None,
         None,
+        &repoweave::deletion::RemoteDeletes::default(),
     );
     assert!(result.is_ok(), "delete should succeed; got: {result:?}");
     assert!(

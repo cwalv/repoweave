@@ -497,26 +497,6 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         "a sync-materialized worktree must be born on the minted ephemeral name"
     );
 
-    // And rwv must hold a receipt for it. Ownership is by record, not by
-    // name shape (R2): without this, the ref sync just created would be
-    // one `workweave delete` can never legitimately clean up.
-    let canonical = main.root.join(new_repo_path);
-    let receipt = repoweave::workweave_index::RefRegistry::for_project(
-        &main.root,
-        &repoweave::manifest::ProjectName::new(PROJECT).unwrap(),
-    )
-    .lookup(
-        &canonical,
-        &repoweave::vcs::RawRefName::new(format!("{PROJECT}--ww1")),
-    )
-    .expect("the registry is readable");
-    assert!(
-        receipt.is_some(),
-        "sync's materialize must persist an ownership receipt for the ref it births, \
-         keyed to the canonical store at {}",
-        canonical.display()
-    );
-
     // doctor --locked should now pass cleanly.
     rwv()
         .args(["doctor", "--locked"])

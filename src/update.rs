@@ -538,7 +538,7 @@ fn materialize_workweave_members(
             entry.role,
             entry.recurse_submodules,
             &start,
-            crate::workweave::ReceiptedBranch::Attach,
+            crate::workweave::BranchPolicy::Restore,
         ) {
             Ok(born) => {
                 created = true;

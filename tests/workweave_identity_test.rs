@@ -16,6 +16,7 @@
 //! Fixtures are synthetic; the verb is destructive and is never exercised
 //! against the live weave.
 
+use repoweave::deletion::RemoteDeletes;
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workweave::{create_workweave, delete_workweave, CreateWorkweave, DirtySource};
 use std::path::{Path, PathBuf};
@@ -86,6 +87,7 @@ fn delete_refuses_a_name_and_a_path_that_denote_different_workweaves() {
         Some(wb.as_path()),
         None,
         None,
+        &RemoteDeletes::default(),
     )
     .expect_err("naming `wa` while holding `wb`'s path must refuse");
 
@@ -122,6 +124,7 @@ fn delete_proceeds_when_the_name_and_the_path_agree() {
         Some(wa.as_path()),
         None,
         None,
+        &RemoteDeletes::default(),
     )
     .expect("naming `wa` while holding `wa`'s path must delete it");
 
@@ -151,6 +154,7 @@ fn delete_accepts_an_equivalent_spelling_of_the_registered_path() {
         Some(detoured.as_path()),
         None,
         None,
+        &RemoteDeletes::default(),
     )
     .expect("an equivalent spelling is the same directory and must not refuse");
 

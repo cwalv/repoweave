@@ -4,7 +4,7 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use crate::alignment::Departure;
-use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent};
+use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnlandedConsent, ForcePushConsent};
 use crate::naming::FlatAddress;
 use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
@@ -1207,9 +1207,8 @@ pub struct NamedBranch {
 ///
 /// Minted only by [`Vcs::create_backup`], whose body is in this module — so a
 /// value of this type is proof the ref exists on disk, not a claim that one
-/// will be written. [`DeletionWarrant::operator_discarded`] takes the proof
-/// by running the backup itself, which is what makes a discard without one
-/// unrepresentable.
+/// will be written. [`DestroyProof::backed_up`] takes the proof by running the
+/// backup itself, which is what makes a discard without one unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupWitness {
     repo: PathBuf,
@@ -1231,16 +1230,20 @@ impl BackupWitness {
 // The branch model
 // ===========================================================================
 //
-// A ref name means one of four notions: the branch a manifest entry DECLARES
-// it tracks, the ephemeral name a create REQUESTS, the ref rwv holds a RECEIPT
-// for, and the ref a checkout is actually ON. Comparing any two of them is a
-// legal line that is usually wrong, so each has its own type.
+// A ref name means one of three notions: the branch a manifest entry DECLARES
+// it tracks, the ephemeral name a create REQUESTS, and the ref a checkout is
+// actually ON. Comparing any two of them is a legal line that is usually wrong,
+// so each has its own type.
 //
 // The split is the same move `ResolvedRevisionId` / `RawRevisionId` make in
 // this file: one parse boundary, one refined value per notion, no cross-type
 // comparison, and a `compile_fail` doctest per invariant so a later "make it
 // easier" `PartialEq`/`From` impl fails CI rather than passing review. A name
-// read from the VCS that none of the four claims stays a `RawRefName`.
+// read from the VCS that none of the three claims stays a `RawRefName`.
+//
+// Destroying a branch is a fourth thing, and takes no name at all: a
+// `DestroyProof` carries the branch, its store and the tip it was proved
+// about, and is minted only by a check that ran.
 
 /// A ref name as observed or as written: the parse boundary of the branch
 /// model.
@@ -1255,7 +1258,7 @@ impl BackupWitness {
 ///
 /// It deliberately keeps [`RawRefName::as_str`]: raw VCS output has to stay
 /// inspectable. The types that must *not* be inspected as strings
-/// ([`TrackingRef`], [`OwnedRef`], [`AttachedRef`]) are exactly the ones
+/// ([`TrackingRef`], [`AttachedRef`]) are exactly the ones
 /// carrying a claim that a string comparison would silently discard.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -1551,7 +1554,7 @@ impl fmt::Display for LocalRefName {
     }
 }
 
-/// Notion (2a): the ephemeral branch name a create **requests**.
+/// Notion (2): the ephemeral branch name a create **requests**.
 ///
 /// [`EphemeralRefName::mint`] is total and takes one input, the workweave's
 /// [`FlatAddress`]: the rendering of its (project, workweave) identity. There
@@ -1561,15 +1564,10 @@ impl fmt::Display for LocalRefName {
 /// has one producer, [`crate::naming::WorkweaveId::flat`] — so a name can never be derived
 /// from the branch a checkout happens to be on.
 ///
-/// Requesting a name is not owning one. Only a persisted receipt makes a
-/// ref rwv's to destroy ([`OwnedRef`], R2), which is why this type has no
-/// path to one that does not go through the registry.
-///
 /// `mint` itself performs no validation and cannot fail:
 /// [`crate::manifest::ProjectName::new`] and
 /// [`crate::manifest::WorkweaveName::new`] already reject anything that would make two
-/// distinct (project, workweave) pairs mint the same name, or that would
-/// make the result read as [`LegacyEphemeralRefName`]'s segmented shape.
+/// distinct (project, workweave) pairs mint the same name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EphemeralRefName(String);
 
@@ -1581,14 +1579,11 @@ impl EphemeralRefName {
         Self(flat.as_str().to_owned())
     }
 
-    /// The requested name at the parse boundary, for the receipt store to
-    /// key on and for the VCS impl to spell.
+    /// The requested name at the parse boundary, for the VCS impl to spell.
     ///
-    /// Deliberately not `as_str()`: the only legitimate question about a
-    /// requested name is "does rwv hold a receipt for it", which is
-    /// `RefRegistry::lookup`, not a string comparison. Handing back a
-    /// [`RawRefName`] grants nothing `RawRefName::new` did not already
-    /// grant — a raw name owns nothing and can destroy nothing.
+    /// Deliberately not `as_str()`: handing back a [`RawRefName`] grants
+    /// nothing `RawRefName::new` did not already grant — a raw name can
+    /// destroy nothing.
     pub fn to_raw(&self) -> RawRefName {
         RawRefName(self.0.clone())
     }
@@ -1600,141 +1595,55 @@ impl fmt::Display for EphemeralRefName {
     }
 }
 
-/// An observed ref that a **live** workweave's own minted namespace claims —
-/// the only observed name the migration may adopt into a receipt.
+/// The branch a checkout is placed on: its name, the store it lives in, and
+/// the revision it starts at when it is created.
 ///
-/// Before the scheme was flattened, rwv minted
-/// `{project}--{workweave}/<segment>`. Those refs predate ownership
-/// receipts, so under R2 they are nobody's:
-/// unownable, and therefore undeletable — including by the rename that
-/// migrates them, which is a DESTROY of the old name and needs a receipt for
-/// it. This type is the one route from an observation to that receipt, and it
-/// is deliberately narrow.
+/// Carries its store, so a birth derives its target from the branch rather
+/// than from an independent path argument — the same carry-your-provenance
+/// rule [`AttachedRef`] follows, for the same reason.
 ///
-/// # What [`claim`](Self::claim) asks, and what it does not
-///
-/// It takes the [`EphemeralRefName`] a live workweave **mints** and asks
-/// whether the observed name sits under it. The observed name is never split
-/// into parts and no part of it is handed on: the answer is this whole name
-/// or nothing. So the migration cannot reconstruct which workweave a stray
-/// `<a>--<b>/<c>` belonged to — it can only recognize a ref inside a
-/// namespace it is standing in.
-///
-/// That is not "ownership by name shape". It authorizes exactly one thing: a
-/// receipt whose immediate and only use is a rename that **preserves the
-/// tip**. No commit can be lost through this type; a mistaken claim costs the
-/// operator a branch name, not work.
+/// Display only, deliberately: no `as_str()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LegacyEphemeralRefName(RawRefName);
-
-impl LegacyEphemeralRefName {
-    /// `Some` iff `observed` sits strictly under the namespace `flat` claims
-    /// — i.e. it is `{flat}/<something non-empty>`.
-    ///
-    /// `flat` itself is **not** a legacy name and yields `None`: adopting the
-    /// flat name goes through [`RefRegistry::record_created`] on the minted
-    /// name and needs no observation at all.
-    ///
-    /// [`RefRegistry::record_created`]: crate::workweave_index::RefRegistry::record_created
-    pub fn claim(flat: &EphemeralRefName, observed: &RawRefName) -> Option<Self> {
-        let rest = observed.as_str().strip_prefix(&format!("{}/", flat.0))?;
-        (!rest.is_empty()).then(|| Self(observed.clone()))
-    }
-
-    /// The claimed name at the parse boundary, for the receipt store to key
-    /// on and for the VCS impl to spell.
-    pub fn to_raw(&self) -> RawRefName {
-        self.0.clone()
-    }
-}
-
-impl fmt::Display for LegacyEphemeralRefName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0.as_str())
-    }
-}
-
-/// Notion (2b): an ephemeral ref rwv holds a persisted **receipt** for.
-///
-/// R2: a ref is rwv's to delete iff rwv holds a receipt for that exact name
-/// in that exact store. A ref that merely *looks* like rwv's is not rwv's,
-/// which is why an [`EphemeralRefName`] cannot become one of these and a
-/// [`RawRefName`] from a listing cannot either.
-///
-/// Carries the store it was recorded against, so [`Vcs::delete_owned_ref`]
-/// and [`Vcs::create_worktree_on`] derive their target from the receipt
-/// rather than from an independent path argument — the same
-/// carry-your-provenance rule [`AttachedRef`] follows, for the same reason.
-///
-/// # Display only, deliberately
-///
-/// No `as_str()`. The question "is this the ref that checkout is on" is
-/// [`OwnedRef::is_attached_by`], a named predicate that yields a `bool` and
-/// no witness; the question "may I delete this" is a
-/// [`DeletionWarrant`]. Neither is a string comparison.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OwnedRef {
+pub struct FoundBranch {
     store: PathBuf,
     name: RawRefName,
-    created_at: ResolvedRevisionId,
+    start: ResolvedRevisionId,
 }
 
-impl OwnedRef {
-    /// Mint from a receipt the registry has already **persisted**.
-    ///
-    /// `pub(crate)` because the receipt store is the producer
-    /// (`RefRegistry::record_created` / `RefRegistry::lookup`), and receipts
-    /// are written before the ref they describe so a crash leaves a
-    /// dangling receipt (benign) rather than an unreceipted ref
-    /// (permanently disowned under R2).
-    ///
-    /// Its only callers are the registry producers in
-    /// [`crate::workweave_index`] — the paths that persist a new receipt and
-    /// that re-derive a stored one. Nothing outside the receipt store mints
-    /// one, which is what makes holding an `OwnedRef` mean a receipt exists.
-    pub(crate) fn from_receipt(
-        store: PathBuf,
-        name: RawRefName,
-        created_at: ResolvedRevisionId,
-    ) -> Self {
+impl FoundBranch {
+    /// The branch the workweave `name` mints, in `store`, created at `start`
+    /// when it does not exist.
+    pub fn minted(store: PathBuf, name: &EphemeralRefName, start: ResolvedRevisionId) -> Self {
         Self {
             store,
-            name,
-            created_at,
+            name: name.to_raw(),
+            start,
         }
     }
 
-    /// The canonical store the receipt is keyed to.
+    #[cfg(test)]
+    pub(crate) fn named(store: PathBuf, name: &str, start: ResolvedRevisionId) -> Self {
+        Self {
+            store,
+            name: RawRefName::new(name),
+            start,
+        }
+    }
+
     pub fn store(&self) -> &Path {
         &self.store
     }
 
-    /// The tip the ref had when rwv recorded creating it. This is what
-    /// [`DeletionWarrant::unmoved`] compares against.
-    pub fn created_at(&self) -> &ResolvedRevisionId {
-        &self.created_at
+    pub fn start(&self) -> &ResolvedRevisionId {
+        &self.start
     }
 
-    /// The recorded name, for the receipt store and the VCS impl to spell.
     pub(crate) fn name(&self) -> &RawRefName {
         &self.name
     }
-
-    /// Whether `a` is a checkout sitting on this exact ref.
-    ///
-    /// A named predicate, not an operator: it answers `bool` and yields no
-    /// witness, so "the receipt and the attachment agree" can never be
-    /// mistaken for "I now hold proof of attachment".
-    ///
-    /// Compares names only. The store correspondence is the caller's: it
-    /// looked this receipt up *by* store, and `a`'s repo is a checkout of
-    /// that store.
-    pub fn is_attached_by(&self, a: &AttachedRef) -> bool {
-        self.name == a.name
-    }
 }
 
-impl fmt::Display for OwnedRef {
+impl fmt::Display for FoundBranch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name.as_str())
     }
@@ -1816,24 +1725,6 @@ impl AttachedRef {
     pub fn is_named(&self, name: &LocalRefName) -> bool {
         self.name.as_str() == name.as_str()
     }
-
-    /// Whether this checkout is on exactly the ref `flat` requests.
-    ///
-    /// The healthy case of the I3 branch-discipline scan, asked through the
-    /// **minted** name so the scan never derives an expectation from what it
-    /// observed.
-    pub fn is_minted(&self, flat: &EphemeralRefName) -> bool {
-        self.name.as_str() == flat.0
-    }
-
-    /// The pre-flat ref this checkout is on, when `flat`'s namespace claims
-    /// it.
-    ///
-    /// `None` for the flat name itself and for every ref outside the
-    /// namespace, including another workweave's.
-    pub fn legacy_name_under(&self, flat: &EphemeralRefName) -> Option<LegacyEphemeralRefName> {
-        LegacyEphemeralRefName::claim(flat, &self.name)
-    }
 }
 
 impl fmt::Display for AttachedRef {
@@ -1905,52 +1796,10 @@ impl fmt::Display for DetachedHead {
     }
 }
 
-/// Proof that *this call* created a ref, as opposed to adopting a
-/// pre-existing one.
-///
-/// Returned by a worktree creation only on its authoring path. Its
-/// consumer is rollback: a failed create deletes only refs it holds a
-/// `BornRef` for, so it can no longer destroy a branch the create merely
-/// adopted — which is how a create's cleanup used to take a unique commit
-/// with it.
-///
-/// Carries no registry duty. The receipt was written *before* the birth by
-/// the registry; this type separates "authored" from "adopted", nothing
-/// more.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BornRef {
-    store: PathBuf,
-    name: RawRefName,
-    at: ResolvedRevisionId,
-}
-
-impl BornRef {
-    /// The canonical store the ref was authored in.
-    pub fn store(&self) -> &Path {
-        &self.store
-    }
-
-    /// The authored ref's name.
-    pub fn name(&self) -> &RawRefName {
-        &self.name
-    }
-
-    /// The revision the ref was authored at.
-    pub fn at(&self) -> &ResolvedRevisionId {
-        &self.at
-    }
-}
-
-impl fmt::Display for BornRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name.as_str())
-    }
-}
-
 /// Whether a worktree birth wrote its branch or took one that was already
 /// there.
 ///
-/// Rollback deletes a branch only when the birth authored it, so the two
+/// Rollback destroys a branch only when the birth authored it, so the two
 /// outcomes are named rather than left to a bool whose `true` an
 /// implementation could read the other way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1959,19 +1808,6 @@ pub enum RefOrigin {
     Authored,
     /// A branch of that name already existed, and the worktree was put on it.
     Adopted,
-}
-
-impl RefOrigin {
-    fn born(self, owned: &OwnedRef) -> Option<BornRef> {
-        match self {
-            Self::Authored => Some(BornRef {
-                store: owned.store().to_path_buf(),
-                name: owned.name().clone(),
-                at: owned.created_at().clone(),
-            }),
-            Self::Adopted => None,
-        }
-    }
 }
 
 /// The remote's own declaration of its primary branch.
@@ -2171,7 +2007,7 @@ impl fmt::Display for HeadAttachment {
 }
 
 // ---------------------------------------------------------------------------
-// Consent and warrant tokens
+// Consent and proof tokens
 // ---------------------------------------------------------------------------
 //
 // The consent tokens live in `crate::cli::consent` — the CLI layer's flag
@@ -2182,9 +2018,10 @@ impl fmt::Display for HeadAttachment {
 // visible only within `crate::cli`), so a mint written here does not build.
 // See that module's doc comment.
 //
-// The warrant types below stay in this module: they are minted from checks
-// this module runs (`DeletionWarrant::unmoved`/`merged`) or paired with a
-// savepoint this module writes (`DiscardWarrant::new`).
+// The proof types below stay in this module: they are minted from checks
+// this module runs (`DestroyProof::landed`), from a backup this module writes
+// (`DestroyProof::backed_up`), or paired with a savepoint this module writes
+// (`DiscardWarrant::new`).
 //
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`.
@@ -2245,9 +2082,7 @@ pub struct SavepointListing {
 /// savepoint under the recovery namespace has been **written** (not
 /// planned), and the operator passed the verb's named override. A rewind
 /// without a savepoint is therefore unrepresentable rather than
-/// discouraged, which closes the asymmetry where deleting a fully-merged
-/// empty branch needed a receipt and a warrant while resetting a branch to
-/// an older revision needed nothing.
+/// discouraged.
 #[derive(Debug)]
 pub struct DiscardWarrant {
     savepoint: SavepointRef,
@@ -2267,120 +2102,140 @@ impl DiscardWarrant {
     }
 }
 
-/// Why this ref is safe to destroy now (R3).
-///
-/// The receipt ([`OwnedRef`]) says "this is mine"; the warrant says "and it
-/// is safe to lose now". Three warrants, and no others.
-///
-/// An opaque struct over a **private** enum, not a `pub enum`: Rust cannot
-/// make a public enum's variant constructors private, so a public enum
-/// would let any code in the crate write the "unmoved" variant while
-/// filling `recorded_tip` from a fresh read of the very ref it claims is
-/// unmoved — vacuously true, and exactly today's unguarded force-delete
-/// with extra ceremony. The `pub fn` checkers below **run** the check they
-/// certify.
-///
-/// Direction matters: unlike [`VerifiedRestoreOutcome`], which reports what
-/// a check inside a primitive decided, a `DeletionWarrant` is caller-supplied
-/// proof, because the destroy site ([`Vcs::delete_owned_ref`]) and the check
-/// sites (the registry, the merged-check) are different code. That
-/// inversion is why constructibility is load-bearing here.
-#[derive(Debug)]
-pub struct DeletionWarrant(WarrantKind);
+/// Where a branch is destroyed: in the repo's own refs, or on a remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Site {
+    Local,
+    Remote(RemoteHandle),
+}
 
-/// Private: see [`DeletionWarrant`]'s docs for why this is not `pub`.
+/// Why a branch may be destroyed now: every commit on it is reached by a ref
+/// that outlives it (**landed**), or a backup of it was made first.
+///
+/// The proof names the branch, the store it lives in and the tip it was
+/// proved about, and [`Vcs::delete_branch`] takes nothing else, so there is
+/// no way to spell "delete this branch I recognized". A branch that has moved
+/// since the proof was made is not deleted.
+///
+/// An opaque struct over a private enum, not a `pub enum`: Rust cannot make a
+/// public enum's variant constructors private, so a public enum would let any
+/// code in the crate write the landed variant without running the ancestry
+/// check it certifies. The constructors below **run** the check.
 #[derive(Debug)]
-enum WarrantKind {
-    /// The ref's tip is exactly the tip rwv recorded creating it at.
-    Unmoved { recorded_tip: ResolvedRevisionId },
-    /// The ref's tip is an ancestor of a named baseline.
-    Merged { baseline: ResolvedRevisionId },
-    /// The ref's tip was kept as a backup before the operator's named
-    /// override discarded it.
+pub struct DestroyProof {
+    site: Site,
+    store: PathBuf,
+    branch: RawRefName,
+    tip: ResolvedRevisionId,
+    ground: Ground,
+}
+
+#[derive(Debug)]
+enum Ground {
+    Landed { onto: ResolvedRevisionId },
     BackedUp { backup: BackupWitness },
 }
 
-impl DeletionWarrant {
-    /// `Some` iff the ref's current tip equals the receipt's recorded tip
-    /// — nothing has happened to it since rwv created it. This is the
-    /// warrant a create's retry can hold, and it is what makes the retry's
-    /// shipped justification ("deletes a *stale* branch") true rather than
-    /// aspirational.
-    ///
-    /// `None` when the ref is gone, unreadable, or has moved.
-    pub fn unmoved(vcs: &dyn Vcs, r: &OwnedRef) -> Option<Self> {
-        let tip = vcs.resolve_local_branch_tip(r.store(), r.name()).ok()??;
-        (tip == *r.created_at()).then_some(Self(WarrantKind::Unmoved { recorded_tip: tip }))
-    }
-
-    /// `Some` iff the ref's tip is an ancestor of `baseline` — every commit
-    /// on it is reachable from a name that outlives it.
-    ///
-    /// `None` when the ref is gone, unreadable, or carries commits the
-    /// baseline does not.
-    pub fn merged(vcs: &dyn Vcs, r: &OwnedRef, baseline: &ResolvedRevisionId) -> Option<Self> {
-        let tip = vcs.resolve_local_branch_tip(r.store(), r.name()).ok()??;
-        vcs.is_ancestor(r.store(), &tip, baseline)
-            .ok()?
-            .then_some(Self(WarrantKind::Merged {
-                baseline: baseline.clone(),
-            }))
-    }
-
-    /// The operator passed `--discard-unmerged-commits`: the ref's tip is
-    /// kept as a backup, and the warrant rests on that backup.
-    ///
-    /// `consent` is not otherwise inspected: its field is private to
-    /// `cli::consent`, so this module (a different one) cannot even
-    /// destructure it. Holding a value of the type is the proof of the
-    /// operator's say-so; the backup is what makes the loss none.
-    pub fn operator_discarded(
+impl DestroyProof {
+    fn tip_at(
         vcs: &dyn Vcs,
-        r: &OwnedRef,
-        consent: DiscardUnmergedConsent,
-    ) -> Result<Self, VcsError> {
-        let _ = consent;
-        let tip = vcs
-            .resolve_local_branch_tip(r.store(), r.name())?
-            .ok_or_else(|| VcsError::RevisionNotFound {
-                repo: r.store().to_path_buf(),
-                rev: r.name().as_str().to_owned(),
-            })?;
-        let backup = vcs.create_backup(
-            r.store(),
-            &BackupSource::Branch(r.name().clone()),
-            &tip,
-            None,
-        )?;
-        Ok(Self(WarrantKind::BackedUp { backup }))
-    }
-
-    /// The backup this warrant rests on, when it rests on one.
-    pub fn backup(&self) -> Option<&BackupWitness> {
-        match &self.0 {
-            WarrantKind::BackedUp { backup } => Some(backup),
-            WarrantKind::Unmoved { .. } | WarrantKind::Merged { .. } => None,
+        store: &Path,
+        site: &Site,
+        branch: &RawRefName,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        match site {
+            Site::Local => vcs.resolve_local_branch_tip(store, branch),
+            Site::Remote(remote) => Ok(vcs
+                .remote_copies(store, branch)?
+                .into_iter()
+                .find(|copy| copy.remote == *remote)
+                .map(|copy| copy.tip)),
         }
     }
 
-    /// One line naming which warrant this is and what it rests on, for
-    /// reports that have to say why a ref was destroyed.
+    /// `Some` iff the branch exists at `site` and its tip is an ancestor of
+    /// one of `onto`: every commit on it is reached by a name that outlives it.
+    pub fn landed(
+        vcs: &dyn Vcs,
+        store: &Path,
+        site: Site,
+        branch: &RawRefName,
+        onto: &[ResolvedRevisionId],
+    ) -> Result<Option<Self>, VcsError> {
+        let Some(tip) = Self::tip_at(vcs, store, &site, branch)? else {
+            return Ok(None);
+        };
+        for target in onto {
+            if vcs.is_ancestor(store, &tip, target)? {
+                return Ok(Some(Self {
+                    site,
+                    store: store.to_path_buf(),
+                    branch: branch.clone(),
+                    tip,
+                    ground: Ground::Landed {
+                        onto: target.clone(),
+                    },
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The branch's tip is kept as a backup, and the proof rests on that
+    /// backup. `consent` is not otherwise inspected: its field is private to
+    /// `cli::consent`, so holding one is the operator's say-so.
+    pub fn backed_up(
+        vcs: &dyn Vcs,
+        store: &Path,
+        site: Site,
+        branch: &RawRefName,
+        consent: DiscardUnlandedConsent,
+    ) -> Result<Self, VcsError> {
+        let _ = consent;
+        let tip =
+            Self::tip_at(vcs, store, &site, branch)?.ok_or_else(|| VcsError::RevisionNotFound {
+                repo: store.to_path_buf(),
+                rev: branch.as_str().to_owned(),
+            })?;
+        let backup = vcs.create_backup(store, &BackupSource::Branch(branch.clone()), &tip, None)?;
+        Ok(Self {
+            site,
+            store: store.to_path_buf(),
+            branch: branch.clone(),
+            tip,
+            ground: Ground::BackedUp { backup },
+        })
+    }
+
+    pub(crate) fn site(&self) -> &Site {
+        &self.site
+    }
+
+    pub(crate) fn store(&self) -> &Path {
+        &self.store
+    }
+
+    pub(crate) fn branch(&self) -> &RawRefName {
+        &self.branch
+    }
+
+    pub(crate) fn tip(&self) -> &ResolvedRevisionId {
+        &self.tip
+    }
+
+    /// The backup this proof rests on, when it rests on one.
+    pub fn backup(&self) -> Option<&BackupWitness> {
+        match &self.ground {
+            Ground::BackedUp { backup } => Some(backup),
+            Ground::Landed { .. } => None,
+        }
+    }
+
     pub fn describe(&self) -> String {
-        match &self.0 {
-            WarrantKind::Unmoved { recorded_tip } => {
-                format!(
-                    "unmoved since rwv created it at {}",
-                    recorded_tip.display_str()
-                )
-            }
-            WarrantKind::Merged { baseline } => {
-                format!("merged into {}", baseline.display_str())
-            }
-            WarrantKind::BackedUp { backup } => {
-                format!(
-                    "operator passed --discard-unmerged-commits; kept as backup {}",
-                    backup.backup().name
-                )
+        match &self.ground {
+            Ground::Landed { onto } => format!("landed on {}", onto.display_str()),
+            Ground::BackedUp { backup } => {
+                format!("kept as backup {}", backup.backup().name)
             }
         }
     }
@@ -2660,6 +2515,14 @@ pub trait Vcs: Send + Sync {
         url_remote: Option<&RemoteHandle>,
     ) -> Result<Option<RemoteHandle>, VcsError>;
 
+    /// [`Vcs::push_target`] for a branch that need not be checked out.
+    fn push_target_of(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError>;
+
     /// The tip of the branch on `target` named as `on` is, as last fetched, or
     /// `None` when `target` has no such branch: the push branch.
     fn push_branch(
@@ -2730,10 +2593,10 @@ pub trait Vcs: Send + Sync {
         )
     }
 
-    /// Bring every remote's branches and tags into `repo`'s object store,
-    /// dropping remote-tracking branches a remote no longer has, and report
-    /// each remote-tracking branch that moved. No local branch and no
-    /// checkout moves.
+    /// Bring every remote's branches and tags into `repo`'s object store (the
+    /// remotes `only` names, when it names some), dropping remote-tracking
+    /// branches a remote no longer has, and report each remote-tracking
+    /// branch that moved. No local branch and no checkout moves.
     ///
     /// A branch that moved to a tip not descending from its old one keeps the
     /// old tip as its superseded tip, recorded before this returns (git:
@@ -2743,6 +2606,7 @@ pub trait Vcs: Send + Sync {
         &self,
         claim: &crate::fetch_claim::FetchClaim,
         repo: &Path,
+        only: Option<&[RemoteHandle]>,
     ) -> Result<PruningFetch, VcsError>;
 
     /// Resolve `branch` on `remote`, as last fetched.
@@ -3711,9 +3575,8 @@ pub trait Vcs: Send + Sync {
     // ATTACH, DESTROY, DESTROY-STORE — and the kind decides what consent is
     // required. The methods below are grouped by kind, and each
     // takes the proof its kind needs: a witness for a MOVE, a consent token
-    // for an ATTACH that is not a birth, a receipt plus a warrant for a
-    // DESTROY. Store-level destroys (R4) are not ref operations and have no
-    // method here.
+    // for an ATTACH that is not a birth, a `DestroyProof` for a DESTROY.
+    // Store-level destroys are not ref operations and have no method here.
     //
     // These REPLACED `checkout` / `delete_branch` / `current_ref` /
     // `restore_savepoint`, which no longer exist. They were deleted only once
@@ -3784,9 +3647,7 @@ pub trait Vcs: Send + Sync {
     /// such branch exists.
     ///
     /// Resolves in the local-branch namespace specifically, so a tag of
-    /// the same name cannot answer instead. Used by
-    /// [`DeletionWarrant::unmoved`] and [`DeletionWarrant::merged`], which
-    /// have to compare a receipt against the ref it describes.
+    /// the same name cannot answer instead.
     fn resolve_local_branch_tip(
         &self,
         repo: &Path,
@@ -3944,29 +3805,17 @@ pub trait Vcs: Send + Sync {
 
     // ---- ATTACH ------------------------------------------------------------
 
-    /// Materialize a worktree at `dest` on the ref a receipt describes.
+    /// Materialize a worktree at `dest` on `found`.
     ///
     /// This is a **birth**: no consent token, because there was no prior
-    /// attachment to lose. The store, the name, and the start point all
-    /// come from the receipt, which the registry persisted *before* this
-    /// call — so a crash here leaves a dangling receipt (benign) rather
-    /// than an unreceipted ref (permanently disowned under R2).
+    /// attachment to lose. The store, the name, and the start point all come
+    /// from `found`.
     ///
-    /// Returns `Some(BornRef)` iff this call **authored** the ref, `None`
-    /// when it adopted a pre-existing one. Rollback keys on that: a create
-    /// that adopted a branch must not delete it on the way out.
-    fn create_worktree_on(
-        &self,
-        owned: &OwnedRef,
-        dest: &Path,
-    ) -> Result<Option<BornRef>, VcsError> {
-        let ref_origin = self.materialize_worktree_on_ref(
-            owned.store(),
-            dest,
-            owned.name(),
-            owned.created_at(),
-        )?;
-        Ok(ref_origin.born(owned))
+    /// Says whether this call **authored** the ref or took one that was
+    /// already there. Rollback keys on that: a create that adopted a branch
+    /// must not delete it on the way out.
+    fn create_worktree_on(&self, found: &FoundBranch, dest: &Path) -> Result<RefOrigin, VcsError> {
+        self.materialize_worktree_on_ref(found.store(), dest, found.name(), found.start())
     }
 
     /// VCS-specific half of [`create_worktree_on`]: create a worktree at
@@ -3975,8 +3824,8 @@ pub trait Vcs: Send + Sync {
     /// Returns [`RefOrigin::Authored`] when the branch was created by this
     /// call and [`RefOrigin::Adopted`] when a branch of that name already
     /// existed. Implementations must **not** delete a pre-existing branch to
-    /// force the authoring path: destroying a ref needs a receipt and a
-    /// warrant, and this call has neither.
+    /// force the authoring path: destroying a ref needs a [`DestroyProof`],
+    /// and this call has none.
     ///
     /// [`create_worktree_on`]: Vcs::create_worktree_on
     fn materialize_worktree_on_ref(
@@ -4079,88 +3928,12 @@ pub trait Vcs: Send + Sync {
 
     // ---- DESTROY -----------------------------------------------------------
 
-    /// Destroy a ref rwv holds a receipt for.
+    /// Destroy the branch `proof` was made about, at the site it names.
     ///
-    /// Receipt **and** warrant, and no overload takes a name: there is no
-    /// way to spell "delete this branch I recognized". The store comes from
-    /// the receipt, so a receipt cannot authorize a delete in a different
-    /// store.
-    fn delete_owned_ref(
-        &self,
-        branch: &OwnedRef,
-        warrant: DeletionWarrant,
-    ) -> Result<(), VcsError> {
-        let _ = warrant.describe();
-        self.destroy_local_ref(branch.store(), branch.name())
-    }
-
-    /// VCS-specific half of [`delete_owned_ref`]. Not to be called
-    /// directly: it takes a raw name and no warrant, which is precisely
-    /// the shape R2 and R3 exist to forbid at the call sites above it.
-    ///
-    /// [`delete_owned_ref`]: Vcs::delete_owned_ref
-    fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError>;
-
-    // ---- rename (a DESTROY of the old name plus a birth) -----------------
-
-    /// Rename `from` to `to`, migrating a pre-flat ref to its flat name.
-    ///
-    /// Both halves are receipts, because a rename is a DESTROY
-    /// of the old name plus a birth of the new: the DESTROY needs `from`'s
-    /// receipt and `warrant`, and the birth's receipt (`to`) has to be on
-    /// disk before the ref write, which it is — an [`OwnedRef`] exists only
-    /// after [`RefRegistry::record_created`] has fsynced it.
-    ///
-    /// One VCS operation rather than a delete plus a create because **neither
-    /// half can go first**. git cannot hold `refs/heads/p--w` and
-    /// `refs/heads/p--w/<segment>` at the same time (a ref and a directory of
-    /// the same name), so the birth cannot precede the DESTROY; and git
-    /// refuses to delete the branch a worktree's HEAD is on, which here is
-    /// exactly the branch being renamed, so the DESTROY cannot precede the
-    /// birth either. The rename resolves both at once, and moves every
-    /// worktree HEAD that pointed at the old name.
-    ///
-    /// The store comes from `from`'s receipt, so a receipt cannot authorize a
-    /// rename in a different refdb; `to`'s store must agree, and this refuses
-    /// when it does not.
-    ///
-    /// [`RefRegistry::record_created`]: crate::workweave_index::RefRegistry::record_created
-    fn rename_owned_ref(
-        &self,
-        from: &OwnedRef,
-        to: &OwnedRef,
-        warrant: DeletionWarrant,
-    ) -> Result<(), VcsError> {
-        let _ = warrant.describe();
-        if from.store != to.store {
-            return Err(VcsError::CommandFailed {
-                args: vec!["rename".to_owned()],
-                repo: from.store.clone(),
-                stderr: format!(
-                    "receipt for `{}` is keyed to {} but the receipt for `{}` is keyed to {}",
-                    from.name,
-                    from.store.display(),
-                    to.name,
-                    to.store.display()
-                ),
-            });
-        }
-        self.rename_local_ref(from.store(), from.name(), to.name())
-    }
-
-    /// VCS-specific half of [`rename_owned_ref`]. Not to be called directly:
-    /// it takes raw names and no warrant.
-    ///
-    /// **Must not force.** Renaming over an existing name would destroy that
-    /// name's ref with neither receipt nor warrant.
-    ///
-    /// [`rename_owned_ref`]: Vcs::rename_owned_ref
-    fn rename_local_ref(
-        &self,
-        store: &Path,
-        from: &RawRefName,
-        to: &RawRefName,
-    ) -> Result<(), VcsError>;
+    /// The proof and no name: there is no way to spell "delete this branch I
+    /// recognized". A branch that is checked out, or has moved off the tip
+    /// the proof names, is not deleted.
+    fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError>;
 
     // ---- publish ----------------------------------------------------------
 
@@ -4229,8 +4002,8 @@ pub trait Vcs: Send + Sync {
 
     /// Local branch names starting with `prefix`, as observed.
     ///
-    /// Report-only by type: a [`RawRefName`] is not an [`OwnedRef`], so
-    /// nothing in the result can be deleted without a registry lookup. That
+    /// Report-only by type: a [`RawRefName`] is not a [`DestroyProof`], so
+    /// nothing in the result can be deleted without a check that ran. That
     /// is the difference between "destroy this prefix-scoped set" and
     /// "report what is left over".
     fn list_branch_names_with_prefix(
@@ -4422,6 +4195,15 @@ pub trait Vcs: Send + Sync {
     /// Every file of `commit`'s tree.
     fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError>;
 
+    /// The distinct contents `path` has had in the history `tip` reaches,
+    /// newest first; none where it never existed.
+    fn file_versions(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        path: &Path,
+    ) -> Result<Vec<String>, VcsError>;
+
     /// A commit with `message` on top of `parents` (none: a commit with no
     /// history), referenced by nothing, whose tree is the first parent's
     /// (empty where there is none) with `changes` applied. The author is the
@@ -4486,22 +4268,21 @@ pub trait Vcs: Send + Sync {
 pub trait WorkspacePopulation: Send + Sync {
     /// [`Vcs::create_worktree_on`], writing no tracked file.
     ///
-    /// The same receipt and branch handling: `Some(BornRef)` iff this call
-    /// authored the ref. The new workspace already records what it is a
-    /// checkout of, so [`WorkspacePopulation::tracked_files`] answers for it
-    /// before anything is written.
+    /// The same branch handling: says whether this call authored the ref. The
+    /// new workspace already records what it is a checkout of, so
+    /// [`WorkspacePopulation::tracked_files`] answers for it before anything
+    /// is written.
     fn create_unpopulated_worktree_on(
         &self,
-        owned: &OwnedRef,
+        found: &FoundBranch,
         dest: &Path,
-    ) -> Result<Option<BornRef>, VcsError> {
-        let ref_origin = self.materialize_unpopulated_worktree_on_ref(
-            owned.store(),
+    ) -> Result<RefOrigin, VcsError> {
+        self.materialize_unpopulated_worktree_on_ref(
+            found.store(),
             dest,
-            owned.name(),
-            owned.created_at(),
-        )?;
-        Ok(ref_origin.born(owned))
+            found.name(),
+            found.start(),
+        )
     }
 
     /// VCS-specific half of
@@ -4770,28 +4551,6 @@ mod tests {
         for no in ["main", "v1", "vnext", "1.2.3", "release/1.x", "v"] {
             assert!(!is_release_shape_name(no), "{no}");
         }
-    }
-
-    #[test]
-    fn a_receipt_and_an_attachment_are_compared_by_a_named_predicate() {
-        // `is_attached_by` is the only bridge between notion (2b) and notion
-        // (3), it answers `bool`, and it yields no witness — so "the receipt
-        // matches" can never be mistaken for "I hold proof of attachment".
-        let owned = OwnedRef::from_receipt(
-            PathBuf::from("/tmp/store/.git"),
-            RawRefName::new("p--ww"),
-            ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap()),
-        );
-        let same = AttachedRef {
-            repo: PathBuf::from("/tmp/checkout"),
-            name: RawRefName::new("p--ww"),
-        };
-        let other = AttachedRef {
-            repo: PathBuf::from("/tmp/checkout"),
-            name: RawRefName::new("main"),
-        };
-        assert!(owned.is_attached_by(&same));
-        assert!(!owned.is_attached_by(&other));
     }
 
     // -----------------------------------------------------------------------

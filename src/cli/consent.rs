@@ -7,7 +7,7 @@
 //!
 //!  1. The tuple literal. Each struct's field is unnamed and unmarked
 //!     (private), and Rust resolves field privacy against the *declaring
-//!     module*, not the call site — so `DiscardUnmergedConsent(())` cannot be written
+//!     module*, not the call site — so `DiscardUnlandedConsent(())` cannot be written
 //!     from any other module, in this crate or any other. Pinned per token, by
 //!     error code, in `tests/branch_model_compile_fail_test.rs` and
 //!     `tests/workweave_consent_compile_fail_test.rs`.
@@ -16,7 +16,7 @@
 //!     this module tree and nowhere else. The only other member of the tree
 //!     is `cli::dispatch`, which is where a parsed flag exists to mint from.
 //!     `vcs.rs` — which must only ever *receive* a token, never mint one —
-//!     cannot call it: `DiscardUnmergedConsent::from_flag(true)` there is E0624,
+//!     cannot call it: `DiscardUnlandedConsent::from_flag(true)` there is E0624,
 //!     `associated function is private`. Within dispatch every mint sits in
 //!     `run`, which reads argv and takes no arguments, so no caller of the
 //!     library picks the flag a token is minted from. No visibility rule can
@@ -46,13 +46,13 @@ use crate::manifest::{ProjectName, RepoKey, RepoOperand};
 /// not merged into the baseline. Minted from
 /// `--discard-unmerged-commits`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
-pub struct DiscardUnmergedConsent(());
+pub struct DiscardUnlandedConsent(());
 
-impl DiscardUnmergedConsent {
+impl DiscardUnlandedConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnmergedConsent::granted`]'s doc comment.
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
     pub(crate) fn granted() -> Self {
         Self(())
@@ -60,9 +60,9 @@ impl DiscardUnmergedConsent {
 
     /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
     /// iff the operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
-    pub(in crate::cli) fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
-        discard_unmerged_commits.then_some(Self(()))
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(discard_unlanded: bool) -> Option<Self> {
+        discard_unlanded.then_some(Self(()))
     }
 }
 
@@ -70,20 +70,20 @@ impl DiscardUnmergedConsent {
 /// the pushed one does not descend from, discarding the remote history it
 /// does not contain. Minted from `--force`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct ForcePushConsent(());
 
 impl ForcePushConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnmergedConsent::granted`]'s doc comment.
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
     pub(crate) fn granted() -> Self {
         Self(())
     }
 
     /// Mint from the parsed `--force` value: `Some` iff the operator passed
-    /// it. `pub(in crate::cli)`: see [`DiscardUnmergedConsent::from_flag`]'s doc
+    /// it. `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s doc
     /// comment.
     pub(in crate::cli) fn from_flag(force: bool) -> Option<Self> {
         force.then_some(Self(()))
@@ -96,13 +96,13 @@ impl ForcePushConsent {
 /// override the fresh op recorded, so a resumed op holds the same proof
 /// without the flag on its command line.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct DiscardLocalCommitsConsent(());
 
 impl DiscardLocalCommitsConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnmergedConsent::granted`]'s doc comment.
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
     pub(crate) fn granted() -> Self {
         Self(())
@@ -110,7 +110,7 @@ impl DiscardLocalCommitsConsent {
 
     /// Mint from the parsed `--discard-local-commits` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(discard_local_commits: bool) -> Option<Self> {
         discard_local_commits.then_some(Self(()))
     }
@@ -129,14 +129,14 @@ impl DiscardLocalCommitsConsent {
 /// Proof that the operator consented to losing uncommitted changes in a
 /// workweave being deleted. Minted from `--discard-uncommitted`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct DiscardUncommittedConsent(());
 
 impl DiscardUncommittedConsent {
     /// Mint from the parsed `--discard-uncommitted` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(discard_uncommitted: bool) -> Option<Self> {
         discard_uncommitted.then_some(Self(()))
     }
@@ -149,14 +149,14 @@ impl DiscardUncommittedConsent {
 /// Replacing covers the workweave, not work inside it: uncommitted or
 /// unmerged work there still refuses, because the operator never saw it.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct ReplaceExistingConsent(());
 
 impl ReplaceExistingConsent {
     /// Mint from the parsed `--replace-existing` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(replace_existing: bool) -> Option<Self> {
         replace_existing.then_some(Self(()))
     }
@@ -167,14 +167,14 @@ impl ReplaceExistingConsent {
 /// workweave's branch created at the canonical clone's HEAD. Minted from
 /// `--abandon-lost-pins`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct AbandonLostPinsConsent(());
 
 impl AbandonLostPinsConsent {
     /// Mint from the parsed `--abandon-lost-pins` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(abandon_lost_pins: bool) -> Option<Self> {
         abandon_lost_pins.then_some(Self(()))
     }
@@ -184,13 +184,13 @@ impl AbandonLostPinsConsent {
 /// an rwv-attested generated file and regenerating it from the current
 /// inputs. Minted from `--regenerate-drifted`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct RegenerateDriftedConsent(());
 
 impl RegenerateDriftedConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnmergedConsent::granted`]'s doc comment.
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
     pub(crate) fn granted() -> Self {
         Self(())
@@ -198,7 +198,7 @@ impl RegenerateDriftedConsent {
 
     /// Mint from the parsed `--regenerate-drifted` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(regenerate_drifted: bool) -> Option<Self> {
         regenerate_drifted.then_some(Self(()))
     }
@@ -208,13 +208,13 @@ impl RegenerateDriftedConsent {
 /// generated file's current content as the accepted generation. Minted
 /// from `--adopt-drifted`.
 ///
-/// `Copy`: see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct AdoptDriftedConsent(());
 
 impl AdoptDriftedConsent {
     /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnmergedConsent::granted`]'s doc comment.
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
     #[cfg(test)]
     pub(crate) fn granted() -> Self {
         Self(())
@@ -222,7 +222,7 @@ impl AdoptDriftedConsent {
 
     /// Mint from the parsed `--adopt-drifted` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(adopt_drifted: bool) -> Option<Self> {
         adopt_drifted.then_some(Self(()))
     }
@@ -237,7 +237,7 @@ impl AdoptDriftedConsent {
 /// carry: it unlinks, and the file each link pointed at survives, so the flag
 /// must not read as consent to deleting content.
 ///
-/// `Copy`: a zero-sized proof token; see [`DiscardUnmergedConsent`]'s doc comment.
+/// `Copy`: a zero-sized proof token; see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoveUndeclaredLinksConsent(());
 
@@ -248,7 +248,7 @@ impl RemoveUndeclaredLinksConsent {
 
     /// Mint from the parsed `--remove-undeclared-links` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(remove_undeclared_links: bool) -> Option<Self> {
         remove_undeclared_links.then_some(Self(()))
     }
@@ -291,7 +291,7 @@ impl AbandonForeignTipConsent {
 
     /// Mint from the parsed `--abandon-foreign-tip` values — one entry
     /// per occurrence of the flag. `pub(in crate::cli)`: see
-    /// [`DiscardUnmergedConsent::from_flag`]'s doc comment.
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     ///
     /// Each value is a [`RepoOperand`] as the operator typed it, which already
     /// reads a completed path, a `./` prefix and a Windows separator as the

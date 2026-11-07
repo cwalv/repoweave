@@ -62,11 +62,6 @@ pub enum RefusalKind {
     UnpushableRepoBranch,
     /// Preflight: tips are not in the fast-forward relation the strategy needs.
     NotFastForwardable,
-    /// Standing ownership receipts claim the store a delete would destroy.
-    StoreStillClaimed,
-    /// The records that would prove a store unclaimed could not be read, so
-    /// the delete fails closed.
-    StoreClaimsUnreadable,
     /// A checkout dropped from the lock carries commits nothing else reaches.
     DroppedRepoHasUniqueCommits,
     /// A sync-to target's committed lock is behind its HEAD.
@@ -77,11 +72,6 @@ pub enum RefusalKind {
     TargetLockBehind,
     /// `--continue` arguments disagree with the recorded op.
     ResumeContradictsRecord,
-    /// `--retire`'s merged-check found divergence from the target.
-    RetireNotConverged,
-    /// `--retire` found a checkout in the workweave that replay could not
-    /// prune.
-    RetireUnprunedCheckout,
     /// Abort found a tip the op does not account for.
     ForeignTip,
     /// At advance time the target carries commits CWD's tip does not.
@@ -126,8 +116,6 @@ pub enum RefusalKind {
     StateClaimHeld,
     /// An attested input changed while the file was being generated.
     DerivationInputsMoved,
-    /// An ownership receipt's recorded revision is not a commit id.
-    ReceiptRevisionUncanonical,
     /// Attested generated files hold content rwv never accepted, no consent
     /// given.
     UnacceptedGeneratedContent,
@@ -141,10 +129,6 @@ pub enum RefusalKind {
     NoSuchWorkweave,
     /// A repo the create would fork has no resolvable HEAD.
     RepoWithoutCommits,
-    /// The ephemeral name is held by a ref rwv holds no receipt for.
-    UnownedBranchInNamespace,
-    /// The receipted ref is off its recorded tip.
-    OwnedBranchMoved,
     /// The directory slot is taken by a non-addressable occupant.
     TargetDirOccupied,
     /// The reuse/replace target holds work no flag here can consent to lose.
@@ -152,9 +136,6 @@ pub enum RefusalKind {
     /// The source project directory is dirty and `--capture-dirty` was not
     /// given.
     DirtyProjectDir,
-    /// A workweave holds unlanded commits and `--discard-unmerged-commits` was
-    /// not given.
-    UnmergedCommits,
     /// Two paths both claim to be this workweave.
     RegistryPathDisagreement,
 

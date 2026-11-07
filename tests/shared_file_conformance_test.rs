@@ -15,10 +15,9 @@
 use repoweave::git::{git_vcs, restore_paths_from_head};
 use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::vcs::{
-    ContentIdentity, DerivedContentPolicy, EphemeralRefName, RawRefName, ResolvedRevisionId,
-    TrackedFile, TrackingRef, Vcs, WorkspacePopulation,
+    ContentIdentity, DerivedContentPolicy, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
+    ResolvedRevisionId, TrackedFile, TrackingRef, Vcs, WorkspacePopulation,
 };
-use repoweave::workweave_index::RefRegistry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -33,7 +32,6 @@ const AFTER: &[u8] = b"after\n";
 /// commits: `before` and then `after`, which differ in [`SHARED`].
 struct Weave {
     tmp: TempDir,
-    primary: PathBuf,
     store: PathBuf,
     before: ResolvedRevisionId,
     after: ResolvedRevisionId,
@@ -60,7 +58,6 @@ impl Weave {
         let store = repoweave::path_spelling::resolve(&store).unwrap();
         Self {
             tmp,
-            primary,
             store,
             before,
             after,
@@ -85,28 +82,26 @@ impl Weave {
         dest
     }
 
-    /// A workspace with nothing written, created through the backend from a
-    /// receipt the registry recorded.
+    /// A workspace with nothing written, created through the backend on a
+    /// branch of its own.
     fn unpopulated(&self, vcs: &dyn Vcs, name: &str, at: &ResolvedRevisionId) -> PathBuf {
         let project = ProjectName::new("conformance").unwrap();
-        let receipt = RefRegistry::for_project(&self.primary, &project)
-            .record_created(
-                &self.store,
-                EphemeralRefName::mint(
-                    &WorkweaveId {
-                        project: project.clone(),
-                        name: WorkweaveName::new(name).unwrap(),
-                    }
-                    .flat(),
-                ),
-                at.clone(),
-            )
-            .unwrap();
+        let found = FoundBranch::minted(
+            self.store.clone(),
+            &EphemeralRefName::mint(
+                &WorkweaveId {
+                    project: project.clone(),
+                    name: WorkweaveName::new(name).unwrap(),
+                }
+                .flat(),
+            ),
+            at.clone(),
+        );
         let dest = self.tmp.path().join(name);
-        let born = population(vcs)
-            .create_unpopulated_worktree_on(&receipt, &dest)
+        let origin = population(vcs)
+            .create_unpopulated_worktree_on(&found, &dest)
             .unwrap();
-        assert!(born.is_some(), "fixture check: the ref is new");
+        assert_eq!(origin, RefOrigin::Authored, "fixture check: the ref is new");
         dest
     }
 }

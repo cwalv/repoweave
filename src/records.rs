@@ -16,7 +16,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::vcs::{
-    CommitId, CommittedFile, FileChange, RecordsAdvance, RecordsSite, RemoteHandle, Vcs, VcsError,
+    CommitId, CommittedFile, FileChange, RawRefName, RecordsAdvance, RecordsSite, RemoteHandle,
+    Vcs, VcsError,
 };
 
 const WRITER_TRAILER: &str = "Rwv-Writer";
@@ -313,20 +314,20 @@ pub fn merge_snapshots(base: &Snapshot, ours: &Snapshot, theirs: &Snapshot) -> S
 }
 
 fn changes_between(from: &Snapshot, to: &Snapshot) -> Vec<FileChange> {
-    let mut changes: Vec<FileChange> = to
-        .iter()
-        .filter(|(name, bytes)| from.get(*name) != Some(*bytes))
-        .map(|(name, bytes)| FileChange {
+    let mut changes: Vec<FileChange> = from
+        .keys()
+        .filter(|name| !to.contains_key(*name))
+        .map(|name| FileChange {
             path: name.clone(),
-            content: Some(bytes.clone()),
+            content: None,
         })
         .collect();
     changes.extend(
-        from.keys()
-            .filter(|name| !to.contains_key(*name))
-            .map(|name| FileChange {
+        to.iter()
+            .filter(|(name, bytes)| from.get(*name) != Some(*bytes))
+            .map(|(name, bytes)| FileChange {
                 path: name.clone(),
-                content: None,
+                content: Some(bytes.clone()),
             }),
     );
     changes
@@ -503,6 +504,9 @@ pub fn chain_text(chain: &[BranchName]) -> String {
 struct Fold {
     heads: Vec<CommitId>,
     snapshot: Snapshot,
+    /// The local branch's own entries, which `snapshot` may differ from by
+    /// what a remote's merge brought in.
+    local: Snapshot,
 }
 
 /// The records of one project repo.
@@ -581,7 +585,7 @@ impl<'a> Store<'a> {
             kept.push(tip);
             heads = kept;
         }
-        let snapshot = match heads.split_first() {
+        let mut snapshot = match heads.split_first() {
             None => Snapshot::new(),
             Some((first, rest)) => {
                 let mut merged = self.snapshot_at(first)?;
@@ -595,7 +599,38 @@ impl<'a> Store<'a> {
                 merged
             }
         };
-        Ok(Fold { heads, snapshot })
+        let held = match &local {
+            Some(tip) => self.snapshot_at(tip)?,
+            None => Snapshot::new(),
+        };
+        for (name, bytes) in &held {
+            if !snapshot.contains_key(name) && self.exists_here(name)? {
+                snapshot.insert(name.clone(), bytes.clone());
+            }
+        }
+        Ok(Fold {
+            heads,
+            snapshot,
+            local: held,
+        })
+    }
+
+    /// Whether a branch of this name is a local branch, or a remote-tracking
+    /// branch of a records remote.
+    fn exists_here(&self, name: &str) -> Result<bool, VcsError> {
+        let branch = RawRefName::new(name);
+        if self
+            .vcs
+            .resolve_local_branch_tip(self.repo, &branch)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .vcs
+            .remote_copies(self.repo, &branch)?
+            .iter()
+            .any(|copy| self.remotes.contains(&copy.remote)))
     }
 
     /// The records as they stand, computed in memory: nothing is written.
@@ -619,6 +654,18 @@ impl<'a> Store<'a> {
         &self,
         decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
     ) -> Result<Written, WriteError> {
+        self.write_dropping(decide, &|_| false)
+    }
+
+    /// [`Store::write`], and in the same commit the drop rule: every entry the
+    /// local branch already held whose branch `droppable` names goes. An entry
+    /// a merge brought in is never among them, so a record that reached a
+    /// remote just before its branch is not lost in the gap.
+    pub fn write_dropping(
+        &self,
+        decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
+        droppable: &dyn Fn(&str) -> bool,
+    ) -> Result<Written, WriteError> {
         for _ in 0..WRITE_ATTEMPTS {
             let local = self.vcs.records_tip(self.repo, RecordsSite::Local)?;
             let fold = self.fold(local.clone())?;
@@ -629,22 +676,36 @@ impl<'a> Store<'a> {
                 .into_iter()
                 .filter(|w| folded.entry(&w.branch) != Some(Entry::Value(w.record.clone())))
                 .collect();
+            let drops: Vec<String> = fold
+                .local
+                .keys()
+                .filter(|name| {
+                    fold.snapshot.contains_key(*name)
+                        && droppable(name)
+                        && !writes.iter().any(|w| w.branch.as_str() == name.as_str())
+                })
+                .cloned()
+                .collect();
+            let first_snapshot = match fold.heads.first() {
+                Some(first) => self.snapshot_at(first)?,
+                None => Snapshot::new(),
+            };
             let mut tip = match fold.heads.as_slice() {
                 [] => None,
-                [only] => Some(only.clone()),
-                [first, ..] => {
-                    let base = self.snapshot_at(first)?;
-                    Some(self.vcs.write_commit(
-                        self.repo,
-                        &fold.heads,
-                        &changes_between(&base, &fold.snapshot),
-                        &commit_message("merge records"),
-                    )?)
-                }
+                [only] if fold.snapshot == first_snapshot => Some(only.clone()),
+                heads => Some(self.vcs.write_commit(
+                    self.repo,
+                    heads,
+                    &changes_between(&first_snapshot, &fold.snapshot),
+                    &commit_message("merge records"),
+                )?),
             };
             let mut after = fold.snapshot;
-            if !writes.is_empty() {
+            if !writes.is_empty() || !drops.is_empty() {
                 let before = after.clone();
+                for name in &drops {
+                    after.remove(name);
+                }
                 for write in &writes {
                     let entry = Entry::Value(write.record.clone());
                     after.insert(
@@ -652,16 +713,25 @@ impl<'a> Store<'a> {
                         entry.render().expect("a value renders"),
                     );
                 }
-                let summary = writes
-                    .iter()
-                    .map(|w| format!("{} {}", w.branch, w.record.mode().token()))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let mut parts: Vec<String> = Vec::new();
+                if !writes.is_empty() {
+                    parts.push(format!(
+                        "set {}",
+                        writes
+                            .iter()
+                            .map(|w| format!("{} {}", w.branch, w.record.mode().token()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if !drops.is_empty() {
+                    parts.push(format!("drop {}", drops.join(", ")));
+                }
                 tip = Some(self.vcs.write_commit(
                     self.repo,
                     &tip.iter().cloned().collect::<Vec<_>>(),
                     &changes_between(&before, &after),
-                    &commit_message(&format!("set {summary}")),
+                    &commit_message(&parts.join("; ")),
                 )?);
             }
             let committed = tip != local;
@@ -674,6 +744,7 @@ impl<'a> Store<'a> {
             return Ok(Written {
                 view: View { snapshot: after },
                 committed,
+                dropped: drops,
             });
         }
         Err(WriteError::Busy)
@@ -728,6 +799,8 @@ pub struct Written {
     pub view: View,
     /// Whether the local records branch moved.
     pub committed: bool,
+    /// The branches whose entries the write dropped.
+    pub dropped: Vec<String>,
 }
 
 fn commit_message(subject: &str) -> String {

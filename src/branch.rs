@@ -18,6 +18,7 @@ use crate::vcs::{project_vcs, HeadObservation, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_rel_path, WorkspaceContext};
 
 pub const BRANCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch");
+pub const BRANCH_DELETE_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch-delete");
 
 /// What `rwv branch set-mode` is asked to record.
 #[derive(Debug, Clone)]
@@ -114,7 +115,7 @@ fn target_candidates(
     Ok(ranked.into_iter().map(|(_, name)| name).collect())
 }
 
-fn judge_lookup(
+pub(crate) fn judge_lookup(
     vcs: &dyn Vcs,
     store: &Store<'_>,
     project: &ProjectName,
@@ -489,6 +490,134 @@ fn report_dependents(before: &View, after: &View, branch: &BranchName) {
             }
         }
     }
+}
+
+/// What `rwv branch delete` is asked to do.
+pub struct Delete {
+    pub branch: String,
+    pub target: Option<String>,
+    pub discard_unlanded: Option<crate::cli::consent::DiscardUnlandedConsent>,
+    pub remote_deletes: crate::deletion::RemoteDeletes,
+}
+
+/// The envelope `rwv branch delete --json` prints.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BranchDeleteJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub branch: String,
+    /// The branch the deleted branches were judged landed against.
+    pub target: String,
+    #[serde(flatten)]
+    pub outcome: crate::deletion::Outcome,
+}
+
+/// `rwv branch delete <W> [--target <T>] [--discard-unlanded]
+/// [--delete-remote] [--delete-remote-unlanded <repo>]...`.
+pub fn run_delete(
+    ctx: &WorkspaceContext,
+    request: Delete,
+    output: OutputMode,
+) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let branch = named(vcs.as_ref(), &project, &dir, &request.branch)?;
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let view = view_of(&store)?;
+    let target = match (&request.target, view.lookup(&branch)) {
+        (Some(text), _) => named(vcs.as_ref(), &project, &dir, text)?,
+        (None, Lookup::Value(Record::Feature { target, .. })) => target,
+        (None, Lookup::Value(Record::Declared)) => {
+            return Err(State::TargetNoTarget
+                .of(label(&project))
+                .project_repo()
+                .subject(&branch)
+                .bind("<W>", &branch)
+                .judge(vcs.as_ref())
+                .refused())
+        }
+        (None, lookup) => {
+            return Err(
+                judge_lookup(vcs.as_ref(), &store, &project, &dir, &branch, lookup)?.refused(),
+            )
+        }
+    };
+    let rule = crate::deletion::Rule::open(crate::deletion::Request {
+        primary: ctx.primary_path(),
+        project: &project,
+        branch: branch.clone(),
+        target: target.clone(),
+        discard_unlanded: request.discard_unlanded,
+        remote_deletes: &request.remote_deletes,
+        leaving: None,
+        verb: "branch delete",
+    })?;
+    let outcome = rule.apply()?;
+    if output.is_json() {
+        let envelope = BranchDeleteJsonOutput {
+            schema_url: BRANCH_DELETE_SCHEMA_URL.to_owned(),
+            branch: branch.to_string(),
+            target: target.to_string(),
+            outcome: outcome.clone(),
+        };
+        outln!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        if outcome.deleted.is_empty() && outcome.survivors.is_empty() {
+            outln!("nothing of {branch} to delete");
+        }
+        outcome.print();
+    }
+    if outcome.left_something() {
+        return Err(crate::exit_status::CompletedWithRemainder.into());
+    }
+    Ok(())
+}
+
+/// Drop the records whose branches exist nowhere: no local branch, no
+/// remote-tracking branch, and no workspace of this machine aligned for it.
+/// Nothing drops while a fetch of the project repo went unconfirmed.
+pub fn drop_records(
+    project: &ProjectName,
+    primary: &Path,
+    unconfirmed: bool,
+) -> anyhow::Result<Vec<String>> {
+    if unconfirmed {
+        return Ok(Vec::new());
+    }
+    let vcs = project_vcs();
+    let dir = crate::workspace::project_dir(primary, project);
+    let existing: std::collections::BTreeSet<String> = vcs
+        .named_branches(&dir)?
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    let mut aligned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut workspaces: Vec<std::path::PathBuf> = vec![dir.clone()];
+    for (id, root) in crate::sync::recorded_workweaves(primary)? {
+        if &id.project == project {
+            workspaces.push(crate::workspace::project_dir(root.as_path(), project));
+        }
+    }
+    for workspace in workspaces {
+        if let crate::alignment::StateReading {
+            state:
+                crate::alignment::WorkspaceState {
+                    aligned: Some(crate::alignment::Aligned::Branch(name)),
+                    ..
+                },
+            ..
+        } = crate::alignment::read_state(vcs.as_ref(), &workspace)?
+        {
+            aligned.insert(name);
+        }
+    }
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let written = store
+        .write_dropping(|_| Ok(Vec::new()), &|name: &str| {
+            !existing.contains(name) && !aligned.contains(name)
+        })
+        .map_err(|e| anyhow::Error::new(e).context("could not drop the branch records"))?;
+    Ok(written.dropped)
 }
 
 /// One weave branch's record, as `rwv branch list --json` carries it.

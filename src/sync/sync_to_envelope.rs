@@ -28,6 +28,7 @@ pub(super) struct SyncToOutcome {
     project_repo_advance: Option<Step3AdvanceOutput>,
     coordinates: Option<OpCoordinates>,
     retired: Option<WorkweaveName>,
+    survivors: Vec<crate::deletion::Survivor>,
     resumed: Option<OpPhase>,
     placements: Vec<PlacementOutput>,
     members: Vec<MemberOutput>,
@@ -69,6 +70,7 @@ impl SyncToOutcome {
             source_workweave: coordinates.source_workweave,
             target: WirePath::of(&coordinates.target),
             retired: self.retired.is_some(),
+            survivors: self.survivors,
             resumed: self.resumed,
             outcomes,
             placements: self.placements,
@@ -143,7 +145,15 @@ impl OutputHandler for SyncToRecorder {
     }
 
     fn record_retired(&self, retired: &RetiredWorkweave) {
-        self.with(|o| o.retired = Some(retired.name.clone()));
+        self.with(|o| {
+            o.retired = Some(retired.name.clone());
+            o.survivors = retired
+                .deletion
+                .rule
+                .as_ref()
+                .map(|rule| rule.survivors.clone())
+                .unwrap_or_default();
+        });
     }
 
     fn record_resumed(&self, phase: OpPhase) {

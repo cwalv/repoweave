@@ -164,7 +164,7 @@ const ALLOWLIST: &[Allowed] = &[
             behind the dirty-scan refusal. (4) delete_workweave: behind the \
             dirty refusal unless --discard-uncommitted, and behind the \
             unmerged-commits refusal unless the caller holds a \
-            DiscardUnmergedConsent — the token minted only from \
+            DiscardUnlandedConsent — the token minted only from \
             --discard-unmerged-commits at CLI dispatch. \
             Both list what is lost first. The per-ref DESTROYs inside \
             the same verb each additionally hold their own warrant (R3); \
@@ -303,7 +303,7 @@ const ALLOWLIST: &[Allowed] = &[
             workweave's member checkout, reached two ways. From \
             delete_workweave's member loop: behind the dirty refusal unless \
             --discard-uncommitted and the unmerged refusal unless \
-            DiscardUnmergedConsent (see the workweave.rs/remove_dir_all \
+            DiscardUnlandedConsent (see the workweave.rs/remove_dir_all \
             entry), after resolving each worktree's actual canonical-store \
             parent (Vcs::store_of) and refusing when that \
             checkout is itself a canonical store with dependents outside the \
