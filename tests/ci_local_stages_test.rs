@@ -148,7 +148,7 @@ const AMBIENT_AUTOCRLF_HEADER: &str =
      (ambient core.autocrlf=true, as Git for Windows installs it)";
 
 const NO_TEST_PAUSE_HEADER: &str = "==> cargo test --no-fail-fast --test test_pause_build_test \
-     (built as releases build it: without test-pause)";
+     -- --include-ignored (built as releases build it: without test-pause)";
 
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",

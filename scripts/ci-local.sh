@@ -163,11 +163,12 @@ if run_stage test-ambient-autocrlf; then
 fi
 
 if run_stage no-test-pause; then
-    header "cargo test --no-fail-fast --test test_pause_build_test (built as releases build it: without test-pause)"
-    # Debug, not the test stages' release profile: whether the pause is
-    # compiled in turns on the feature, never on the profile, and the debug
-    # library is one drift's generator build compiles anyway.
-    with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build_test
+    header "cargo test --no-fail-fast --test test_pause_build_test -- --include-ignored (built as releases build it: without test-pause)"
+    # No feature flags, as releases build. Debug, not the test stages' release
+    # profile: whether the pause is compiled in turns on the features, never
+    # on the profile, and the debug library is one drift's generator build
+    # compiles anyway.
+    with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build_test -- --include-ignored
 fi
 
 if run_stage clippy; then

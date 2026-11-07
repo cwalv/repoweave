@@ -379,6 +379,8 @@ build without it.
 
 `debug_assertions` would not do: the gate runs the suite in release. That a
 build without the feature carries no pause is held by
-`tests/test_pause_build_test.rs`, which asserts that the spawned binary
-contains the arming variable's name exactly when the feature is on; the
-gate's `no-test-pause` stage runs it in the build every release makes.
+`tests/test_pause_build_test.rs`: the gate's `no-test-pause` stage builds it
+with no feature flags, as releases build, and asserts the spawned binary
+holds no byte of the arming variable's name, whatever the feature defaults
+are. In the test stages the same file asserts the binary does hold it, so
+the scan is shown able to see it.
