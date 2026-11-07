@@ -76,8 +76,8 @@ fn both_behind_their_pins() -> PushWorkspace {
     publish(&member(&w, LIB));
     publish(&member(&w, APP));
     succeeded(&run(&w, &["lock"]));
-    git_in(&member(&w, LIB), &["reset", "-q", "--hard", "HEAD~1"]);
-    git_in(&member(&w, APP), &["reset", "-q", "--hard", "HEAD~1"]);
+    git_in(member(&w, LIB), &["reset", "-q", "--hard", "HEAD~1"]);
+    git_in(member(&w, APP), &["reset", "-q", "--hard", "HEAD~1"]);
     w
 }
 
@@ -87,7 +87,7 @@ fn plain_lock_refuses_everything_it_finds_before_it_writes_a_pin() {
     commit_in(&member(&w, LIB), "lib-one");
     publish(&member(&w, LIB));
     succeeded(&run(&w, &["lock"]));
-    git_in(&member(&w, LIB), &["reset", "-q", "--hard", "HEAD~1"]);
+    git_in(member(&w, LIB), &["reset", "-q", "--hard", "HEAD~1"]);
     commit_in(&member(&w, APP), "app-one");
     let before = lock_text(&project(&w));
 
@@ -110,7 +110,7 @@ fn plain_lock_refuses_everything_it_finds_before_it_writes_a_pin() {
 fn lock_repo_moves_only_the_named_repo_backward() {
     let w = both_behind_their_pins();
     let app_pin = pin_of(&project(&w), APP).unwrap();
-    let lib_head = git_in(&member(&w, LIB), &["rev-parse", "HEAD"]);
+    let lib_head = git_in(member(&w, LIB), &["rev-parse", "HEAD"]);
     assert_ne!(pin_of(&project(&w), LIB).unwrap(), lib_head);
 
     let text = succeeded(&run(&w, &["lock", "--repo", LIB]));
@@ -159,7 +159,7 @@ fn assert_committed_with_its_first_pin(w: &PushWorkspace, repo: &str, clone: &Pa
 }
 
 fn commits(w: &PushWorkspace) -> usize {
-    git_in(&project(w), &["rev-list", "--count", "HEAD"])
+    git_in(project(w), &["rev-list", "--count", "HEAD"])
         .parse()
         .unwrap()
 }
@@ -264,7 +264,7 @@ fn member_add_new_of_an_empty_upstream_commits_the_entry_and_says_it_has_no_pin(
     assert!(std::fs::read_to_string(project(&w).join("rwv.toml"))
         .unwrap()
         .contains("local/acme/fresh"));
-    assert_eq!(git_in(&project(&w), &["status", "--porcelain"]), "");
+    assert_eq!(git_in(project(&w), &["status", "--porcelain"]), "");
 }
 
 fn advance_remote(w: &PushWorkspace, repo: &str, file: &str) -> String {
@@ -291,8 +291,8 @@ fn advance_remote(w: &PushWorkspace, repo: &str, file: &str) -> String {
 
 fn pinless(w: &PushWorkspace) {
     common::fixture_lock(&project(w), &[]);
-    git_in(&project(w), &["add", "rwv.lock"]);
-    git_in(&project(w), &["commit", "-qm", "no pins"]);
+    git_in(project(w), &["add", "rwv.lock"]);
+    git_in(project(w), &["commit", "-qm", "no pins"]);
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn update_remote_gives_a_pinless_member_its_own_upstream_tip_and_no_other() {
     succeeded(&run(&w, &["update", "--remote", "--repo", APP]));
 
     assert_eq!(pin_of(&project(&w), APP).as_deref(), Some(app_tip.as_str()));
-    assert_eq!(git_in(&member(&w, APP), &["rev-parse", "HEAD"]), app_tip);
+    assert_eq!(git_in(member(&w, APP), &["rev-parse", "HEAD"]), app_tip);
     assert_eq!(
         pin_of(&project(&w), LIB),
         None,
@@ -365,7 +365,7 @@ fn the_pruning_fetch_reports_a_pin_off_the_remote_and_moves_nothing() {
     assert_eq!(git_in(&app, &["rev-parse", "HEAD"]), head);
     assert_eq!(heads(&app), branches);
     assert_eq!(lock_text(&project(&w)), lock);
-    assert_eq!(git_in(&project(&w), &["status", "--porcelain"]), "");
+    assert_eq!(git_in(project(&w), &["status", "--porcelain"]), "");
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn member_pin_records_a_commit_by_name_in_either_direction() {
     let text = succeeded(&run(&w, &["member", "pin", APP, &first, "--commit"]));
     assert!(text.contains("by name"), "{text}");
     assert_eq!(pin_of(&project(&w), APP).as_deref(), Some(first.as_str()));
-    assert_eq!(git_in(&project(&w), &["status", "--porcelain"]), "");
+    assert_eq!(git_in(project(&w), &["status", "--porcelain"]), "");
     assert_eq!(files_of_head(&project(&w)), ["rwv.lock"]);
 }
 

@@ -526,8 +526,8 @@ fn push_leaves_a_gone_branch_unpublished_unless_the_repo_is_named() {
         &weave.project(),
         &[(MEMBER, &common::file_url(weave.bare()), &head)],
     );
-    common::git_in(&weave.project(), &["add", "rwv.lock"]);
-    common::commit_staged(&weave.project(), "pin the member's commit");
+    common::git_in(weave.project(), &["add", "rwv.lock"]);
+    common::commit_staged(weave.project(), "pin the member's commit");
 
     let skipped = weave.rwv(&["push"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));
