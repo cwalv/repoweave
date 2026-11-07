@@ -82,6 +82,7 @@ fn smudging_weave(tmp: &Path) -> (PathBuf, PathBuf) {
     common::fixture_lock(&app, &[("github/org/lib", &lib_url, &sha)]);
     git(&home, &app, &["add", "-A"]);
     git(&home, &app, &["commit", "-qm", "lock: initial"]);
+    common::record_trunk(&app);
 
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
     (home, ws)

@@ -13,6 +13,7 @@ rwv doctor --all                    # a clean run records the health floor
 # 2. After installing the new binaries (from the primary weave root):
 rwv doctor --fix                    # migrate .rwv-workweave markers, reference worktrees and rwv.toml member keys
 rwv lock                            # regenerate rwv.lock in the current JSON format
+rwv branch set-mode main declared   # record the trunk; each workweave's branch is recorded from inside it (Step 6)
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
 ```
 
@@ -27,6 +28,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` regenerates it |
+| A weave branch with no record | Written by `rwv` itself | `rwv branch set-mode main declared` records the trunk; `rwv branch set-mode <project>--<name> feature --target main` records a workweave's branch |
 
 ## Install the new binaries
 
@@ -137,6 +139,34 @@ rwv materialize --remove-undeclared-links
 ```
 
 That unlinks only the undeclared symlink without touching any target file.
+
+## Step 6 — a weave branch with no record
+
+Every weave branch has a record that says how it is used, kept on the project repo's records branch. A branch an earlier release made has none, and the verbs that align, lock, land or publish refuse it, naming `rwv fetch` (the record may be published but not yet fetched) and `rwv branch set-mode`:
+
+```text
+rwv lock: projects/<project>: target unrecorded (main)
+choices:
+  look for what may be published but not yet fetched
+    rwv fetch
+  say how this branch is used: feature work onto `<T>`, or declared
+    rwv branch set-mode main feature --target <T>
+    rwv branch set-mode main declared
+```
+
+Record the trunk, `main` or whatever branch the project repo is on in the primary weave, as `declared`, from the primary:
+
+```bash
+rwv branch set-mode main declared
+```
+
+Then record each existing workweave's branch, `<project>--<name>`, as a feature onto the branch it was made from, from inside that workweave:
+
+```bash
+rwv branch set-mode feature --target main
+```
+
+`rwv branch list` shows every weave branch with its record, and `unrecorded` for the ones still to do. `rwv init` and `rwv clone` record the trunk themselves, and `rwv workweave create` records the branch it makes, so a weave made by the new release has nothing to migrate.
 
 ## The health floor and bridge versions
 

@@ -50,6 +50,7 @@ fn weave_and_seat(parent: &Path, endings: LineEndings) -> (PathBuf, PathBuf, Pat
     );
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     common::rwv()
         .args(["workweave", "create", "--project", PROJECT, "feat"])

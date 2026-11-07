@@ -121,6 +121,8 @@ the rest read it.
 | `pull` (`src/pull.rs`) | `rwv pull`: the fetch, the fast-forward of the project branch (`take_in_project`), then `update_members`. |
 | `update` (`src/update.rs`) | `rwv update`, and `bring_members`, the clone-missing-and-align engine `rwv clone` shares: it clones each member not on disk, aligns each present one to its lock entry, and reports what became of every pin as a `PinOutcome`. The lock is read and never written. |
 | `update_remote` (`src/update_remote.rs`) | `rwv update --remote`: the pruning fetch, the advance of each repo to its branch HEAD, and the re-snapshot of `rwv.lock` through `write_project_lock` (`src/lock.rs`, which `rwv lock` also runs). An authoring verb, so it also regenerates integration files. |
+| `branch` (`src/branch.rs`) | `rwv branch set-mode` and `rwv branch list`, and `require_recorded`, the gate the verbs that align, lock, land or publish call before they change anything; `record_trunk` for `init` and `clone`; `workweave_parent` and `record_workweave` for `workweave create`. |
+| `records` (`src/records.rs`) | The branch records: the entry format (`Entry`, `Record`), the entry-by-entry merge of the records remotes (`merge_snapshots`), `View` (what a branch's record reads as, the cycle walk, dependents) and `Store`, whose `write` merges, then writes, then moves the local records branch by compare-and-swap, re-reading and retrying when it loses. The git spelling stays in `src/git/records.rs`. |
 
 ### Seams and shared machinery
 
@@ -435,6 +437,14 @@ as a backup, and the outcome carries the `BackupWitness` that proves it.
 Savepoints are git refs under `refs/rwv/pre-op/<key>`; backups, which outlive
 any operation, are refs under `refs/rwv/backup/<branch>/<id>` (see
 `src/git/backup.rs`; `src/backup.rs` is `rwv backup`, with the pin rule).
+The records branch (`rwv-records`) is the other state rwv keeps in the project
+repo's refs: one TOML file per weave branch, committed with object writes and
+no working tree (`Vcs::write_commit`), advanced by `Vcs::advance_records`, a
+compare-and-swap on the local branch, and read from the remote-tracking tips of
+the records remotes (`Vcs::records_tip`). A read-only verb folds those tips in
+memory (`Store::view`); a verb that writes a record, aligns, locks, lands or
+publishes commits the fold first (`Store::write`).
+
 Every `Vcs` savepoint method takes a `SavepointKey`
 (`src/op_state.rs`): `Op(OpId)` for the workspace the op replayed in,
 `SyncToTarget(OpId)` for a `sync-to` target's repos, whose ref leaf carries a

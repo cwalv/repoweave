@@ -28,6 +28,10 @@ pub struct StatusJsonOutput {
     /// Projects whose `rwv.toml` or `rwv.lock` did not load: none of their
     /// repos is in `repos`.
     pub unreadable_projects: Vec<UnreadableProject>,
+    /// Each project's checked-out branch with its record and the branches that
+    /// land into it, read in memory from the records as last fetched. A
+    /// project whose repo is not on a branch has none.
+    pub records: Vec<crate::branch::BranchRecordStatus>,
     /// Each repo whose branch stands apart from the one it publishes to,
     /// judged on the `push-branch` axis with that state's choices: behind,
     /// ahead, diverged, gone with commits of its own, with a foreign upstream
@@ -278,6 +282,7 @@ pub fn run_status(
     let mut entries: Vec<RepoStatus> = Vec::new();
     let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
     let mut judged = crate::diagnosis::Report::default();
+    let mut records: Vec<crate::branch::BranchRecordStatus> = Vec::new();
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, &pname);
@@ -295,6 +300,12 @@ pub fn run_status(
                 continue;
             }
         };
+        match crate::branch::project_record(&pname, &project_dir) {
+            Ok(record) => records.extend(record),
+            Err(e) => {
+                eprintln!("rwv status: could not read the branch records of project {pname}: {e:#}")
+            }
+        }
         // Resolve lock entries against their on-disk repos so equality with
         // a tip ResolvedRevisionId (which always carries the canonical SHA) works
         // whether the lock pinned a tag, branch, or raw SHA.
@@ -451,6 +462,7 @@ pub fn run_status(
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
             unreadable_projects,
+            records,
             judged: judged.output(),
             resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
@@ -468,6 +480,9 @@ pub fn run_status(
             print_op_header(op);
         }
         print_table(&entries);
+        for record in &records {
+            outln!("{}", record.line());
+        }
         if !judged.is_empty() {
             outln!();
             outln!("{}", judged.render("status").trim_end_matches('\n'));
@@ -600,6 +615,7 @@ mod tests {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
+            records: Vec::new(),
             judged: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
@@ -664,6 +680,7 @@ mod tests {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: vec![],
             unreadable_projects: Vec::new(),
+            records: Vec::new(),
             judged: Vec::new(),
             resolution: None,
             op: Some(OpStatus {
@@ -704,6 +721,7 @@ mod tests {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
+            records: Vec::new(),
             judged: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),

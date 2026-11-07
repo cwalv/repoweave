@@ -140,6 +140,7 @@ fn weave() -> Weave {
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "lock: initial"]);
     common::git_in(&project, &["push", "origin", "main"]);
+    common::record_trunk(&project);
 
     // `rwv push` refuses a project repo whose remote has no recorded canonical
     // branch, which a clone of a then-empty bare repo does not have.

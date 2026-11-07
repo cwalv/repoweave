@@ -128,6 +128,7 @@ fn make_weave(tmp: &Path) -> Weave {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     Weave {
         tmp: tmp.to_path_buf(),

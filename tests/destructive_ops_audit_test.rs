@@ -496,6 +496,30 @@ const ALLOWLIST: &[Allowed] = &[
             real index and working tree are never opened for writing.",
     },
     Allowed {
+        file: "git/records.rs",
+        pattern: "\"update-ref\"",
+        count: 1,
+        callers: &[],
+        justification: "advance_records_ref: moves the local records branch \
+            from the tip the caller read to the commit it built on that tip \
+            (or creates it where none exists), by a compare-and-swap that \
+            names the expected old value, so a ref another verb moved \
+            meanwhile is never overwritten and the call reports it as lost. \
+            The records branch holds no weave state a checkout reads; its \
+            only callers are the records store's writers, which merge the \
+            current tips into what they write.",
+    },
+    Allowed {
+        file: "git/records.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "write_tree_commit: removes the temporary index file \
+            it named under the checkout's private git directory for this \
+            process, after the commit is built. The checkout's real index \
+            and working tree are never opened for writing.",
+    },
+    Allowed {
         file: "activate.rs",
         pattern: "symlink::remove(",
         count: 4,

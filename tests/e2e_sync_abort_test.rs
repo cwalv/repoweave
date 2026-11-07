@@ -98,6 +98,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
 
     // Action verbs require `.rwv-active` (or --project). Set it here so
     // sync tests don't all need to pass --project.
@@ -154,6 +155,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&ww_project, "ww/project", "main");
     // The worktree inherits primary's already-committed rwv.lock (same C1 SHA).
     // No additional commit needed.
     // `make_shared_workspaces` builds two PRIMARY-shaped workspaces (see the
@@ -1420,6 +1422,7 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
             &ww_project.to_string_lossy(),
         ],
     );
+    common::record_feature(&ww_project, &format!("primary--{ww_name}/project"), "main");
 
     let primary_canon = repoweave::path_spelling::resolve(&primary.root)
         .unwrap()

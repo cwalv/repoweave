@@ -113,6 +113,7 @@ fn park() -> Parked {
     )
     .unwrap();
     std::fs::write(primary.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    common::record_trunk(&primary.project);
     succeed(&primary.root, &["lock"]);
     common::git_in(&primary.project, &["add", "-A"]);
     common::git_in(&primary.project, &["commit", "-m", "initial"]);

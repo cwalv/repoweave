@@ -112,6 +112,7 @@ fn make_primary(parent: &Path) -> Primary {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     Primary {

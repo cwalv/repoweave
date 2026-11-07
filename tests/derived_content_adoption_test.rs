@@ -217,6 +217,7 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
 
     write(&ws, ".rwv-active", &format!("{PROJECT}\n"));
 

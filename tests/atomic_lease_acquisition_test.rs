@@ -100,6 +100,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -143,6 +144,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&primary.project_dir, "ww/project", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {

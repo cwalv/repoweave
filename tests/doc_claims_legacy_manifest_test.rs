@@ -75,6 +75,7 @@ fn make_workspace(
     run_git(&["init", "-b", "main"], &project_dir);
     run_git(&["add", manifest_name], &project_dir);
     run_git(&["commit", "-m", "init"], &project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();
     (workspace, project_dir, manifest_path)
 }

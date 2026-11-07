@@ -17,7 +17,7 @@ use crate::activate;
 use crate::add_remove;
 use crate::check;
 use crate::cli::{
-    consent, BackupAction, Cli, Commands, MemberAction, SetupAction, WorkweaveAction,
+    consent, BackupAction, BranchAction, Cli, Commands, MemberAction, SetupAction, WorkweaveAction,
 };
 use crate::clone;
 use crate::explain;
@@ -75,6 +75,50 @@ fn resolve_cwd_override(operand: Operand, cwd: &InvocationDir) -> anyhow::Result
 
     InvocationDir::resolved(&p)
         .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
+}
+
+/// What `rwv branch set-mode [W] MODE [--target T]` asks for: the last word is
+/// the mode, so a branch named like a mode is still a branch when two words
+/// are given. A mode that is neither, `--target` with `declared`, and
+/// `feature` without `--target` are usage errors, as clap's own are.
+fn set_mode_request(mut words: Vec<String>, target: Option<String>) -> crate::branch::SetMode {
+    use clap::error::ErrorKind;
+    let usage = |kind: ErrorKind, message: String| -> ! {
+        Cli::command()
+            .find_subcommand_mut("branch")
+            .and_then(|branch| branch.find_subcommand_mut("set-mode"))
+            .expect("`branch set-mode` is a Commands variant")
+            .error(kind, message)
+            .exit()
+    };
+    let mode_word = words.pop().expect("clap requires at least one word");
+    let branch = words.pop();
+    let mode = <crate::records::Mode as clap::ValueEnum>::from_str(&mode_word, false)
+        .unwrap_or_else(|_| {
+            usage(
+                ErrorKind::InvalidValue,
+                format!(
+                    "`{mode_word}` is not a mode: expected `feature` or `declared`, after the \
+                     branch when one is named (`rwv branch set-mode [W] <feature|declared>`)"
+                ),
+            )
+        });
+    match (mode, &target) {
+        (crate::records::Mode::Feature, None) => usage(
+            ErrorKind::MissingRequiredArgument,
+            "`feature` needs `--target <T>`, the branch the feature lands into".to_owned(),
+        ),
+        (crate::records::Mode::Declared, Some(_)) => usage(
+            ErrorKind::ArgumentConflict,
+            "`declared` takes no `--target`: only a feature lands into a target".to_owned(),
+        ),
+        _ => {}
+    }
+    crate::branch::SetMode {
+        branch,
+        mode,
+        target,
+    }
 }
 
 /// The `-w` address for a `<project>--<name>` argument whose project half was
@@ -984,6 +1028,25 @@ pub fn run() -> anyhow::Result<()> {
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),
             )?;
         }
+        Some(Commands::Branch { action }) => match action {
+            BranchAction::List { json, project } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::branch::run_list(&ctx, OutputMode::from_flag(json))?;
+            }
+            BranchAction::SetMode {
+                words,
+                target,
+                project,
+            } => {
+                let request = set_mode_request(words, target);
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::branch::run_set_mode(&ctx, request)?;
+            }
+        },
         Some(Commands::Backup { action }) => match action {
             BackupAction::List { json, project } => {
                 let project_override =

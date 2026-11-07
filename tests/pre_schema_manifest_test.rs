@@ -81,6 +81,7 @@ fn weave_committing(parent: &Path, manifest: &str) -> Weave {
     std::fs::write(project.join("notes.txt"), "kept\n").unwrap();
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
+    common::record_trunk(&project);
     Weave { root, project }
 }
 
@@ -409,6 +410,7 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
     common::fixture_lock(&project, &[(SERVER_PATH, SERVER_URL, &pinned)]);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww_root = parent.join("ww");
@@ -436,6 +438,7 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&project, "ww/project", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     (

@@ -181,6 +181,7 @@ pub fn run_pull(
         Checkout::Primary { .. } => ctx.require_active_project_on_disk()?.clone(),
         Checkout::Workweave { project, .. } => project.clone(),
     };
+    crate::branch::require_recorded(ctx)?;
     let project = take_in_project(ctx, &project_name, output)?;
 
     let run = update_members(ctx, selection, detach_checkouts, jobs, output, activation)?;

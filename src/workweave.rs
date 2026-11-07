@@ -2062,6 +2062,8 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         }
     }
 
+    let parent = crate::branch::workweave_parent(&project_dir(source_root, project), project)?;
+
     // Pre-flight: verify every repo we are about to worktree has at least one
     // commit. `git worktree add` requires a resolvable HEAD; without this check
     // the user gets a raw "fatal: ambiguous argument 'HEAD'" from git, which
@@ -2499,6 +2501,14 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     )
     .context("failed to record workweave in the primary-side registry")?;
 
+    if let Some(parent) = &parent {
+        for line in
+            crate::branch::record_workweave(&project_dir, project, parent, &ephemeral.to_string())?
+        {
+            eprintln!("rwv workweave create: {line}");
+        }
+    }
+
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
 
@@ -2735,6 +2745,22 @@ fn reuse_existing_workweave(
             workweave_dir.display(),
             modified.join("\n  ")
         );
+    }
+
+    let source_project = project_dir(source_root, project);
+    if let Some(parent) = crate::branch::workweave_parent(&source_project, project)? {
+        let minted = EphemeralRefName::mint(
+            &WorkweaveId {
+                project: project.clone(),
+                name: name.clone(),
+            }
+            .flat(),
+        );
+        for line in
+            crate::branch::record_workweave(&source_project, project, &parent, &minted.to_string())?
+        {
+            eprintln!("rwv workweave create: {line}");
+        }
     }
 
     Ok(workweave_dir.to_path_buf())

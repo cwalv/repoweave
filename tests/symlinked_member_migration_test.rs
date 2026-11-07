@@ -108,6 +108,7 @@ fn unmigrated_weave(tmp: &Path) -> Weave {
         &manifest(&[(OWNED_PATH, &owned, "owned")]),
         &[(OWNED_PATH, &owned, &owned_pin)],
     );
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     rwv()
@@ -567,6 +568,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
             (LINKED_PATH, &linked, &linked_pin),
         ],
     );
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     rwv()
         .args(["workweave", "create", "--project", PROJECT, SEAT])

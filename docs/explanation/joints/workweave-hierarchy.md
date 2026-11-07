@@ -205,6 +205,24 @@ directly into primary's `main` without any detach-or-stash dance. The
 ephemeral naming scheme is not just bookkeeping — it is what makes
 `sync-to` a clean primitive where the single-repo git analog is not.
 
+## A workweave's branch is recorded
+
+Creating a workweave records its ephemeral branch as a **feature onto the
+branch the workspace it was forked from has checked out**, with that branch's
+mode as it stands: `rwv workweave create` from a primary on `main`, which is
+`declared`, records `{ target: main, as: declared }`, and reports where the
+branch lands (`target-recorded`). A workweave made from inside another
+workweave targets that workweave's branch. The record is the one statement of
+how the workweave's branch is used, so the verbs that align, lock, land or
+publish read it, and a branch without one is refused.
+
+The parent's own branch must have a record that reads as one value, else the
+create refuses before it makes anything, naming `rwv branch set-mode` for that
+branch. From a project repo on a detached HEAD there is no branch to land
+into, and the create refuses. Re-running `rwv workweave create` on a workweave
+that exists records its branch when a half-finished create left it without
+one.
+
 ## Related joints
 
 - [workweave-lifecycle](./workweave-lifecycle.md) — what happens at each

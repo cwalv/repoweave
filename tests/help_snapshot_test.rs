@@ -36,6 +36,7 @@ Commands:
   clone        Clone a project and each of its members at the commit `rwv.lock` pins. A member the lock does not pin, or pins at a commit no ref reaches, is cloned at its declared branch's tip and listed; the exit status is then 3
   init         Initialize a new project
   member       Add a repo to the active project, remove one, or change a member's role or submodule setting
+  branch       Record how a weave branch is used, or list the weave branches with their records
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
   lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc

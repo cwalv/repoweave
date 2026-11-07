@@ -145,6 +145,14 @@ pub fn run_clone(
             )
         })?;
 
+    crate::branch::record_trunk(project_vcs.as_ref(), &name, &project_dir).with_context(|| {
+        format!(
+            "could not record the branch {} is on; once the cause is fixed, run \
+                 `rwv branch set-mode <branch> declared` in it",
+            project_dir.display()
+        )
+    })?;
+
     // Unlike `init`/`init_adopt`, clone never calls `set_replay_exclusion` —
     // it clones a project that already exists, and whether `rwv.lock` is
     // declared derived is that project's own prior choice. Complete the

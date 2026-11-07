@@ -1157,6 +1157,47 @@ pub struct BranchTip {
     pub tip: ResolvedRevisionId,
 }
 
+/// A file of a committed tree: its path below the tree's root, `/`-separated,
+/// and its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedFile {
+    pub path: String,
+    pub content: Vec<u8>,
+}
+
+/// A change to one file of a tree: its new bytes, or `None` to remove it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    pub path: String,
+    pub content: Option<Vec<u8>>,
+}
+
+/// Where the records branch is read: this repo's own, or a remote's as last
+/// fetched.
+#[derive(Debug, Clone, Copy)]
+pub enum RecordsSite<'a> {
+    Local,
+    Remote(&'a RemoteHandle),
+}
+
+/// How a compare-and-swap of the local records branch ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordsAdvance {
+    /// The branch held the tip the caller expected and now holds the new one.
+    Advanced,
+    /// The branch held another tip, and nothing was written.
+    Lost,
+}
+
+/// A branch of a repo, local or only on a remote, with the tip a reader of its
+/// files uses: the local branch's, else a remote-tracking branch's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedBranch {
+    pub name: String,
+    pub tip: CommitId,
+    pub local: bool,
+}
+
 /// Proof that a backup has been written.
 ///
 /// Minted only by [`Vcs::create_backup`], whose body is in this module — so a
@@ -4343,6 +4384,71 @@ pub trait Vcs: Send + Sync {
 
     /// Every local and remote-tracking branch of `repo` with its tip.
     fn branch_tips(&self, repo: &Path) -> Result<Vec<BranchTip>, VcsError>;
+
+    // ---- records ----------------------------------------------------------
+
+    /// The name of the branch that holds the weave branches' records.
+    ///
+    /// It shares no history with a weave branch and is never one: a weave
+    /// branch named like it, or below it, is refused.
+    fn records_branch(&self) -> &'static str;
+
+    /// The tip of the records branch at `site`, or `None` where it has none.
+    fn records_tip(&self, repo: &Path, site: RecordsSite<'_>)
+        -> Result<Option<CommitId>, VcsError>;
+
+    /// Move the local records branch from `expected` (`None`: it does not
+    /// exist) to `to`, only if it still holds `expected`.
+    fn advance_records(
+        &self,
+        repo: &Path,
+        expected: Option<&CommitId>,
+        to: &CommitId,
+    ) -> Result<RecordsAdvance, VcsError>;
+
+    /// Every file of `commit`'s tree.
+    fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError>;
+
+    /// A commit with `message` on top of `parents` (none: a commit with no
+    /// history), referenced by nothing, whose tree is the first parent's
+    /// (empty where there is none) with `changes` applied. The author is the
+    /// configured one, else rwv.
+    fn write_commit(
+        &self,
+        repo: &Path,
+        parents: &[CommitId],
+        changes: &[FileChange],
+        message: &str,
+    ) -> Result<CommitId, VcsError>;
+
+    /// The best common ancestors of `a` and `b`; empty when they share no
+    /// history.
+    fn merge_bases(
+        &self,
+        repo: &Path,
+        a: &CommitId,
+        b: &CommitId,
+    ) -> Result<Vec<CommitId>, VcsError>;
+
+    /// The message of the newest commit reachable from `tip` that changed
+    /// `path`; `None` when none did.
+    fn last_message_touching(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        path: &str,
+    ) -> Result<Option<String>, VcsError>;
+
+    /// Every remote some local branch of `repo` publishes to, `url_remote`
+    /// standing in for a branch the VCS records no other remote for.
+    fn branch_push_targets(
+        &self,
+        repo: &Path,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Vec<RemoteHandle>, VcsError>;
+
+    /// Every branch of `repo`, local or remote-tracking, once by name.
+    fn named_branches(&self, repo: &Path) -> Result<Vec<NamedBranch>, VcsError>;
 
     // ---- population -------------------------------------------------------
 

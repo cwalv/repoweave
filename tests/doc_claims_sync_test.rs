@@ -86,6 +86,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // --- workweave --------------------------------------------------------
@@ -116,6 +117,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&primary_project, "ww/project", "main");
     std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -261,6 +263,7 @@ fn sync_json_parallel_emits_the_envelope() {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: worktree-add each repo + the project repo, then advance.
@@ -286,6 +289,7 @@ fn sync_json_parallel_emits_the_envelope() {
             "ww/project",
         ],
     );
+    common::record_feature(&primary_project, "ww/project", "main");
     std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     let mut advanced = Vec::new();

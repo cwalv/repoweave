@@ -84,6 +84,7 @@ role = "owned"
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     common::git_in(&project_dir, &["add", "rwv.toml"]);
     common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
 
     ws
 }

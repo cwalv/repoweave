@@ -172,6 +172,8 @@ pub fn init(
             })?;
     }
 
+    record_trunk(vcs.as_ref(), name, &project_dir)?;
+
     eprintln!(
         "Initialized project '{}' at {}",
         name,
@@ -182,6 +184,22 @@ pub fn init(
     crate::activate::activate(name, &ctx)?;
 
     Ok(())
+}
+
+/// Record the branch the new project repo is on as `declared`, unless a record
+/// already says how it is used.
+fn record_trunk(
+    vcs: &dyn crate::vcs::Vcs,
+    name: &crate::manifest::ProjectName,
+    project_dir: &Path,
+) -> anyhow::Result<()> {
+    crate::branch::record_trunk(vcs, name, project_dir).with_context(|| {
+        format!(
+            "could not record the branch {} is on; once the cause is fixed, run \
+             `rwv branch set-mode <branch> declared` in it",
+            project_dir.display()
+        )
+    })
 }
 
 /// The remote URL `--provider <registry>/<owner>` names for project `name`.
@@ -300,6 +318,8 @@ pub fn init_adopt(
         .context("failed to write .gitattributes")?;
     crate::git::plant_rwv_merge_driver_config(&project_dir)
         .context("failed to plant merge.rwv-ours config")?;
+
+    record_trunk(vcs.as_ref(), &project_name, &project_dir)?;
 
     eprintln!(
         "Adopted project '{}' at {}",

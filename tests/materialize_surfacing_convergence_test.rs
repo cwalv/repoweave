@@ -93,6 +93,7 @@ fn primary_weave() -> (tempfile::TempDir, PathBuf) {
     .unwrap();
     std::fs::write(project_dir.join(SURFACED_CONTROL), "shared\n").unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
 
     std::fs::write(ws.join(".rwv-active"), "alpha\n").unwrap();
     let out = rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);

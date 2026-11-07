@@ -132,6 +132,7 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
 
     (ws, upstream)
 }

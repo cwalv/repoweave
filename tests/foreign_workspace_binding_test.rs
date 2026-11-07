@@ -59,6 +59,7 @@ fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str
     common::fixture_lock(&dir, locked);
     common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);
     common::git_in(&dir, &["commit", "-m", format!("{name}: initial").as_str()]);
+    common::record_trunk(&dir);
 }
 
 struct Weave {
@@ -111,6 +112,7 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
             "dest/project",
         ],
     );
+    common::record_feature(&dest_project, "dest/project", "main");
     std::fs::write(dest.join(".rwv-active"), format!("{SYNCED_PROJECT}\n")).unwrap();
 
     (

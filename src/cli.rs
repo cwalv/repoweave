@@ -165,6 +165,13 @@ pub enum Commands {
         action: MemberAction,
     },
 
+    /// Record how a weave branch is used, or list the weave branches with their records
+    #[command(arg_required_else_help = true)]
+    Branch {
+        #[command(subcommand)]
+        action: BranchAction,
+    },
+
     // ── Workweaves ────────────────────────────────────────────────────────────
     /// Create, delete, or list workweaves
     #[command(arg_required_else_help = true)]
@@ -566,6 +573,37 @@ pub enum BackupAction {
     },
     /// Fetch every remote of every repo with pruning, then drop each backup a branch or remote-tracking branch reaches in full. Refused where it would leave a live pin unreachable
     Prune {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BranchAction {
+    /// List the weave branches with their records, marking a conflicted or unreadable record, a target that is gone and a record no remote holds yet
+    List {
+        /// Emit one `{ "$schema": ..., "branches": [...] }` JSON envelope. See `rwv explain branch`.
+        #[arg(long)]
+        json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Record how a weave branch is used: `feature` work onto a target branch, or `declared`. Writes the record only; it moves no branch and no checkout.
+    ///
+    /// Without a branch name the project repo's checked-out branch is recorded.
+    /// `feature` takes `--target`, the branch the feature lands into, which
+    /// must have a record of its own: the target's mode is stored with the
+    /// feature's record. `declared` takes no `--target`.
+    #[command(override_usage = "rwv branch set-mode [OPTIONS] [W] <feature|declared>")]
+    SetMode {
+        /// `[W] <feature|declared>`: the branch to record (the checked-out one when omitted), then its mode
+        #[arg(num_args = 1..=2, value_names = ["W", "MODE"], required = true)]
+        words: Vec<String>,
+        /// With `feature`: the branch the feature lands into
+        #[arg(long, value_name = "T")]
+        target: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

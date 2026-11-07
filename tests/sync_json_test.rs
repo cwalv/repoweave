@@ -86,6 +86,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
 
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -129,6 +130,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&ww_project, "ww/project", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {
@@ -679,6 +681,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project_dir);
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: worktree-add each repo + the project repo.
@@ -711,6 +714,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
             "ww/project",
         ],
     );
+    common::record_feature(&ww_project_dir, "ww/project", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     // Advance each ww repo by one commit; collect new SHAs.

@@ -47,6 +47,7 @@ fn weave(tmp: &Path, endings: LineEndings) -> PathBuf {
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("rwv.toml"), manifest).unwrap();
     git_init_with_commit(&project);
+    common::record_trunk(&project);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
     ws
 }

@@ -69,6 +69,7 @@ fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str
     common::fixture_lock(&dir, locked);
     common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);
     common::git_in(&dir, &["commit", "-m", format!("{name}: initial").as_str()]);
+    common::record_trunk(&dir);
 }
 
 /// A primary weave carrying TWO projects, and a second workspace whose repos
@@ -113,10 +114,12 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
         (OTHER_PROJECT, "ww/other-project"),
     ] {
         let dest = ww.join(format!("projects/{name}"));
+        let source = primary.join(format!("projects/{name}"));
         common::git_in(
-            primary.join(format!("projects/{name}")),
+            &source,
             &["worktree", "add", &dest.to_string_lossy(), "-b", branch],
         );
+        common::record_feature(&source, branch, "main");
     }
     std::fs::write(ww.join(".rwv-active"), format!("{SYNCED_PROJECT}\n")).unwrap();
 

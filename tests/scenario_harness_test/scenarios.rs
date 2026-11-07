@@ -1,6 +1,8 @@
-use crate::invariants::LockSite;
+use crate::invariants::{LockSite, Mode, Record};
 use crate::runner::{Claim, Exit, Forge, MergeHow, MissingVerb, Scenario, Step};
-use crate::sandbox::{declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed};
+use crate::sandbox::{
+    declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
+};
 
 fn a() -> Place {
     Place::Primary(Machine::A)
@@ -409,21 +411,18 @@ pub fn nested_workweaves_without_naming() -> Scenario {
     )
 }
 
-pub fn origin_and_base_edge_cases() -> Scenario {
-    scenario(
-        "origin and base edge cases",
-        vec![Step::pending(
-            "read the weave branch's origin record",
-            MissingVerb::BaseRecord,
-        )],
-    )
-}
-
 fn feature_branch_in_primary() -> Vec<Step> {
     vec![
         Step::git(&a(), Repo::App, &["switch", "-c", "feat-x"]),
         Step::commit(&a(), Repo::App, "feat-app"),
         Step::git(&a(), Repo::Proj, &["switch", "-c", "feat-x"]),
+        Step::rwv(
+            &a(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "main",
+            ],
+        )
+        .expect(Exit::Succeeds),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
     ]
 }
@@ -572,16 +571,6 @@ pub fn hand_edit_declaration_to_missing_branch() -> Scenario {
             ),
             Step::rwv(&a(), &["update", "--remote"]),
         ],
-    )
-}
-
-pub fn hand_edit_origin_record() -> Scenario {
-    scenario(
-        "hand edit: the weave branch's origin record",
-        vec![Step::pending(
-            "hand-edit the origin record",
-            MissingVerb::BaseRecord,
-        )],
     )
 }
 
@@ -790,5 +779,177 @@ pub fn clone_with_a_complete_lock() -> Scenario {
                 repo: Repo::App,
                 branch: "main",
             })],
+    )
+}
+
+fn feature_onto(target: &str, as_mode: Mode) -> Record {
+    Record::Feature {
+        target: target.to_owned(),
+        as_mode,
+    }
+}
+
+const FEATURE_ONTO_ELSEWHERE: &str =
+    "mode = \"feature\"\ntarget = \"elsewhere\"\nas = \"declared\"\n";
+
+/// A colleague's remote, added only to fetch their branches, holds a records
+/// branch whose entry for `main` clashes with this machine's: it is read as
+/// nothing until the remote becomes a push target of some branch here.
+pub fn records_foreign_remote() -> Scenario {
+    let records_remote_tip = "refs/remotes/colleague/rwv-records";
+    scenario(
+        "records: a remote added only to fetch",
+        vec![
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                "colleague-records",
+                &[("main", FEATURE_ONTO_ELSEWHERE)],
+            ),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["remote", "add", "colleague", "file:///colleague/proj.git"],
+            ),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &[
+                    "update-ref",
+                    records_remote_tip,
+                    "refs/heads/colleague-records",
+                ],
+            ),
+            Step::rwv(&a(), &["branch", "set-mode", "main", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "main",
+                    record: Some(Record::Declared),
+                }),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["config", "branch.main.pushRemote", "colleague"],
+            ),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("conflict")),
+            Step::git(&a(), Repo::Proj, &["branch", "other"]),
+            Step::rwv(&a(), &["branch", "set-mode", "other", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "main",
+                    record: Some(Record::Conflict(vec![
+                        Record::Declared,
+                        feature_onto("elsewhere", Mode::Declared),
+                    ])),
+                }),
+        ],
+    )
+}
+
+/// A raw commit on the records branch changes one entry: it reads as that
+/// entry, and the conflict a later merge stores for it is settled by
+/// `branch set-mode`.
+pub fn records_hand_commit() -> Scenario {
+    scenario(
+        "records: a commit by hand",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "feat-x"]),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch", "set-mode", "feat-x", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "feat-x",
+                record: Some(feature_onto("main", Mode::Declared)),
+            }),
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                RECORDS_BRANCH,
+                &[("feat-x", "mode = \"declared\"\n")],
+            ),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-x",
+                    record: Some(Record::Declared),
+                }),
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                "their-records",
+                &[("feat-x", FEATURE_ONTO_ELSEWHERE)],
+            ),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &[
+                    "update-ref",
+                    "refs/remotes/origin/rwv-records",
+                    "refs/heads/their-records",
+                ],
+            ),
+            Step::rwv(&a(), &["branch", "set-mode", "main", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-x",
+                    record: Some(Record::Conflict(vec![
+                        Record::Declared,
+                        feature_onto("elsewhere", Mode::Declared),
+                    ])),
+                }),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-x", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-x",
+                    record: Some(Record::Declared),
+                }),
+        ],
+    )
+}
+
+/// A raw commit on the records branch writes a field this release does not
+/// read for one workweave's branch: only that branch's verbs refuse, and
+/// `branch set-mode` settles it.
+pub fn records_unreadable_entry() -> Scenario {
+    scenario(
+        "records: an entry this release cannot read",
+        vec![
+            create("w"),
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                RECORDS_BRANCH,
+                &[(
+                    "proj--w",
+                    "mode = \"declared\"\nwritten-by-a-later-release = 1\n",
+                )],
+            ),
+            Step::rwv(&ww("w"), &["lock"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("target unreadable (proj--w)"))
+                .claim(Claim::OutputContains("rwv branch set-mode proj--w"))
+                .claim(Claim::OutputContains("its commit names no rwv release")),
+            Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "set-mode", "proj--w", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "proj--w",
+                    record: Some(Record::Declared),
+                }),
+            Step::rwv(&ww("w"), &["lock"]).expect(Exit::Succeeds),
+        ],
     )
 }

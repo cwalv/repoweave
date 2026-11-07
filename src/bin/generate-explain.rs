@@ -94,6 +94,7 @@ use regex::Regex;
 use schemars::schema_for;
 
 use repoweave::backup::BackupJsonOutput;
+use repoweave::branch::BranchListJsonOutput;
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::clone::CloneJsonOutput;
@@ -419,6 +420,11 @@ fn schema_backup() -> String {
     serde_json::to_string_pretty(&schema).expect("backup schema serializes")
 }
 
+fn schema_branch() -> String {
+    let schema = schema_for!(BranchListJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("branch schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -495,6 +501,11 @@ fn verbs() -> Vec<Verb> {
             name: "backup",
             summary: "list, drop or prune the backups kept before a step that would leave a commit or an edit unpreserved",
             schema: Some(schema_backup),
+        },
+        Verb {
+            name: "branch",
+            summary: "record how a weave branch is used, or list the weave branches with their records",
+            schema: Some(schema_branch),
         },
         Verb {
             name: "member",
@@ -3649,7 +3660,7 @@ const NON_TOKEN_WORDS: &[(&str, &str)] = &[
 ];
 
 /// Verbs an operator page names to say rwv does not have them.
-const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "run"];
+const ABSENT_VERBS: &[&str] = &["commit", "exec", "publish", "run"];
 
 /// What a backticked token on an operator page may name.
 ///
@@ -4759,6 +4770,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::backup::BACKUP_SCHEMA_URL.ends_with("/docs/reference/schemas/backup.json"),
         "BACKUP_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::branch::BRANCH_SCHEMA_URL.ends_with("/docs/reference/schemas/branch.json"),
+        "BRANCH_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         REFUSAL_SCHEMA_URL.ends_with("/docs/reference/schemas/refusal.json"),

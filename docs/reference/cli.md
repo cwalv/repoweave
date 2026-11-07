@@ -446,6 +446,27 @@ Refused under the **pin rule** (`pin` `would be unreachable`) when it would leav
 
 Fetch every remote of every repo of the project with pruning, then drop each backup a branch or remote-tracking branch reaches in full (`[redundant]` in the list). A remote that cannot be fetched is named and its remote-tracking branches are not counted, so a backup is dropped only on what a confirmed fetch or a local branch vouches for. Obeys the pin rule as `drop` does. Prints `nothing to prune` when no backup is redundant. A backup holding commits no branch reaches is never pruned; only `drop` removes it.
 
+### `rwv branch`
+
+Record how a weave branch is used, or list the weave branches with their records. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+
+### `rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]`
+
+Write the record of `<W>`, the project repo's checked-out branch when none is named, and nothing else: no branch moves and no checkout changes. `<W>` must exist locally or on a remote as last fetched (`name` `no-such-branch` otherwise). The mode is always the last word, so a branch named `declared` is still a branch when two words are given.
+
+| Mode | Takes |
+|---|---|
+| `feature` | `--target <T>`, required: the branch the feature lands into, which must have a record that reads as one value. Its mode is stored as `as`. A `--target` whose chain of targets returns to `<W>`, `<W>` itself included, is refused (`target` `cycle`) |
+| `declared` | no `--target` |
+
+A `--target` with no record is refused as `target` `unrecorded`, naming `rwv branch set-mode <T>`. Recording a feature prints where it lands (`target-recorded`): into `<T>`'s member branches when `<T>` is a feature, else into each branch `<T>` declares, listing the members whose entry in `<W>` differs from `<T>`'s. A change to `<W>`'s mode lists each feature that targets `<W>` and recorded its mode differently, which refuses to land until rebound. A branch whose entry two writers set differently (`target` `conflict`) or whose entry does not read (`target` `unreadable`) is settled by this verb, which writes the one value. The records branch's own name and every name below it is refused as `name` `reserved`.
+
+### `rwv branch list [--json] [--project <name>]`
+
+List each weave branch, local or only on a remote as last fetched, with its record: `declared`, `feature onto <T> (as <mode>)`, `unrecorded`, `conflict`, `unreadable` or `cycle`. `*` marks the checked-out branch; `[unpublished]` marks an entry no remote's records, as last fetched, hold; `[target gone]` a target that exists nowhere; `[remote only]` a branch with no local copy. It reads refs as last fetched and writes nothing: the records of the remotes are merged in memory, not into the local records branch.
+
+`--json` emits the envelope `{"$schema": "...", "branches": [...]}`. Each branch has `name`, `checked_out`, `local`, `record` (an object whose `state` is `declared`, `feature` with `target_branch` and `as`, `unrecorded`, `conflict` with `values`, `unreadable` with `reason`, or `cycle` with `chain`), `published` (absent for an unrecorded branch) and `target_gone`. See [JSON envelope convention](#--json-envelope-convention).
+
 ### `rwv status [--json] [...]`
 
 Show per-repo state for the CWD workspace.

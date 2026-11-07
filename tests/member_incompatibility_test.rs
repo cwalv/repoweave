@@ -393,6 +393,7 @@ fn build_update_fixture(
     .unwrap();
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + lock + go.work"]);
+    common::record_trunk(&project_dir);
 
     surface(&workspace, project_name, "go.work");
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();

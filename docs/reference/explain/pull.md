@@ -749,3 +749,7 @@ rwv pull --repo github/acme/server
   commit or stash them, then rerun.
 - *pull could not complete the fetch* — a remote was unreachable or refused;
   `rwv update` aligns the members to the lock as it stands.
+- *target unrecorded* — the checked-out branch of the project repo has no record
+  of how it is used, so this verb, which aligns members, refuses before changing
+  anything. The record may be published but not yet fetched (`rwv fetch`);
+  otherwise say how the branch is used with `rwv branch set-mode`.

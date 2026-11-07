@@ -48,6 +48,8 @@ pub enum Axis {
     UnparseableProject,
     /// The commit a lock pins for a member, and whether a ref reaches it.
     Pin,
+    /// A weave branch's record: how it is used and the branch it lands into.
+    Target,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -58,7 +60,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 7] = [
+    pub const ALL: [Axis; 8] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -66,6 +68,7 @@ impl Axis {
         Self::Publish,
         Self::UnparseableProject,
         Self::Pin,
+        Self::Target,
     ];
 
     pub fn token(self) -> String {
@@ -103,14 +106,18 @@ impl Axis {
             },
             Self::Name => &KindRow {
                 condition: "A name the verb was given cannot be used: another workweave \
-                            already holds it, it reads as a revision where a branch belongs, or \
-                            it names nothing in a repo the verb read.",
+                            already holds it, it reads as a revision where a branch belongs, it \
+                            names nothing in a repo the verb read, or it is the name rwv keeps \
+                            its branch records under.",
                 why: "A workweave name maps to one workweave; recording a second would make \
                       every later address ambiguous, and a delete would remove whichever was \
                       found first. A member entry's `branch` declares the branch to track while \
                       the lock records where you are, so a commit id or release tag there leaves \
                       nothing to track. A name that resolves to nothing has no tip to read, and \
-                      reading another branch in its place would answer a question nobody asked.",
+                      reading another branch in its place would answer a question nobody asked. \
+                      The branch that holds the branch records is rwv's own: a weave branch of \
+                      that name, or below it, would be read as records and written over by \
+                      them.",
                 sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Lock as derived](../explanation/joints/lock-as-derived.md).",
             },
@@ -134,6 +141,20 @@ impl Axis {
                       verb reads them, and the repair is mechanical.",
                 sits: "[Formats](./formats.md) states the member-entry keys; \
                        [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.",
+            },
+            Self::Target => &KindRow {
+                condition: "A weave branch's record cannot be used: the branch has none, two \
+                            writers recorded it differently, the entry does not read, its \
+                            target chain returns to it, or the branch it lands into is gone.",
+                why: "A weave branch's record is the one statement of how it is used: as \
+                      feature work onto a target, or as declared. Every verb that aligns \
+                      members, locks, lands or publishes reads it, and rwv picks none for a \
+                      branch that has none, because a guess that is wrong fails later, about \
+                      something else. A record two writers set differently keeps both values \
+                      until one is chosen, an entry rwv cannot read is refused for that branch \
+                      alone, and a target chain that returns to its branch could never land.",
+                sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
+                       [Formats](./formats.md).",
             },
             Self::Pin => &KindRow {
                 condition: "A commit a lock pins is not there to be at: the lock has no entry \
@@ -165,7 +186,8 @@ impl Axis {
             | Self::PushBranch
             | Self::Name
             | Self::Publish
-            | Self::Pin => None,
+            | Self::Pin
+            | Self::Target => None,
             Self::UnparseableProject => Some(Finding::of(
                 crate::check::ViolationKind::UnparseableProject,
                 crate::check::UnparseableProjectKind::ALL.map(|sub_kind| SubKindRow {
@@ -261,10 +283,16 @@ pub enum State {
     NameTaken,
     NameARevision,
     NameNoSuchBranch,
+    NameReserved,
     PublishWithheld,
     UnparseableProjectHere,
     UnparseableProjectMalformed,
     PinWouldBeUnreachable,
+    TargetUnrecorded,
+    TargetConflict,
+    TargetUnreadable,
+    TargetCycle,
+    TargetGone,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -282,7 +310,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 20] = [
+    pub const ALL: [State; 26] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -299,10 +327,16 @@ impl State {
         Self::NameTaken,
         Self::NameARevision,
         Self::NameNoSuchBranch,
+        Self::NameReserved,
         Self::PublishWithheld,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
         Self::PinWouldBeUnreachable,
+        Self::TargetUnrecorded,
+        Self::TargetConflict,
+        Self::TargetUnreadable,
+        Self::TargetCycle,
+        Self::TargetGone,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -472,8 +506,20 @@ impl State {
                         repo, spelled as the repo's VCS resolves it; the name is listed with the \
                         repo it is missing from, and the repos that have it are still read",
                 refused_by: "`rwv log`, for a range endpoint a member lacks, and for the weave \
-                             branch `--against` names",
+                             branch `--against` names; `rwv branch set-mode`, for a branch the \
+                             project repo has neither locally nor on a remote as last fetched",
                 offers: &[Form::C33],
+                verb_offers: &[],
+            },
+            Self::NameReserved => &StateRow {
+                axis: Axis::Name,
+                name: "reserved",
+                means: "the name is the one rwv keeps its branch records under, or is below it \
+                        (`<records>/<name>`); no weave branch can take it",
+                refused_by: "`rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that \
+                             align, lock, land or publish while the project repo is on a branch \
+                             of that name",
+                offers: &[Form::C10],
                 verb_offers: &[],
             },
             Self::PublishWithheld => &StateRow {
@@ -514,6 +560,57 @@ impl State {
                         listed with the locks that pin it",
                 refused_by: "`rwv backup drop` and `rwv backup prune`",
                 offers: &[Form::C7Push, Form::C27],
+                verb_offers: &[],
+            },
+            Self::TargetUnrecorded => &StateRow {
+                axis: Axis::Target,
+                name: "unrecorded",
+                means: "the branch has no record here: a raw switch or rename made it, its \
+                        record was never published, or it came from a remote that carries none. \
+                        The branches that could be its target are listed, nearest first",
+                refused_by: "`rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and \
+                             `rwv push`, for the project repo's checked-out branch; `rwv \
+                             workweave create`, for the branch it forks from; `rwv branch \
+                             set-mode`, for a `--target` that has no record",
+                offers: &[Form::C33, Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
+            Self::TargetConflict => &StateRow {
+                axis: Axis::Target,
+                name: "conflict",
+                means: "two writers recorded the branch differently and a merge kept both \
+                        values, listed; the conflict stays on the machine whose merge met it",
+                refused_by: "every verb that reads the branch's record on this machine",
+                offers: &[Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
+            Self::TargetUnreadable => &StateRow {
+                axis: Axis::Target,
+                name: "unreadable",
+                means: "the branch's entry on the records branch does not read as a record, \
+                        with why and the rwv release that wrote it when its commit names one; \
+                        other branches' entries read as usual",
+                refused_by: "every verb that reads the branch's record",
+                offers: &[Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
+            Self::TargetCycle => &StateRow {
+                axis: Axis::Target,
+                name: "cycle",
+                means: "the branch's target chain returns to it, listed from the branch",
+                refused_by: "`rwv branch set-mode`, for a `--target` that would close one, and \
+                             every verb that reads the record of a branch a merge of records \
+                             put on one",
+                offers: &[Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
+            Self::TargetGone => &StateRow {
+                axis: Axis::Target,
+                name: "gone",
+                means: "the branch the record lands into exists nowhere: not as a local branch, \
+                        nor on a remote as last fetched",
+                refused_by: "`rwv branch list` reports it",
+                offers: &[Form::C12Feature],
                 verb_offers: &[],
             },
         }
@@ -1151,13 +1248,13 @@ impl Form {
                 choice: C::C12,
                 steps: &[Rwv("rwv branch set-mode <W> feature --target <T>")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C12Declared => &FormRow {
                 choice: C::C12,
                 steps: &[Rwv("rwv branch set-mode <W> declared")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C13 => &FormRow {
                 choice: C::C13,

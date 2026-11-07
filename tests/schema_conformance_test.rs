@@ -68,6 +68,9 @@ use common::json_schema;
 use repoweave::backup::{
     BackupJsonOutput, BackupOutput, HeldCommitOutput, RepoBackupsOutput, BACKUP_SCHEMA_URL,
 };
+use repoweave::branch::{
+    BranchListJsonOutput, ListedBranch, RecordOutput, ValueOutput, BRANCH_SCHEMA_URL,
+};
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
     DOCTOR_SCHEMA_URL,
@@ -93,6 +96,7 @@ use repoweave::pull::{
     PULL_SCHEMA_URL,
 };
 use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_SCHEMA_URL};
+use repoweave::records::Mode;
 use repoweave::share::FilePlacement;
 use repoweave::skipped::{SkipReason, SkippedEffect};
 use repoweave::status::{
@@ -143,6 +147,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "backup",
             schema_url: BACKUP_SCHEMA_URL,
             corpus: backup_corpus,
+        },
+        VerbCase {
+            verb: "branch",
+            schema_url: BRANCH_SCHEMA_URL,
+            corpus: branch_corpus,
         },
         VerbCase {
             verb: "doctor",
@@ -367,6 +376,102 @@ fn backup_corpus() -> Vec<(&'static str, Value)> {
             value(BackupJsonOutput {
                 schema_url: BACKUP_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
+            }),
+        ),
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// branch
+// ---------------------------------------------------------------------------
+
+fn listed(name: &str, record: RecordOutput, published: Option<bool>) -> ListedBranch {
+    ListedBranch {
+        name: name.to_owned(),
+        checked_out: name == "main",
+        local: name != "remote-only",
+        record,
+        published,
+        target_gone: false,
+    }
+}
+
+fn branch_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "every-record-state",
+            value(BranchListJsonOutput {
+                schema_url: BRANCH_SCHEMA_URL.to_owned(),
+                branches: vec![
+                    listed("main", RecordOutput::Declared, Some(true)),
+                    listed(
+                        "feat-x",
+                        RecordOutput::Feature {
+                            target_branch: "main".to_owned(),
+                            as_mode: Mode::Declared,
+                        },
+                        Some(false),
+                    ),
+                    listed(
+                        "stacked",
+                        RecordOutput::Feature {
+                            target_branch: "feat-x".to_owned(),
+                            as_mode: Mode::Feature,
+                        },
+                        Some(true),
+                    ),
+                    listed("raw", RecordOutput::Unrecorded, None),
+                    listed(
+                        "clash",
+                        RecordOutput::Conflict {
+                            values: vec![
+                                ValueOutput {
+                                    mode: Mode::Declared,
+                                    target_branch: None,
+                                    as_mode: None,
+                                },
+                                ValueOutput {
+                                    mode: Mode::Feature,
+                                    target_branch: Some("main".to_owned()),
+                                    as_mode: Some(Mode::Declared),
+                                },
+                            ],
+                        },
+                        Some(false),
+                    ),
+                    listed(
+                        "odd",
+                        RecordOutput::Unreadable {
+                            reason: "unknown field `later`".to_owned(),
+                        },
+                        Some(true),
+                    ),
+                    listed(
+                        "loop",
+                        RecordOutput::Cycle {
+                            chain: vec!["loop".to_owned(), "loop".to_owned()],
+                        },
+                        Some(false),
+                    ),
+                    ListedBranch {
+                        target_gone: true,
+                        ..listed(
+                            "remote-only",
+                            RecordOutput::Feature {
+                                target_branch: "deleted".to_owned(),
+                                as_mode: Mode::Declared,
+                            },
+                            Some(true),
+                        )
+                    },
+                ],
+            }),
+        ),
+        (
+            "none",
+            value(BranchListJsonOutput {
+                schema_url: BRANCH_SCHEMA_URL.to_owned(),
+                branches: Vec::new(),
             }),
         ),
     ]
@@ -958,6 +1063,59 @@ fn op_status(verb: OpVerb, phase: OpPhase) -> OpStatus {
     }
 }
 
+fn status_records() -> Vec<repoweave::branch::BranchRecordStatus> {
+    let project = repoweave::manifest::ProjectName::new("app").unwrap();
+    let record = |branch: &str, record: RecordOutput| repoweave::branch::BranchRecordStatus {
+        project: project.clone(),
+        branch: branch.to_owned(),
+        record,
+        dependents: Vec::new(),
+    };
+    vec![
+        repoweave::branch::BranchRecordStatus {
+            dependents: vec!["feat-x".to_owned(), "feat-y".to_owned()],
+            ..record("main", RecordOutput::Declared)
+        },
+        record(
+            "feat-x",
+            RecordOutput::Feature {
+                target_branch: "main".to_owned(),
+                as_mode: Mode::Declared,
+            },
+        ),
+        record("raw", RecordOutput::Unrecorded),
+        record(
+            "clash",
+            RecordOutput::Conflict {
+                values: vec![
+                    ValueOutput {
+                        mode: Mode::Declared,
+                        target_branch: None,
+                        as_mode: None,
+                    },
+                    ValueOutput {
+                        mode: Mode::Feature,
+                        target_branch: Some("main".to_owned()),
+                        as_mode: Some(Mode::Feature),
+                    },
+                ],
+            },
+        ),
+        record(
+            "odd",
+            RecordOutput::Unreadable {
+                reason: "unknown field `later`".to_owned(),
+            },
+        ),
+        record(
+            "loop",
+            RecordOutput::Cycle {
+                chain: vec!["loop".to_owned(), "loop".to_owned()],
+            },
+        ),
+    ]
+}
+
 fn status_corpus() -> Vec<(&'static str, Value)> {
     let mut docs = vec![
         (
@@ -966,6 +1124,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: status_repos(),
                 unreadable_projects: Vec::new(),
+                records: status_records(),
                 judged: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
@@ -977,6 +1136,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: status_repos(),
                 unreadable_projects: Vec::new(),
+                records: Vec::new(),
                 judged: judged_on_every_axis(),
                 resolution: Some(resolution()),
                 op: None,
@@ -988,6 +1148,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
                 unreadable_projects: Vec::new(),
+                records: Vec::new(),
                 judged: Vec::new(),
                 resolution: None,
                 op: None,
@@ -1002,6 +1163,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                     project: repoweave::manifest::ProjectName::new("app").unwrap(),
                     error: "failed to parse rwv.toml".to_owned(),
                 }],
+                records: Vec::new(),
                 judged: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
@@ -1026,6 +1188,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
                 unreadable_projects: Vec::new(),
+                records: Vec::new(),
                 judged: Vec::new(),
                 resolution: Some(primary_resolution()),
                 op: Some(op_status(verb, phase)),
@@ -1777,6 +1940,7 @@ fn records_key(verb: &str) -> &'static str {
         "status" | "update-remote" | "fetch" | "log" => "repos",
         "refusal" => "refused",
         "backup" => "repos",
+        "branch" => "branches",
         _ => "outcomes",
     }
 }

@@ -197,6 +197,7 @@ fn update_for_project(
     let project_dir = crate::workspace::project_dir(active_root, project_name);
     let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
+    crate::branch::require_recorded(ctx)?;
 
     if commit.is_some() {
         let authored = if filter.is_empty() {

@@ -2795,6 +2795,9 @@ pub fn run_sync(
     request: SyncRequest,
     output: OutputMode,
 ) -> anyhow::Result<()> {
+    if matches!(request, SyncRequest::Fresh { .. }) {
+        crate::branch::require_recorded(ctx)?;
+    }
     match output {
         OutputMode::Json => run_sync_json(ctx, request),
         OutputMode::Text => {
@@ -7326,6 +7329,9 @@ pub fn run_sync_to(
     request: SyncRequest,
     output: OutputMode,
 ) -> anyhow::Result<()> {
+    if matches!(request, SyncRequest::Fresh { .. }) {
+        crate::branch::require_recorded(ctx)?;
+    }
     match output {
         OutputMode::Json => run_sync_to_json(ctx, request),
         OutputMode::Text => {

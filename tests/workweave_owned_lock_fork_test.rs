@@ -158,6 +158,7 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
 
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 

@@ -64,6 +64,7 @@ fn two_projects_with_a_workweave_named_alike() -> Weave {
         common::git_in(&dir, &["config", "user.name", "Test"]);
         common::git_in(&dir, &["add", "-A"]);
         common::git_in(&dir, &["commit", "-qm", "manifest and lock"]);
+        common::record_trunk(&dir);
     }
     std::fs::write(primary.join(".rwv-active"), "p1\n").unwrap();
     assert_eq!(

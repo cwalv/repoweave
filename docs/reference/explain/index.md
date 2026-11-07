@@ -25,6 +25,7 @@ rwv explain <verb>
 - **workweave** — create, delete, or list workweaves for a project
 - **abort** — roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched
 - **backup** — list, drop or prune the backups kept before a step that would leave a commit or an edit unpreserved (`--json` available)
+- **branch** — record how a weave branch is used, or list the weave branches with their records (`--json` available)
 - **member** — add a repo to the active project manifest, remove one, or change a member's role or submodule setting
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks

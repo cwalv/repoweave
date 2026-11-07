@@ -386,6 +386,13 @@ Schema:
           "enum": [
             "pin"
           ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
+          ]
         }
       ]
     },
@@ -1592,3 +1599,7 @@ rwv abort
 - *op in progress* — CWD or target is already involved in a sync-to (or other
   mutating) op. Resume with `rwv sync-to --continue` from the owner workspace,
   or roll back with `rwv abort`.
+- *target unrecorded* — the checked-out branch of the project repo has no record
+  of how it is used, so this verb, which lands work, refuses before changing
+  anything. The record may be published but not yet fetched (`rwv fetch`);
+  otherwise say how the branch is used with `rwv branch set-mode`.

@@ -157,6 +157,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     common::fixture_lock(&project_dir, &entries);
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::record_trunk(&project_dir);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 

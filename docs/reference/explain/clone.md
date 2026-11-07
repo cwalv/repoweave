@@ -13,6 +13,10 @@ local counterpart of the branch its `rwv.toml` entry declares, positioned at
 the commit the lock pins for it. When no project is active, `clone` then
 activates the project it cloned, as `rwv activate` would.
 
+`clone` reads the records the remote holds for the project's branches first,
+then records the branch it leaves checked out as `declared` when they hold none
+for it (`rwv branch list` shows it).
+
 A plain path is not a source: it names no remote, so `clone` refuses
 (`unresolvable-repo-source`) and names the two spellings that are — `rwv clone
 file://<absolute path>` to clone from a local remote, and `rwv update --project
@@ -223,6 +227,13 @@ Schema:
           "type": "string",
           "enum": [
             "pin"
+          ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
           ]
         }
       ]

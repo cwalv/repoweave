@@ -379,6 +379,7 @@ pub fn lock(
     dirty: bool,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
+    crate::branch::require_recorded(ctx)?;
     match write_project_lock(ctx, dirty, commit)? {
         Some(pending) => commit_project_lock(&pending, &BTreeSet::new()),
         None => Ok(()),

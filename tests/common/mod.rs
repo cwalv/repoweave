@@ -6,6 +6,7 @@ pub mod doctor_corpus;
 pub mod job;
 pub mod json_schema;
 pub mod pause;
+pub mod records;
 pub mod src_scan;
 
 use std::path::PathBuf;
@@ -456,6 +457,42 @@ pub fn git_in_configured(
         .to_string()
 }
 
+/// Record the branch the project repo at `project_dir` is on as `declared`,
+/// as `rwv init` and `rwv clone` do for a project they make.
+///
+/// A fixture that builds its project repo with git has no record until it
+/// says so, and the verbs that align, lock, land or publish refuse a branch
+/// with none. The record is written by the code those verbs run, so the
+/// fixture holds exactly what a weave made by `rwv init` holds.
+pub fn record_trunk(project_dir: &std::path::Path) {
+    let name = project_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    let project = repoweave::manifest::ProjectName::new(name)
+        .expect("a fixture project directory names a project");
+    repoweave::branch::record_trunk(repoweave::git::git_vcs().as_ref(), &project, project_dir)
+        .unwrap_or_else(|e| panic!("cannot record {}: {e:#}", project_dir.display()));
+}
+
+/// Record `branch` of the project repo at `project_dir` as a feature onto
+/// `target`, which must itself be recorded: the record `rwv workweave create`
+/// writes for the branch it makes, for a fixture that makes such a branch
+/// with git.
+pub fn record_feature(project_dir: &std::path::Path, branch: &str, target: &str) {
+    let name = project_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    let project = repoweave::manifest::ProjectName::new(name)
+        .expect("a fixture project directory names a project");
+    let vcs = repoweave::git::git_vcs();
+    let target = repoweave::records::BranchName::parse(vcs.as_ref(), target)
+        .unwrap_or_else(|e| panic!("{target:?} is no weave branch name: {e:?}"));
+    repoweave::branch::record_workweave(project_dir, &project, &target, branch)
+        .unwrap_or_else(|e| panic!("cannot record {branch}: {e:#}"));
+}
+
 /// Initialize a bare repo and seed it with one commit on `main` so it can
 /// be cloned by `--origin` consumers and act as a push target.
 pub fn init_bare_repo_with_commit(bare: &std::path::Path) {
@@ -666,6 +703,7 @@ pub fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorksp
 
     git_in(&project_dir, &["add", "."]);
     git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
+    record_trunk(&project_dir);
 
     // Mark this project active.
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();

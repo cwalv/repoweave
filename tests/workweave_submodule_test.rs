@@ -308,6 +308,7 @@ fn configured_weave(
     );
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     Weave {
         _tmp: tmp,
@@ -749,6 +750,7 @@ fn create_leaves_a_repo_without_submodules_alone() {
     );
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let output = common::rwv()

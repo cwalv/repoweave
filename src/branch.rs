@@ -1,0 +1,738 @@
+//! `rwv branch`: how each weave branch is used, and the gate that refuses the
+//! verbs which align, lock, land or publish on a branch that has no record.
+
+use std::path::Path;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::add_remove::find_project;
+use crate::diagnosis::{Judged, State};
+use crate::manifest::{Manifest, ProjectName};
+use crate::parallel::OutputMode;
+use crate::records::{
+    chain_text, BranchName, Entry, Lookup, Mode, NameError, Record, Store, View, Write, WriteError,
+};
+use crate::refusal::{refusal, RefusalKind};
+use crate::vcs::{project_vcs, HeadObservation, ResolvedRevisionId, Vcs};
+use crate::workspace::{project_rel_path, WorkspaceContext};
+
+pub const BRANCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch");
+
+/// What `rwv branch set-mode` is asked to record.
+#[derive(Debug, Clone)]
+pub struct SetMode {
+    /// The branch to record; the checked-out one when `None`.
+    pub branch: Option<String>,
+    pub mode: Mode,
+    /// The branch a feature lands into.
+    pub target: Option<String>,
+}
+
+fn label(project: &ProjectName) -> String {
+    project_rel_path(project)
+}
+
+fn named(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    text: &str,
+) -> anyhow::Result<BranchName> {
+    match BranchName::parse(vcs, text) {
+        Ok(name) => Ok(name),
+        Err(NameError::Reserved) => Err(State::NameReserved
+            .of(label(project))
+            .subject(text)
+            .checkout(dir)
+            .judge(vcs)
+            .refused()),
+        Err(NameError::Invalid(e)) => Err(refusal(
+            RefusalKind::InvalidRefName,
+            format!("`{text}` is not a usable branch name: {e:#}"),
+        )),
+    }
+}
+
+fn checked_out(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<String>> {
+    Ok(match vcs.observe_head(dir)? {
+        HeadObservation::Attached { name } | HeadObservation::Unborn { name } => {
+            Some(name.as_str().to_owned())
+        }
+        HeadObservation::Detached { .. } => None,
+    })
+}
+
+fn writer_text(store: &Store<'_>, branch: &BranchName) -> anyhow::Result<String> {
+    Ok(match store.writer_of(branch)? {
+        Some(release) => format!("written by rwv {release}"),
+        None => "its commit names no rwv release".to_owned(),
+    })
+}
+
+/// The branches `branch` could land into: each other weave branch with a
+/// record that reads as one value, the ones sharing the most history with
+/// `branch` first.
+fn target_candidates(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    view: &View,
+    branch: &BranchName,
+) -> anyhow::Result<Vec<String>> {
+    let tips = vcs.named_branches(dir)?;
+    let own = tips
+        .iter()
+        .find(|b| b.name == branch.as_str())
+        .map(|own| ResolvedRevisionId::from(own.tip.clone()));
+    let mut ranked: Vec<(usize, String)> = Vec::new();
+    for other in &tips {
+        let Ok(name) = BranchName::parse(vcs, &other.name) else {
+            continue;
+        };
+        if &name == branch || !matches!(view.lookup(&name), Lookup::Value(_)) {
+            continue;
+        }
+        let tip = ResolvedRevisionId::from(other.tip.clone());
+        if vcs
+            .read_file_at_revision(dir, &tip, Path::new(Manifest::FILE_NAME))
+            .is_err()
+        {
+            continue;
+        }
+        let distance = match own.as_ref() {
+            Some(own) => match vcs.merge_bases(dir, own.id(), &other.tip)?.first() {
+                Some(base) => {
+                    vcs.count_commits_in_range(dir, &ResolvedRevisionId::from(base.clone()), own)?
+                }
+                None => usize::MAX,
+            },
+            None => usize::MAX,
+        };
+        ranked.push((distance, other.name.clone()));
+    }
+    ranked.sort();
+    Ok(ranked.into_iter().map(|(_, name)| name).collect())
+}
+
+fn judge_lookup(
+    vcs: &dyn Vcs,
+    store: &Store<'_>,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+    lookup: Lookup,
+) -> anyhow::Result<Judged> {
+    let judging = |state: State| {
+        state
+            .of(label(project))
+            .project_repo()
+            .subject(branch)
+            .checkout(dir)
+            .bind("<W>", branch)
+    };
+    Ok(match lookup {
+        Lookup::Value(_) => unreachable!("a record that reads is not judged"),
+        Lookup::Unrecorded => {
+            let view = store.view()?;
+            let candidates = target_candidates(vcs, dir, &view, branch)?;
+            let mut judging = judging(State::TargetUnrecorded);
+            if !candidates.is_empty() {
+                judging = judging.listing([format!(
+                    "--target candidates, nearest first: {}",
+                    candidates.join(", ")
+                )]);
+            }
+            judging.judge(vcs)
+        }
+        Lookup::Conflict(first, second) => judging(State::TargetConflict)
+            .listing([first.to_string(), second.to_string()])
+            .judge(vcs),
+        Lookup::Unreadable(why) => judging(State::TargetUnreadable)
+            .listing([why, writer_text(store, branch)?])
+            .judge(vcs),
+        Lookup::Cycle(chain) => judging(State::TargetCycle)
+            .listing([chain_text(&chain)])
+            .judge(vcs),
+    })
+}
+
+fn write_refusal(
+    vcs: &dyn Vcs,
+    store: &Store<'_>,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+    error: WriteError,
+) -> anyhow::Error {
+    let judged = |target: &BranchName, lookup: Lookup| {
+        judge_lookup(vcs, store, project, dir, target, lookup).map_or_else(|e| e, Judged::refused)
+    };
+    match error {
+        WriteError::Cycle(chain) => judged(branch, Lookup::Cycle(chain)),
+        WriteError::TargetUnrecorded(target) => judged(&target, Lookup::Unrecorded),
+        WriteError::TargetUnreadable(target, lookup) => judged(&target, lookup),
+        WriteError::Busy => anyhow::Error::msg(WriteError::Busy.to_string()),
+        WriteError::Vcs(e) => anyhow::Error::new(e).context("could not write the branch record"),
+    }
+}
+
+fn view_of(store: &Store<'_>) -> anyhow::Result<View> {
+    store
+        .view()
+        .map_err(|e| anyhow::Error::new(e).context("could not read the branch records"))
+}
+
+/// The gate of the verbs that align, lock, land or publish: the project
+/// repo's checked-out branch has a record that reads as one value, else the
+/// verb refuses before changing anything. The records remotes' tips are
+/// merged into the local records branch first.
+///
+/// A project repo that is not on a branch has no record to read; what that
+/// state refuses is the alignment axis's.
+pub fn require_recorded(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    if !vcs.is_repo(&dir) {
+        return Ok(());
+    }
+    let Some(text) = checked_out(vcs.as_ref(), &dir)? else {
+        return Ok(());
+    };
+    let branch = named(vcs.as_ref(), &project, &dir, &text)?;
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let written = store
+        .write(|_| Ok(Vec::new()))
+        .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &branch, e))?;
+    match written.view.lookup(&branch) {
+        Lookup::Value(_) => Ok(()),
+        lookup => {
+            Err(judge_lookup(vcs.as_ref(), &store, &project, &dir, &branch, lookup)?.refused())
+        }
+    }
+}
+
+/// Record the project repo's checked-out branch as `declared` when it has no
+/// record, after merging in the records its remotes hold: what `init` and
+/// `clone` mean, "start from this project's trunk".
+pub fn record_trunk(vcs: &dyn Vcs, project: &ProjectName, dir: &Path) -> anyhow::Result<()> {
+    let Some(text) = checked_out(vcs, dir)? else {
+        return Ok(());
+    };
+    let trunk = named(vcs, project, dir, &text)?;
+    let store = Store::open(vcs, dir)?;
+    store
+        .write(|view| {
+            Ok(match view.lookup(&trunk) {
+                Lookup::Unrecorded => vec![Write {
+                    branch: trunk.clone(),
+                    record: Record::Declared,
+                }],
+                _ => Vec::new(),
+            })
+        })
+        .map_err(|e| write_refusal(vcs, &store, project, dir, &trunk, e))?;
+    Ok(())
+}
+
+/// The branch a new workweave made from the workspace whose project repo is
+/// `source_dir` lands into: the branch that repo has checked out, whose record
+/// must read as one value. `None` where `source_dir` is not a repo, which has
+/// no records.
+///
+/// Refuses before anything is created, so a create reports it with the
+/// others.
+pub fn workweave_parent(
+    source_dir: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<Option<BranchName>> {
+    let vcs = project_vcs();
+    if !vcs.is_repo(source_dir) {
+        return Ok(None);
+    }
+    let Some(text) = checked_out(vcs.as_ref(), source_dir)? else {
+        return Err(refusal(
+            RefusalKind::HeadNotOnBranch,
+            format!(
+                "rwv workweave create: the project repo at {} is on a detached HEAD, so the \
+                 new workweave's branch has no branch to land into; switch it to a branch first",
+                source_dir.display()
+            ),
+        ));
+    };
+    let parent = named(vcs.as_ref(), project, source_dir, &text)?;
+    let store = Store::open(vcs.as_ref(), source_dir)?;
+    let view = view_of(&store)?;
+    match view.lookup(&parent) {
+        Lookup::Value(_) => Ok(Some(parent)),
+        lookup => {
+            Err(judge_lookup(vcs.as_ref(), &store, project, source_dir, &parent, lookup)?.refused())
+        }
+    }
+}
+
+/// Record `minted`, the branch a new workweave of `project` is on, as a
+/// feature onto `parent` with `parent`'s mode as it stands, and say where it
+/// lands. A branch that already has a record keeps it.
+pub fn record_workweave(
+    repo: &Path,
+    project: &ProjectName,
+    parent: &BranchName,
+    minted: &str,
+) -> anyhow::Result<Vec<String>> {
+    let vcs = project_vcs();
+    let branch = named(vcs.as_ref(), project, repo, minted)?;
+    let store = Store::open(vcs.as_ref(), repo)?;
+    let written = store
+        .write(|view| {
+            if !matches!(view.lookup(&branch), Lookup::Unrecorded) {
+                return Ok(Vec::new());
+            }
+            if let Some(chain) = view.chain_back_to(&branch, vec![parent.clone()]) {
+                return Err(WriteError::Cycle(chain));
+            }
+            let as_mode = match view.lookup(parent) {
+                Lookup::Value(record) => record.mode(),
+                Lookup::Unrecorded => return Err(WriteError::TargetUnrecorded(parent.clone())),
+                other => return Err(WriteError::TargetUnreadable(parent.clone(), other)),
+            };
+            Ok(vec![Write {
+                branch: branch.clone(),
+                record: Record::Feature {
+                    target: parent.clone(),
+                    as_mode,
+                },
+            }])
+        })
+        .map_err(|e| write_refusal(vcs.as_ref(), &store, project, repo, &branch, e))?;
+    match written.view.lookup(&branch) {
+        Lookup::Value(Record::Feature { target, as_mode }) => {
+            target_recorded_lines(vcs.as_ref(), repo, &branch, &target, as_mode)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// `rwv branch set-mode [<W>] <feature|declared> [--target <T>]`.
+pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let text = match request.branch {
+        Some(text) => text,
+        None => checked_out(vcs.as_ref(), &dir)?.ok_or_else(|| {
+            refusal(
+                RefusalKind::HeadNotOnBranch,
+                "rwv branch set-mode: the project repo is on a detached HEAD, which has no \
+                 branch to record; name the branch: `rwv branch set-mode <W> <mode>`",
+            )
+        })?,
+    };
+    let branch = named(vcs.as_ref(), &project, &dir, &text)?;
+    let target = request
+        .target
+        .as_deref()
+        .map(|t| named(vcs.as_ref(), &project, &dir, t))
+        .transpose()?;
+    let known = vcs.named_branches(&dir)?;
+    if !known.iter().any(|b| b.name == branch.as_str()) {
+        return Err(State::NameNoSuchBranch
+            .of(label(&project))
+            .project_repo()
+            .subject(&branch)
+            .judge(vcs.as_ref())
+            .refused());
+    }
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let before = view_of(&store)?;
+    let written = store
+        .write(|view| {
+            let record = match (&request.mode, &target) {
+                (Mode::Declared, _) => Record::Declared,
+                (Mode::Feature, Some(target)) => {
+                    if let Some(chain) = view.chain_back_to(&branch, vec![target.clone()]) {
+                        return Err(WriteError::Cycle(chain));
+                    }
+                    let as_mode = match view.lookup(target) {
+                        Lookup::Value(record) => record.mode(),
+                        Lookup::Unrecorded => {
+                            return Err(WriteError::TargetUnrecorded(target.clone()))
+                        }
+                        other => return Err(WriteError::TargetUnreadable(target.clone(), other)),
+                    };
+                    Record::Feature {
+                        target: target.clone(),
+                        as_mode,
+                    }
+                }
+                (Mode::Feature, None) => unreachable!("dispatch requires --target with feature"),
+            };
+            Ok(vec![Write {
+                branch: branch.clone(),
+                record,
+            }])
+        })
+        .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &branch, e))?;
+    let Lookup::Value(record) = written.view.lookup(&branch) else {
+        unreachable!("the record just written reads as one value");
+    };
+    outln!("rwv branch set-mode: {branch} is {record}");
+    if let Record::Feature { target, as_mode } = &record {
+        for line in target_recorded_lines(vcs.as_ref(), &dir, &branch, target, *as_mode)? {
+            outln!("{line}");
+        }
+    }
+    report_dependents(&before, &written.view, &branch);
+    Ok(())
+}
+
+fn member_entries(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    tip: &ResolvedRevisionId,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let text = vcs
+        .read_file_at_revision(dir, tip, Path::new(Manifest::FILE_NAME))
+        .map_err(|e| format!("{e:#}"))?;
+    let manifest = Manifest::from_toml_str(&text).map_err(|e| format!("{e:#}"))?;
+    Ok(manifest
+        .iter_entries()
+        .map(|(path, entry)| {
+            (
+                path.to_string(),
+                toml::to_string(entry).unwrap_or_else(|e| format!("{e:#}")),
+            )
+        })
+        .collect())
+}
+
+/// What recording `branch` as a feature onto `target` says about where it
+/// lands: into `target`'s member branches when `target` is a feature, else into
+/// each branch `target` declares, listing the members whose entry in `branch`
+/// differs from `target`'s.
+fn target_recorded_lines(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &BranchName,
+    target: &BranchName,
+    as_mode: Mode,
+) -> anyhow::Result<Vec<String>> {
+    let lands = match as_mode {
+        Mode::Feature => format!("into {target}'s member branches"),
+        Mode::Declared => format!("into each branch {target} declares"),
+    };
+    let mut lines = vec![format!("target-recorded: {branch} lands {lands}")];
+    if as_mode == Mode::Feature {
+        return Ok(lines);
+    }
+    let known = vcs.named_branches(dir)?;
+    let tip = |name: &BranchName| {
+        known
+            .iter()
+            .find(|b| b.name == name.as_str())
+            .map(|b| ResolvedRevisionId::from(b.tip.clone()))
+    };
+    let (Some(own), Some(theirs)) = (tip(branch), tip(target)) else {
+        return Ok(lines);
+    };
+    match (
+        member_entries(vcs, dir, &own),
+        member_entries(vcs, dir, &theirs),
+    ) {
+        (Ok(own), Ok(theirs)) => {
+            let differing: Vec<&String> = own
+                .keys()
+                .chain(theirs.keys())
+                .filter(|key| own.get(*key) != theirs.get(*key))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            if !differing.is_empty() {
+                lines.push(format!(
+                    "target-recorded: members whose entry in {branch} differs from {target}'s: {}",
+                    differing
+                        .iter()
+                        .map(|m| m.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+        (Err(why), _) | (_, Err(why)) => {
+            lines.push(format!(
+                "target-recorded: member entries were not compared: {why}"
+            ));
+        }
+    }
+    Ok(lines)
+}
+
+fn report_dependents(before: &View, after: &View, branch: &BranchName) {
+    let mode_before = match before.lookup(branch) {
+        Lookup::Value(record) => Some(record.mode()),
+        _ => None,
+    };
+    let Lookup::Value(record) = after.lookup(branch) else {
+        return;
+    };
+    if mode_before == Some(record.mode()) {
+        return;
+    }
+    for dependent in after.dependents(branch) {
+        if let Some(Entry::Value(Record::Feature { as_mode, .. })) = after.entry(&dependent) {
+            if as_mode != record.mode() {
+                outln!(
+                    "dependent: {dependent} records {branch} as {}, and {branch} is now {}; \
+                     it refuses to land until rebound with `rwv branch set-mode {dependent} \
+                     feature --target {branch}`",
+                    as_mode.token(),
+                    record.mode().token(),
+                );
+            }
+        }
+    }
+}
+
+/// One weave branch's record, as `rwv branch list --json` carries it.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum RecordOutput {
+    Declared,
+    Feature {
+        /// The branch the feature lands into.
+        target_branch: String,
+        #[serde(rename = "as")]
+        as_mode: Mode,
+    },
+    /// The branch has no record here.
+    Unrecorded,
+    /// Two writers recorded the branch differently; both values are listed.
+    Conflict {
+        values: Vec<ValueOutput>,
+    },
+    /// The entry does not read as a record.
+    Unreadable {
+        reason: String,
+    },
+    /// The branch's target chain returns to it.
+    Cycle {
+        chain: Vec<String>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ValueOutput {
+    pub mode: Mode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_branch: Option<String>,
+    #[serde(rename = "as", skip_serializing_if = "Option::is_none")]
+    pub as_mode: Option<Mode>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListedBranch {
+    pub name: String,
+    /// The project repo is on this branch.
+    pub checked_out: bool,
+    /// The branch exists locally; false for one only on a remote, as last
+    /// fetched.
+    pub local: bool,
+    pub record: RecordOutput,
+    /// A remote's records, as last fetched, hold this entry. False for an
+    /// entry only this machine has, which a push of the branch publishes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published: Option<bool>,
+    /// The record's target exists nowhere, local or remote.
+    pub target_gone: bool,
+}
+
+/// The envelope `rwv branch list --json` prints.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BranchListJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub branches: Vec<ListedBranch>,
+}
+
+fn value_output(record: &Record) -> ValueOutput {
+    match record {
+        Record::Declared => ValueOutput {
+            mode: Mode::Declared,
+            target_branch: None,
+            as_mode: None,
+        },
+        Record::Feature { target, as_mode } => ValueOutput {
+            mode: Mode::Feature,
+            target_branch: Some(target.to_string()),
+            as_mode: Some(*as_mode),
+        },
+    }
+}
+
+fn record_output(lookup: &Lookup) -> RecordOutput {
+    match lookup {
+        Lookup::Unrecorded => RecordOutput::Unrecorded,
+        Lookup::Value(Record::Declared) => RecordOutput::Declared,
+        Lookup::Value(Record::Feature { target, as_mode }) => RecordOutput::Feature {
+            target_branch: target.to_string(),
+            as_mode: *as_mode,
+        },
+        Lookup::Conflict(first, second) => RecordOutput::Conflict {
+            values: vec![value_output(first), value_output(second)],
+        },
+        Lookup::Unreadable(why) => RecordOutput::Unreadable {
+            reason: why.clone(),
+        },
+        Lookup::Cycle(chain) => RecordOutput::Cycle {
+            chain: chain.iter().map(ToString::to_string).collect(),
+        },
+    }
+}
+
+fn record_line(lookup: &Lookup) -> String {
+    match lookup {
+        Lookup::Unrecorded => "unrecorded".to_owned(),
+        Lookup::Value(record) => record.to_string(),
+        Lookup::Conflict(first, second) => format!("conflict: {first} | {second}"),
+        Lookup::Unreadable(why) => format!("unreadable: {why}"),
+        Lookup::Cycle(chain) => format!("cycle: {}", chain_text(chain)),
+    }
+}
+
+/// A project repo's checked-out branch and what its record reads as, with the
+/// branches that land into it, as `rwv status` shows it.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BranchRecordStatus {
+    pub project: ProjectName,
+    pub branch: String,
+    pub record: RecordOutput,
+    /// The branches whose records name this one as their target.
+    pub dependents: Vec<String>,
+}
+
+impl BranchRecordStatus {
+    pub fn line(&self) -> String {
+        let record = match &self.record {
+            RecordOutput::Declared => "declared".to_owned(),
+            RecordOutput::Feature {
+                target_branch,
+                as_mode,
+            } => {
+                format!("feature onto {target_branch} (as {})", as_mode.token())
+            }
+            RecordOutput::Unrecorded => "unrecorded".to_owned(),
+            RecordOutput::Conflict { .. } => "conflict".to_owned(),
+            RecordOutput::Unreadable { reason } => format!("unreadable: {reason}"),
+            RecordOutput::Cycle { chain } => format!("cycle: {}", chain.join(" -> ")),
+        };
+        let mut line = format!("record: {} {}: {record}", self.project, self.branch);
+        if !self.dependents.is_empty() {
+            line.push_str(&format!("; landed into by {}", self.dependents.join(", ")));
+        }
+        line
+    }
+}
+
+/// The record of the branch the project repo at `dir` is on, computed in
+/// memory from the local records branch and the records remotes as last
+/// fetched. `None` where the repo is not on a branch.
+pub fn project_record(
+    project: &ProjectName,
+    dir: &Path,
+) -> anyhow::Result<Option<BranchRecordStatus>> {
+    let vcs = project_vcs();
+    if !vcs.is_repo(dir) {
+        return Ok(None);
+    }
+    let Some(text) = checked_out(vcs.as_ref(), dir)? else {
+        return Ok(None);
+    };
+    let branch = named(vcs.as_ref(), project, dir, &text)?;
+    let store = Store::open(vcs.as_ref(), dir)?;
+    let view = view_of(&store)?;
+    Ok(Some(BranchRecordStatus {
+        project: project.clone(),
+        record: record_output(&view.lookup(&branch)),
+        dependents: view
+            .dependents(&branch)
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        branch: text,
+    }))
+}
+
+/// `rwv branch list`: every weave branch with its record, computed in memory
+/// from the local records branch and the records remotes' as last fetched.
+pub fn run_list(ctx: &WorkspaceContext, output: OutputMode) -> anyhow::Result<()> {
+    let (_, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let current = checked_out(vcs.as_ref(), &dir)?;
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let view = view_of(&store)?;
+    let branches = vcs.named_branches(&dir)?;
+    let published_names = store.published_names(&view)?;
+    let mut listed: Vec<ListedBranch> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    for branch in &branches {
+        let Ok(name) = BranchName::parse(vcs.as_ref(), &branch.name) else {
+            continue;
+        };
+        let tip = ResolvedRevisionId::from(branch.tip.clone());
+        if vcs
+            .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
+            .is_err()
+        {
+            continue;
+        }
+        let lookup = view.lookup(&name);
+        let published = match lookup {
+            Lookup::Unrecorded => None,
+            _ => Some(published_names.contains(name.as_str())),
+        };
+        let target_gone = match &lookup {
+            Lookup::Value(Record::Feature { target, .. }) => {
+                !branches.iter().any(|b| b.name == target.as_str())
+            }
+            _ => false,
+        };
+        let checked_out = current.as_deref() == Some(branch.name.as_str());
+        let mut line = format!(
+            "{} {:<24} {}",
+            if checked_out { "*" } else { " " },
+            branch.name,
+            record_line(&lookup)
+        );
+        if target_gone {
+            line.push_str(" [target gone]");
+        }
+        if published == Some(false) {
+            line.push_str(" [unpublished]");
+        }
+        if !branch.local {
+            line.push_str(" [remote only]");
+        }
+        lines.push(line);
+        listed.push(ListedBranch {
+            name: branch.name.clone(),
+            checked_out,
+            local: branch.local,
+            record: record_output(&lookup),
+            published,
+            target_gone,
+        });
+    }
+    if output.is_json() {
+        let envelope = BranchListJsonOutput {
+            schema_url: BRANCH_SCHEMA_URL.to_owned(),
+            branches: listed,
+        };
+        outln!("{}", serde_json::to_string_pretty(&envelope)?);
+        return Ok(());
+    }
+    if lines.is_empty() {
+        outln!("no weave branches");
+    }
+    for line in lines {
+        outln!("{line}");
+    }
+    Ok(())
+}

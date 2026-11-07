@@ -5,15 +5,16 @@ use crate::path_spelling::CanonicalPath;
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange,
-    BranchTip, CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
-    DerivedContentResolution, DiffBeyond, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
-    HeadObservation, ListedBackup, LocalRefName, MemberBirth, MidOperation, PinOutcome,
-    PruningFetch, PublishRef, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
-    RecordedUrl, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
-    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTracking,
-    ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, SubmoduleBirth,
-    SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
-    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
+    DerivedContentPolicy, DerivedContentResolution, DiffBeyond, DiscardOutcome, FileChange, Force,
+    ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName, MemberBirth,
+    MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeListing, RawRefName,
+    RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsSite, RefOrigin,
+    RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle,
+    RemoteNameTaken, RemoteRef, RemoteTracking, ReplayExclusionState, ResolvedEndpoint,
+    ResolvedRevisionId, SavepointListing, SubmoduleBirth, SubmoduleCheckout, TrackedFile,
+    TrackedFileKind, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -23,6 +24,7 @@ use std::process::Stdio;
 
 mod argv;
 mod backup;
+mod records;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -3193,6 +3195,71 @@ impl Vcs for GitVcs {
 
     fn branch_tips(&self, repo: &Path) -> Result<Vec<BranchTip>, VcsError> {
         Self::branch_tip_listing(repo)
+    }
+
+    fn records_branch(&self) -> &'static str {
+        records::RECORDS_BRANCH
+    }
+
+    fn records_tip(
+        &self,
+        repo: &Path,
+        site: RecordsSite<'_>,
+    ) -> Result<Option<CommitId>, VcsError> {
+        Self::records_tip_at(&Self::work_dir_for_store(repo), site)
+    }
+
+    fn advance_records(
+        &self,
+        repo: &Path,
+        expected: Option<&CommitId>,
+        to: &CommitId,
+    ) -> Result<RecordsAdvance, VcsError> {
+        Self::advance_records_ref(&Self::work_dir_for_store(repo), expected, to)
+    }
+
+    fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError> {
+        Self::files_of_commit(&Self::work_dir_for_store(repo), commit)
+    }
+
+    fn write_commit(
+        &self,
+        repo: &Path,
+        parents: &[CommitId],
+        changes: &[FileChange],
+        message: &str,
+    ) -> Result<CommitId, VcsError> {
+        Self::write_tree_commit(&Self::work_dir_for_store(repo), parents, changes, message)
+    }
+
+    fn merge_bases(
+        &self,
+        repo: &Path,
+        a: &CommitId,
+        b: &CommitId,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        Self::merge_base_list(&Self::work_dir_for_store(repo), a, b)
+    }
+
+    fn last_message_touching(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        path: &str,
+    ) -> Result<Option<String>, VcsError> {
+        Self::last_message_changing(&Self::work_dir_for_store(repo), tip, path)
+    }
+
+    fn branch_push_targets(
+        &self,
+        repo: &Path,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Vec<RemoteHandle>, VcsError> {
+        Self::push_target_remotes(&Self::work_dir_for_store(repo), url_remote)
+    }
+
+    fn named_branches(&self, repo: &Path) -> Result<Vec<NamedBranch>, VcsError> {
+        Self::every_branch(&Self::work_dir_for_store(repo))
     }
 
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {

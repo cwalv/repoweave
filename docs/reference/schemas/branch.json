@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BranchListJsonOutput",
+  "description": "The envelope `rwv branch list --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "branches"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "branches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ListedBranch"
+      }
+    }
+  },
+  "definitions": {
+    "ListedBranch": {
+      "type": "object",
+      "required": [
+        "checked_out",
+        "local",
+        "name",
+        "record",
+        "target_gone"
+      ],
+      "properties": {
+        "checked_out": {
+          "description": "The project repo is on this branch.",
+          "type": "boolean"
+        },
+        "local": {
+          "description": "The branch exists locally; false for one only on a remote, as last fetched.",
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "published": {
+          "description": "A remote's records, as last fetched, hold this entry. False for an entry only this machine has, which a push of the branch publishes.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/definitions/RecordOutput"
+        },
+        "target_gone": {
+          "description": "The record's target exists nowhere, local or remote.",
+          "type": "boolean"
+        }
+      }
+    },
+    "Mode": {
+      "description": "How a weave branch is used.",
+      "oneOf": [
+        {
+          "description": "Work onto a target branch: its `owned` and `fork` members sit on branches named after it.",
+          "type": "string",
+          "enum": [
+            "feature"
+          ]
+        },
+        {
+          "description": "Members sit on the branches its member entries declare.",
+          "type": "string",
+          "enum": [
+            "declared"
+          ]
+        }
+      ]
+    },
+    "RecordOutput": {
+      "description": "One weave branch's record, as `rwv branch list --json` carries it.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "declared"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "as",
+            "state",
+            "target_branch"
+          ],
+          "properties": {
+            "as": {
+              "$ref": "#/definitions/Mode"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "feature"
+              ]
+            },
+            "target_branch": {
+              "description": "The branch the feature lands into.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The branch has no record here.",
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "unrecorded"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Two writers recorded the branch differently; both values are listed.",
+          "type": "object",
+          "required": [
+            "state",
+            "values"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "conflict"
+              ]
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ValueOutput"
+              }
+            }
+          }
+        },
+        {
+          "description": "The entry does not read as a record.",
+          "type": "object",
+          "required": [
+            "reason",
+            "state"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "description": "The branch's target chain returns to it.",
+          "type": "object",
+          "required": [
+            "chain",
+            "state"
+          ],
+          "properties": {
+            "chain": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "cycle"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ValueOutput": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "as": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Mode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "$ref": "#/definitions/Mode"
+        },
+        "target_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

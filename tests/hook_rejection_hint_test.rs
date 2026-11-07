@@ -114,6 +114,7 @@ fn a_silent_hook_refusing_the_project_repo_is_still_named_to_the_operator() {
     write_manifest(&project_dir, &repo_path);
     common::git_in(&project_dir, &["add", "rwv.toml"]);
     common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
     std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
     assert_word_absent_from_paths(&[tmp.path(), &ws, &project_dir]);
 

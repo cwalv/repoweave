@@ -85,6 +85,7 @@ fn weave() -> Weave {
     write_manifest(&project_dir, &[KEPT]);
     write_lock(&project_dir, &[(KEPT, &kept), (GONE, &gone)]);
     commit_project(&project_dir, "initial");
+    common::record_trunk(&project_dir);
     write_manifest(&other_dir, &[]);
     commit_project(&other_dir, "initial");
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();

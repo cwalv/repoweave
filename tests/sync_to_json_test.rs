@@ -113,6 +113,7 @@ fn make_workweave_ahead_fixture(
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: materialize as git worktrees from the primary repos.
@@ -151,6 +152,7 @@ fn make_workweave_ahead_fixture(
             &format!("web-app--{workweave_name}"),
         ],
     );
+    common::record_feature(&ww_project, &format!("web-app--{workweave_name}"), "main");
 
     // Advance the workweave's server repo and relock so sync-to has work.
     let advance_sha = make_commit(&ww_server, "ww.txt", "workweave\n", "ww: advance server");
@@ -337,6 +339,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&source_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&source_project);
     std::fs::write(source.join(".rwv-active"), "web-app\n").unwrap();
 
     // Target workspace: worktrees from source repos.
@@ -367,6 +370,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
             "web-app--target",
         ],
     );
+    common::record_feature(&target_project, "web-app--target", "main");
     std::fs::write(target.join(".rwv-active"), "web-app\n").unwrap();
 
     // Advance source so sync-to has work.
@@ -535,6 +539,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = parent.join("noop-ww");
@@ -567,6 +572,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
             "web-app--noop-ww",
         ],
     );
+    common::record_feature(&ww_project, "web-app--noop-ww", "main");
 
     // No additional commits in ww; primary and ww are at the same tip.
     // sync-to --strategy=ff from ww to primary: step 1 is a no-op, step 3

@@ -459,6 +459,7 @@ fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
     // Make the project a git repo so we can commit the index into it.
     let project_dir = ws.join("projects").join("web-app");
     init_repo_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

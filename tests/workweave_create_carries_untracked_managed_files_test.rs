@@ -101,6 +101,7 @@ fn fixture(tmp: &Path) -> (PathBuf, PathBuf) {
     )
     .unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     (ws, project_dir)
@@ -254,6 +255,7 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
     // supported policy.
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     rwv_with_path(&["doctor", "--fix"], &ws, &path);

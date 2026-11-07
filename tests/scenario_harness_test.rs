@@ -240,8 +240,6 @@ pending_on!(
     stable_end_to_end => WeaveBranch,
     main_change_into_stable => WeaveBranch,
     nested_workweaves => WeaveBranch,
-    origin_and_base_edge_cases => BaseRecord,
-    hand_edit_origin_record => BaseRecord,
     cherry_pick_onto_stable => WeaveBranch,
     pr_closed_unmerged => Publish,
 );
@@ -1077,8 +1075,71 @@ fn records_reader_reads_nothing_where_no_records_branch_exists() {
         },
     )
     .assert_green();
+    let origin = sandbox.remote_store(Remote::origin(Repo::Proj));
+    assert_eq!(invariants::read_records(&sandbox, &origin), None);
+}
+
+#[test]
+fn a_remote_added_only_to_fetch_contributes_no_record_until_it_is_a_push_target() {
+    runner::run(scenarios::records_foreign_remote()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_record_changed_by_a_raw_commit_reads_as_that_entry_and_a_conflict_settles_by_set_mode() {
+    runner::run(scenarios::records_hand_commit()).assert_fully_decided_green();
+}
+
+#[test]
+fn an_entry_this_release_cannot_read_refuses_its_own_branch_alone() {
+    runner::run(scenarios::records_unreadable_entry()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_workweave_makes_its_target_a_branch_the_first_parent_check_watches() {
+    let sandbox = Sandbox::new(Seed::default());
+    let report = runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "a workweave onto main",
+            seed: Seed::default(),
+            steps: vec![
+                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                    .expect(Exit::Succeeds),
+            ],
+        },
+    );
+    report.assert_fully_decided_green();
+    let snapshot = invariants::snapshot(&sandbox);
+    let watched = snapshot.target_branches();
+    assert!(
+        watched
+            .get(&Repo::Proj)
+            .is_some_and(|branches| branches.contains("main")),
+        "{watched:?}"
+    );
+}
+
+#[test]
+fn a_clone_records_the_trunk_as_declared_and_the_reader_reads_it() {
+    let sandbox = Sandbox::new(Seed::default());
+    runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "a fresh clone",
+            seed: Seed::default(),
+            steps: Vec::new(),
+        },
+    )
+    .assert_green();
     let canonical = sandbox.canonical(Machine::A, Repo::Proj);
-    assert_eq!(invariants::read_records(&sandbox, &canonical), None);
+    assert_eq!(
+        invariants::read_records(&sandbox, &canonical),
+        Some(
+            [("main".to_owned(), Record::Declared)]
+                .into_iter()
+                .collect()
+        )
+    );
 }
 
 #[test]

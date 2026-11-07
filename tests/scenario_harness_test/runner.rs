@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::common::pause::Paused;
-use crate::invariants::{self, Allowance, LockSite, RemoteWrite, Snapshot, Violation};
+use crate::invariants::{self, Allowance, LockSite, Record, RemoteWrite, Snapshot, Violation};
 use crate::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Unreachable};
 
 /// A verb a scenario needs that rwv does not have. A step that needs one is
@@ -22,9 +22,6 @@ pub enum MissingVerb {
     Declare,
     /// Materialize a branch someone else pushed, in a workweave of its own.
     Review,
-    /// Read or repair what a weave records about where its branch came from
-    /// or lands.
-    BaseRecord,
 }
 
 impl MissingVerb {
@@ -35,7 +32,6 @@ impl MissingVerb {
             MissingVerb::Rename => "rename a workweave's branches",
             MissingVerb::Declare => "change a member's declared branch",
             MissingVerb::Review => "materialize someone else's pushed branch",
-            MissingVerb::BaseRecord => "read or repair a weave branch's origin record",
         }
     }
 }
@@ -209,6 +205,13 @@ pub enum Claim {
     },
     /// What the step printed holds this text.
     OutputContains(&'static str),
+    /// Machine `machine`'s records branch holds exactly this entry for
+    /// `branch`: none when it holds none.
+    RecordIs {
+        machine: Machine,
+        branch: &'static str,
+        record: Option<Record>,
+    },
     /// The checkout of `repo` at `at` is at the commit the lock of the project
     /// checked out there pins it at.
     AtPin {
@@ -1058,6 +1061,22 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
+                }
+            }
+            Claim::RecordIs {
+                machine,
+                branch,
+                record,
+            } => {
+                let canonical = sb.canonical(*machine, Repo::Proj);
+                let held = crate::invariants::read_records(sb, &canonical)
+                    .and_then(|records| records.get(*branch).cloned());
+                if held == *record {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "machine {machine:?} records {branch} as {held:?}, not {record:?}"
+                    ))
                 }
             }
             Claim::AtPin { at, repo } => {

@@ -88,6 +88,7 @@ impl Weave {
         .unwrap();
         std::fs::write(project.join(".gitignore"), ignore).unwrap();
         git_init_with_commit(&project);
+        common::record_trunk(&project);
         std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
         let bin = root.join("bin");

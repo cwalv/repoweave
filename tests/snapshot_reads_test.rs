@@ -132,6 +132,7 @@ fn sync_reads_committed_lock_not_working_tree() {
         &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
     let dest_proj = dest_projects.join("myproject");
+    common::record_trunk(&dest_proj);
 
     // Clone lib under destination at sha_v1.
     let dest_lib = dest_ws.join("lib");
@@ -233,6 +234,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
         &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
     let dest_proj = dest_projects.join("myproject");
+    common::record_trunk(&dest_proj);
 
     // Materialize lib in dest at sha_t0.
     let dest_lib = dest_ws.join("lib");
@@ -418,6 +420,7 @@ fn branch_form_lock_workspaces(
         &cwd_projects,
         &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
+    common::record_trunk(&cwd_projects.join("myproject"));
     std::fs::write(cwd_ws.join(".rwv-active"), "myproject\n").unwrap();
 
     let cwd_lib = cwd_ws.join("lib");

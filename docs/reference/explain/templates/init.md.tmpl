@@ -5,7 +5,10 @@
 Create a new project in the workspace, or adopt an existing repo as a project.
 `init` is the day-0 verb: it bootstraps the workspace (if needed), creates
 `projects/<name>/`, writes a skeletal `rwv.toml`, authors the integration
-files it implies, and auto-activates the project.
+files it implies, and auto-activates the project. It records the branch the
+project repo is on as `declared` (`rwv branch list` shows it); `init --adopt`
+first merges in the records the adopted repo's remote holds, so a branch someone
+already recorded keeps its record.
 
 `rwv init <name>` authors what an empty manifest implies — with the default
 integrations, `<name>.code-workspace` — before it activates, so a new project

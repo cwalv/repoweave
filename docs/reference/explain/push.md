@@ -205,6 +205,13 @@ Schema:
           "enum": [
             "pin"
           ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
+          ]
         }
       ]
     },
@@ -623,3 +630,7 @@ rwv push -j 4
   beneath it, so the project repo was not pushed; members that pushed are
   published. Resolve the rejection, or choose where the member pushes, then
   re-run `rwv push`.
+- *target unrecorded* — the checked-out branch of the project repo has no record
+  of how it is used, so this verb, which publishes, refuses before changing
+  anything. The record may be published but not yet fetched (`rwv fetch`);
+  otherwise say how the branch is used with `rwv branch set-mode`.

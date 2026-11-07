@@ -312,6 +312,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     // workweave's worktree checkout does not carry one.
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     let weaveroot = root.join(".workweaves");

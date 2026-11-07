@@ -118,6 +118,7 @@ fn setup_ci_shaped_workspace(tmp: &Path, pin: DepPin) -> (std::path::PathBuf, St
             &workspace.join("projects/web-app").to_string_lossy(),
         ],
     );
+    common::record_trunk(&workspace.join("projects/web-app"));
 
     (workspace, dep_sha)
 }

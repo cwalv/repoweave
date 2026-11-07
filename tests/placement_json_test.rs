@@ -137,6 +137,7 @@ fn weave() -> Weave {
     common::fixture_lock(&project, &[(MEMBER, &url, &sha)]);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-q", "-m", "lock: initial"]);
+    common::record_trunk(&project);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     Weave {
         _tmp: tmp,

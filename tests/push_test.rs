@@ -486,6 +486,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     // Move project repo to a non-canonical branch.
     common::git_in(&project_dir, &["checkout", "-b", "feat/x"]);
+    common::record_feature(&project_dir, "feat/x", "main");
 
     let output = rwv()
         .args(["push"])
@@ -550,6 +551,7 @@ fn push_refuses_project_repo_unborn_head_by_route_token() {
     // no commits — `rwv.toml`/`rwv.lock` stay on disk (still tracked from
     // the prior HEAD), but nothing is committed on the new branch yet.
     common::git_in(&project_dir, &["checkout", "--orphan", "newborn"]);
+    common::record_feature(&project_dir, "newborn", "main");
 
     let output = rwv()
         .args(["push"])

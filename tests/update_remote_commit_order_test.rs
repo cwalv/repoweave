@@ -86,6 +86,7 @@ fn weave() -> Weave {
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "manifest and lock"]);
     common::git_in(&project, &["push", "origin", "main"]);
+    common::record_trunk(&project);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let forge = parent.join("forge");

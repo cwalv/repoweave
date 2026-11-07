@@ -87,6 +87,7 @@ fn primary() -> Weaves {
     )
     .unwrap();
     git_init_with_commit(&alpha);
+    common::record_trunk(&alpha);
     std::fs::write(alpha.join("shared.db"), "primary db\n").unwrap();
     std::fs::write(alpha.join("local.db"), "local db\n").unwrap();
     std::fs::create_dir_all(alpha.join(".shared")).unwrap();

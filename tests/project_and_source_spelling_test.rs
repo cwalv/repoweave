@@ -43,6 +43,7 @@ fn init_project(dir: &Path) {
     common::git_in(dir, &["config", "user.name", "Test"]);
     common::git_in(dir, &["add", "-A"]);
     common::git_in(dir, &["commit", "-m", "init"]);
+    common::record_trunk(dir);
 }
 
 /// A weave holding `web-app` (active) and `mobile`, both with empty manifests.

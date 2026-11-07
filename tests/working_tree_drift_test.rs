@@ -97,6 +97,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_primary);
 
     let ww_root = parent.join(".workweaves").join("ws--ww");
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
@@ -125,6 +126,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
             &project_ww.to_string_lossy(),
         ],
     );
+    common::record_feature(&project_ww, "ww/project", "main");
 
     let primary_canon = repoweave::path_spelling::resolve(&primary_root)
         .unwrap()
@@ -307,6 +309,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_primary);
 
     let ww_root = tmp.path().join(".workweaves").join("primary--ww");
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
@@ -335,6 +338,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
             &project_ww.to_string_lossy(),
         ],
     );
+    common::record_feature(&project_ww, "ww/project", "main");
 
     let primary_canon = repoweave::path_spelling::resolve(&primary_root)
         .unwrap()

@@ -340,6 +340,7 @@ fn sync_post_refresh_clears_stale_index() {
     common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_primary);
 
     // --- Workweave ---
     let ww_root = tmp.path().join(".workweaves").join("primary--ww");
@@ -369,6 +370,7 @@ fn sync_post_refresh_clears_stale_index() {
             &project_ww.to_string_lossy(),
         ],
     );
+    common::record_feature(&project_primary, "ww/project", "main");
     // The ww project worktree inherits the already-committed rwv.lock@c1 from
     // project_primary. No additional commit needed — the lock already matches HEAD.
 
@@ -508,6 +510,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     common::fixture_lock(&project_source, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     common::git_in(&project_source, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_source, &["commit", "-m", "lock: v1.0.0"]);
+    common::record_trunk(&project_source);
 
     // CWD workspace: also at the same commit (SHA lock entry).
     let cwd_root = tmp.path().join("cwd");
@@ -538,6 +541,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
             &project_cwd.to_string_lossy(),
         ],
     );
+    common::record_feature(&project_source, "cwd/project", "main");
     // CWD lock uses the SHA form.
     common::fixture_lock(&project_cwd, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(&project_cwd, &["add", "rwv.lock"]);

@@ -165,6 +165,7 @@ pub fn run_push(
     }
 
     let project_name = ctx.require_active_project_on_disk()?.clone();
+    crate::branch::require_recorded(ctx)?;
     let primary_root = ctx.primary_path().to_path_buf();
     let project_dir = project_dir(&primary_root, &project_name);
 

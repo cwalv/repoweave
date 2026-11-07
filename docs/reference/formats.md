@@ -167,6 +167,43 @@ An older or hand-edited lock may still carry an entry pinned by a tag or branch 
 
 Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock` from a workweave updates the workweave's lock, not primary's.
 
+## Branch records
+
+Lives on the `rwv-records` branch of the project repo: an orphan branch with no working tree and no history in common with any weave branch, so it carries no `rwv.toml` and is no weave branch. `rwv branch set-mode` writes it, and so do `rwv init`, `rwv clone` and `rwv workweave create`; every verb that aligns members, locks, lands or publishes reads it. It holds one file per weave branch, at the branch's name (`feat/x` is the file `x` in the directory `feat`). Each commit on it ends with a trailer naming the release that wrote it:
+
+```
+records: set feat-x feature
+
+Rwv-Writer: 0.25.0
+```
+
+An entry is a small TOML file. A feature names the branch it lands into, `target`, and that branch's mode when the entry was written, `as`; a declared branch names only its mode:
+
+```toml
+mode = "feature"
+target = "main"
+as = "declared"
+```
+
+```toml
+mode = "declared"
+```
+
+When two writers recorded one branch differently and a merge met both, the entry holds only `conflict`, an array of the two values, until `rwv branch set-mode` writes one:
+
+```toml
+conflict = [
+  { mode = "declared" },
+  { mode = "feature", target = "main", as = "declared" },
+]
+```
+
+An entry with any other shape (an unknown key, a `feature` without `target`, a file that is not TOML) reads as `target` `unreadable` for that branch alone; the other entries read as usual, and `rwv branch set-mode` rewrites it. The writing release is named by the trailer of the commit that last changed the entry.
+
+The branch is read from the records remotes as well as from this repo: each remote-tracking records branch of the project repo's url remote and of every remote a project branch here publishes to is merged into the local one, entry by entry against their merge base. An entry changed on one side takes that side, one changed alike on both takes that value, and one changed differently is stored as a `conflict`. A remote added only to fetch someone's branches is read as nothing. A verb that only reads (`rwv branch list`, `rwv status`, `rwv log`, `rwv fetch`) does the merge in memory and writes nothing; a verb that writes a record, aligns, locks, lands or publishes commits the merge first. Writers move the local branch with a compare-and-swap, so two verbs writing at once lose neither write.
+
+The branch name `rwv-records` and every name below it (`rwv-records/…`) are reserved: no weave branch takes them (`name` `reserved`). Do not write the branch by hand; the next `rwv branch set-mode` converges whatever a hand edit left.
+
 ## `.rwv-active` — active project marker
 
 Lives at the weave root. Single line: the active project name.

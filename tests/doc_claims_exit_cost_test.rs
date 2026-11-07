@@ -99,6 +99,7 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     let project = ws.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
+    common::record_trunk(&project);
     std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
     std::fs::write(project.join(".gitignore"), "*.code-workspace\n").unwrap();
     std::fs::write(

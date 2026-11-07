@@ -51,6 +51,7 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     std::fs::write(project_dir.join(".claude"), "claude config\n").unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
 
     std::fs::write(ws.join(".rwv-active"), "alpha\n").unwrap();
     let activate_out = rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);

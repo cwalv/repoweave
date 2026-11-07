@@ -6,6 +6,7 @@
   "required": [
     "$schema",
     "judged",
+    "records",
     "repos",
     "unreadable_projects"
   ],
@@ -30,6 +31,13 @@
           "type": "null"
         }
       ]
+    },
+    "records": {
+      "description": "Each project's checked-out branch with its record and the branches that land into it, read in memory from the records as last fetched. A project whose repo is not on a branch has none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/BranchRecordStatus"
+      }
     },
     "repos": {
       "type": "array",
@@ -108,8 +116,43 @@
           "enum": [
             "pin"
           ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
+          ]
         }
       ]
+    },
+    "BranchRecordStatus": {
+      "description": "A project repo's checked-out branch and what its record reads as, with the branches that land into it, as `rwv status` shows it.",
+      "type": "object",
+      "required": [
+        "branch",
+        "dependents",
+        "project",
+        "record"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "dependents": {
+          "description": "The branches whose records name this one as their target.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "project": {
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/definitions/RecordOutput"
+        }
+      }
     },
     "ChoiceOutput": {
       "type": "object",
@@ -332,6 +375,25 @@
         "mid-bisect"
       ]
     },
+    "Mode": {
+      "description": "How a weave branch is used.",
+      "oneOf": [
+        {
+          "description": "Work onto a target branch: its `owned` and `fork` members sit on branches named after it.",
+          "type": "string",
+          "enum": [
+            "feature"
+          ]
+        },
+        {
+          "description": "Members sit on the branches its member entries declare.",
+          "type": "string",
+          "enum": [
+            "declared"
+          ]
+        }
+      ]
+    },
     "OpPhase": {
       "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
@@ -478,6 +540,126 @@
           ]
         }
       }
+    },
+    "RecordOutput": {
+      "description": "One weave branch's record, as `rwv branch list --json` carries it.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "declared"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "as",
+            "state",
+            "target_branch"
+          ],
+          "properties": {
+            "as": {
+              "$ref": "#/definitions/Mode"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "feature"
+              ]
+            },
+            "target_branch": {
+              "description": "The branch the feature lands into.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The branch has no record here.",
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "unrecorded"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Two writers recorded the branch differently; both values are listed.",
+          "type": "object",
+          "required": [
+            "state",
+            "values"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "conflict"
+              ]
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ValueOutput"
+              }
+            }
+          }
+        },
+        {
+          "description": "The entry does not read as a record.",
+          "type": "object",
+          "required": [
+            "reason",
+            "state"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "description": "The branch's target chain returns to it.",
+          "type": "object",
+          "required": [
+            "chain",
+            "state"
+          ],
+          "properties": {
+            "chain": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "cycle"
+              ]
+            }
+          }
+        }
+      ]
     },
     "RepoStatus": {
       "description": "Per-repo status entry.",
@@ -636,6 +818,33 @@
         },
         "project": {
           "type": "string"
+        }
+      }
+    },
+    "ValueOutput": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "as": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Mode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "$ref": "#/definitions/Mode"
+        },
+        "target_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

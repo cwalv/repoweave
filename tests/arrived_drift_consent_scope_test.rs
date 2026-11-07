@@ -246,6 +246,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + managed files"]);
     common::git_in(&project_dir, &["push", "origin", "main"]);
+    common::record_trunk(&project_dir);
 
     Fixture { _tmp: tmp, ws }
 }

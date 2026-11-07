@@ -28,6 +28,14 @@ src/add_remove.rs	unspellable-directory-name	tests/adopt_unspellable_directory_n
 src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	10
 src/backup.rs	pin would be unreachable	tests/backup_verb_test.rs	1
 src/bin/rwv-each/select.rs	(untokened:plugin)	-	6
+src/branch.rs	head-not-on-branch	-	2
+src/branch.rs	invalid-ref-name	-	1
+src/branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/branch.rs	name reserved	tests/refusal_arrival_test.rs	1
+src/branch.rs	target conflict	tests/branch_gate_test.rs	1
+src/branch.rs	target cycle	tests/branch_gate_test.rs	1
+src/branch.rs	target unreadable	tests/branch_gate_test.rs	1
+src/branch.rs	target unrecorded	tests/branch_gate_test.rs	1
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1

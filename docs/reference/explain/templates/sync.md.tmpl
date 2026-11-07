@@ -213,3 +213,7 @@ rwv sync --json -j 8 | jq -c 'select(.kind == "failed")'
   carry user lock-edits through. Run `rwv doctor --fix`.
 - *network-error* — a remote fetch failed. Retry after checking
   connectivity.
+- *target unrecorded* — the checked-out branch of the project repo has no record
+  of how it is used, so this verb, which aligns members, refuses before changing
+  anything. The record may be published but not yet fetched (`rwv fetch`);
+  otherwise say how the branch is used with `rwv branch set-mode`.

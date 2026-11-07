@@ -309,6 +309,7 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
 
     // ------------------------------------------------------------------
     // 2. Activate the primary — authors go.work at projects/web-app/go.work

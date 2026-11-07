@@ -163,6 +163,13 @@ Schema:
           "enum": [
             "pin"
           ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
+          ]
         }
       ]
     },

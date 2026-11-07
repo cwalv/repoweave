@@ -141,6 +141,7 @@ fn fixture() -> Fixture {
     );
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
+    common::record_trunk(&project_dir);
 
     // A second project, and it is the one primary selects: the pointer's value
     // is now something a stray selection would visibly change.

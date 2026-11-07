@@ -95,6 +95,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = parent.join("ww");
@@ -124,6 +125,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&ww_project, "ww/project", "main");
     std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     (

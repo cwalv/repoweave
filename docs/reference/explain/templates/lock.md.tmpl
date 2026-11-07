@@ -143,3 +143,7 @@ rwv lock --dirty
   `--commit`.
 - *workspace could not be resolved* — CWD is not inside a weave or workweave;
   run from within the workspace.
+- *target unrecorded* — the checked-out branch of the project repo has no record
+  of how it is used, so this verb, which locks, refuses before changing
+  anything. The record may be published but not yet fetched (`rwv fetch`);
+  otherwise say how the branch is used with `rwv branch set-mode`.

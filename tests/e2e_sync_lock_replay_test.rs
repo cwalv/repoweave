@@ -132,6 +132,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
 
     // Action verbs require `.rwv-active`.
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -416,6 +417,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     );
     common::git_in(&project_dir, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
 
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -724,6 +726,7 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
         &project_dir,
         &["commit", "-m", "lock: initial (legacy attrs)"],
     );
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let primary = PrimaryWorkspace {
@@ -826,6 +829,7 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
         &project_dir,
         &["commit", "-m", "lock: initial (both attrs lines)"],
     );
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let primary = PrimaryWorkspace {

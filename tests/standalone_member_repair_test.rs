@@ -61,6 +61,7 @@ fn weave_with_standalone_member(tmp: &Path) -> Weave {
     common::fixture_lock(&project_dir, &[(MEMBER, url.as_str(), pin.as_str())]);
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest and lock"]);
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     common::rwv()

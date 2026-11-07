@@ -93,6 +93,7 @@ fn plain_weave(root: &Path) -> PathBuf {
     std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
     common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
     ws
 }
@@ -1270,6 +1271,7 @@ fn primary_and_workweave(parent: &Path) -> (PathBuf, PathBuf) {
     .unwrap();
     common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww_root = parent.join(".workweaves/web-app--ww");
@@ -1295,6 +1297,7 @@ fn primary_and_workweave(parent: &Path) -> (PathBuf, PathBuf) {
             "web-app--ww",
         ],
     );
+    common::record_feature(&project_dir, "web-app--ww", "main");
     common::register_workweave(&primary, "web-app", "ww", &ww_root);
     std::fs::write(
         ww_root.join(".rwv-workweave"),

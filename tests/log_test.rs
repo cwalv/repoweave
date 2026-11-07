@@ -126,6 +126,7 @@ fn world(pin_app: bool) -> World {
     }
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     World { _tmp: tmp, ws }
 }
@@ -148,6 +149,7 @@ fn feature_world() -> (World, Feature) {
     for repo in [w.lib(), w.project()] {
         common::git_in(&repo, &["branch", "feat-x"]);
     }
+    common::record_feature(&w.project(), "feat-x", "main");
     let main_moved = commit(&w.lib(), "main-moved.txt", "lib: main moves");
     let relock = w.rwv(&["lock", "--commit"]);
     assert!(relock.status.success(), "{}", stderr(&relock));

@@ -128,6 +128,7 @@ fn fixture() -> Fixture {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary_root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     // -----------------------------------------------------------------------
@@ -174,6 +175,7 @@ fn fixture() -> Fixture {
             "ww/project",
         ],
     );
+    common::record_feature(&primary_project, "ww/project", "main");
     std::fs::write(ww_root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     Fixture {

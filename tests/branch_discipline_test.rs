@@ -1328,6 +1328,7 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
     write_project_manifest(&ws, "myproj", "github/acme/repo");
     git_in(&project_dir, &["add", "rwv.toml"]);
     git_in(&project_dir, &["commit", "-q", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
 
     rwv()
         .args(["workweave", "create", "--project", "myproj", "seat"])
@@ -4402,6 +4403,7 @@ fn a_sync_to_parked_mid_rebase_draws_no_switch_advice() {
     )
     .unwrap();
     std::fs::write(primary.join(".rwv-active"), "app\n").unwrap();
+    common::record_trunk(&primary_project);
     rwv().arg("lock").current_dir(&primary).assert().success();
     git_in(&primary_project, &["add", "-A"]);
     git_in(&primary_project, &["commit", "-q", "-m", "initial"]);

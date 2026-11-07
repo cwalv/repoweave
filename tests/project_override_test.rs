@@ -73,12 +73,14 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
     write_manifest_only(&proj_a, &[("github/acme/server", &url)]);
     common::git_in(&proj_a, &["add", "rwv.toml"]);
     common::git_in(&proj_a, &["commit", "-m", "init"]);
+    common::record_trunk(&proj_a);
 
     let proj_b = ws.join("projects/proj-b");
     init_repo(&proj_b);
     write_manifest_only(&proj_b, &[("github/acme/server", &url)]);
     common::git_in(&proj_b, &["add", "rwv.toml"]);
     common::git_in(&proj_b, &["commit", "-m", "init"]);
+    common::record_trunk(&proj_b);
 
     (ws, proj_a, proj_b, sha)
 }

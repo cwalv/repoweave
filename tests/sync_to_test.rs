@@ -104,6 +104,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // --- workweave --------------------------------------------------------
@@ -134,6 +135,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "ww/project",
         ],
     );
+    common::record_feature(&primary_project, "ww/project", "main");
     std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -986,6 +988,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
             "primary--feat",
         ],
     );
+    common::record_feature(&primary.project_dir, "primary--feat", "main");
 
     // Write the `.rwv-workweave` marker so WorkspaceContext::resolve returns
     // Checkout::Workweave with project = "web-app".
@@ -1137,6 +1140,7 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&primary_project);
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let weaveroot = parent_tmp.join(".workweaves");

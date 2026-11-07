@@ -101,6 +101,7 @@ fn setup_named_workspace_with_project(
     write_manifest(&project_dir, repos);
     run(&["add", "rwv.toml"], &project_dir);
     run(&["commit", "-m", "init"], &project_dir);
+    common::record_trunk(&project_dir);
 
     // Make the project active so action-verb tests don't need to pass
     // --project explicitly.

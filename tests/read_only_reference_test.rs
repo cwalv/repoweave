@@ -221,6 +221,7 @@ fn make_weave(tmp: &Path) -> Weave {
     )
     .unwrap();
     weave.commit_manifest(&project_dir, "owned", "reference");
+    common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     weave
 }
@@ -665,6 +666,7 @@ fn add_project(weave: &Weave, name: &str, ref_role: &str) {
     )
     .unwrap();
     weave.commit_manifest(&project_dir, "owned", ref_role);
+    common::record_trunk(&project_dir);
 }
 
 fn activate(weave: &Weave, project: &str) {

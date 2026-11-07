@@ -209,6 +209,7 @@ pub(crate) fn update_members(
         None => invocation,
     };
     let name = ctx.require_active_project_on_disk()?.clone();
+    crate::branch::require_recorded(ctx)?;
 
     // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
     // workweave when in one, primary otherwise. Mirrors add_remove.rs's

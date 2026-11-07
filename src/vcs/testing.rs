@@ -603,6 +603,71 @@ impl Vcs for FakeVcs {
         unsupported("branch_tips")
     }
 
+    fn records_branch(&self) -> &'static str {
+        unsupported("records_branch")
+    }
+
+    fn records_tip(
+        &self,
+        _repo: &Path,
+        _site: RecordsSite<'_>,
+    ) -> Result<Option<CommitId>, VcsError> {
+        unsupported("records_tip")
+    }
+
+    fn advance_records(
+        &self,
+        _repo: &Path,
+        _expected: Option<&CommitId>,
+        _to: &CommitId,
+    ) -> Result<RecordsAdvance, VcsError> {
+        unsupported("advance_records")
+    }
+
+    fn files_at(&self, _repo: &Path, _commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError> {
+        unsupported("files_at")
+    }
+
+    fn write_commit(
+        &self,
+        _repo: &Path,
+        _parents: &[CommitId],
+        _changes: &[FileChange],
+        _message: &str,
+    ) -> Result<CommitId, VcsError> {
+        unsupported("write_commit")
+    }
+
+    fn merge_bases(
+        &self,
+        _repo: &Path,
+        _a: &CommitId,
+        _b: &CommitId,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        unsupported("merge_bases")
+    }
+
+    fn last_message_touching(
+        &self,
+        _repo: &Path,
+        _tip: &CommitId,
+        _path: &str,
+    ) -> Result<Option<String>, VcsError> {
+        unsupported("last_message_touching")
+    }
+
+    fn branch_push_targets(
+        &self,
+        _repo: &Path,
+        _url_remote: Option<&RemoteHandle>,
+    ) -> Result<Vec<RemoteHandle>, VcsError> {
+        unsupported("branch_push_targets")
+    }
+
+    fn named_branches(&self, _repo: &Path) -> Result<Vec<NamedBranch>, VcsError> {
+        unsupported("named_branches")
+    }
+
     fn cancel_in_flight_op(&self, _repo: &Path) {
         unsupported("cancel_in_flight_op")
     }

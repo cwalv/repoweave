@@ -422,6 +422,7 @@ fn build_push_fixture() -> PushFixture {
     );
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::record_trunk(&project_dir);
 
     std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();
 

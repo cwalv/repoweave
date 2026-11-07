@@ -27,6 +27,14 @@ commits into the parent and deletes the workweave in one step.
 The parent workspace recorded in `.rwv-workweave` becomes the default sync-to
 target for bare `rwv sync-to` from inside the workweave.
 
+`create` records the new branch as a feature onto the branch the parent's
+project repo has checked out, with that branch's mode as it stands, and prints
+where it lands (`target-recorded`). It refuses before it makes anything when
+that branch has no record (`target` `unrecorded`, naming `rwv branch set-mode`)
+or when the parent's project repo is on a detached HEAD. Running `create` again
+on a workweave that exists records its branch if an earlier `create` stopped
+before doing so.
+
 ## Subcommands
 
 ### `rwv workweave create <name>`
