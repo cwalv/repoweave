@@ -127,6 +127,7 @@ src/plugins.rs	unknown-verb	-	1
 src/pull.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
 src/pull.rs	push-branch diverged	-	1
 src/push.rs	(untokened:environment-passthrough)	-	3
+src/push.rs	(untokened:internal-invariant)	-	1
 src/push.rs	(untokened:tally)	-	1
 src/push.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	tests/refusal_arrival_test.rs	1
