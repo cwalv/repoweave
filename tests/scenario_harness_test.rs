@@ -298,8 +298,6 @@ macro_rules! pending_on {
 pending_on!(
     resume_on_machine_b => WeaveBranch,
     feature_in_primary_while_main_moves => WeaveBranch,
-    workweave_without_b_then_pr => Rename,
-    workweave_without_b_given_up_after_publishing => Rename,
     feature_off_stable => WeaveBranch,
     review_colleague_fix => Review,
     stable_end_to_end => WeaveBranch,
@@ -2052,4 +2050,35 @@ fn log_against_resolves_a_range_per_repo_and_reads_the_pins_of_a_weave_branch() 
     );
 
     assert_eq!(refs_and_locks(&sandbox), before, "a log moves no ref");
+}
+
+#[test]
+fn a_workweave_without_a_branch_is_named_by_the_rename_and_then_published() {
+    runner::run(scenarios::workweave_without_b_then_pr()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_workweave_named_and_published_is_given_up_with_its_published_branches() {
+    runner::run(scenarios::workweave_without_b_given_up_after_publishing())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_rename_of_a_published_feature_leaves_the_old_branches_listed() {
+    runner::run(scenarios::raw_rename_published_feature()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_declared_branch_renamed_on_one_machine_is_adopted_on_another_without_a_conflict() {
+    runner::run(scenarios::records_rename_adopt()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_pruned_branch_records_no_superseded_tip_and_leaves_the_rename_unnamed() {
+    runner::run(scenarios::no_superseded_on_prune()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_declared_mode_branch_is_renamed_and_retired_and_protected_only_against_rewrites() {
+    runner::run(scenarios::declared_mode_rename_retire()).assert_fully_decided_green();
 }

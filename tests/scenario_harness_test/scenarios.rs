@@ -246,7 +246,44 @@ pub fn workweave_without_b_then_pr() -> Scenario {
         vec![
             create("anon"),
             Step::commit(&ww("anon"), Repo::App, "anon-app"),
-            Step::pending("name the workweave's branch", MissingVerb::Rename),
+            Step::rwv(&ww("anon"), &["push"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("rwv branch rename <new>")),
+            Step::rwv(&ww("anon"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("anon"), &["branch", "rename", "fix-anon"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: ww("anon"),
+                    repo: Repo::App,
+                    branch: "fix-anon",
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "proj--anon",
+                    record: None,
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "fix-anon",
+                    record: Some(feature_onto("main", Mode::Declared)),
+                }),
+            publishes_records(Step::rwv(&ww("anon"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "fix-anon")
+                .pushes(Remote::origin(Repo::Proj), "fix-anon")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteContains {
+                    repo: Repo::App,
+                    branch: "fix-anon",
+                    mark: "anon-app",
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "fix-anon",
+                    record: Some(feature_onto("main", Mode::Declared)),
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "proj--anon",
+                    record: None,
+                }),
         ],
     )
 }
@@ -354,8 +391,9 @@ pub fn tombstone_to_backup() -> Scenario {
 }
 
 /// A workweave made without a branch of its own carries a minted name that is
-/// never published: `push` refuses it, and naming the branch is the rename of a
-/// later release.
+/// never published: `push` refuses it, offering the rename that names it; once
+/// named and published, giving the workweave up takes the published branches
+/// with it by the named repos.
 pub fn workweave_without_b_given_up_after_publishing() -> Scenario {
     scenario(
         "workweave without -b, given up after publishing",
@@ -367,8 +405,45 @@ pub fn workweave_without_b_given_up_after_publishing() -> Scenario {
                 .claim(Claim::OutputContains(
                     "projects/proj: name minted (proj--anon)",
                 ))
-                .claim(Claim::OutputLacks("rwv branch rename")),
-            Step::pending("name the branch, then publish it", MissingVerb::Rename),
+                .claim(Claim::OutputContains("rwv branch rename <new>")),
+            Step::rwv(&ww("anon"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("anon"), &["branch", "rename", "fix-anon"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("anon"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "fix-anon")
+                .pushes(Remote::origin(Repo::Proj), "fix-anon")
+                .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "delete",
+                    "--project",
+                    "proj",
+                    "anon",
+                    "--discard-unlanded",
+                    "--delete-remote-unlanded",
+                    "local/remotes/app",
+                    "--delete-remote-unlanded",
+                    "projects/proj",
+                ],
+            )
+            .deletes(Remote::origin(Repo::App), "fix-anon")
+            .deletes(Remote::origin(Repo::Proj), "fix-anon")
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("anon")))
+            .claim(Claim::RemoteLacks {
+                repo: Repo::App,
+                branch: "fix-anon",
+            })
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Proj,
+                branch: "fix-anon",
+            })
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "anon-app",
+                marked: None,
+            }),
         ],
     )
 }
@@ -2200,6 +2275,145 @@ pub fn index_old_path() -> Scenario {
     )
 }
 
+/// raw-rename-published-feature: a raw `git branch -m` of a pushed `feat-x` in
+/// the project repo leaves its members on `feat-x`, the old record and the old
+/// remote branches in place, and the workspace unaligned.
+pub fn raw_rename_published_feature() -> Scenario {
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["branch", "-m", "feat-x", "feat-y"]),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app   feat-x"))
+            .claim(Claim::OutputContains("local/remotes/lib   feat-x"))
+            .claim(Claim::OutputContains("record: proj feat-y: unrecorded"))
+            .claim(Claim::OutputContains("projects/proj aligned for feat-x"))
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::App,
+                branch: "feat-x",
+            })
+            .claim(Claim::RemoteContains {
+                repo: Repo::App,
+                branch: "feat-x",
+                mark: "pr-app",
+            })
+            .claim(Claim::RemoteContains {
+                repo: Repo::Lib,
+                branch: "feat-x",
+                mark: "pr-lib",
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-x",
+                record: feat_x_record(),
+            }),
+    ]);
+    scenario("a raw rename of a published feature", steps)
+}
+
+/// records-rename-adopt: `stable`, recorded `declared`, is renamed `release`
+/// on A and pushed; B, with its own `stable`, adopts the new name; both
+/// records and the dependent's target move with no conflict, and the landed
+/// `origin/stable` is deleted by a named target.
+pub fn records_rename_adopt() -> Scenario {
+    scenario(
+        "records: a declared branch renamed on one machine, adopted on another",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::git(&a(), Repo::Proj, &["branch", "stable"]),
+            Step::git(&a(), Repo::Proj, &["branch", "stacked"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["branch", "set-mode", "stacked", "feature", "--target", "stable"],
+            )
+            .expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "stable"]))
+                .pushes(Remote::origin(Repo::Proj), "stable")
+                .expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "stacked"]))
+                .pushes(Remote::origin(Repo::Proj), "stacked")
+                .expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["fetch", "origin"]),
+            Step::git(&b(), Repo::Proj, &["branch", "stable", "origin/stable"]),
+            Step::rwv(&b(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["switch", "stable"]),
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "rename", "release"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "stable",
+                    record: None,
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "release",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "stacked",
+                    record: Some(feature_onto("release", Mode::Declared)),
+                }),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "release")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: None,
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "release",
+                    record: Some(Record::Declared),
+                }),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "stacked"]))
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stacked",
+                    record: Some(feature_onto("release", Mode::Declared)),
+                }),
+            Step::git(&b(), Repo::Proj, &["switch", "stable"]),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["branch", "rename", "release", "--adopt"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "stable",
+                    record: None,
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "release",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "stacked",
+                    record: Some(feature_onto("release", Mode::Declared)),
+                }),
+            Step::rwv(
+                &b(),
+                &[
+                    "branch",
+                    "delete",
+                    "stable",
+                    "--target",
+                    "release",
+                    "--delete-remote",
+                ],
+            )
+            .deletes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Proj,
+                branch: "stable",
+            }),
+        ],
+    )
+}
+
 pub fn basedir_default() -> Scenario {
     scenario(
         "the basedir is the default until it is set, and is kept in the index",
@@ -2235,4 +2449,143 @@ pub fn basedir_default() -> Scenario {
                 .claim(Claim::OutputContains("ww")),
         ],
     )
+}
+
+/// no-superseded-on-prune: a pull request merged and its branch deleted is a
+/// prune, which records no superseded tip, leaves the unpushed commits listed
+/// and prints the rename without a name of its own to offer.
+pub fn no_superseded_on_prune() -> Scenario {
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
+        Step::forge(Forge::Merge {
+            repo: Repo::App,
+            branch: "feat-x",
+            how: MergeHow::Squash,
+        })
+        .may_leave_unresolved(&[Repo::App]),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::App,
+            branch: "feat-x",
+        })
+        .may_leave_unresolved(&[Repo::App]),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::Lib,
+            branch: "feat-x",
+        })
+        .may_leave_unresolved(&[Repo::Lib]),
+        Step::forge(Forge::Merge {
+            repo: Repo::Proj,
+            branch: "feat-x",
+            how: MergeHow::Squash,
+        })
+        .may_leave_unresolved(&[Repo::App, Repo::Lib]),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::Proj,
+            branch: "feat-x",
+        }),
+        Step::rwv(&a(), &["fetch"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("pruned"))
+            .claim(Claim::OutputLacks("rewritten")),
+        Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/superseded"])
+            .claim(Claim::OutputLacks("refs/rwv/superseded")),
+        Step::git(&a(), Repo::Proj, &["for-each-ref", "refs/rwv/superseded"])
+            .claim(Claim::OutputLacks("refs/rwv/superseded")),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("push-branch gone"))
+            .claim(Claim::OutputContains("pr-app")),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("push-branch gone"))
+            .claim(Claim::OutputContains("rwv branch rename <new> --adopt")),
+    ]);
+    scenario("a merged pull request's pruned branch", steps)
+}
+
+/// declared-mode-rename-retire (GP-1): a declared-mode project branch is
+/// protected only against rewrites. `stable` is renamed `release` and pushed,
+/// `--overwrite` and `--delete-remote-unlanded` refuse it `protected`, the
+/// landed `origin/release` is deleted by a named target, and the forge's rename
+/// of `main` to `trunk` takes the rename that adopts it.
+pub fn declared_mode_rename_retire() -> Scenario {
+    let mut steps = vec![
+        Step::git(&a(), Repo::Proj, &["branch", "stable"]),
+        Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["switch", "stable"]),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "rename", "release"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "stable",
+                record: None,
+            })
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "release",
+                record: Some(Record::Declared),
+            }),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "release")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteRecordIs {
+                branch: "release",
+                record: Some(Record::Declared),
+            }),
+        Step::rwv(&a(), &["push", "--overwrite", "projects/proj"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("protected declared mode (release)")),
+        Step::git(&a(), Repo::Proj, &["switch", "main"]),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "delete",
+                "release",
+                "--target",
+                "main",
+                "--discard-unlanded",
+                "--delete-remote-unlanded",
+                "projects/proj",
+            ],
+        )
+        .expect(Exit::Fails)
+        .claim(Claim::OutputContains("protected declared mode (release)")),
+        Step::rwv(
+            &a(),
+            &["branch", "delete", "release", "--target", "main", "--delete-remote"],
+        )
+        .deletes(Remote::origin(Repo::Proj), "release")
+        .expect(Exit::Succeeds)
+        .claim(Claim::RemoteLacks {
+            repo: Repo::Proj,
+            branch: "release",
+        }),
+        Step::commit(&a(), Repo::App, "main-work"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(Step::forge_rename_branch(Repo::Proj, "main", "trunk"));
+    steps.extend([
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .claim(Claim::OutputContains("push-branch gone"))
+            .claim(Claim::OutputContains("rwv branch rename <new> --adopt")),
+        Step::rwv(&a(), &["branch", "rename", "trunk", "--adopt"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "main",
+                record: None,
+            })
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "trunk",
+                record: Some(Record::Declared),
+            }),
+    ]);
+    scenario("a declared-mode branch is renamed and retired", steps)
 }

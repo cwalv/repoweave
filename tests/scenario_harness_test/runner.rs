@@ -13,8 +13,6 @@ pub enum MissingVerb {
     /// Start a branch across the project and its members, or move a weave
     /// between such branches.
     WeaveBranch,
-    /// Give a workweave's branches a chosen name after creation.
-    Rename,
     /// Change the branch `rwv.toml` declares for a member.
     Declare,
     /// Materialize a branch someone else pushed, in a workweave of its own.
@@ -25,7 +23,6 @@ impl MissingVerb {
     pub fn describe(self) -> &'static str {
         match self {
             MissingVerb::WeaveBranch => "create or switch a branch across the whole weave",
-            MissingVerb::Rename => "rename a workweave's branches",
             MissingVerb::Declare => "change a member's declared branch",
             MissingVerb::Review => "materialize someone else's pushed branch",
         }
