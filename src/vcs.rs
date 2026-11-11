@@ -3262,6 +3262,10 @@ pub trait Vcs: Send + Sync {
         pushed: Option<&ResolvedRevisionId>,
     ) -> Result<Vec<RangeCommit>, VcsError>;
 
+    /// How long ago a fetch into `repo` last completed, or `None` where none
+    /// is on record. For git: the age of `FETCH_HEAD`.
+    fn last_fetch_age(&self, repo: &Path) -> Result<Option<std::time::Duration>, VcsError>;
+
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
     ///

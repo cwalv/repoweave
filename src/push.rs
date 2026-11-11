@@ -315,7 +315,11 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     .map_err(|(reported, e)| json_refusal(&reported, e))?;
 
     if request.mode == PushMode::DryRun {
-        plan.print_dry_run(&pushed, push_project);
+        plan.print_dry_run(
+            &pushed,
+            push_project,
+            &fetch_age_text(pvcs.as_ref(), &pushed.project_dir),
+        );
         return Ok(());
     }
 
@@ -701,8 +705,11 @@ struct ProjectPlan {
 }
 
 impl Plan {
-    fn print_dry_run(&self, pushed: &Pushed, push_project: bool) {
-        outln!("rwv push (dry-run):");
+    fn print_dry_run(&self, pushed: &Pushed, push_project: bool, fetch_age: &str) {
+        outln!(
+            "rwv push (dry-run): judged on refs as last fetched{}",
+            fetch_age
+        );
         for item in &self.items {
             outln!(
                 "  {}: would push {} -> {}",
@@ -830,6 +837,8 @@ fn judge_into(
         reported: Report::default(),
     };
 
+    let target_lock = target_lock_of(pushed, pvcs)?;
+    let declared = declared_by_pushed_range(pushed, pvcs, project_url_remote)?;
     for member in members {
         if !member.acting {
             if request.filter.is_empty() {
@@ -852,11 +861,21 @@ fn judge_into(
             aligner.as_ref(),
             fetched.url_remote(&member.path),
             &live,
+            target_lock.as_ref(),
             refusals,
             reported,
             failures,
             &mut plan,
         )?;
+        if let Some(names) = declared.get(&member.path) {
+            plan_declared_branches(
+                pushed,
+                member,
+                fetched.url_remote(&member.path),
+                names,
+                &mut plan,
+            )?;
+        }
     }
 
     judge_project(
@@ -881,6 +900,7 @@ fn judge_member(
     aligner: Option<&Aligner>,
     url_remote: Option<&RemoteHandle>,
     live: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
+    target_lock: Option<&LockFile>,
     refusals: &mut Report,
     reported: &mut Report,
     failures: &mut Vec<String>,
@@ -975,6 +995,13 @@ fn judge_member(
         member: true,
     };
     let judged = crate::push_branch::judge(vcs, &subject, &branch_standing);
+    if pushed.is_feature()
+        && matches!(member.entry.role, Role::Owned | Role::Fork)
+        && !holds_commits_beyond_target_pin(vcs, member, &head, target_lock)?
+    {
+        plan.state_skipped.push(path.clone());
+        return Ok(());
+    }
     let named = !request.filter.is_empty();
     let operand = RepoOperand::Member(path.clone());
     let replace = match &branch_standing {
@@ -1030,14 +1057,6 @@ fn judge_member(
             plan.state_skipped.push(path.clone());
             return Ok(());
         }
-        Standing::Unpublished
-            if pushed.is_feature()
-                && matches!(member.entry.role, Role::Owned | Role::Fork)
-                && vcs.unpushed_commits(&member.dir, &branch)?.is_empty() =>
-        {
-            plan.state_skipped.push(path.clone());
-            return Ok(());
-        }
         Standing::Ahead | Standing::Unpublished | Standing::Gone { .. } => Replace::FastForwardOnly,
     };
     let target = target.expect("a standing other than no push target has one");
@@ -1050,6 +1069,197 @@ fn judge_member(
         replace,
     });
     Ok(())
+}
+
+/// `T`'s lock: the one at the tip of the newer of the record's target and its
+/// upstream, `None` where this is no feature or the target has no lock here.
+fn target_lock_of(pushed: &Pushed, pvcs: &dyn Vcs) -> anyhow::Result<Option<LockFile>> {
+    let Record::Feature { target, .. } = &pushed.record else {
+        return Ok(None);
+    };
+    let raw = RawRefName::new(target.as_str());
+    let mut tips: Vec<ResolvedRevisionId> = pvcs
+        .resolve_local_branch_tip(&pushed.project_dir, &raw)?
+        .into_iter()
+        .collect();
+    tips.extend(
+        pvcs.remote_copies(&pushed.project_dir, &raw)?
+            .into_iter()
+            .map(|copy| copy.tip),
+    );
+    let mut newest: Option<ResolvedRevisionId> = None;
+    for tip in tips {
+        newest = match newest {
+            None => Some(tip),
+            Some(held) if pvcs.is_ancestor(&pushed.project_dir, &held, &tip)? => Some(tip),
+            Some(held) if pvcs.is_ancestor(&pushed.project_dir, &tip, &held)? => Some(held),
+            Some(_) => anyhow::bail!(
+                "rwv push: {target} and its upstream have diverged, so its tip, whose lock \
+                 says what {} holds beyond it, is not one commit; take theirs in first",
+                pushed.branch
+            ),
+        };
+    }
+    let Some(tip) = newest else {
+        return Ok(None);
+    };
+    Ok(pvcs
+        .read_file_at_revision(&pushed.project_dir, &tip, Path::new(LockFile::FILE_NAME))
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok()))
+}
+
+/// Whether a feature's member branch holds commits the target's pin for the
+/// member lacks. A member the target's lock does not pin, or pins at a commit
+/// this clone lacks, has no pin to lack them: the branch is published.
+fn holds_commits_beyond_target_pin(
+    vcs: &dyn Vcs,
+    member: &Member,
+    head: &ResolvedRevisionId,
+    target_lock: Option<&LockFile>,
+) -> anyhow::Result<bool> {
+    let Some(entry) = target_lock.and_then(|lock| lock.get_entry(&member.path)) else {
+        return Ok(true);
+    };
+    let Ok(pin) = vcs.resolve_revision(&member.dir, entry.version.as_str()) else {
+        return Ok(true);
+    };
+    Ok(!matches!(
+        vcs.relation(&member.dir, head, &pin)?,
+        crate::vcs::Relation::Even | crate::vcs::Relation::Behind
+    ))
+}
+
+/// The commits a push of the project branch publishes, oldest first.
+fn pushed_project_range(
+    pushed: &Pushed,
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+) -> anyhow::Result<(Vec<crate::vcs::RangeCommit>, Option<ResolvedRevisionId>)> {
+    let Some(tip) = pvcs.resolve_local_branch_tip(&pushed.project_dir, &pushed.raw)? else {
+        return Ok((Vec::new(), None));
+    };
+    let (standing, target) = crate::push_branch::standing_of_branch(
+        pvcs,
+        &pushed.project_dir,
+        &pushed.raw,
+        project_url_remote,
+    )?;
+    let on_target = match (&standing, &target) {
+        (Standing::Unpublished | Standing::Gone { .. }, _) | (_, None) => None,
+        (_, Some(target)) => pvcs
+            .remote_copies(&pushed.project_dir, &pushed.raw)?
+            .into_iter()
+            .find(|copy| &copy.remote == target)
+            .map(|copy| copy.tip),
+    };
+    let range = pvcs.pushed_range(&pushed.project_dir, &tip, on_target.as_ref())?;
+    Ok((range, Some(tip)))
+}
+
+/// Every branch each member is declared on, by the project branch's tip and,
+/// for a branch that is not a feature, by each commit of the range being pushed. A commit whose `rwv.toml` does not
+/// parse under the current schema declares nothing.
+fn declared_by_pushed_range(
+    pushed: &Pushed,
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+) -> anyhow::Result<BTreeMap<RepoPath, std::collections::BTreeSet<String>>> {
+    let mut declared: BTreeMap<RepoPath, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for (path, entry) in pushed.manifest.iter_entries() {
+        declared
+            .entry(path.clone())
+            .or_default()
+            .insert(entry.branch.local_counterpart().as_str().to_owned());
+    }
+    if pushed.is_feature() {
+        return Ok(declared);
+    }
+    let (range, _) = pushed_project_range(pushed, pvcs, project_url_remote)?;
+    for commit in range {
+        let at = ResolvedRevisionId::from(commit.id);
+        let Some(manifest) = pvcs
+            .read_file_at_revision(&pushed.project_dir, &at, Path::new(Manifest::FILE_NAME))
+            .ok()
+            .and_then(|text| Manifest::from_toml_str(&text).ok())
+        else {
+            continue;
+        };
+        for (path, entry) in manifest.iter_entries() {
+            declared
+                .entry(path.clone())
+                .or_default()
+                .insert(entry.branch.local_counterpart().as_str().to_owned());
+        }
+    }
+    Ok(declared)
+}
+
+/// Each branch the tip or a commit of the pushed range declares for `member`,
+/// other than the one already judged, goes to its push target when it exists
+/// here and has commits the push target lacks or no push branch.
+fn plan_declared_branches(
+    pushed: &Pushed,
+    member: &Member,
+    url_remote: Option<&RemoteHandle>,
+    names: &std::collections::BTreeSet<String>,
+    plan: &mut Plan,
+) -> anyhow::Result<()> {
+    let vcs = member.vcs.as_ref();
+    let judged = pushed.expected(member.entry.role, &member.entry);
+    for name in names {
+        let branch = RawRefName::new(name.clone());
+        if branch == judged
+            || plan
+                .items
+                .iter()
+                .any(|i| i.repo_path == member.path && i.branch == *name)
+            || vcs
+                .resolve_local_branch_tip(&member.dir, &branch)?
+                .is_none()
+        {
+            continue;
+        }
+        let (standing, target) =
+            crate::push_branch::standing_of_branch(vcs, &member.dir, &branch, url_remote)?;
+        let Some(target) = target else { continue };
+        let publishes = match standing {
+            Standing::Unpublished => true,
+            Standing::Ahead => !pushed.is_feature(),
+            _ => false,
+        };
+        if publishes {
+            plan.items.push(PushPlanItem {
+                repo_path: member.path.clone(),
+                branch: name.clone(),
+                vcs_type: member.entry.vcs_type,
+                publish_ref: PublishRef::from_local(&LocalRefName::of_branch(&branch)),
+                target,
+                replace: Replace::FastForwardOnly,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `, the last fetch <n> ago` or `, none on record`, for the project repo.
+fn fetch_age_text(vcs: &dyn Vcs, repo: &Path) -> String {
+    match vcs.last_fetch_age(repo) {
+        Ok(Some(age)) => {
+            let secs = age.as_secs();
+            let (n, unit) = match secs {
+                0..=59 => (secs, "second"),
+                60..=3599 => (secs / 60, "minute"),
+                3600..=86399 => (secs / 3600, "hour"),
+                _ => (secs / 86400, "day"),
+            };
+            format!(
+                " (last fetch {n} {unit}{} ago)",
+                if n == 1 { "" } else { "s" }
+            )
+        }
+        _ => " (no fetch on record)".to_owned(),
+    }
 }
 
 /// The line refusing an overwrite of `branch`'s push branch while a live lock

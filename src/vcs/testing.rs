@@ -762,6 +762,10 @@ impl Vcs for FakeVcs {
         unsupported("count_commits_ahead_of_remote")
     }
 
+    fn last_fetch_age(&self, _repo: &Path) -> Result<Option<std::time::Duration>, VcsError> {
+        unsupported("last_fetch_age")
+    }
+
     fn pushed_range(
         &self,
         _repo: &Path,

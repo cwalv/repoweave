@@ -438,6 +438,120 @@ fn push_refuses_detached_head() {
 // A recorded feature branch publishes from the primary
 // ============================================================================
 
+/// A feature's member branch is published when it holds commits the target's
+/// pin lacks, even when some other remote branch already carries them.
+#[test]
+fn a_feature_member_branch_holding_commits_beyond_the_targets_pin_is_published() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["checkout", "-b", "feat/y"]);
+    common::record_feature(&project_dir, "feat/y", "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let member = ws.workspace.join("local/org/a");
+    std::fs::write(member.join("y.txt"), "y").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "feature work"]);
+    common::git_in(&member, &["push", "origin", "HEAD:refs/heads/elsewhere"]);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&ws.manifest_bares[0].1, &["rev-parse", "refs/heads/feat/y"]),
+        common::git_in(&member, &["rev-parse", "HEAD"]),
+        "the branch holds commits the target's pin lacks, so it is published"
+    );
+}
+
+/// A feature's member branch at the target's pin holds nothing the pin lacks
+/// and is not published.
+#[test]
+fn a_feature_member_branch_at_the_targets_pin_is_not_published() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["checkout", "-b", "feat/z"]);
+    common::record_feature(&project_dir, "feat/z", "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let none = common::git()
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/feat/z"])
+        .current_dir(&ws.manifest_bares[0].1)
+        .output()
+        .unwrap();
+    assert!(
+        none.stdout.is_empty(),
+        "nothing beyond the target's pin to publish"
+    );
+}
+
+/// On a declared branch, a branch some commit in the pushed range declared is
+/// published with the branch the tip declares.
+#[test]
+fn a_branch_a_commit_in_the_pushed_range_declared_is_published() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let member = ws.workspace.join("local/org/a");
+    common::git_in(&member, &["branch", "side"]);
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "branch = \"side\""),
+    )
+    .unwrap();
+    common::git_in(&project_dir, &["commit", "-qam", "declare side"]);
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
+    common::git_in(&project_dir, &["commit", "-qam", "declare main again"]);
+
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&ws.manifest_bares[0].1, &["rev-parse", "refs/heads/side"]),
+        common::git_in(&member, &["rev-parse", "side"]),
+        "the branch the range declared is published"
+    );
+}
+
+/// A dry run says what it judged from, and how old that is.
+#[test]
+fn push_dry_run_says_it_judged_refs_as_last_fetched() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let out = rwv()
+        .args(["push", "--dry-run"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("judged on refs as last fetched (last fetch")
+            || stdout.contains("judged on refs as last fetched (no fetch on record)"),
+        "{stdout}"
+    );
+}
+
 /// A publishing push leaves `rwv.lock` as the committed lock holds it: it
 /// judges the pins and never writes them.
 #[test]

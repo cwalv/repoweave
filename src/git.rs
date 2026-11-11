@@ -2944,6 +2944,22 @@ impl Vcs for GitVcs {
             .collect()
     }
 
+    fn last_fetch_age(&self, repo: &Path) -> Result<Option<std::time::Duration>, VcsError> {
+        let path = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "FETCH_HEAD",
+            ],
+            repo,
+        )?;
+        Ok(std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.elapsed().ok()))
+    }
+
     fn pushed_range(
         &self,
         repo: &Path,
