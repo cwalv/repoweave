@@ -476,12 +476,13 @@ fn validate_overwrites(
                     );
                 }
                 if pushed.record == Record::Declared {
-                    crate::refuse!(
-                        RefusalKind::InapplicableFlag,
-                        "rwv push: `{}` is a declared-mode project branch, which `--overwrite` \
-                         never rewrites",
-                        pushed.branch
-                    );
+                    return Err(State::ProtectedDeclaredMode
+                        .of(project_label(&pushed.project))
+                        .project_repo()
+                        .subject(&pushed.branch)
+                        .by_verb("push")
+                        .judge(project_vcs().as_ref())
+                        .refused());
                 }
             }
             RepoOperand::Member(path) => {
@@ -496,14 +497,17 @@ fn validate_overwrites(
                 let expected = pushed.expected(member.entry.role, &member.entry);
                 let accounting =
                     accounting.get_or_insert_with(|| Accounting::scan(ctx.primary_path()));
-                if accounting.declares(&member.path, expected.as_str()) {
-                    crate::refuse!(
-                        RefusalKind::InapplicableFlag,
-                        "rwv push: `{}` in {} is a branch some weave branch declares, which \
-                         `--overwrite` never rewrites",
-                        expected,
-                        member.path
-                    );
+                let declarers = accounting.declarers(&member.path, expected.as_str());
+                if !declarers.is_empty() {
+                    return Err(State::ProtectedDeclared
+                        .of(&member.path)
+                        .member()
+                        .subject(&expected)
+                        .listing(declarers)
+                        .bind("<m>", &member.path)
+                        .by_verb("push")
+                        .judge(project_vcs().as_ref())
+                        .refused());
                 }
             }
         }

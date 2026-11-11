@@ -3813,6 +3813,26 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn rename_branch(
+        &self,
+        repo: &Path,
+        from: &RawRefName,
+        to: &RawRefName,
+    ) -> Result<(), VcsError> {
+        if self.resolve_local_branch_tip(repo, to)?.is_some() {
+            return Err(VcsError::CommandFailed {
+                args: local_branch_tip_args(to.as_str()),
+                repo: repo.to_path_buf(),
+                stderr: format!("a local branch named '{to}' already exists"),
+            });
+        }
+        Self::run(["branch", "--move", from.as_str(), to.as_str()], repo)?;
+        if Self::config_get(repo, &format!("branch.{to}.merge"))?.is_some() {
+            Self::run(["branch", "--unset-upstream", to.as_str()], repo)?;
+        }
+        Ok(())
+    }
+
     fn create_branch(
         &self,
         repo: &Path,

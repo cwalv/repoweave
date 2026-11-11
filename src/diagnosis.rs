@@ -60,6 +60,8 @@ pub enum Axis {
     Alignment,
     /// A project's workweave index at the path earlier releases kept it at.
     LegacyWorkweaveIndex,
+    /// A branch rwv never rewrites, renames or deletes.
+    Protected,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -70,7 +72,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 10] = [
+    pub const ALL: [Axis; 11] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -81,6 +83,7 @@ impl Axis {
         Self::Target,
         Self::Alignment,
         Self::LegacyWorkweaveIndex,
+        Self::Protected,
     ];
 
     pub fn token(self) -> String {
@@ -197,6 +200,21 @@ impl Axis {
                        [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); \
                        [Shared refs and drift](../explanation/joints/shared-refs-drift.md).",
             },
+            Self::Protected => &KindRow {
+                condition: "A verb would rewrite, rename or delete a branch that other \
+                            branches depend on staying where it is: a branch some live weave \
+                            branch declares for a member, or the project branch whose record \
+                            is `declared`.",
+                why: "A declared branch is what every weave branch that declares it follows, \
+                      and what a fresh clone checks out; rewriting, renaming or deleting it \
+                      moves them all at once, and a rewrite can strand commits others have \
+                      built on. A declared-mode project branch is protected against rewrites \
+                      and the deletion of an unlanded push branch alone: a rename moves only \
+                      its record, stored entries and the records that land into it, and a \
+                      landed push branch deleted loses nothing.",
+                sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
+                       [Destructive operations](../explanation/destructive-operations.md).",
+            },
             Self::Pin => &KindRow {
                 condition: "A commit a lock pins is not there to be at: the lock has no entry \
                             for a member, or pins a commit that no ref in the clone reaches; or \
@@ -241,6 +259,7 @@ impl Axis {
             | Self::PushBranch
             | Self::Name
             | Self::Publish
+            | Self::Protected
             | Self::Target => None,
             Self::Pin => Some(Finding::of(
                 crate::check::ViolationKind::Pin,
@@ -390,6 +409,8 @@ pub enum State {
     NameNoSuchBranch,
     NameReserved,
     NameMinted,
+    NameDeclared,
+    NameFeature,
     PublishWithheld,
     PublishRecordsRejected,
     PublishNoPin,
@@ -422,6 +443,8 @@ pub enum State {
     PinBackwards,
     PinUnmerged,
     PinWaived,
+    ProtectedDeclared,
+    ProtectedDeclaredMode,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -439,7 +462,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 52] = [
+    pub const ALL: [State; 56] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -464,12 +487,16 @@ impl State {
         Self::PinUnmerged,
         Self::PinWaived,
         Self::PinWouldBeUnreachable,
+        Self::ProtectedDeclared,
+        Self::ProtectedDeclaredMode,
         Self::NameTaken,
         Self::NameExists,
         Self::NameARevision,
         Self::NameNoSuchBranch,
         Self::NameReserved,
         Self::NameMinted,
+        Self::NameDeclared,
+        Self::NameFeature,
         Self::PublishWithheld,
         Self::PublishRecordsRejected,
         Self::PublishNoPin,
@@ -590,7 +617,7 @@ impl State {
                         fetched, and holds commits no remote-tracking branch reaches, listed",
                 refused_by: "`rwv push` skips it unless `--repo` names it; `rwv status` \
                              reports it",
-                offers: &[Form::C15, Form::C7PushRepo],
+                offers: &[Form::C15, Form::C7PushRepo, Form::C10Adopt],
                 verb_offers: &[],
             },
             Self::PushBranchForeignUpstream => &StateRow {
@@ -671,11 +698,17 @@ impl State {
                 means: "a repo already has a branch of the name the verb would give its \
                         checkout, standing at a revision other than the one the verb would \
                         start it at, which the line lists; it holds commits the verb did not \
-                        put there",
+                        put there. For a rename, the new name is a local branch of the project \
+                        repo or of a member the rename would move, or a branch a remote has, \
+                        as last fetched; `--adopt` takes up the remote's",
                 refused_by: "`rwv workweave create`, for the branch it mints in the project \
-                             repo and in each owned or fork member",
+                             repo and in each owned or fork member; `rwv branch rename`",
                 offers: &[],
-                verb_offers: &[("workweave create", Form::AnotherName)],
+                verb_offers: &[
+                    ("workweave create", Form::AnotherName),
+                    ("branch rename", Form::C10),
+                    ("branch rename", Form::C10Adopt),
+                ],
             },
             Self::NameARevision => &StateRow {
                 axis: Axis::Name,
@@ -717,6 +750,27 @@ impl State {
                         that was not given one, `<project>--<workweave>`, which is never \
                         published, and neither is its record",
                 refused_by: "`rwv push`",
+                offers: &[Form::C10],
+                verb_offers: &[],
+            },
+            Self::NameDeclared => &StateRow {
+                axis: Axis::Name,
+                name: "declared",
+                means: "a feature would take a name that a live weave branch declares as a \
+                        member's branch, the member and the declaring branches listed: the \
+                        member's branch of that name is the declared branch, and a feature's \
+                        own member branch cannot be it",
+                refused_by: "`rwv branch rename`, for a feature",
+                offers: &[Form::C10],
+                verb_offers: &[],
+            },
+            Self::NameFeature => &StateRow {
+                axis: Axis::Name,
+                name: "feature",
+                means: "a feature would take a name that another project's feature of that \
+                        name already uses for a member both list, the project and the member \
+                        named: one member branch would serve two features",
+                refused_by: "`rwv branch rename`, for a feature",
                 offers: &[Form::C10],
                 verb_offers: &[],
             },
@@ -1017,6 +1071,28 @@ impl State {
                         differently is listed and not refused",
                 refused_by: "`rwv push`",
                 offers: &[Form::C26],
+                verb_offers: &[],
+            },
+            Self::ProtectedDeclared => &StateRow {
+                axis: Axis::Protected,
+                name: "declared",
+                means: "a member's branch that some live weave branch declares, listed with \
+                        the weave branches declaring it; rwv never rewrites, renames or \
+                        deletes it",
+                refused_by: "`rwv branch rename`, for a feature's member branch of the \
+                             renamed name; `rwv push --overwrite`, for a member",
+                offers: &[Form::C2UpdateRemote],
+                verb_offers: &[],
+            },
+            Self::ProtectedDeclaredMode => &StateRow {
+                axis: Axis::Protected,
+                name: "declared mode",
+                means: "a project branch whose record is `declared`; rwv never rewrites it, \
+                        and never deletes its unlanded push branch. Renaming it, and deleting \
+                        its push branch once landed, run",
+                refused_by: "`rwv push --overwrite`; `rwv branch delete \
+                             --delete-remote-unlanded`, for the project repo",
+                offers: &[Form::C2Pull],
                 verb_offers: &[],
             },
             Self::PinWaived => &StateRow {
@@ -1656,13 +1732,13 @@ impl Form {
                 choice: C::C10,
                 steps: &[Rwv("rwv branch rename <new>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C10Adopt => &FormRow {
                 choice: C::C10,
                 steps: &[Rwv("rwv branch rename <new> --adopt")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C11SetBranch => &FormRow {
                 choice: C::C11,
@@ -1959,7 +2035,11 @@ impl Form {
     /// is spelled for one of them alone.
     fn scope(self) -> Option<Scope> {
         match self {
-            Self::C1Pull | Self::C2Pull | Self::C3Pull | Self::C7Push => Some(Scope::Project),
+            Self::C1Pull
+            | Self::C2Pull
+            | Self::C3Pull
+            | Self::C7Push
+            | Self::C10Adopt => Some(Scope::Project),
             Self::C1UpdateRemote
             | Self::C1UpdateRemoteCommit
             | Self::C2UpdateRemote

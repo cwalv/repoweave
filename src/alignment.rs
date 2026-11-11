@@ -114,6 +114,31 @@ pub fn store_state(
     Ok(true)
 }
 
+/// Carry what the workspace at `project_dir` holds for the branch `from` to
+/// the branch `to`: the branch it last aligned for, and the member entries it
+/// last aligned that branch by. Whether the state file changed is returned.
+pub fn rename_branch(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    from: &str,
+    to: &str,
+) -> anyhow::Result<bool> {
+    let StateReading {
+        mut state,
+        corrupt,
+    } = read_state(vcs, project_dir)?;
+    if corrupt.is_some() {
+        return Ok(false);
+    }
+    if state.aligned == Some(Aligned::Branch(from.to_owned())) {
+        state.aligned = Some(Aligned::Branch(to.to_owned()));
+    }
+    if let Some(entries) = state.entries.remove(from) {
+        state.entries.insert(to.to_owned(), entries);
+    }
+    store_state(vcs, project_dir, &state)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Declared,
@@ -152,7 +177,7 @@ pub fn record(root: &Path, project: &ProjectName) -> anyhow::Result<bool> {
 /// recorded weave branches.
 #[derive(Debug, Clone, Default)]
 pub struct Accounting {
-    declared: BTreeMap<String, BTreeSet<String>>,
+    declared: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     recorded: BTreeSet<String>,
 }
 
@@ -186,13 +211,20 @@ impl Accounting {
                 if matches!(view.lookup(&name), Lookup::Unrecorded) {
                     continue;
                 }
-                accounting.read_declarations(vcs.as_ref(), &dir, &branch.tip);
+                let declarer = format!("{} (projects/{project})", branch.name);
+                accounting.read_declarations(vcs.as_ref(), &dir, &branch.tip, &declarer);
             }
         }
         accounting
     }
 
-    fn read_declarations(&mut self, vcs: &dyn Vcs, dir: &Path, tip: &crate::vcs::CommitId) {
+    fn read_declarations(
+        &mut self,
+        vcs: &dyn Vcs,
+        dir: &Path,
+        tip: &crate::vcs::CommitId,
+        declarer: &str,
+    ) {
         let tip = ResolvedRevisionId::from(tip.clone());
         let Ok(text) = vcs.read_file_at_revision(dir, &tip, Path::new(Manifest::FILE_NAME)) else {
             return;
@@ -204,14 +236,24 @@ impl Accounting {
             self.declared
                 .entry(path.to_string())
                 .or_default()
-                .insert(entry.branch.local_counterpart().as_str().to_owned());
+                .entry(entry.branch.local_counterpart().as_str().to_owned())
+                .or_default()
+                .insert(declarer.to_owned());
         }
     }
 
     pub fn declares(&self, member: &RepoPath, branch: &str) -> bool {
+        !self.declarers(member, branch).is_empty()
+    }
+
+    /// The live weave branches that declare `branch` for `member`, each as
+    /// `<branch> (projects/<project>)`.
+    pub fn declarers(&self, member: &RepoPath, branch: &str) -> Vec<String> {
         self.declared
             .get(member.as_str())
-            .is_some_and(|set| set.contains(branch))
+            .and_then(|by_branch| by_branch.get(branch))
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub fn is_recorded(&self, branch: &str) -> bool {

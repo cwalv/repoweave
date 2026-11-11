@@ -383,14 +383,13 @@ impl<'a> Rule<'a> {
                 );
             };
             if repo.member.is_none() && self.w_record_mode == Some(Mode::Declared) {
-                crate::refuse!(
-                    crate::refusal::RefusalKind::InapplicableFlag,
-                    "rwv {}: `{}` is a declared-mode project branch, whose push branch \
-                     `--delete-remote-unlanded` never deletes; `--delete-remote` deletes it \
-                     once it has landed",
-                    self.request.verb,
-                    self.request.branch
-                );
+                return Err(State::ProtectedDeclaredMode
+                    .of(repo.label())
+                    .project_repo()
+                    .subject(&self.request.branch)
+                    .by_verb("branch delete")
+                    .judge(repo.vcs.as_ref())
+                    .refused());
             }
         }
         Ok(())

@@ -594,6 +594,22 @@ pub enum BranchAction {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Rename the project repo's checked-out branch, and in a feature its `owned` and `fork` members' branches of the same name; the record, its stored entries, every record that lands into it and the workspace's aligned branch follow. A declared-mode project branch can be renamed; a member branch some live weave branch declares cannot
+    ///
+    /// Each renamed branch stops taking in from the remote branch it did, and
+    /// each old remote branch is reported as left, with the command that
+    /// deletes it once landed. A `<new>` that exists locally, or on a remote as
+    /// last fetched, is refused unless `--adopt` names the remote's.
+    Rename {
+        /// The new name of the checked-out project branch
+        new: String,
+        /// Take up a branch a remote already has under `<new>` (a rename made on the forge, or on another machine): each renamed branch takes in from the remote's `<new>`. Refused where the two have diverged
+        #[arg(long)]
+        adopt: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Delete a weave branch and the branches that belong to it, by the deletion rule: each is deleted when everything on it has landed on the branch it lands into and no live lock pins a commit only it reaches; the rest survive, listed with why, and the exit status is 3. A declared branch never belongs
     ///
     /// The branch it lands into is the record's target, or `--target`, which

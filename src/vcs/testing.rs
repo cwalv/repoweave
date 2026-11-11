@@ -639,6 +639,15 @@ impl Vcs for FakeVcs {
         unsupported("set_upstream")
     }
 
+    fn rename_branch(
+        &self,
+        _repo: &Path,
+        _from: &RawRefName,
+        _to: &RawRefName,
+    ) -> Result<(), VcsError> {
+        unsupported("rename_branch")
+    }
+
     fn create_branch(
         &self,
         _repo: &Path,

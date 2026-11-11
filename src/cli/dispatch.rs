@@ -1125,6 +1125,16 @@ pub fn run() -> anyhow::Result<()> {
                     OutputMode::from_flag(json),
                 )?;
             }
+            BranchAction::Rename {
+                new,
+                adopt,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::branch::run_rename(&ctx, crate::branch::Rename { new, adopt })?;
+            }
             BranchAction::SetMode {
                 words,
                 target,

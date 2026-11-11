@@ -3708,6 +3708,16 @@ pub trait Vcs: Send + Sync {
         upstream: &Upstream,
     ) -> Result<(), VcsError>;
 
+    /// Rename the local branch `from` to `to`, checked out or not, and stop it
+    /// taking in from any remote branch: the branch the VCS recorded for
+    /// `from` does not follow the name. Refuses a `to` already taken.
+    fn rename_branch(
+        &self,
+        repo: &Path,
+        from: &RawRefName,
+        to: &RawRefName,
+    ) -> Result<(), VcsError>;
+
     /// Create the local branch `name` at `at`, taking in from `upstream` when
     /// one is given. No checkout moves. Refuses a name already taken.
     fn create_branch(

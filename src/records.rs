@@ -460,6 +460,8 @@ pub enum WriteError {
     Cycle(Vec<BranchName>),
     /// The target has no record to take the mode of.
     TargetUnrecorded(BranchName),
+    /// The branch has no record to move.
+    Unrecorded(BranchName),
     /// The target's record is not one value.
     TargetUnreadable(BranchName, Lookup),
     /// Another verb kept winning the compare-and-swap.
@@ -477,7 +479,9 @@ impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cycle(chain) => write!(f, "a target cycle: {}", chain_text(chain)),
-            Self::TargetUnrecorded(target) => write!(f, "{target} has no record"),
+            Self::TargetUnrecorded(target) | Self::Unrecorded(target) => {
+                write!(f, "{target} has no record")
+            }
             Self::TargetUnreadable(target, _) => {
                 write!(f, "the record of {target} reads as no one value")
             }
@@ -748,6 +752,50 @@ impl<'a> Store<'a> {
             });
         }
         Err(WriteError::Busy)
+    }
+
+    /// Move `from`'s entry to `to`, and point every entry whose target is
+    /// `from` at `to`, in one commit: nothing is left under the old name. The
+    /// entry moved is `from`'s, or `to`'s own where `from` has none, the
+    /// state an earlier run of the same rename left.
+    pub fn rename(&self, from: &BranchName, to: &BranchName) -> Result<Written, WriteError> {
+        self.write_dropping(
+            |view| {
+                let moved = match (view.lookup(from), view.lookup(to)) {
+                    (Lookup::Value(record), _) | (Lookup::Unrecorded, Lookup::Value(record)) => {
+                        record
+                    }
+                    (Lookup::Unrecorded, _) => return Err(WriteError::Unrecorded(from.clone())),
+                    (other, _) => return Err(WriteError::TargetUnreadable(from.clone(), other)),
+                };
+                if let Some(target) = moved.target() {
+                    if let Some(chain) = view.chain_back_to(to, vec![target.clone()]) {
+                        return Err(WriteError::Cycle(chain));
+                    }
+                }
+                let mut writes = vec![Write {
+                    branch: to.clone(),
+                    record: moved,
+                }];
+                for dependent in view.dependents(from) {
+                    if dependent == *to {
+                        continue;
+                    }
+                    match view.lookup(&dependent) {
+                        Lookup::Value(Record::Feature { as_mode, .. }) => writes.push(Write {
+                            branch: dependent,
+                            record: Record::Feature {
+                                target: to.clone(),
+                                as_mode,
+                            },
+                        }),
+                        other => return Err(WriteError::TargetUnreadable(dependent, other)),
+                    }
+                }
+                Ok(writes)
+            },
+            &|name| name == from.as_str(),
+        )
     }
 
     /// Publish `branch`'s record, and the drops this machine has made, to

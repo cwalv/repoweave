@@ -1,20 +1,25 @@
 //! `rwv branch`: how each weave branch is used, and the gate that refuses the
 //! verbs which align, lock, land or publish on a branch that has no record.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::add_remove::find_project;
-use crate::diagnosis::{Judged, State};
-use crate::manifest::{Manifest, ProjectName};
+use crate::alignment::Accounting;
+use crate::diagnosis::{Judged, Judging, Report, State};
+use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
 use crate::parallel::OutputMode;
 use crate::records::{
     chain_text, BranchName, Entry, Lookup, Mode, NameError, Record, Store, View, Write, WriteError,
 };
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{project_vcs, HeadObservation, ResolvedRevisionId, Vcs};
+use crate::path_spelling::CanonicalPath;
+use crate::vcs::{
+    project_vcs, short_revision, vcs_for, HeadObservation, RawRefName, Relation, RemoteHandle,
+    ResolvedRevisionId, Upstream, Vcs,
+};
 use crate::workspace::{project_rel_path, WorkspaceContext};
 
 pub const BRANCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch");
@@ -170,7 +175,9 @@ fn write_refusal(
     };
     match error {
         WriteError::Cycle(chain) => judged(branch, Lookup::Cycle(chain)),
-        WriteError::TargetUnrecorded(target) => judged(&target, Lookup::Unrecorded),
+        WriteError::TargetUnrecorded(target) | WriteError::Unrecorded(target) => {
+            judged(&target, Lookup::Unrecorded)
+        }
         WriteError::TargetUnreadable(target, lookup) => judged(&target, lookup),
         WriteError::Busy => anyhow::Error::msg(WriteError::Busy.to_string()),
         WriteError::Vcs(e) => anyhow::Error::new(e).context("could not write the branch record"),
@@ -391,6 +398,378 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
         }
     }
     report_dependents(&before, &written.view, &branch);
+    Ok(())
+}
+
+/// What `rwv branch rename` is asked to do.
+pub struct Rename {
+    pub new: String,
+    pub adopt: bool,
+}
+
+struct Moving {
+    label: String,
+    dir: std::path::PathBuf,
+    vcs: Box<dyn Vcs>,
+    url_remote: Option<RemoteHandle>,
+    member: Option<RepoPath>,
+    adopted: Option<Upstream>,
+}
+
+impl Moving {
+    fn judging(&self, state: State) -> Judging {
+        let judging = state.of(&self.label).checkout(&self.dir);
+        match &self.member {
+            Some(path) => judging.member().bind("<m>", path),
+            None => judging.project_repo(),
+        }
+    }
+}
+
+fn moving_repos(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    dir: &Path,
+    feature: bool,
+    old: &RawRefName,
+) -> anyhow::Result<Vec<Moving>> {
+    let project_vcs = project_vcs();
+    let url_remote = project_vcs.project_url_remote(dir)?;
+    let mut repos = vec![Moving {
+        label: label(project),
+        dir: dir.to_path_buf(),
+        vcs: project_vcs,
+        url_remote,
+        member: None,
+        adopted: None,
+    }];
+    if !feature {
+        return Ok(repos);
+    }
+    let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+    for (path, entry) in manifest.iter_entries() {
+        if !matches!(entry.role, Role::Owned | Role::Fork) {
+            continue;
+        }
+        let member_dir = ctx.active_path().join(path.as_path());
+        let vcs = vcs_for(entry.vcs_type);
+        if !vcs.is_repo(&member_dir) || vcs.resolve_local_branch_tip(&member_dir, old)?.is_none() {
+            continue;
+        }
+        let url_remote = crate::url_remote::present(vcs.as_ref(), &member_dir, &entry.url)?;
+        repos.push(Moving {
+            label: path.to_string(),
+            dir: member_dir,
+            vcs,
+            url_remote,
+            member: Some(path.clone()),
+            adopted: None,
+        });
+    }
+    Ok(repos)
+}
+
+fn other_checkouts(repo: &Moving, old: &RawRefName) -> anyhow::Result<Vec<PathBuf>> {
+    let here = CanonicalPath::of(&repo.dir);
+    Ok(repo
+        .vcs
+        .checkouts_of_branch(&repo.dir, old)?
+        .into_iter()
+        .filter(|checkout| CanonicalPath::of(checkout) != here)
+        .collect())
+}
+
+fn other_projects_with_feature(
+    primary: &Path,
+    project: &ProjectName,
+    new: &BranchName,
+    member: &RepoPath,
+) -> Vec<String> {
+    let vcs = project_vcs();
+    let mut found = Vec::new();
+    for other in crate::workspace::discover_projects(primary) {
+        if &other == project {
+            continue;
+        }
+        let dir = crate::workspace::project_dir(primary, &other);
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let Ok(store) = Store::open(vcs.as_ref(), &dir) else {
+            continue;
+        };
+        let Ok(view) = store.view() else { continue };
+        if !matches!(view.lookup(new), Lookup::Value(Record::Feature { .. })) {
+            continue;
+        }
+        let Ok(branches) = vcs.named_branches(&dir) else {
+            continue;
+        };
+        let Some(branch) = branches.iter().find(|b| b.name == new.as_str()) else {
+            continue;
+        };
+        let tip = ResolvedRevisionId::from(branch.tip.clone());
+        let lists = vcs
+            .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
+            .ok()
+            .and_then(|text| Manifest::from_toml_str(&text).ok())
+            .is_some_and(|manifest| manifest.get_entry(member).is_some());
+        if lists {
+            found.push(label(&other));
+        }
+    }
+    found
+}
+
+fn judge_rename_of(
+    repo: &mut Moving,
+    request: &Rename,
+    old: &BranchName,
+    new: &BranchName,
+    scan: &RenameScan<'_>,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let old_raw = RawRefName::new(old.as_str());
+    let new_raw = RawRefName::new(new.as_str());
+    let recorded = crate::sync::recorded_workweaves(scan.primary)?;
+    for checkout in other_checkouts(repo, &old_raw)? {
+        report.add(crate::sync::judge_checkout(
+            repo.vcs.as_ref(),
+            &repo.label,
+            &checkout,
+            &repo.dir,
+            &recorded,
+        ));
+    }
+    if let Some(path) = &repo.member {
+        let declarers = scan.accounting.declarers(path, old.as_str());
+        if !declarers.is_empty() {
+            report.add(
+                repo.judging(State::ProtectedDeclared)
+                    .subject(old)
+                    .listing(declarers)
+                    .by_verb("branch rename")
+                    .judge(repo.vcs.as_ref()),
+            );
+        }
+        let declarers = scan.accounting.declarers(path, new.as_str());
+        if !declarers.is_empty() {
+            report.add(
+                repo.judging(State::NameDeclared)
+                    .subject(new)
+                    .listing(declarers)
+                    .by_verb("branch rename")
+                    .judge(repo.vcs.as_ref()),
+            );
+        }
+        let elsewhere = other_projects_with_feature(scan.primary, scan.project, new, path);
+        if !elsewhere.is_empty() {
+            report.add(
+                repo.judging(State::NameFeature)
+                    .subject(new)
+                    .listing(elsewhere)
+                    .by_verb("branch rename")
+                    .judge(repo.vcs.as_ref()),
+            );
+        }
+    }
+    let taken_locally = repo
+        .vcs
+        .resolve_local_branch_tip(&repo.dir, &new_raw)?
+        .is_some();
+    let copies = repo.vcs.remote_copies(&repo.dir, &new_raw)?;
+    if taken_locally || (!copies.is_empty() && !request.adopt) {
+        let mut listing = Vec::new();
+        if taken_locally {
+            listing.push(format!("{new} is a local branch"));
+        }
+        listing.extend(copies.iter().map(|c| format!("{new} is on {}", c.remote)));
+        report.add(
+            repo.judging(State::NameExists)
+                .subject(new)
+                .listing(listing)
+                .by_verb("branch rename")
+                .judge(repo.vcs.as_ref()),
+        );
+        return Ok(());
+    }
+    if !request.adopt {
+        return Ok(());
+    }
+    let target = repo
+        .vcs
+        .push_target_of(&repo.dir, &old_raw, repo.url_remote.as_ref())?;
+    let Some(copy) = copies
+        .into_iter()
+        .find(|copy| Some(&copy.remote) == target.as_ref())
+    else {
+        if repo.member.is_none() {
+            report.add(
+                repo.judging(State::NameNoSuchBranch)
+                    .subject(format!("{new} on the remote {} publishes to", repo.label))
+                    .judge(repo.vcs.as_ref()),
+            );
+        }
+        return Ok(());
+    };
+    let tip = repo
+        .vcs
+        .resolve_local_branch_tip(&repo.dir, &old_raw)?
+        .expect("a branch to rename exists");
+    if repo.vcs.relation(&repo.dir, &tip, &copy.tip)? == Relation::Diverged {
+        let unpushed = repo.vcs.unpushed_commits(&repo.dir, &old_raw)?;
+        report.add(
+            repo.judging(State::PushBranchDiverged)
+                .subject(format!("{old} and {}/{new}", copy.remote))
+                .listing(
+                    unpushed
+                        .iter()
+                        .map(|c| format!("{} {}", short_revision(c.id.as_str()), c.subject)),
+                )
+                .judge(repo.vcs.as_ref()),
+        );
+    }
+    repo.adopted = Some(Upstream {
+        remote: copy.remote,
+        branch: new_raw,
+    });
+    Ok(())
+}
+
+struct RenameScan<'a> {
+    primary: &'a Path,
+    project: &'a ProjectName,
+    accounting: Accounting,
+}
+
+fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Result<()> {
+    if repo.vcs.resolve_local_branch_tip(&repo.dir, old)?.is_none() {
+        return Ok(());
+    }
+    repo.vcs.rename_branch(&repo.dir, old, new)?;
+    if let Some(upstream) = &repo.adopted {
+        repo.vcs.set_upstream(&repo.dir, new, upstream)?;
+    }
+    outln!("renamed {}: {old} -> {new}", repo.label);
+    if let Some(upstream) = &repo.adopted {
+        outln!(
+            "adopted {}: {new} takes in from {}/{}",
+            repo.label,
+            upstream.remote,
+            upstream.branch
+        );
+    }
+    Ok(())
+}
+
+/// `rwv branch rename <new> [--adopt]`.
+pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let old_text = checked_out(vcs.as_ref(), &dir)?.ok_or_else(|| {
+        refusal(
+            RefusalKind::HeadNotOnBranch,
+            "rwv branch rename: the project repo is on a detached HEAD, which has no branch \
+             to rename; switch to the branch first",
+        )
+    })?;
+    let old = named(vcs.as_ref(), &project, &dir, &old_text)?;
+    let new = named(vcs.as_ref(), &project, &dir, &request.new)?;
+    let old_raw = RawRefName::new(old.as_str());
+    let new_raw = RawRefName::new(new.as_str());
+    if old == new {
+        return Err(State::NameExists
+            .of(label(&project))
+            .project_repo()
+            .subject(&new)
+            .checkout(&dir)
+            .by_verb("branch rename")
+            .judge(vcs.as_ref())
+            .refused());
+    }
+    let store = Store::open(vcs.as_ref(), &dir)?;
+    let view = store
+        .settle()
+        .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &old, e))?;
+    let record = match (view.lookup(&old), view.lookup(&new)) {
+        (Lookup::Value(record), _) | (Lookup::Unrecorded, Lookup::Value(record)) => record,
+        (lookup, _) => {
+            return Err(judge_lookup(vcs.as_ref(), &store, &project, &dir, &old, lookup)?.refused())
+        }
+    };
+    let mut report = Report::default();
+    let dependents: Vec<BranchName> = view
+        .dependents(&old)
+        .into_iter()
+        .filter(|dependent| *dependent != new)
+        .collect();
+    for dependent in &dependents {
+        match view.lookup(dependent) {
+            Lookup::Value(_) => {}
+            lookup => report.add(judge_lookup(
+                vcs.as_ref(),
+                &store,
+                &project,
+                &dir,
+                dependent,
+                lookup,
+            )?),
+        }
+    }
+    let mut repos = moving_repos(
+        ctx,
+        &project,
+        &dir,
+        record.mode() == Mode::Feature,
+        &old_raw,
+    )?;
+    let scan = RenameScan {
+        primary: ctx.primary_path(),
+        project: &project,
+        accounting: Accounting::scan(ctx.primary_path()),
+    };
+    for repo in &mut repos {
+        judge_rename_of(repo, &request, &old, &new, &scan, &mut report)?;
+    }
+    report.into_result()?;
+
+    for repo in repos.iter().filter(|repo| repo.member.is_some()) {
+        rename_in(repo, &old_raw, &new_raw)?;
+    }
+    let written = store
+        .rename(&old, &new)
+        .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &old, e))?;
+    outln!("moved the record of {old} to {new}: {}", {
+        match written.view.lookup(&new) {
+            Lookup::Value(record) => record.to_string(),
+            _ => unreachable!("the record just moved reads as one value"),
+        }
+    });
+    for dependent in &dependents {
+        outln!(
+            "retargeted {dependent}: it now lands into {new}; `rwv push --branch {dependent}` \
+             publishes it"
+        );
+    }
+    crate::alignment::rename_branch(vcs.as_ref(), &dir, old.as_str(), new.as_str())?;
+    if let Some(project_repo) = repos.iter().find(|repo| repo.member.is_none()) {
+        rename_in(project_repo, &old_raw, &new_raw)?;
+    }
+    for repo in &repos {
+        let copies = repo.vcs.remote_copies(&repo.dir, &old_raw)?;
+        if copies.is_empty() {
+            continue;
+        }
+        for copy in &copies {
+            eprintln!(
+                "left: {} {old}: {} still has it",
+                repo.label, copy.remote
+            );
+        }
+        eprintln!(
+            "  delete what is landed: rwv branch delete {old} --target {new} --delete-remote"
+        );
+    }
     Ok(())
 }
 
