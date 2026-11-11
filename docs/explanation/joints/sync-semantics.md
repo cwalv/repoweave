@@ -143,7 +143,8 @@ repoweave it does not:
   the name `rwv workweave create` gives a workweave made without a branch of
   its own (`name` `minted`). That is policy, not physics: no hook or doctor
   check stops a plain `git push`, but while nobody bypasses rwv that way,
-  rebasing that branch rewrites nothing anyone else can have seen.
+  rebasing that branch rewrites nothing anyone else can have seen. Naming the
+  branch (`rwv branch rename <new>`) is what makes it publishable.
 - **Landing rebases only the unpublished side.** `sync-to` rebases CWD (the
   workweave) against the target, then fast-forwards the target.
 - **Divergence that arrives through a remote** is `update --remote`'s and git's to

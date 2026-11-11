@@ -49,6 +49,18 @@ git -C github/chatly/server commit -am "review: fix"
 git -C github/chatly/server push origin HEAD:<pr-branch>
 ```
 
+## Keep a fix of your own
+
+A review workweave made without a branch is on the minted name `web-app--pr-42`, which `rwv push` never publishes. A member the review left alone is still on that branch, so a fix you want to keep that is unrelated to the PR goes there, never on the detached `HEAD` the PR sits on. Commit it, name the workweave's branch for the fix, then publish the member that carries it:
+
+```bash
+git -C github/chatly/lib commit -am "fix the lib typo"
+rwv branch rename lib-fix
+rwv push --repo github/chatly/lib
+```
+
+`rwv branch rename` renames the project branch and each `owned` and `fork` member's branch of the same name, moves the branch's record, and stops each from taking in from a remote branch of the old name. A branch some live weave branch declares is never renamed (`protected`), and a `<new>` that already exists is refused (`name` `exists`); `--adopt` takes up a remote's.
+
 ## Clean up
 
 Return to the primary weave root (`cd ../../<weave>` from `../.workweaves/web-app--pr-42`, where `<weave>` is the weave root's directory name) and delete the review workweave:

@@ -10,7 +10,7 @@ rwv push
 
 Before pushing any remote, `rwv push` refuses unless all of these hold:
 
-- **A recorded, named branch:** the project repo's checked-out branch must have a record (`target` `unrecorded` otherwise: say how the branch is used with `rwv branch set-mode`) and a name rwv publishes. The name `rwv workweave create` gives a workweave made without a branch of its own, `<project>--<name>`, is never published (`name` `minted`). A project repo on a detached `HEAD` is a detached workspace, which runs no push (`alignment` `project detached`). To publish a branch the workspace has not checked out, name it: `rwv push --branch <branch>`.
+- **A recorded, named branch:** the project repo's checked-out branch must have a record (`target` `unrecorded` otherwise: say how the branch is used with `rwv branch set-mode`) and a name rwv publishes. The name `rwv workweave create` gives a workweave made without a branch of its own, `<project>--<name>`, is never published (`name` `minted`): give the workweave's branch a name of its own with `rwv branch rename <new>`, which renames the project branch and each member's branch of the same name, and moves the record. A project repo on a detached `HEAD` is a detached workspace, which runs no push (`alignment` `project detached`). To publish a branch the workspace has not checked out, name it: `rwv push --branch <branch>`.
 - **Committed project repo:** `projects/<project>/` must have no uncommitted changes to tracked files and no untracked `rwv.toml` or `rwv.lock` (`edits`), because push publishes the project repo's last commit. When only `rwv.toml` or `rwv.lock` is uncommitted, the refusal offers `rwv lock --commit`; otherwise commit or stash with the commands it prints.
 - **Reachable remotes:** `push` fetches the remotes first. One it could not reach that the push publishes to, or judges a pin by, refuses it (`push-branch` `unconfirmed`); run `rwv fetch` once the remote answers.
 - **Aligned members with pins:** each member the push acts on must sit on the branch the checked-out branch's record expects (`rwv update` moves it), and is judged against the revision pinned in `rwv.lock`. A member with no pin (`pin` `none`), a pin no ref reaches (`unreachable`), a `HEAD` behind the pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that nothing else holds (`unpinned`) refuses, and the refusal prints the choice that clears it. `rwv push` never writes the lock.
@@ -46,7 +46,7 @@ A branch that was amended or rebased after it was published has diverged from it
 rwv push --overwrite github/chatly/server
 ```
 
-The remote tip is kept as a backup first, and the replacement lands only if the push branch still holds the tip the push read, so a colleague's push in between refuses it. It is refused for a branch some weave branch declares, for a declared-mode project branch, and while another live lock pins a commit only the replaced tip reaches. `rwv.lock` is not written; relock the amended member first with `rwv lock --repo <member> --commit`.
+The remote tip is kept as a backup first, and the replacement lands only if the push branch still holds the tip the push read, so a colleague's push in between refuses it. It is refused for a branch some weave branch declares and for a declared-mode project branch (`protected`), and while another live lock pins a commit only the replaced tip reaches. `rwv.lock` is not written; relock the amended member first with `rwv lock --repo <member> --commit`.
 
 ## Recover from an unpinned commit
 

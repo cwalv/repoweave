@@ -3,7 +3,7 @@
 ## Purpose
 
 Record how a **weave branch** is used, list the weave branches with their
-records, and delete one. A weave branch is a branch of the project repo that
+records, rename one, and delete one. A weave branch is a branch of the project repo that
 carries `rwv.toml` and `rwv.lock`.
 
 A branch's **record** is one of two modes:
@@ -68,6 +68,51 @@ onto <T> (as <mode>)`, `unrecorded`, `conflict`, `unreadable`, `cycle`).
 `list` reads refs as last fetched and writes nothing: the records of the
 remotes it knows are merged in memory, not into the local records branch.
 
+### `rename`
+
+Renames the project repo's checked-out branch to `<new>`. The branch's record,
+the member entries the workspace last aligned it by, the record of every branch
+that lands into it (its `target` becomes `<new>`) and the workspace's aligned
+branch move with it, in one commit of the records branch, and no entry is left
+under the old name. A record that lands into the branch is published, like any
+record, by a push of that branch (`rwv push --branch <dependent>`). In a feature
+the same-named branch of each `owned` and `fork` member that has one is renamed
+too; a declared-mode project branch's members sit on the branches `rwv.toml`
+declares and are not touched.
+
+Each renamed branch stops taking in from the remote branch it did. Every old
+remote branch is reported on stderr as `left: <repo> <old>: <remote> still has
+it`, with the `rwv branch delete <old> --target <new> --delete-remote` that
+deletes it once it has landed on `<new>`.
+
+A declared-mode project branch is protected against rewrites only: it can be
+renamed. A rename made on the forge (the project's `main` renamed `trunk` on the
+remote) is taken up with `rwv branch rename trunk --adopt`. A member branch
+that some live weave branch declares is protected and is never renamed.
+
+- `--adopt` takes up a branch a remote already has under `<new>`: each renamed
+  branch whose push target has `<new>` takes in from it, and the project branch
+  must have one (`name` `no-such-branch` otherwise). Where the two have
+  diverged the rename is refused (`push-branch` `diverged`, the unpushed
+  commits listed), changing nothing. Without `--adopt` a `<new>` a remote has,
+  as last fetched, is refused.
+- The record that moves is the old branch's; where it has none and `<new>`
+  has one, a run that stopped partway left it there and is completed.
+
+Refused, before anything changes, each as its own line: `<old>` with no record
+that reads (`target` `unrecorded`, `conflict`, `unreadable`), a record that
+lands into it and does not read, a member branch some live weave branch declares
+(`protected` `declared`, listing the weave branches declaring it), a `<new>`
+that exists as a local branch of a repo the rename moves or on a remote without
+`--adopt` (`name` `exists`), a feature's `<new>` that a live weave branch
+declares for a member (`name` `declared`) or that another project's feature uses
+for a member both list (`name` `feature`), the records branch's name (`name`
+`reserved`), and a branch checked out in another workspace (`checkout`).
+
+The writes are ordered so that a run which stopped partway is a state the same
+command, run again, completes: members first, then the record, then the project
+branch.
+
 ### `delete`
 
 Deletes `<W>` and the branches that belong to it, by the deletion rule. `<W>`
@@ -118,6 +163,7 @@ recording `a/b`.
 ```
 rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]
 rwv branch list [--json] [--project <name>]
+rwv branch rename <new> [--adopt] [--project <name>]
 rwv branch delete <W> [--target <T>] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
 ```
 
@@ -132,7 +178,11 @@ Run `rwv branch --help` for the full clap surface.
 
 `set-mode` prints one line saying what is recorded, then any `target-recorded`
 and dependent lines. `list` prints one line per branch, or `no weave branches`.
-`delete` prints `deleted <repo> <branch> (<site>): <because>` for each branch it
+`rename` prints `renamed <repo>: <old> -> <new>` for each branch it renamed,
+`moved the record of <old> to <new>: <record>`, `retargeted <dependent>` for
+each record that lands into it and `adopted <repo>: <new> takes in from
+<remote>/<new>` for each branch `--adopt` linked; each old remote branch is
+`left: <repo> <old>: <remote> still has it` on stderr. `delete` prints `deleted <repo> <branch> (<site>): <because>` for each branch it
 deleted and `dropped the record of <branch>` for each record it dropped; each
 survivor is `left: <repo> <branch>: <reason>` on stderr, with what the reason
 rests on beneath it.
@@ -152,8 +202,8 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
 
 ## Exit codes
 
-- `0` — the record was written (or already held), the listing printed, or
-  `delete` deleted everything that belongs to the branch.
+- `0` — the record was written (or already held), the listing printed, the
+  rename done, or `delete` deleted everything that belongs to the branch.
 - `3` — `delete` finished and the rule kept at least one branch; the output
   lists each and why.
 - non-zero — a refusal (`target`, `name`, `checkout`) or a branch the verb could
@@ -177,6 +227,18 @@ See every weave branch and how it is used:
 
 ```
 rwv branch list
+```
+
+Give a workweave made without a branch its real name:
+
+```
+rwv branch rename fix-123
+```
+
+Take up a rename made on the forge, in a workspace on the old name:
+
+```
+rwv branch rename trunk --adopt
 ```
 
 Delete a feature once it has landed, with its member branches:
@@ -211,6 +273,15 @@ rwv branch delete feat-x --discard-unlanded --delete-remote
   <T>`.
 - *target no target* — the branch is declared, so its record names no branch it
   landed on. Name one with `--target <T>`.
+- *protected declared* — a member branch the rename would move is declared by the
+  listed weave branches, and is never renamed. Rename the feature to a name no
+  weave branch declares for the member's branch: the refusal names the branches
+  declaring it.
+- *name exists* — `<new>` is a local branch, or a remote has it as last fetched.
+  Choose another name, or with `--adopt` take up the remote's.
+- *name declared*, *name feature* — a feature cannot take a name that a member's
+  declared branch has, nor one another project's feature uses for a member both
+  list.
 - *checkout* — the branch is checked out in another workspace (named). Switch
   that workspace off it, or delete its workweave.
 - *name no-such-branch* — `<W>` is a branch nowhere in the project repo, local or

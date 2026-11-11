@@ -437,7 +437,7 @@ The record is published as one commit on the push target's records branch as las
 |---|---|
 | `--role` / `--repo` | Select the repos the push acts on; `projects/<name>` names the project repo. A `dependency` or `reference` repo is pushed only when one names it |
 | `--branch <W>` | Push weave branch `W` instead of the checked-out one, judging each member by `W`'s record, lock and branches |
-| `--overwrite <repo>` | Replace this repo's diverged push branch: its remote tip is kept as a backup, the replacement is leased to that tip, and it is refused while another live lock pins a commit only that tip reaches (`pin` `would be unreachable`). Never a branch some weave branch declares, nor a declared-mode project branch. Repeat per repo; the project repo is `projects/<name>` |
+| `--overwrite <repo>` | Replace this repo's diverged push branch: its remote tip is kept as a backup, the replacement is leased to that tip, and it is refused while another live lock pins a commit only that tip reaches (`pin` `would be unreachable`). Never a branch some weave branch declares, nor a declared-mode project branch (`protected`). Repeat per repo; the project repo is `projects/<name>` |
 | `-j N` | Parallel fetch and push (up to N concurrent for member repos; project repo always last and serial). Default: 1, because every push authenticates and runs the repo's pre-push hook: concurrent pushes would contend for one terminal's credential prompts and run those hooks side by side. The default push set is already narrowed to writable roles, so there is less to parallelize than in a fetch |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dry-run` | Print the push plan without fetching or pushing; it says it judged refs as last fetched, and how long ago |
@@ -485,7 +485,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 ### `rwv branch`
 
-Record how a weave branch is used, list the weave branches with their records, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+Record how a weave branch is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
 ### `rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]`
 
@@ -504,6 +504,17 @@ List each weave branch, local or only on a remote as last fetched, with its reco
 
 `--json` emits the envelope `{"$schema": "...", "branches": [...]}`. Each branch has `name`, `checked_out`, `local`, `record` (an object whose `state` is `declared`, `feature` with `target_branch` and `as`, `unrecorded`, `conflict` with `values`, `unreadable` with `reason`, or `cycle` with `chain`), `published` (absent for an unrecorded branch) and `target_gone`. See [JSON envelope convention](#--json-envelope-convention).
 
+### `rwv branch rename <new> [--adopt] [--project <name>]`
+
+Rename the project repo's checked-out branch to `<new>`. A declared-mode project branch is renamed like any other: protection bars only its rewrites. In a feature, the same-named branch of each `owned` and `fork` member that has one is renamed too; a declared-mode branch's members sit on the branches `rwv.toml` declares and are not touched. Each renamed branch stops taking in from the remote branch it did, and each old remote branch is reported on stderr as `left: <repo> <old>: <remote> still has it`, with the `rwv branch delete <old> --target <new> --delete-remote` that deletes it once landed. The record, its stored entries, every record that lands into `<old>` (retargeted to `<new>`, and published with a push of that branch) and the workspace's aligned branch move with it in one commit; nothing is left under the old name. A run that stopped partway is completed by running it again.
+
+| Flag | Effect |
+|---|---|
+| `--adopt` | Take up a branch a remote already has under `<new>`, a rename made on the forge or on another machine: each renamed branch whose push target has `<new>` takes in from it, and the project branch must have one. Refused where the two have diverged (`push-branch` `diverged`, the unpushed commits listed) |
+| `--project <name>` | Operate on this project instead of the active project |
+
+Refused, before anything changes: a branch with no record that reads (`target` `unrecorded`, `conflict`, `unreadable`); a member branch some live weave branch declares (`protected` `declared`, listing the weave branches declaring it); a `<new>` that exists as a local branch of any repo the rename moves, or on a remote as last fetched without `--adopt` (`name` `exists`); a feature `<new>` that a live weave branch declares for a member (`name` `declared`) or that another project's feature uses for a member both list (`name` `feature`); the records branch's name or a name below it (`name` `reserved`); a branch checked out in another workspace (`checkout`); a record that lands into `<old>` and does not read (`target`); a detached project repo. See [`rwv explain branch`](./explain/branch.md).
+
 ### `rwv branch delete <W> [--target <T>] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]`
 
 Delete `<W>` and the branches that belong to it, by the deletion rule: the project branch `<W>` (which may exist only on a remote, as last fetched) and, in each member `<W>`'s `rwv.toml` lists, the branch of the same name that no live weave branch declares. A declared branch never belongs. A branch that belongs is deleted when everything on it has landed on the branch `<W>` lands into, no live lock pins a commit that only it reaches, and, for the project branch, its published copy has landed and no member branch that belongs survives. Members are judged first. A branch the rule keeps survives with its record and is reported with its reason (`unlanded`, `pinned`, `open-head`, `members`, `unconfirmed`); the exit status is then `3`.
@@ -513,7 +524,7 @@ Delete `<W>` and the branches that belong to it, by the deletion rule: the proje
 | `--target <T>` | The branch whose commits count as landed; the record's target when omitted, and required for a branch that is not a feature (`target` `no target`). `<T>` needs a record that reads |
 | `--discard-unlanded` | Also delete a branch that has not landed, after keeping its tip as a backup. Lifts the landed clause only: a pinned branch survives |
 | `--delete-remote` | Also delete each push branch of what belongs that has landed on the target's remote-tracking branch |
-| `--delete-remote-unlanded <repo>` | Also delete that repo's push branch, landed or not, an open pull request's head included, after keeping its tip as a backup. One repo per occurrence, as `rwv backup drop` names it; needs `--discard-unlanded`; never the push branch of a declared-mode project branch |
+| `--delete-remote-unlanded <repo>` | Also delete that repo's push branch, landed or not, an open pull request's head included, after keeping its tip as a backup. One repo per occurrence, as `rwv backup drop` names it; needs `--discard-unlanded`; never the push branch of a declared-mode project branch (`protected` `declared mode`) |
 | `--json` | Emit one envelope with `branch`, `target`, `deleted`, `survivors` and `records_dropped` |
 | `--project <name>` | Operate on this project instead of the active project |
 
