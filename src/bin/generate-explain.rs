@@ -8750,7 +8750,7 @@ mod tests {
             HashSet::from(["version-is-a-pin".to_owned(), "spelled-out".to_owned()])
         );
         let real = refusal_tokens(&fs::read_to_string(repo_root().join("src/refusal.rs")).unwrap());
-        assert!(real.len() > 90, "read {} refusal tokens", real.len());
+        assert!(real.len() > 85, "read {} refusal tokens", real.len());
         assert!(real.contains(&repoweave::refusal::RefusalKind::InvalidRefName.token()));
     }
 

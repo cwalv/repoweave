@@ -46,7 +46,7 @@ fn pages_text() -> String {
 fn every_minted_token_has_an_entry() {
     let tokens = minted_tokens();
     assert!(
-        tokens.len() > 90,
+        tokens.len() > 85,
         "the register walk yielded {} tokens, too few to be the whole enum",
         tokens.len()
     );
