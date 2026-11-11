@@ -2039,6 +2039,21 @@ pub fn dc21_marker_disagreement() -> Scenario {
                     at: ww("w"),
                     parent: a(),
                 }),
+            Step::tamper("delete w's marker", Tamper::DeleteMarker(ww("w"))),
+            refused_naming_the_repair(Step::rwv(
+                &a(),
+                &["-w", "proj--w", "workweave", "delete", "w"],
+            ))
+            .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
+            refused_naming_the_repair(Step::rwv(&a(), &["-w", "proj--w", "sync-to", "--retire"]))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
+            Step::rwv(&a(), &["-w", "proj--w", "status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("restored"))
+                .claim(Claim::MarkerParent {
+                    at: ww("w"),
+                    parent: a(),
+                }),
             Step::tamper("delete the index", Tamper::DeleteIndex(Machine::A)),
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)

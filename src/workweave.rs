@@ -185,6 +185,15 @@ pub fn validate_registry_entry(
     RegistryEntryValidation::Valid
 }
 
+/// The directory the index records for `(project, name)`, unvalidated.
+pub fn recorded_workweave_dir(
+    primary_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+) -> anyhow::Result<Option<PathBuf>> {
+    Ok(workweave_index::lookup_raw(primary_root, project, name)?.map(CanonicalPath::into_path_buf))
+}
+
 /// Look up a workweave by `(project, name)` via the recorded registry,
 /// validating the marker round-trip before returning the path.
 ///

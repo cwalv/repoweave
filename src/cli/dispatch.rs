@@ -164,6 +164,7 @@ fn flat_spelling_of(raw: &str) -> Option<String> {
 fn resolve_workweave_flag(
     raw: &str,
     workspace_origin: &Path,
+    policy: crate::workspace::Policy,
 ) -> anyhow::Result<(PathBuf, ProjectName)> {
     // A path-shaped argument (contains a separator) is a mistake: -C handles
     // path addressing. Give a corrective error rather than a confusing
@@ -261,6 +262,13 @@ fn resolve_workweave_flag(
             )
         }
     };
+
+    if let Some(recorded) = crate::workweave::recorded_workweave_dir(&primary_root, project, name)?
+    {
+        if recorded.is_dir() {
+            crate::workspace::reconcile_invocation(&recorded, policy)?;
+        }
+    }
 
     // The pair is recorded; whether the directory it points at still is a
     // workweave of that project is the marker round-trip's question.
@@ -408,6 +416,14 @@ fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     match ctx.active_project() {
         Some(project) => crate::workweave::refuse_symlinked_members(ctx.active_path(), project),
         None => Ok(()),
+    }
+}
+
+fn reconcile_policy(command: Option<&Commands>) -> crate::workspace::Policy {
+    if destroys_workweave(command) {
+        crate::workspace::Policy::Refuse
+    } else {
+        crate::workspace::Policy::Restore
     }
 }
 
@@ -609,7 +625,11 @@ pub fn run() -> anyhow::Result<()> {
         match cli.workweave_flag.as_deref() {
             None => (workspace_origin, None),
             Some(raw) => {
-                let (ww_path, project) = resolve_workweave_flag(raw, workspace_origin.as_path())?;
+                let (ww_path, project) = resolve_workweave_flag(
+                    raw,
+                    workspace_origin.as_path(),
+                    reconcile_policy(cli.command.as_ref()),
+                )?;
                 let dir = InvocationDir::resolved(&ww_path).with_context(|| {
                     format!("'-w {raw}': failed to resolve {}", ww_path.display())
                 })?;
@@ -625,14 +645,7 @@ pub fn run() -> anyhow::Result<()> {
     // Step 3: the root's marker against the index and the worktree relation,
     // before the verb resolves the root it runs in. A verb that destroys the
     // workweave refuses on a disagreement; every other verb repairs it.
-    crate::workspace::reconcile_invocation(
-        origin_dir,
-        if destroys_workweave(cli.command.as_ref()) {
-            crate::workspace::Policy::Refuse
-        } else {
-            crate::workspace::Policy::Restore
-        },
-    )?;
+    crate::workspace::reconcile_invocation(origin_dir, reconcile_policy(cli.command.as_ref()))?;
 
     match cli.command {
         None => {
