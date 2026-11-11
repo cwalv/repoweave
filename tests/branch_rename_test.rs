@@ -127,7 +127,7 @@ fn a_feature_rename_moves_the_branches_the_record_the_dependents_and_the_aligned
     let ww = create_workweave(&w.workspace, "anon");
     let old = minted("anon");
     let work = commit_in(&ww.join(LIB), "lib.txt");
-    common::git_in(&project_dir(&w.workspace), &["branch", "stacked", &old]);
+    common::git_in(project_dir(&w.workspace), &["branch", "stacked", &old]);
     succeed(
         &["branch", "set-mode", "stacked", "feature", "--target", &old],
         &ww,
@@ -141,10 +141,7 @@ fn a_feature_rename_moves_the_branches_the_record_the_dependents_and_the_aligned
         assert!(!has_branch(&repo, &old), "{} keeps {old}", repo.display());
         assert!(has_branch(&repo, "feat-x"), "{}", repo.display());
     }
-    assert_eq!(
-        common::git_in(ww.join(LIB), &["rev-parse", "feat-x"]),
-        work
-    );
+    assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "feat-x"]), work);
     assert_eq!(record_of(&w.workspace, &old), None, "{}", describe(&out));
     assert!(record_of(&w.workspace, "feat-x")
         .unwrap()
@@ -155,7 +152,7 @@ fn a_feature_rename_moves_the_branches_the_record_the_dependents_and_the_aligned
     let state = workspace_state(&project_dir(&ww));
     assert!(state.contains("feat-x") && !state.contains(&old), "{state}");
     assert_eq!(
-        common::git_in(&project_dir(&ww), &["branch", "--show-current"]),
+        common::git_in(project_dir(&ww), &["branch", "--show-current"]),
         "feat-x"
     );
 }
@@ -198,9 +195,11 @@ fn a_member_branch_a_live_weave_branch_declares_protects_the_rename_and_nothing_
 #[test]
 fn a_declared_mode_project_branch_is_renamed_leaving_its_members_alone() {
     let w = weave(&[LIB]);
-    common::git_in(&project_dir(&w.workspace), &["branch", "stacked", "main"]);
+    common::git_in(project_dir(&w.workspace), &["branch", "stacked", "main"]);
     succeed(
-        &["branch", "set-mode", "stacked", "feature", "--target", "main"],
+        &[
+            "branch", "set-mode", "stacked", "feature", "--target", "main",
+        ],
         &w.workspace,
     );
 
@@ -230,7 +229,7 @@ fn a_new_name_that_exists_locally_is_refused_and_nothing_changes() {
     let w = weave(&[LIB]);
     let ww = create_workweave(&w.workspace, "anon");
     let old = minted("anon");
-    common::git_in(&project_dir(&ww), &["branch", "taken"]);
+    common::git_in(project_dir(&ww), &["branch", "taken"]);
 
     let refusal = refuse(&["branch", "rename", "taken"], &ww);
 
@@ -246,7 +245,10 @@ fn publish_project_branch(w: &common::PushWorkspace, name: &str, with_commit: bo
     if with_commit {
         commit_in(&project, &format!("{name}.txt"));
     }
-    common::git_in(&project, &["push", "-q", "origin", &format!("tmp-{name}:{name}")]);
+    common::git_in(
+        &project,
+        &["push", "-q", "origin", &format!("tmp-{name}:{name}")],
+    );
     common::git_in(&project, &["switch", "-q", "main"]);
     common::git_in(&project, &["branch", "-qD", &format!("tmp-{name}")]);
     common::git_in(&project, &["fetch", "-q", "origin"]);
@@ -269,7 +271,11 @@ fn a_new_name_a_remote_has_is_refused_without_adopt_and_taken_up_with_it() {
 
     let out = succeed(&["branch", "rename", "forge-name", "--adopt"], &ww);
 
-    assert!(has_branch(&project_dir(&ww), "forge-name"), "{}", describe(&out));
+    assert!(
+        has_branch(&project_dir(&ww), "forge-name"),
+        "{}",
+        describe(&out)
+    );
     assert_eq!(
         upstream_of(&project_dir(&ww), "forge-name").as_deref(),
         Some("refs/heads/forge-name")
@@ -311,7 +317,7 @@ fn the_records_branch_name_is_reserved_and_an_unrecorded_branch_has_no_record_to
     let reserved = refuse(&["branch", "rename", "rwv-records"], &w.workspace);
     assert!(reserved.contains("name reserved"), "{reserved}");
 
-    common::git_in(&project_dir(&w.workspace), &["switch", "-qc", "raw"]);
+    common::git_in(project_dir(&w.workspace), &["switch", "-qc", "raw"]);
     let unrecorded = refuse(&["branch", "rename", "other"], &w.workspace);
     assert!(unrecorded.contains("target unrecorded"), "{unrecorded}");
     assert!(has_branch(&project_dir(&w.workspace), "raw"));
@@ -322,7 +328,7 @@ fn a_rename_that_stopped_after_a_member_is_completed_by_running_it_again() {
     let w = weave(&[LIB]);
     let ww = create_workweave(&w.workspace, "anon");
     let old = minted("anon");
-    common::git_in(&ww.join(LIB), &["branch", "-m", &old, "feat-x"]);
+    common::git_in(ww.join(LIB), &["branch", "-m", &old, "feat-x"]);
 
     succeed(&["branch", "rename", "feat-x"], &ww);
 
@@ -348,7 +354,10 @@ fn a_gone_project_push_branch_offers_the_rename_that_adopts() {
     let w = weave(&[LIB]);
     let project = project_dir(&w.workspace);
     common::git_in(&project, &["switch", "-qc", "feat"]);
-    succeed(&["branch", "set-mode", "feat", "feature", "--target", "main"], &w.workspace);
+    succeed(
+        &["branch", "set-mode", "feat", "feature", "--target", "main"],
+        &w.workspace,
+    );
     commit_in(&project, "work.txt");
     common::git_in(&project, &["push", "-q", "-u", "origin", "feat"]);
     common::git_in(&project, &["push", "-q", "origin", "--delete", "feat"]);

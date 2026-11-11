@@ -123,10 +123,7 @@ pub fn rename_branch(
     from: &str,
     to: &str,
 ) -> anyhow::Result<bool> {
-    let StateReading {
-        mut state,
-        corrupt,
-    } = read_state(vcs, project_dir)?;
+    let StateReading { mut state, corrupt } = read_state(vcs, project_dir)?;
     if corrupt.is_some() {
         return Ok(false);
     }

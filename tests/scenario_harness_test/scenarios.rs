@@ -2326,7 +2326,9 @@ pub fn records_rename_adopt() -> Scenario {
             Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
             Step::rwv(
                 &a(),
-                &["branch", "set-mode", "stacked", "feature", "--target", "stable"],
+                &[
+                    "branch", "set-mode", "stacked", "feature", "--target", "stable",
+                ],
             )
             .expect(Exit::Succeeds),
             publishes_records(Step::rwv(&a(), &["push", "--branch", "stable"]))
@@ -2556,7 +2558,14 @@ pub fn declared_mode_rename_retire() -> Scenario {
         .claim(Claim::OutputContains("protected declared mode (release)")),
         Step::rwv(
             &a(),
-            &["branch", "delete", "release", "--target", "main", "--delete-remote"],
+            &[
+                "branch",
+                "delete",
+                "release",
+                "--target",
+                "main",
+                "--delete-remote",
+            ],
         )
         .deletes(Remote::origin(Repo::Proj), "release")
         .expect(Exit::Succeeds)

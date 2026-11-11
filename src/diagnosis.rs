@@ -2035,11 +2035,9 @@ impl Form {
     /// is spelled for one of them alone.
     fn scope(self) -> Option<Scope> {
         match self {
-            Self::C1Pull
-            | Self::C2Pull
-            | Self::C3Pull
-            | Self::C7Push
-            | Self::C10Adopt => Some(Scope::Project),
+            Self::C1Pull | Self::C2Pull | Self::C3Pull | Self::C7Push | Self::C10Adopt => {
+                Some(Scope::Project)
+            }
             Self::C1UpdateRemote
             | Self::C1UpdateRemoteCommit
             | Self::C2UpdateRemote

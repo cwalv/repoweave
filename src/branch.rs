@@ -11,11 +11,11 @@ use crate::alignment::Accounting;
 use crate::diagnosis::{Judged, Judging, Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
 use crate::parallel::OutputMode;
+use crate::path_spelling::CanonicalPath;
 use crate::records::{
     chain_text, BranchName, Entry, Lookup, Mode, NameError, Record, Store, View, Write, WriteError,
 };
 use crate::refusal::{refusal, RefusalKind};
-use crate::path_spelling::CanonicalPath;
 use crate::vcs::{
     project_vcs, short_revision, vcs_for, HeadObservation, RawRefName, Relation, RemoteHandle,
     ResolvedRevisionId, Upstream, Vcs,
@@ -761,10 +761,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             continue;
         }
         for copy in &copies {
-            eprintln!(
-                "left: {} {old}: {} still has it",
-                repo.label, copy.remote
-            );
+            eprintln!("left: {} {old}: {} still has it", repo.label, copy.remote);
         }
         eprintln!(
             "  delete what is landed: rwv branch delete {old} --target {new} --delete-remote"
