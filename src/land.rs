@@ -15,8 +15,8 @@ use crate::op_state::{CreatedRef, LeftBehind, Moves};
 use crate::records::{BranchName, Mode, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::vcs::{
-    project_vcs, vcs_for, CommitId, DestroyProof, HeadAttachment, RawRefName, ResolvedRevisionId,
-    Site, Vcs, VcsError,
+    project_vcs, vcs_for, CommitId, CommitSummary, DestroyProof, HeadAttachment, RawRefName,
+    ResolvedRevisionId, Site, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
 use std::collections::{BTreeMap, BTreeSet};
