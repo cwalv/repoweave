@@ -729,9 +729,10 @@ fn fetch_and_resolve(
         })
 }
 
-/// Refuse, before any member moves, every member whose upstream tip does not
-/// descend from the commit the lock pins for it: recording it would move the
-/// pin backward, and only a verb that names the member may do that.
+/// Refuse, before any member moves, every member whose declared branch exists
+/// nowhere, and every member whose upstream tip does not descend from the
+/// commit the lock pins for it: recording it would move the pin backward, and
+/// only a verb that names the member may do that.
 fn refuse_backwards(
     items: &[WorkItem],
     fetched: &[Result<ResolvedRevisionId, String>],
@@ -739,8 +740,23 @@ fn refuse_backwards(
 ) -> anyhow::Result<()> {
     let mut report = crate::diagnosis::Report::default();
     for (item, tip) in items.iter().zip(fetched) {
-        let Ok(tip) = tip else { continue };
         let dir = item.checkout.path();
+        if dir.exists() {
+            let branch =
+                crate::vcs::RawRefName::new(item.entry.branch.local_counterpart().as_str());
+            if matches!(
+                crate::alignment::find_e(item.vcs.as_ref(), dir, &item.entry, &branch)?,
+                crate::alignment::Found::Nowhere
+            ) {
+                report.add(
+                    crate::alignment::declared_nowhere(&item.repo_path, dir, &branch)
+                        .by_verb("update")
+                        .judge(item.vcs.as_ref()),
+                );
+                continue;
+            }
+        }
+        let Ok(tip) = tip else { continue };
         let subject = match crate::alignment::pin_of(item.vcs.as_ref(), dir, lock, &item.repo_path)
         {
             crate::alignment::Pin::None => continue,

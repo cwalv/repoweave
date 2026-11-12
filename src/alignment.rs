@@ -367,6 +367,23 @@ pub(crate) fn find_e(
     }
 }
 
+/// The member `repo` declares `branch`, which exists nowhere: not locally, not
+/// on a remote as last fetched.
+pub(crate) fn declared_nowhere(
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    branch: impl std::fmt::Display,
+) -> crate::diagnosis::Judging {
+    let branch = branch.to_string();
+    State::NameNoSuchBranch
+        .of(&repo)
+        .member()
+        .subject(&branch)
+        .bind("<m>", repo)
+        .bind("<b>", branch)
+        .checkout(dir)
+}
+
 /// How a member is expected to sit, and why it sits there.
 #[derive(Debug, Clone)]
 pub enum Target {
@@ -1049,11 +1066,8 @@ impl Aligner {
 
     fn notes(&self, m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Vec<Judged> {
         if let Some(branch) = &plan.unfound {
-            return vec![State::NameNoSuchBranch
-                .of(repo)
+            return vec![declared_nowhere(repo, m.dir, branch)
                 .member()
-                .subject(branch)
-                .checkout(m.dir)
                 .bind("<m>", m.path)
                 .bind("<b>", branch)
                 .judge(m.vcs)];

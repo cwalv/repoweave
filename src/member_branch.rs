@@ -345,14 +345,8 @@ pub(crate) fn judge_entry(
     match (request.creation, &tip) {
         (Creation::Existing, None) => {
             refusals.add(
-                State::NameNoSuchBranch
-                    .of(member)
-                    .member()
+                crate::alignment::declared_nowhere(member, dir, &raw)
                     .by_verb(verb)
-                    .subject(tracking.local_counterpart().as_str())
-                    .bind("<m>", member)
-                    .bind("<b>", tracking.local_counterpart().as_str())
-                    .checkout(dir)
                     .judge(vcs),
             );
             return Ok(None);

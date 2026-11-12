@@ -491,3 +491,66 @@ fn placement_disagreement_compares_with_the_url_on_the_default_branch() {
         "a mirror url on another branch tripped it: {findings:?}"
     );
 }
+
+fn declare_by_hand(w: &PushWorkspace, repo: &str, branch: &str) {
+    let mut manifest: toml::Value = toml::from_str(&manifest_text(w)).unwrap();
+    manifest["repositories"][repo]["branch"] = toml::Value::String(branch.to_owned());
+    std::fs::write(
+        project(w).join("rwv.toml"),
+        toml::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+fn head_of(dir: &Path) -> String {
+    git_in(dir, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn update_remote_refuses_a_declared_branch_that_exists_nowhere_as_lock_does_and_moves_nothing() {
+    let w = two_members();
+    let app = member(&w, APP);
+    commit_in(&app, "app-ahead");
+    publish_branch(&app, "main");
+    git_in(&app, &["reset", "-q", "--hard", "HEAD~1"]);
+    declare_by_hand(&w, LIB, "nowhere");
+    let before = (
+        head_of(&app),
+        head_of(&member(&w, LIB)),
+        std::fs::read_to_string(project(&w).join("rwv.lock")).unwrap(),
+    );
+
+    let update = refused(&run(&w, &["update", "--remote"]));
+    let lock = refused(&run(&w, &["lock", "--commit"]));
+
+    let state = format!("{LIB}: name no-such-branch (nowhere)");
+    assert!(lock.contains(&state), "{lock}");
+    assert!(update.contains(&state), "{update}");
+    assert!(update.contains("rwv fetch"), "{update}");
+    assert!(update.contains("rwv explain name"), "{update}");
+    assert!(!update.contains("update aborted"), "{update}");
+    assert_eq!(
+        (
+            head_of(&app),
+            head_of(&member(&w, LIB)),
+            std::fs::read_to_string(project(&w).join("rwv.lock")).unwrap(),
+        ),
+        before,
+        "the refusal came after something moved"
+    );
+}
+
+#[test]
+fn update_reports_a_declared_branch_that_exists_nowhere_by_the_same_judgement() {
+    let w = two_members();
+    declare_by_hand(&w, LIB, "nowhere");
+
+    let out = run(&w, &["update"]);
+    let update = format!("{}{}", stdout_of(&out), succeeded(&out));
+
+    assert!(
+        update.contains(&format!("{LIB}: name no-such-branch (nowhere)")),
+        "{update}"
+    );
+    assert!(update.contains("rwv fetch"), "{update}");
+}
