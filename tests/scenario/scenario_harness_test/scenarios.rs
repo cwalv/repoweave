@@ -6602,7 +6602,11 @@ pub fn abort_deletes_a_created_receiving_branch() -> Scenario {
                 &declared_branch_text(Repo::Lib, "main"),
                 &declared_branch_text(Repo::Lib, "lib-next"),
             ),
-            Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "lib onto lib-next"]),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-qam", "lib onto lib-next"],
+            ),
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::rwv_paused(
                 &ww("w"),
