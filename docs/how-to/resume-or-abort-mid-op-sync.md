@@ -29,8 +29,8 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 | Equal to the savepoint | `untouched` — the operation never moved this repository |
 | Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
 | On another branch than when the operation began, at a tip the operation accounts for | `switched back` onto that branch, the branch it was on left where it stands, then judged by this table |
-| In the source, mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
-| In a `land`'s target, a repository the landing never moved, whatever its state | `left` where it stands, a rebase or merge in progress there included |
+| A repository the operation integrates, mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
+| Any other repository mid-rebase / mid-merge / mid-cherry-pick / mid-revert, or in a `land`'s target a repository the landing never moved | `left` where it stands, the operation in progress there included |
 | Anything else | `foreign-tip violation` — restore refused, the tip left in place and nothing written; op-state retained |
 
 A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
