@@ -1608,8 +1608,9 @@ fn an_edit_beside_drift_left_in_place_is_offered_no_commit() {
 // ---------------------------------------------------------------------------
 
 /// A worktree whose index file is gone: git's merge would read it as an
-/// initial checkout and write every file, an ignored one standing at a path
-/// the move did not touch included. Nothing reads as moved under it.
+/// initial checkout and write every file, the ignored ones standing at paths
+/// the move did not touch included (an untracked one makes it refuse
+/// whole, so every file here is ignored). Nothing reads as moved under it.
 #[test]
 fn a_worktree_with_no_index_is_not_refreshed() {
     let f = fixture();
@@ -1618,7 +1619,7 @@ fn a_worktree_with_no_index_is_not_refreshed() {
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     );
     std::fs::create_dir_all(Path::new(&common_dir).join("info")).unwrap();
-    std::fs::write(Path::new(&common_dir).join("info/exclude"), "README.md\n").unwrap();
+    std::fs::write(Path::new(&common_dir).join("info/exclude"), "*.md\n*.txt\n").unwrap();
     f.move_from_elsewhere("ww/project", "new.txt", "new\n");
     let index = common::git_in(
         &f.ww_lib,
