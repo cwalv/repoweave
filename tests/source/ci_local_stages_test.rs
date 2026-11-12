@@ -1013,7 +1013,7 @@ fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
     let ci_local = scripts.join("ci-local.sh");
-    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    common::copy_executable(&ci_local_sh(), &ci_local);
     for (path, body) in [
         (
             scripts.join("git-floor.sh"),
@@ -1027,8 +1027,7 @@ fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
             "#!/bin/sh\necho \"git version ${CI_LOCAL_TEST_FLOOR_GIT:-2.36.0}\"\n".to_owned(),
         ),
     ] {
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, body);
     }
     (dir, ci_local)
 }

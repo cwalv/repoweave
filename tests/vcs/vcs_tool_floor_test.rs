@@ -8,13 +8,12 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use repoweave::refusal::RefusalKind;
 
-mod common;
+use crate::common;
 
 const FLOOR: &str = "2.36";
 
@@ -34,8 +33,7 @@ fn stand_in(answer: &str) -> StandIn {
         calls.display()
     );
     let git = bin.join("git");
-    std::fs::write(&git, script).unwrap();
-    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&git, script);
     StandIn {
         _dir: dir,
         bin,

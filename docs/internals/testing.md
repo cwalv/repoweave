@@ -339,7 +339,7 @@ the release gate and the pre-push hook run. Two named tiers split it:
 
 Together they are the full gate, each stage once. The script writes down only
 the seat list and computes landing from it, and
-`tests/ci_local_stages_test.rs` holds the partition. A change touching
+`tests/source/ci_local_stages_test.rs` holds the partition. A change touching
 `cfg(windows)` code, or how line endings are read, written or compared, runs
 the full gate in its own checkout, since those are exactly what the landing
 stages catch. A tier run's terminal line names the tier and its stages, so

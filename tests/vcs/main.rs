@@ -12,3 +12,4 @@ mod shared_file_conformance_test;
 mod snapshot_reads_test;
 mod vcs_io_cause_arrival_test;
 mod vcs_test;
+mod vcs_tool_floor_test;
