@@ -2961,6 +2961,22 @@ impl Judging {
         self
     }
 
+    /// Several values for `placeholder`, each its own argument where it
+    /// stands.
+    pub fn bind_list<V: fmt::Display>(
+        mut self,
+        placeholder: &'static str,
+        values: impl IntoIterator<Item = V>,
+    ) -> Self {
+        let joined = values
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(LIST);
+        self.bindings.insert(placeholder, joined);
+        self
+    }
+
     pub fn checkout(self, dir: &Path) -> Self {
         self.bind("<checkout>", dir.display())
     }
@@ -3049,10 +3065,14 @@ impl Judging {
     }
 }
 
-/// `template` with every bound `<placeholder>` replaced by its value, quoted
-/// where it holds whitespace. An unbound one stays for the operator to fill.
 /// What separates the values [`Judging::bind_each`] binds.
 const EACH: &str = "\u{1f}";
+
+/// What separates the values [`Judging::bind_list`] binds.
+const LIST: &str = "\u{1e}";
+
+/// `template` with every bound `<placeholder>` replaced by its value, quoted
+/// where it holds whitespace. An unbound one stays for the operator to fill.
 
 fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
     let quoted = |value: &str| {
@@ -3065,6 +3085,10 @@ fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
     bindings
         .iter()
         .fold(template.to_owned(), |text, (placeholder, value)| {
+            if value.contains(LIST) {
+                let words: Vec<String> = value.split(LIST).map(quoted).collect();
+                return text.replace(placeholder, &words.join(" "));
+            }
             if !value.contains(EACH) {
                 return text.replace(placeholder, &quoted(value));
             }

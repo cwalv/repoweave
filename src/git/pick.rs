@@ -109,6 +109,38 @@ impl GitVcs {
         Ok(unmerged)
     }
 
+    pub(super) fn cherry_pick_head(checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        let args = ["rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD^{commit}"];
+        let output = git_command()
+            .args(args)
+            .current_dir(checkout)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        commit_id(&String::from_utf8_lossy(&output.stdout), &args, checkout).map(Some)
+    }
+
+    pub(super) fn cherry_picked_from(
+        repo: &Path,
+        commit: &CommitId,
+    ) -> Result<Option<CommitId>, VcsError> {
+        let args = ["log", "-1", "--format=%B", commit.as_str(), "--"];
+        let message = Self::run(args, repo)?;
+        let Some(id) = message.lines().rev().find_map(|line| {
+            line.trim()
+                .strip_prefix("(cherry picked from commit ")?
+                .strip_suffix(')')
+        }) else {
+            return Ok(None);
+        };
+        commit_id(id, &args, repo).map(Some)
+    }
+
     pub(super) fn parents_of(repo: &Path, commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {
         let args = ["rev-list", "--parents", "-n", "1", commit.as_str()];
         let line = Self::run_trimmed(args, repo)?;

@@ -8619,7 +8619,8 @@ pub fn cherry_pick_conflict_aborts() -> Scenario {
             .claim(Claim::OutputLine("readme-p")),
         Step::git(&ww("p"), Repo::Lib, &["status", "--porcelain"])
             .claim(Claim::OutputLacks("README")),
-        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"]).claim(Claim::OutputLine("")),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("rwv.")),
         Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
             .claim(Claim::LocalStateUnchanged(ww("p"))),
@@ -9308,7 +9309,10 @@ pub fn cherry_pick_project_conflict() -> Scenario {
             .claim(Claim::OutputLacks("guide.txt")),
         Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
             .claim(Claim::OutputLacks("recurse-submodules")),
-        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"]).claim(Claim::OutputLine("")),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("guide"))
+            .claim(Claim::OutputLacks("notes"))
+            .claim(Claim::OutputLacks("rwv.")),
     ]);
     scenario("cherry-pick project conflict continued", steps)
 }
@@ -9321,7 +9325,10 @@ pub fn cherry_pick_project_conflict_aborts() -> Scenario {
         Step::rwv(&ww("p"), &["abort"]).expect(Exit::Succeeds),
         Step::git(&ww("p"), Repo::Proj, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLine("notes-p")),
-        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"]).claim(Claim::OutputLine("")),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("guide"))
+            .claim(Claim::OutputLacks("notes"))
+            .claim(Claim::OutputLacks("rwv.")),
         Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
             .claim(Claim::LocalStateUnchanged(ww("p"))),

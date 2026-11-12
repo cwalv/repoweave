@@ -3019,7 +3019,8 @@ pub trait Vcs: Send + Sync {
     ///
     /// For git: parses
     /// `git status --porcelain --untracked-files=no`, keeping entries whose
-    /// index column is set, and reports the post-rename name.
+    /// index column is set; a rename names both its source and its
+    /// destination.
     fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
     /// The tracked paths whose working file differs from what the index
@@ -4680,6 +4681,19 @@ pub trait Vcs: Send + Sync {
         commit: &CommitId,
         mainline: Option<usize>,
     ) -> Result<Vec<String>, VcsError>;
+
+    /// The commit a copy in progress in `checkout` is copying, `None` where
+    /// no copy is in progress.
+    ///
+    /// For git: `CHERRY_PICK_HEAD`.
+    fn copy_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// The commit `commit` records it copies, as [`Vcs::copy_commit`] records
+    /// it; `None` where it records none.
+    ///
+    /// For git: the last `(cherry picked from commit <id>)` line of its
+    /// message.
+    fn copied_from(&self, repo: &Path, commit: &CommitId) -> Result<Option<CommitId>, VcsError>;
 
     /// The parents of `commit`, in order; none for a root commit.
     ///

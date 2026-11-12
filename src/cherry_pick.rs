@@ -245,7 +245,7 @@ fn pick(
                 .clone()
                 .context("the op record holds no port to resume")?;
             reported.rev = Some(record.rev.to_string());
-            act(&here, &op, record, output, reported)
+            act(&here, &op, record, true, output, reported)
         }
     }
 }
@@ -482,7 +482,7 @@ fn fresh(
         take_in,
         &repos,
     )?;
-    act(here, &op, plan.record, output, reported)
+    act(here, &op, plan.record, false, output, reported)
 }
 
 fn savepoint_repos(here: &Here<'_>) -> Vec<(PathBuf, Box<dyn Vcs>)> {
@@ -648,6 +648,7 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
         members: Vec::new(),
         carried: BTreeMap::new(),
         excepted: BTreeMap::new(),
+        head: head.clone(),
         project_started: false,
     };
     let mut notes = Vec::new();
@@ -658,14 +659,19 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
         let entry = ours.get_entry(path);
         if except.contains(path) {
             if let Some(entry) = entry {
-                judge_excepted(
-                    here,
-                    path,
-                    entry,
-                    our_pins.get(path),
-                    &mut record,
-                    &mut report,
-                )?;
+                if let Some(tip) =
+                    judge_excepted(here, &aligner, path, entry, our_pins.get(path), &mut report)?
+                {
+                    record.excepted.insert(RepoKey::Member(path.clone()), tip);
+                } else if our_pins.get(path).is_some()
+                    && vcs_for(entry.vcs_type).is_repo(&here.member_dir(path))
+                {
+                    notes.push(format!("{path}: left out; its checkout is at its pin here"));
+                } else {
+                    notes.push(format!(
+                        "{path}: left out; no checkout here records anything"
+                    ));
+                }
             } else {
                 notes.push(format!("{path}: left out; this branch does not list it"));
             }
@@ -750,13 +756,7 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
                 .checkout(&mdir)
                 .bind("<m>", path)
                 .bind("<rev>", p1.short())
-                .bind(
-                    "<ids>",
-                    ids.iter()
-                        .map(|c| c.short().to_owned())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
+                .bind_list("<ids>", dropped.iter().map(|c| c.id.short()))
                 .only_forms(&[if owned {
                     Form::C39
                 } else {
@@ -838,6 +838,30 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
         &theirs,
     )?;
     report.into_result()?;
+    if project_moves {
+        let added = match &parent {
+            Some(parent) => vcs.changed_paths_between(dir, &rev(parent), &rev(&commit))?,
+            None => Vec::new(),
+        };
+        let mut in_the_way = Vec::new();
+        for path in added {
+            if dir.join(&path).exists() && !vcs.is_tracked(dir, Path::new(&path))? {
+                in_the_way.push(path);
+            }
+        }
+        if !in_the_way.is_empty() {
+            crate::refuse!(
+                RefusalKind::UntrackedCollision,
+                "{label}: {} writes {}, which stand{} here untracked; move {} aside, then run \
+                 `rwv cherry-pick {}` again",
+                commit.short(),
+                in_the_way.join(", "),
+                if in_the_way.len() == 1 { "s" } else { "" },
+                if in_the_way.len() == 1 { "it" } else { "them" },
+                args.rev,
+            );
+        }
+    }
     let not_ported = not_ported(&label, &base, &theirs, &ours);
     Ok(Plan {
         record,
@@ -854,6 +878,8 @@ struct PlannedCopies {
     commits: Vec<CommitId>,
     mainline: Option<usize>,
     left_out: Vec<CommitId>,
+    branch: String,
+    start: CommitId,
 }
 
 impl PlannedCopies {
@@ -869,6 +895,9 @@ impl PlannedCopies {
             copied: Vec::new(),
             dropped: Vec::new(),
             left_out: self.left_out,
+            branch: self.branch,
+            start: self.start,
+            copying: false,
         }
     }
 }
@@ -903,6 +932,8 @@ fn plan_copies(
             commits: Vec::new(),
             mainline: None,
             left_out,
+            branch: crate::branch::checked_out(mvcs, mdir)?.unwrap_or_default(),
+            start: head.id().clone(),
         }));
     }
     let landing_merge = mainline.and_then(|n| {
@@ -914,6 +945,16 @@ fn plan_copies(
         None => {
             if copy.iter().any(|c| c.parents.len() > 1) {
                 let ids: Vec<CommitId> = copy.iter().map(|c| c.id.clone()).collect();
+                let mut chain = Vec::new();
+                let mut at = Some(p1.clone());
+                while let Some(id) = at.filter(|id| ids.contains(id)) {
+                    at = copy
+                        .iter()
+                        .find(|c| c.id == id)
+                        .and_then(|c| c.parents.first().cloned());
+                    chain.push(id);
+                }
+                chain.reverse();
                 let merges: BTreeSet<&CommitId> = copy
                     .iter()
                     .filter(|c| c.parents.len() > 1)
@@ -939,13 +980,7 @@ fn plan_copies(
                         .bind_place("<b-checkout>", mdir)
                         .bind("<m>", path)
                         .bind("<pin>", p1.short())
-                        .bind(
-                            "<ids>",
-                            ids.iter()
-                                .map(|c| c.short().to_owned())
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        )
+                        .bind_list("<ids>", chain.iter().map(CommitId::short))
                         .judge(mvcs),
                 );
                 return Ok(None);
@@ -991,37 +1026,55 @@ fn plan_copies(
                 .judge(mvcs),
         ),
     }
+    let branch = crate::branch::checked_out(mvcs, mdir)?.unwrap_or_default();
     Ok(Some(PlannedCopies {
         repo: RepoKey::Member(path.clone()),
         commits,
         mainline: member_mainline,
         left_out,
+        branch,
+        start: head.id().clone(),
     }))
 }
 
-/// A member `--except` names: its checked-out tip is recorded as `lock`
-/// records it, forward only.
+/// A member `--except` names: its checked-out tip, to record as `lock`
+/// records it, aligned and forward only. `None` where it records nothing:
+/// no checkout, a refusal reported, or its tip already its pin.
 fn judge_excepted(
     here: &Here<'_>,
+    aligner: &Aligner,
     path: &RepoPath,
     entry: &RepoEntry,
     pin: Option<&CommitId>,
-    record: &mut PickRecord,
     report: &mut Report,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<CommitId>> {
     let mdir = here.member_dir(path);
     let mvcs = vcs_for(entry.vcs_type);
     if !mvcs.is_repo(&mdir) {
-        return Ok(());
+        return Ok(None);
     }
     let mvcs = mvcs.as_ref();
-    report.extend(crate::diagnosis::judge_edits(
+    if let Some(busy) = crate::diagnosis::judge_edits(
         mvcs,
         path,
         &mdir,
         mvcs.tracked_dirty_file_names(&mdir)?,
         None,
-    ));
+    ) {
+        report.add(busy);
+        return Ok(None);
+    }
+    let member = Member {
+        path,
+        entry,
+        dir: &mdir,
+        vcs: mvcs,
+    };
+    let planned = aligner.plan(&member, None)?;
+    if let Some(off) = aligner.refusal(&member, &planned, path)? {
+        report.add(off);
+        return Ok(None);
+    }
     let tip = mvcs.head_revision(&mdir)?;
     if let Some(pin) = pin {
         let pinned = rev(pin);
@@ -1044,16 +1097,13 @@ fn judge_excepted(
                 subject,
                 Some(tip.id().short()),
             ));
-            return Ok(());
+            return Ok(None);
         }
         if pin == tip.id() {
-            return Ok(());
+            return Ok(None);
         }
     }
-    record
-        .excepted
-        .insert(RepoKey::Member(path.clone()), tip.id().clone());
-    Ok(())
+    Ok(Some(tip.id().clone()))
 }
 
 /// Whether porting `<rev>`'s project files changes anything here: a file
@@ -1180,13 +1230,14 @@ fn conflict_stop(
     checkout: &Path,
     paths: &[String],
     what: &str,
+    note: &str,
     vcs: &dyn Vcs,
 ) -> anyhow::Error {
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
-            "rwv {VERB}: the copy of {what} in {repo} stopped on a conflict ({}) at {}.\n{}\nthen \
-             run `{}`, or `rwv abort` to put everything back as it was",
+            "rwv {VERB}: the copy of {what} in {repo} stopped on a conflict ({}) at {}.\n{note}{}\n\
+             then run `{}`, or `rwv abort` to put everything back as it was",
             paths.join(", "),
             checkout.display(),
             vcs.conflict_resolution_hint(crate::vcs::ConflictOp::Rebase),
@@ -1195,24 +1246,271 @@ fn conflict_stop(
     )
 }
 
+/// A step the VCS refused once the op had started: the op is held.
+fn held(repo: &str, what: &str, error: &dyn std::fmt::Display) -> anyhow::Error {
+    crate::refusal::refusal(
+        RefusalKind::OpParked,
+        format!(
+            "rwv {VERB}: the copy of {what} in {repo} failed: {error}\nThe port is held: once what \
+             stopped it is fixed, run `{}`, or `rwv abort` to put everything back as it was",
+            crate::op_state::resume_command(OpVerb::CherryPick),
+        ),
+    )
+}
+
+/// A checkout at a tip the port did not write.
+fn foreign_tip(
+    repo: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    found: &CommitId,
+    left: &CommitId,
+    branch: &str,
+) -> anyhow::Error {
+    let keep = vcs
+        .hint(crate::vcs::VcsAction::BranchAt)
+        .replace("<checkout>", &dir.display().to_string())
+        .replace("<sha>", found.short());
+    crate::refusal::refusal(
+        RefusalKind::ForeignTip,
+        format!(
+            "rwv {VERB}: {repo}: its checkout is at {}, a commit the port did not make; the port \
+             left '{branch}' at {}.\nKeep {} on a branch of its own if it is wanted (`{keep}`), \
+             move '{branch}' back to {}, then run `{}`; or `rwv abort` to put everything back as \
+             it was",
+            found.short(),
+            left.short(),
+            found.short(),
+            left.short(),
+            crate::op_state::resume_command(OpVerb::CherryPick),
+        ),
+    )
+}
+
+/// A checkout no longer on the branch the port copies onto.
+fn off_branch(
+    repo: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    branch: &str,
+    found: Option<&str>,
+) -> anyhow::Error {
+    let switch = vcs
+        .hint(crate::vcs::VcsAction::SwitchTo)
+        .replace("<checkout>", &dir.display().to_string())
+        .replace("<E>", branch);
+    let found = found.map_or_else(|| "no branch".to_owned(), |b| format!("'{b}'"));
+    crate::refusal::refusal(
+        RefusalKind::HeadNotOnBranch,
+        format!(
+            "rwv {VERB}: {repo}: the port copies onto '{branch}', and its checkout has {found} \
+             checked out.\nSwitch it back (`{switch}`), then run `{}`; or `rwv abort` to put \
+             everything back as it was",
+            crate::op_state::resume_command(OpVerb::CherryPick),
+        ),
+    )
+}
+
+/// The member's checkout holds the copy of `next` the port started, made
+/// and not yet recorded: one commit on the tip the port left, recording
+/// `next` as its source.
+fn holds_started_copy(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    pick: &MemberPick,
+    head: &CommitId,
+) -> anyhow::Result<bool> {
+    let Some(next) = pick.remaining().first() else {
+        return Ok(false);
+    };
+    Ok(pick.copying
+        && vcs.parents(dir, head)? == [pick.expected().clone()]
+        && vcs.copied_from(dir, head)?.as_ref() == Some(next))
+}
+
+/// The project repo holds the project commit the port started, made and
+/// not yet recorded.
+fn holds_project_commit(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    record: &PickRecord,
+    head: &CommitId,
+) -> anyhow::Result<bool> {
+    Ok(record.project_started
+        && vcs.parents(dir, head)? == [record.head.clone()]
+        && vcs
+            .annotation_values(dir, head, PICKED_FROM)?
+            .contains(&record.rev.to_string()))
+}
+
+/// What `--continue` finds before it moves anything: each repo the port
+/// moves on the branch it planned against, at the tip the port left it or
+/// holding the copy it started, and no operation in progress the port did
+/// not start; each excepted member judged again at its tip.
+fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow::Result<()> {
+    for pick in &record.members {
+        let RepoKey::Member(path) = &pick.repo else {
+            continue;
+        };
+        if pick.commits.is_empty() {
+            continue;
+        }
+        let entry = ours
+            .get_entry(path)
+            .with_context(|| format!("{path} is no member of the project"))?;
+        let dir = here.member_dir(path);
+        let vcs = vcs_for(entry.vcs_type);
+        let vcs = vcs.as_ref();
+        let found = crate::branch::checked_out(vcs, &dir)?;
+        if found.as_deref() != Some(pick.branch.as_str()) {
+            return Err(off_branch(
+                path.as_str(),
+                &dir,
+                vcs,
+                &pick.branch,
+                found.as_deref(),
+            ));
+        }
+        let head = vcs.head_revision(&dir)?.id().clone();
+        let next = pick.remaining().first();
+        if vcs.mid_operation(&dir).is_some() {
+            let own = pick.copying
+                && head == *pick.expected()
+                && next.is_some()
+                && vcs.copy_in_flight(&dir)?.as_ref() == next;
+            if !own {
+                if let Some(busy) = crate::diagnosis::judge_edits(vcs, path, &dir, Vec::new(), None)
+                {
+                    return Err(busy.refused());
+                }
+            }
+            continue;
+        }
+        if head != *pick.expected() && !holds_started_copy(vcs, &dir, pick, &head)? {
+            return Err(foreign_tip(
+                path.as_str(),
+                &dir,
+                vcs,
+                &head,
+                pick.expected(),
+                &pick.branch,
+            ));
+        }
+    }
+    if !record.project_started {
+        let vcs = here.vcs.as_ref();
+        if let Some(busy) =
+            crate::diagnosis::judge_edits(vcs, here.label(), &here.dir, Vec::new(), None)
+        {
+            return Err(busy.refused());
+        }
+        let head = vcs.head_revision(&here.dir)?.id().clone();
+        if head != record.head {
+            let branch = crate::branch::checked_out(vcs, &here.dir)?.unwrap_or_default();
+            return Err(foreign_tip(
+                &here.label(),
+                &here.dir,
+                vcs,
+                &head,
+                &record.head,
+                &branch,
+            ));
+        }
+    }
+    if !record.excepted.is_empty() {
+        let aligner = Aligner::open(here.ctx.active_path(), &here.project, Accounting::default())?;
+        let our_pins = pins_of(lock_at(here.vcs.as_ref(), &here.dir, &record.head).as_ref());
+        let mut report = Report::default();
+        let mut excepted = BTreeMap::new();
+        for key in record.excepted.keys() {
+            let RepoKey::Member(path) = key else {
+                continue;
+            };
+            let Some(entry) = ours.get_entry(path) else {
+                continue;
+            };
+            if let Some(tip) =
+                judge_excepted(here, &aligner, path, entry, our_pins.get(path), &mut report)?
+            {
+                excepted.insert(key.clone(), tip);
+            }
+        }
+        report.into_result()?;
+        record.excepted = excepted;
+    }
+    Ok(())
+}
+
+/// Every repo the port moves has its savepoint before it moves: one an
+/// interrupted start did not take is taken where the repo still sits at the
+/// tip the port was planned on.
+fn ensure_savepoints(
+    here: &Here<'_>,
+    op: &Op,
+    ours: &Manifest,
+    record: &PickRecord,
+) -> anyhow::Result<()> {
+    let key = SavepointKey::Op(op.id.clone());
+    let mut repos: Vec<(String, PathBuf, Box<dyn Vcs>, CommitId)> = Vec::new();
+    for pick in &record.members {
+        let RepoKey::Member(path) = &pick.repo else {
+            continue;
+        };
+        if pick.commits.is_empty() {
+            continue;
+        }
+        let Some(entry) = ours.get_entry(path) else {
+            continue;
+        };
+        repos.push((
+            path.to_string(),
+            here.member_dir(path),
+            vcs_for(entry.vcs_type),
+            pick.start.clone(),
+        ));
+    }
+    repos.push((
+        here.label(),
+        here.dir.clone(),
+        project_vcs(),
+        record.head.clone(),
+    ));
+    for (repo, dir, vcs, start) in repos {
+        if vcs.resolve_savepoint(&dir, &key).is_some() {
+            continue;
+        }
+        let head = vcs.head_revision(&dir)?.id().clone();
+        if head != start || vcs.mid_operation(&dir).is_some() {
+            return Err(crate::untokened!(
+                Owed,
+                "{repo}: the op's savepoint of it is gone and it has moved since the port began, so \
+                 nothing would put it back; run `rwv abort` and port again"
+            ));
+        }
+        vcs.create_savepoint(&dir, &key)?;
+    }
+    Ok(())
+}
+
 /// Carry out the port, or resume it: each member's remaining copies, then the
-/// project commit. Every step finds what an earlier run did and goes on.
+/// project commit. Every step records that it starts before it moves
+/// anything, and a resumed run reads the repo to learn whether it did.
 fn act(
     here: &Here<'_>,
     op: &Op,
     mut record: PickRecord,
+    resumed: bool,
     output: OutputMode,
     reported: &mut CherryPickJsonOutput,
 ) -> anyhow::Result<()> {
-    let key = SavepointKey::Op(op.id.clone());
-    let pre_head = here
-        .vcs
-        .resolve_savepoint(&here.dir, &key)
-        .context("the op's savepoint of the project repo is gone")?
-        .id()
-        .clone();
+    let pre_head = record.head.clone();
     let ours = manifest_at(here.vcs.as_ref(), &here.dir, &pre_head)
         .context("the project's rwv.toml did not parse when the port began")?;
+    if resumed {
+        recheck(here, &ours, &mut record)?;
+        save(op, &record)?;
+    }
+    ensure_savepoints(here, op, &ours, &record)?;
     let result = copy_members(here, op, &ours, &mut record, output);
     reported.members = record.members.iter().map(member_output).collect();
     reported.excepted = record
@@ -1273,11 +1571,13 @@ fn copy_members(
     record: &mut PickRecord,
     output: OutputMode,
 ) -> anyhow::Result<()> {
-    let key = SavepointKey::Op(op.id.clone());
     for i in 0..record.members.len() {
         let RepoKey::Member(path) = record.members[i].repo.clone() else {
             continue;
         };
+        if record.members[i].remaining().is_empty() {
+            continue;
+        }
         let entry = ours
             .get_entry(&path)
             .with_context(|| format!("{path} is no member of the project"))?;
@@ -1285,20 +1585,35 @@ fn copy_members(
         let vcs = vcs_for(entry.vcs_type);
         let vcs = vcs.as_ref();
         while let Some(next) = record.members[i].remaining().first().cloned() {
-            let expected = record.members[i]
-                .copied
-                .last()
-                .map(|(_, to)| to.clone())
-                .or_else(|| vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone()));
+            let pick = &record.members[i];
+            let expected = pick.expected().clone();
             let head = vcs.head_revision(&dir)?.id().clone();
-            let copied = if matches!(vcs.mid_op(&dir), Some(crate::vcs::ConflictOp::CherryPick)) {
-                vcs.continue_copy(&dir)?
-            } else if expected.as_ref().is_some_and(|e| e != &head)
-                && vcs.is_ancestor(&dir, &rev(expected.as_ref().unwrap_or(&head)), &rev(&head))?
-            {
+            let in_flight = vcs.copy_in_flight(&dir)?;
+            let copied = if pick.copying && head == expected && in_flight.as_ref() == Some(&next) {
+                vcs.continue_copy(&dir)
+                    .map_err(|e| held(path.as_str(), next.short(), &e))?
+            } else if in_flight.is_none() && head != expected {
+                if !holds_started_copy(vcs, &dir, pick, &head)? {
+                    return Err(foreign_tip(
+                        path.as_str(),
+                        &dir,
+                        vcs,
+                        &head,
+                        &expected,
+                        &pick.branch,
+                    ));
+                }
                 Copied::Commit(head)
+            } else if vcs.mid_operation(&dir).is_none() {
+                record.members[i].copying = true;
+                save(op, record)?;
+                crate::test_pause::point("cherry-pick-member-copy");
+                vcs.copy_commit(&dir, &next, record.members[i].mainline)
+                    .map_err(|e| held(path.as_str(), next.short(), &e))?
             } else {
-                vcs.copy_commit(&dir, &next, record.members[i].mainline)?
+                let busy = crate::diagnosis::judge_edits(vcs, &path, &dir, Vec::new(), None)
+                    .context("a checkout in an operation is judged busy")?;
+                return Err(busy.refused());
             };
             match copied {
                 Copied::Commit(to) => {
@@ -1312,6 +1627,7 @@ fn copy_members(
                         &format!("{path}: copied {} as {}", next.short(), to.short()),
                     );
                     record.members[i].copied.push((next, to));
+                    record.members[i].copying = false;
                     save(op, record)?;
                 }
                 Copied::Empty => {
@@ -1323,6 +1639,7 @@ fn copy_members(
                         ),
                     );
                     record.members[i].dropped.push(next);
+                    record.members[i].copying = false;
                     save(op, record)?;
                 }
                 Copied::Conflicted(paths) => {
@@ -1331,6 +1648,7 @@ fn copy_members(
                         &dir,
                         &paths,
                         next.short(),
+                        "",
                         vcs,
                     ));
                 }
@@ -1338,6 +1656,80 @@ fn copy_members(
         }
     }
     Ok(())
+}
+
+/// Discard the dirty files rwv writes itself, regenerated afterwards, so the
+/// project copy is not stopped by them.
+fn set_aside_authored(here: &Here<'_>, ours: &Manifest) -> anyhow::Result<()> {
+    let vcs = here.vcs.as_ref();
+    let authored = crate::activate::owned_paths(here.ctx.active_path(), &here.project, ours);
+    for path in vcs.tracked_dirty_file_names(&here.dir)? {
+        if !authored.contains(&path) {
+            continue;
+        }
+        let captured = std::fs::read(here.dir.join(&path)).unwrap_or_default();
+        vcs.discard_captured_change(&here.dir, Path::new(&path), &captured)?;
+    }
+    Ok(())
+}
+
+/// Where the project copy stands: applied, its conflicted paths listed, or
+/// committed by an earlier run that stopped before recording it.
+enum ProjectCopy {
+    Conflicted(Vec<String>),
+    Made(CommitId),
+}
+
+fn start_project_copy(
+    here: &Here<'_>,
+    op: &Op,
+    ours: &Manifest,
+    record: &mut PickRecord,
+) -> anyhow::Result<ProjectCopy> {
+    let vcs = here.vcs.as_ref();
+    let dir = &here.dir;
+    let label = here.label();
+    let commit = record.rev.clone();
+    if record.project_started {
+        let head = vcs.head_revision(dir)?.id().clone();
+        match vcs.copy_in_flight(dir)? {
+            Some(copying) if copying == commit && head == record.head => {
+                return Ok(ProjectCopy::Conflicted(vcs.unmerged_paths(dir)?));
+            }
+            Some(_) => {
+                let busy = crate::diagnosis::judge_edits(vcs, &label, dir, Vec::new(), None)
+                    .context("a checkout in an operation is judged busy")?;
+                return Err(busy.refused());
+            }
+            None if head != record.head => {
+                if holds_project_commit(vcs, dir, record, &head)? {
+                    return Ok(ProjectCopy::Made(head));
+                }
+                let branch = crate::branch::checked_out(vcs, dir)?.unwrap_or_default();
+                return Err(foreign_tip(&label, dir, vcs, &head, &record.head, &branch));
+            }
+            None => {
+                let authored =
+                    crate::activate::owned_paths(here.ctx.active_path(), &here.project, ours);
+                let dirty: Vec<String> = vcs
+                    .tracked_dirty_file_names(dir)?
+                    .into_iter()
+                    .filter(|path| !authored.contains(path))
+                    .collect();
+                if let Some(busy) = crate::diagnosis::judge_edits(vcs, &label, dir, dirty, None) {
+                    return Err(busy.refused());
+                }
+            }
+        }
+    }
+    set_aside_authored(here, ours)?;
+    record.project_started = true;
+    save(op, record)?;
+    crate::test_pause::point("cherry-pick-project-copy");
+    let conflicted = vcs
+        .copy_uncommitted(dir, &commit, record.mainline)
+        .map_err(|e| held(&label, commit.short(), &e))?;
+    Ok(ProjectCopy::Conflicted(conflicted))
 }
 
 /// The project commit: `<rev>`'s project files, the ported tables of
@@ -1366,48 +1758,33 @@ fn commit_project(
         .as_ref()
         .and_then(|p| manifest_at(vcs, dir, p))
         .unwrap_or_else(|| empty.clone());
-    let tables = ported_tables(&base, &theirs, ours);
+    let ported = ported_tables(&base, &theirs, ours);
 
-    if !record.project_started {
-        record.project_started = true;
-        save(op, record)?;
-        crate::test_pause::point("cherry-pick-project-copy");
-        let mut conflicted = vcs.copy_uncommitted(dir, &commit, record.mainline)?;
-        if tables.conflicted.is_empty() {
-            conflicted.retain(|p| p != Manifest::FILE_NAME);
+    let mut conflicted = match start_project_copy(here, op, ours, record)? {
+        ProjectCopy::Conflicted(paths) => paths,
+        ProjectCopy::Made(tip) => {
+            crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
+            return Ok(Some(tip));
         }
-        conflicted.retain(|p| p != LockFile::FILE_NAME);
-        if !conflicted.is_empty() {
-            return Err(conflict_stop(&label, dir, &conflicted, commit.short(), vcs));
-        }
-    } else {
-        let mut conflicted = vcs.unmerged_paths(dir)?;
-        conflicted.retain(|p| p != LockFile::FILE_NAME);
-        if !conflicted.is_empty() {
-            return Err(conflict_stop(&label, dir, &conflicted, commit.short(), vcs));
-        }
-    }
+    };
+    conflicted.retain(|p| p != LockFile::FILE_NAME);
 
     let manifest_path = dir.join(Manifest::FILE_NAME);
-    let settled = if tables.conflicted.is_empty() {
-        with_tables(ours, &theirs, &tables.taken)
-    } else {
-        let mut resolved = Manifest::from_path(&manifest_path)
-            .with_context(|| format!("{}: the resolved rwv.toml does not parse", label))?;
-        resolved.history = ours.history;
-        resolved.repositories = ours.repositories.clone();
-        resolved
-    };
-    let unchanged = toml::to_string(&settled).ok() == toml::to_string(ours).ok();
-    if unchanged {
-        let text =
-            vcs.read_file_at_revision(dir, &rev(pre_head), Path::new(Manifest::FILE_NAME))?;
-        crate::durable_file::replace(&manifest_path, text.as_bytes())?;
-    } else {
-        settled.write(&manifest_path)?;
+    let ours_text =
+        vcs.read_file_at_revision(dir, &rev(pre_head), Path::new(Manifest::FILE_NAME))?;
+    if ported.conflicted.is_empty() {
+        conflicted.retain(|p| p != Manifest::FILE_NAME);
+        let settled = with_tables(ours, &theirs, &ported.taken);
+        if toml::to_string(&settled).ok() == toml::to_string(ours).ok() {
+            crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
+        } else {
+            settled.write(&manifest_path)?;
+        }
+    } else if conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
+        crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
     }
 
-    let held = lock_at(vcs, dir, pre_head);
+    let held_lock = lock_at(vcs, dir, pre_head);
     let mut pins: Vec<(RepoPath, ResolvedRevisionId)> = Vec::new();
     for member in &record.members {
         if let (RepoKey::Member(path), Some((_, to))) = (&member.repo, member.copied.last()) {
@@ -1419,9 +1796,62 @@ fn commit_project(
             pins.push((path.clone(), rev(to)));
         }
     }
-    let lock = crate::lock::with_pins(ours, held.as_ref(), pins.iter().map(|(p, c)| (p, c)));
+    let lock = crate::lock::with_pins(ours, held_lock.as_ref(), pins.iter().map(|(p, c)| (p, c)));
     crate::lock::write_lock_in(&lock, dir)?;
-    vcs.stage_paths(dir, &[Manifest::FILE_NAME, LockFile::FILE_NAME])?;
+    let settled_files: Vec<&str> = if conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
+        vec![LockFile::FILE_NAME]
+    } else {
+        vec![Manifest::FILE_NAME, LockFile::FILE_NAME]
+    };
+    vcs.stage_paths(dir, &settled_files)?;
+
+    if !conflicted.is_empty() {
+        let note = if conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
+            let theirs_tables = tables(&theirs);
+            let shown: Vec<String> = ported
+                .conflicted
+                .iter()
+                .map(|name| {
+                    format!(
+                        "[{name}] in {}: {}",
+                        commit.short(),
+                        theirs_tables
+                            .get(name)
+                            .map_or_else(String::new, ToString::to_string)
+                    )
+                })
+                .collect();
+            format!(
+                "rwv.toml holds this branch's tables, and {} changed on both sides; set them as \
+                 wanted there and stage it ({}).\n",
+                ported.conflicted.join(", "),
+                shown.join("; "),
+            )
+        } else {
+            String::new()
+        };
+        return Err(conflict_stop(
+            &label,
+            dir,
+            &conflicted,
+            commit.short(),
+            &note,
+            vcs,
+        ));
+    }
+
+    if !ported.conflicted.is_empty() {
+        let mut resolved = Manifest::from_path(&manifest_path)
+            .with_context(|| format!("{}: the resolved rwv.toml does not parse", label))?;
+        resolved.history = ours.history;
+        resolved.repositories = ours.repositories.clone();
+        if toml::to_string(&resolved).ok() == toml::to_string(ours).ok() {
+            crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
+        } else {
+            resolved.write(&manifest_path)?;
+        }
+        vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
+    }
 
     let mut paths: Vec<String> = vcs.staged_paths(dir)?;
     for file in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
@@ -1438,6 +1868,7 @@ fn commit_project(
             RepoKey::Project => None,
         }),
     );
+    crate::test_pause::point("cherry-pick-project-commit");
     let made = crate::repin::commit_annotated(
         vcs,
         dir,
@@ -1456,7 +1887,7 @@ fn commit_project(
     }
     let tip = vcs.head_revision(dir)?.id().clone();
     crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
-    let before = pins_of(held.as_ref());
+    let before = pins_of(held_lock.as_ref());
     for (key, to) in &record.carried {
         let RepoKey::Member(path) = key else {
             continue;

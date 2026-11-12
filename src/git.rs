@@ -2346,7 +2346,7 @@ impl Vcs for GitVcs {
         Ok(Self::porcelain_status(repo, StatusReach::Tracked)?
             .into_iter()
             .filter(|entry| entry.staged != b' ' && entry.staged != b'?')
-            .map(|entry| entry.path)
+            .flat_map(|entry| std::iter::once(entry.path).chain(entry.renamed_from))
             .collect())
     }
     fn unstaged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
@@ -4564,6 +4564,14 @@ impl Vcs for GitVcs {
         mainline: Option<usize>,
     ) -> Result<Vec<String>, VcsError> {
         Self::copy_without_commit(checkout, commit, mainline)
+    }
+
+    fn copy_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        Self::cherry_pick_head(checkout)
+    }
+
+    fn copied_from(&self, repo: &Path, commit: &CommitId) -> Result<Option<CommitId>, VcsError> {
+        Self::cherry_picked_from(repo, commit)
     }
 
     fn parents(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {

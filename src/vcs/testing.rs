@@ -845,6 +845,14 @@ impl Vcs for FakeVcs {
         unsupported("copy_uncommitted")
     }
 
+    fn copy_in_flight(&self, _checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        unsupported("copy_in_flight")
+    }
+
+    fn copied_from(&self, _repo: &Path, _commit: &CommitId) -> Result<Option<CommitId>, VcsError> {
+        unsupported("copied_from")
+    }
+
     fn parents(&self, _repo: &Path, _commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {
         unsupported("parents")
     }

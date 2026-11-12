@@ -654,7 +654,9 @@ pub struct PickRecord {
     pub carried: BTreeMap<RepoKey, CommitId>,
     /// Each excepted member's tip, recorded as it stands.
     pub excepted: BTreeMap<RepoKey, CommitId>,
-    /// The project commit's copy has started in the project repo.
+    /// The project repo's tip the port was planned on.
+    pub head: CommitId,
+    /// The project commit's copy may have begun: recorded before it starts.
     pub project_started: bool,
 }
 
@@ -669,9 +671,21 @@ pub struct MemberPick {
     pub dropped: Vec<CommitId>,
     /// The commits of the range the branch already held, not copied.
     pub left_out: Vec<CommitId>,
+    /// The branch the copies go onto.
+    pub branch: String,
+    /// The checkout's tip the port was planned on.
+    pub start: CommitId,
+    /// The copy of the first remaining commit may have begun: recorded
+    /// before it starts.
+    pub copying: bool,
 }
 
 impl MemberPick {
+    /// The tip the checkout holds once the copies so far are made.
+    pub fn expected(&self) -> &CommitId {
+        self.copied.last().map_or(&self.start, |(_, to)| to)
+    }
+
     /// The commits not copied or dropped yet.
     pub fn remaining(&self) -> &[CommitId] {
         &self.commits[(self.copied.len() + self.dropped.len()).min(self.commits.len())..]
@@ -1875,8 +1889,8 @@ pub fn resume(workspace_dir: &Path) -> anyhow::Result<ResolvedOwner> {
         None => {
             crate::refuse!(
                 RefusalKind::NoOpRecorded,
-                "no sync/land op in progress to continue at {}. \
-                 If you meant to start a new op, omit `--continue`.",
+                "no operation in progress to continue at {}. \
+                 If you meant to start a new one, omit `--continue`.",
                 workspace_dir.display()
             );
         }
@@ -3290,8 +3304,8 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let err = resume(tmp.path()).unwrap_err().to_string();
         assert!(
-            err.contains("no sync"),
-            "expected 'no sync/land op in progress' error; got: {err}"
+            err.contains("no operation in progress"),
+            "expected 'no operation in progress' error; got: {err}"
         );
     }
 
