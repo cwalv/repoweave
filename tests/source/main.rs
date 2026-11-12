@@ -75,6 +75,7 @@ mod stdout_single_writer_test;
 mod surfaced_file_compile_fail_test;
 mod symlink_strategy_test;
 mod sync_request_compile_fail_test;
+mod test_binary_layout_test;
 mod token_register_agreement_test;
 mod tool_declaration_compile_fail_test;
 mod tool_spelling_scan_test;
