@@ -1,4 +1,4 @@
-//! `rwv sync` and rwv-owned generated state: the non-carry is deliberate,
+//! `rwv sync-to` and rwv-owned generated state: the non-carry is deliberate,
 //! and the remedy note is conditional on delivered input changes.
 //!
 //! Sync moves committed state and never fires integration hooks, so the
@@ -160,12 +160,12 @@ impl Fixture {
         }
     }
 
-    /// `rwv sync primary` in the workweave, returning combined output.
+    /// `rwv sync-to --strategy rebase` in the workweave, returning combined output.
     fn sync_from_primary(&self) -> String {
-        self.rwv(&["sync", "primary"], &self.ww_dir)
+        self.rwv(&["sync-to", "--strategy", "rebase"], &self.ww_dir)
     }
 
-    /// `rwv sync primary --json` in the workweave, returning stdout parsed
+    /// `rwv sync-to --strategy rebase --json` in the workweave, returning stdout parsed
     /// as JSON. Stdout only (never combined with stderr): the envelope is
     /// what a `--json` consumer actually reads, and combining streams would
     /// let stderr chatter corrupt the parse.
@@ -175,14 +175,14 @@ impl Fixture {
 
     fn sync_json_from_primary_with(&self, extra: &[&str]) -> serde_json::Value {
         let output = common::rwv()
-            .args(["sync", "primary", "--json"])
+            .args(["sync-to", "--strategy", "rebase", "--json"])
             .args(extra)
             .current_dir(&self.ww_dir)
             .output()
             .expect("rwv should run");
         assert!(
             output.status.success(),
-            "rwv sync primary --json {extra:?} failed:\n{}",
+            "rwv sync-to --strategy rebase --json {extra:?} failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
@@ -249,6 +249,11 @@ fn fixture() -> Fixture {
     )
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     git_init_with_commit(&project_dir);
     common::record_trunk(&project_dir);
 
@@ -532,8 +537,7 @@ fn sync_at_primary_names_materialize_for_the_presented_project() {
     let f = fixture();
     advance_ww_member_manifest(&f);
 
-    let ww_arg = f.ww_dir.to_string_lossy().to_string();
-    let output = f.rwv(&["sync", &ww_arg], &f.ws);
+    let output = f.rwv(&["sync-to", "--strategy", "ff"], &f.ww_dir);
 
     assert!(
         output.contains("rwv materialize"),
@@ -555,8 +559,10 @@ fn sync_at_primary_stays_quiet_for_a_project_the_root_does_not_present() {
     present_other_project(&f);
 
     let ww_tip = git_head(&f.ww_server_dir());
-    let ww_arg = f.ww_dir.to_string_lossy().to_string();
-    let output = f.rwv(&["sync", &ww_arg, "--project", "web-app"], &f.ws);
+    let output = f.rwv(
+        &["sync-to", "--strategy", "ff", "--project", "web-app"],
+        &f.ww_dir,
+    );
 
     assert_eq!(
         git_head(&f.server_dir()),
