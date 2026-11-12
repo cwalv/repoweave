@@ -5,7 +5,7 @@
 //! Scenario shape (the n-way tests): a primary workspace ("main") with two
 //! sibling workweaves `ww1` and `ww2`. Both workweaves make commits in the
 //! same manifest repo and (in some tests) in the project repo. Goal: `rwv
-//! land` from ww1, then `rwv sync --strategy rebase` from ww2, then `rwv
+//! land` from ww1, then `rwv sync --history linear` from ww2, then `rwv
 //! land` from ww2 lands both workweaves' contributions in main without
 //! manual git surgery.
 //!

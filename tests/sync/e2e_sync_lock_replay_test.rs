@@ -7,7 +7,7 @@
 //!
 //! 1. **N=2 lock-only convergence** (`sync_two_workweaves_lock_only_rebase_converges`):
 //!    Two workweaves both bump the manifest lock. Primary absorbs WA; WB then
-//!    syncs primary with `--strategy=rebase`. The lock-only commit in WB's
+//!    syncs primary with `--history=linear`. The lock-only commit in WB's
 //!    project history should drop silently (an empty patch, rwv holding the
 //!    lock merge driver to the target's lock). No
 //!    manual `git rebase --continue`.
@@ -18,13 +18,13 @@
 //!    histories.
 //!
 //! 3. **The source's lock merge driver** is judged as well as CWD's under
-//!    `--strategy=rebase`, since its committed `.gitattributes` governs the
+//!    `--history=linear`, since its committed `.gitattributes` governs the
 //!    replay.
 //!
 //! ### FF strategy (advances branch pointer, no replay)
 //!
 //! 4. **FF preserves lock-only commits** (`sync_ff_preserves_lock_only_commits`):
-//!    With `--strategy=ff` (no replay), a workweave's lock-only commit lands
+//!    With `--history=ff-only` (no replay), a workweave's lock-only commit lands
 //!    verbatim in primary's history. Attribution is preserved; the commit count
 //!    grows by exactly 1 (the lock commit). The precondition does NOT fire for
 //!    FF since no merge happens.
@@ -168,7 +168,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 
 /// Two workweaves (WA and WB) both do a commit in the manifest repo and bump
 /// the lock. Primary absorbs WA (ff); WB then syncs primary with
-/// `--strategy=rebase`. WB's lock-only commit should drop silently via the
+/// `--history=linear`. WB's lock-only commit should drop silently via the
 /// held lock merge driver + `--empty=drop` mechanism. No manual `git rebase --continue`.
 #[test]
 fn sync_two_workweaves_lock_only_rebase_converges() {
@@ -271,7 +271,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 /// Three workweaves (WA, WB, WC) all bump the manifest lock independently.
 /// WA and WB land into primary sequentially. WC, which was forked before any
 /// of them landed, syncs primary (which now has two prior lock-bump commits)
-/// with `--strategy=rebase`. Both of WC's lock-only project commits should
+/// with `--history=linear`. Both of WC's lock-only project commits should
 /// drop silently.
 #[test]
 fn sync_three_workweaves_lock_only_rebase_converges() {
@@ -642,7 +642,7 @@ fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
     );
 }
 
-/// Golden path: a `rwv land --strategy=rebase` that stops on
+/// Golden path: a `rwv land --history=linear` that stops on
 /// a genuine non-lock conflict in the project repo can be resumed by the
 /// operator with `resolve + git add + rwv land --continue` — no `git rebase
 /// --continue` step. `--continue` MUST drive the entire remaining op:

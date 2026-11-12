@@ -651,6 +651,8 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    dc04_conflict_setter,
+    landing_names_every_field,
     history_unset_fast_forward,
     history_unset_moved,
     history_contradicted,
@@ -1006,8 +1008,6 @@ macro_rules! pending_on {
 }
 
 pending_on!(
-    history_disagreement => Land,
-    history_member_override => Land,
     resume_on_machine_b => Land,
     feature_in_primary_while_main_moves => Land,
     feature_off_stable => Land,
@@ -4203,4 +4203,24 @@ fn rebased_backup_lifetime_is_green() {
 #[test]
 fn history_published_rebase_is_green() {
     runner::run(scenarios::history_published_rebase()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_disagreement_is_reported_and_each_project_lands_by_its_own() {
+    runner::run(scenarios::history_disagreement()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_member_override_is_stored_and_a_fast_forward_reads_neither() {
+    runner::run(scenarios::history_member_override()).assert_fully_decided_green();
+}
+
+#[test]
+fn landing_names_every_field_is_green() {
+    runner::run(scenarios::landing_names_every_field()).assert_fully_decided_green();
+}
+
+#[test]
+fn dc04_a_conflicted_entry_is_settled_by_its_setters() {
+    runner::run(scenarios::dc04_conflict_setter()).assert_green();
 }

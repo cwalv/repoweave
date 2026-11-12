@@ -4152,10 +4152,11 @@ pub fn history_set_unset() -> Scenario {
 }
 
 /// `proj` and `proj2` record different `history` for `lib`: `doctor`
-/// reports it. How each project's landings follow its own setting needs
-/// `land`.
+/// reports it, and each project's landing follows its own setting: `proj`'s
+/// merges `lib`, `proj2`'s rebases it.
 pub fn history_disagreement() -> Scenario {
     let lib = "local/remotes/lib";
+    let w2 = Place::Workweave(Machine::A, Repo::Proj2, "w2".to_owned());
     Scenario {
         name: "history: two projects record different settings for a shared member",
         seed: Seed::default().second_project(SecondProject { branch: "main" }),
@@ -4186,16 +4187,51 @@ pub fn history_disagreement() -> Scenario {
                 ))
                 .claim(Claim::OutputContains("proj main: merge"))
                 .claim(Claim::OutputContains("proj2 main: linear")),
-            Step::pending(
-                "land into proj's main by merge and into proj2's by rebase",
-                MissingVerb::Land,
-            ),
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["branch", "set-history", "--project", "proj2", "linear"],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "main-lib-2"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/lib: rebased"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^1",
+                    mark: "main-lib-2",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^2",
+                    mark: "w-lib",
+                }),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&w2, Repo::Lib, "w2-lib"),
+            Step::rwv(&w2, &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&w2, &["land"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Lib, Repo::Proj2])
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: rebased; the tip it left",
+                )),
         ],
     }
 }
 
-/// Top-level `linear`, `lib` overridden to `merge`: what is stored. That one
-/// landing rebases `app` and merges `lib` needs `land`.
+/// Top-level `linear`, `lib` overridden to `merge`: what is stored, and a
+/// landing that only fast-forwards reads neither. `history_member_override_lands`
+/// is the landing that needs both.
 pub fn history_member_override() -> Scenario {
     let lib = "local/remotes/lib";
     scenario(
@@ -4215,7 +4251,8 @@ pub fn history_member_override() -> Scenario {
             create("over"),
             Step::commit(&ww("over"), Repo::App, "over-app"),
             Step::commit(&ww("over"), Repo::Lib, "over-lib"),
-            Step::pending("land, rebasing app and merging lib", MissingVerb::Land),
+            Step::rwv(&ww("over"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("over"), &["land"]).expect(Exit::Succeeds),
         ],
     )
 }
@@ -7482,7 +7519,7 @@ pub fn land_refuses_a_moved_member_whose_branch_lacks_the_pin() -> Scenario {
 /// The receiving branch of a moved member holds commits beyond the target's
 /// pin: the landing lists them as a fact and pins them with the work. A member
 /// it does not move keeps the target's pin though its branch moved on, so a
-/// landing that composes nothing (`--strategy ff`) lands the rest.
+/// landing that composes nothing (`--history ff-only`, all it lands fast-forwarding) lands the rest.
 pub fn land_reports_what_it_pins_beyond_the_target() -> Scenario {
     scenario(
         "land reports what it pins beyond the target",
@@ -7495,17 +7532,14 @@ pub fn land_reports_what_it_pins_beyond_the_target() -> Scenario {
                 mark: "forge-lib",
             }),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(
-                &ww("w"),
-                &["land", "--history", "linear", "--strategy", "ff"],
-            )
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("local/remotes/lib: ff-advanced"))
-            .claim(Claim::PinContains {
-                site: main_lock(),
-                member: Repo::App,
-                mark: "w-app",
-            }),
+            Step::rwv(&ww("w"), &["land", "--history", "ff-only"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/lib: ff-advanced"))
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::App,
+                    mark: "w-app",
+                }),
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
@@ -8285,7 +8319,31 @@ pub fn land_refuses_a_target_diverged_from_its_upstream() -> Scenario {
                 .claim(Claim::OutputContains(
                     "rwv pull --reset-to-upstream projects/proj",
                 ))
+                .claim(Claim::OutputContains("rwv pull --merge-upstream"))
                 .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "forge-proj",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "a-proj",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
         ],
     )
 }
@@ -8312,7 +8370,41 @@ pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario 
                 .claim(Claim::OutputContains(
                     "rwv update --remote --reset-to-upstream local/remotes/lib",
                 ))
+                .claim(Claim::OutputContains(
+                    "rwv update --remote --merge-upstream --repo local/remotes/lib",
+                ))
                 .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &a(),
+                &[
+                    "update",
+                    "--remote",
+                    "--merge-upstream",
+                    "--repo",
+                    "local/remotes/lib",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Lib, Repo::Proj])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "forge-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "a-lib",
+                })
+                .claim(Claim::OutputContains("local/remotes/lib: rebased")),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("w-lib")),
         ],
     )
 }
@@ -9983,6 +10075,133 @@ pub fn history_published_rebase() -> Scenario {
                 .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
                 .claim(Claim::OutputLacks("--overwrite"))
                 .claim(Claim::OutputContains("--merge-upstream")),
+        ],
+    )
+}
+
+/// `landing-names-every-field`: a seat changes `lib`'s role, `app`'s
+/// `history`, `docs`'s `recurse-submodules` and the top-level `history`, and
+/// the `[integrations]` table. The landing refuses `target` member changes,
+/// listing each field with `main`'s value and the seat's, and lands only when
+/// `--allow-member-change` names `lib`, `app`, `docs` and `projects/proj`;
+/// the `[integrations]` change lands unnamed.
+pub fn landing_names_every_field() -> Scenario {
+    let docs = "local/remotes/docs";
+    let app = "local/remotes/app";
+    scenario(
+        "landing names every field",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", app])
+                .expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("w"),
+                &["member", "set-recurse-submodules", docs, "false"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                "[integrations.vscode-workspace]\nenabled = false\n",
+                "[integrations.vscode-workspace]\nenabled = false\n\n\
+                 [integrations.cargo-workspace]\nenabled = false\n",
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::Judged(Repo::App, State::TargetMemberChanges))
+                .claim(Claim::Judged(Repo::Docs, State::TargetMemberChanges))
+                .claim(Claim::Judged(Repo::Proj, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("role: owned → fork"))
+                .claim(Claim::OutputContains("history: unset → merge"))
+                .claim(Claim::OutputContains("recurse-submodules: true → false"))
+                .claim(Claim::OutputLacks("integrations"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "land",
+                    "--allow-member-change",
+                    LIB,
+                    "--allow-member-change",
+                    app,
+                    "--allow-member-change",
+                    docs,
+                ],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::TargetMemberChanges))
+            .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "land",
+                    "--allow-member-change",
+                    LIB,
+                    "--allow-member-change",
+                    app,
+                    "--allow-member-change",
+                    docs,
+                    "--allow-member-change",
+                    "projects/proj",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            }),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("[integrations.cargo-workspace]"))
+                .claim(Claim::OutputContains("role = \"fork\""))
+                .claim(Claim::OutputContains("history = \"merge\"")),
+        ],
+    )
+}
+
+/// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
+/// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
+/// conflict, printing each field's setter with each side's value. That the
+/// setters then settle the entry and stage the file, so `--continue`
+/// completes with no hand edit, is left undecided: no setter yet reads an
+/// `rwv.toml` a merge left conflicted.
+pub fn dc04_conflict_setter() -> Scenario {
+    scenario(
+        "dc04 a conflicted entry is settled by its setters",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-branch", LIB, "lib-main", "--new"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", LIB])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(
+                    "rwv member set-branch local/remotes/lib lib-w",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv member set-branch local/remotes/lib lib-main",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history merge --repo local/remotes/lib",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history linear --repo local/remotes/lib",
+                )),
+            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w"]),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB]),
+            Step::rwv(&ww("w"), &["sync", "--continue"]),
         ],
     )
 }

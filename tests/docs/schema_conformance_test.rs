@@ -1879,6 +1879,7 @@ fn landing_reports() -> Vec<LandingReportOutput> {
         LandingReportOutput::EntryRemoved {
             path: "local/remotes/docs".to_owned(),
         },
+<<<<<<< HEAD
         LandingReportOutput::TakenIn {
             path: "(project)".to_owned(),
             branch: "main".to_owned(),
@@ -1919,6 +1920,16 @@ fn landing_reports() -> Vec<LandingReportOutput> {
                     fields: Vec::new(),
                 },
             ],
+=======
+        LandingReportOutput::Merged {
+            path: "local/remotes/lib".to_owned(),
+            merge: id('e'),
+        },
+        LandingReportOutput::Rebased {
+            path: "local/remotes/app".to_owned(),
+            was: id('f'),
+            backup: "proj--feat/rebased-ffffffffffff".to_owned(),
+>>>>>>> 96a42476 (scenarios: landing-names-every-field, dc04's stop, history-disagreement and -member-override land; diverged T and U run the printed merge to a clean landing)
         },
         LandingReportOutput::Refreshed {
             path: "local/remotes/lib".to_owned(),

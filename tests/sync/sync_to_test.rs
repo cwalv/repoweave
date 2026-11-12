@@ -2,12 +2,12 @@
 //!
 //! Critical invariants verified:
 //!
-//! 1. **End-state ordering (Option-B check)**: After `land --strategy=rebase`,
+//! 1. **End-state ordering (Option-B check)**: After `land --history=linear`,
 //!    target's project history has CWD's unique commits ON TOP of target's prior
 //!    tip — not below it. This is the load-bearing assertion that distinguishes
 //!    Option B from the previously-rejected Option A.
 //!
-//! 2. **ff-clean path**: When CWD is strictly ahead of target, `--strategy=ff`
+//! 2. **ff-clean path**: When CWD is strictly ahead of target, `--history=ff-only`
 //!    fast-forwards target with no rewrites.
 //!
 //! 3. **rebase path**: CWD has unique commits on top of a shared ancestor;
@@ -153,7 +153,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 // Test 1: ff-clean path
 //
-// CWD (workweave) has commits that primary doesn't. --strategy=ff should
+// CWD (workweave) has commits that primary doesn't. --history=ff-only should
 // fast-forward primary to the workweave's tip.
 // ---------------------------------------------------------------------------
 
@@ -208,7 +208,7 @@ fn sync_to_ff_clean_advances_target() {
 // Scenario: primary and workweave diverge. Primary has a commit in its project
 // repo that ww doesn't (a non-lock file commit so it survives rebase);
 // ww has a non-lock project commit that primary doesn't. After land
-// --strategy=rebase from ww:
+// --history=linear from ww:
 //   - ww's non-lock project commit must be ON TOP of primary's prior tip.
 //   - primary should be fast-forwarded to this rebased tip.
 //
@@ -588,7 +588,7 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
         &["commit", "-m", "lock: primary advance"],
     );
 
-    // Trying land with --strategy=ff from ww (which is behind primary) should fail.
+    // Trying land with --history=ff-only from ww (which is behind primary) should fail.
     let err_output = rwv()
         .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
@@ -1378,7 +1378,7 @@ fn reachable_from(repo: &Path, rev: &str, branch: &str) -> bool {
 /// project repo. The published lock has to name the rebased tip.
 ///
 /// Equality rather than reachability, deliberately: the committed
-/// `rwv.lock merge=rwv-ours` exclusion that `--strategy=rebase` refuses to run
+/// `rwv.lock merge=rwv-ours` exclusion that `--history=linear` refuses to run
 /// without already resolves every lock hunk to the target's own side, so a
 /// carried entry is reachable whatever else is wrong with it — a landing that
 /// published nothing at all would satisfy a reachability check while leaving

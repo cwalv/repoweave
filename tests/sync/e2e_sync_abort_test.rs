@@ -432,8 +432,8 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
 // rwv land — project ancestry precondition
 // ---------------------------------------------------------------------------
 //
-// Under `--strategy ff` CWD's project tip must be strictly ahead of (or equal
-// to) the target's; `--strategy rebase` replays CWD onto the target instead.
+// Under `--history ff-only` CWD's project tip must be strictly ahead of (or equal
+// to) the target's; `--history linear` replays CWD onto the target instead.
 
 /// Helper: advance primary's project repo by one commit (no-op edit) and re-lock.
 /// Leaves primary's lock fresh.
@@ -475,7 +475,7 @@ fn ff_only_refuses_when_target_project_repo_is_ahead_of_cwd() {
     );
 }
 
-/// Under `--strategy ff`, land refuses when CWD's project tip and the
+/// Under `--history ff-only`, land refuses when CWD's project tip and the
 /// target's have diverged (neither is an ancestor of the other).
 #[test]
 fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
@@ -569,7 +569,7 @@ fn ff_only_refusal_names_taking_the_target_in_first() {
     );
 }
 
-/// What ff refuses lands cleanly under `--strategy rebase`: CWD replays onto
+/// What ff refuses lands cleanly under `--history linear`: CWD replays onto
 /// the target's tip and the target then fast-forwards to the converged tip.
 #[test]
 fn sync_to_rebase_lands_lock_only_divergence() {
@@ -633,7 +633,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 // rwv land — non-ff strategies
 // ---------------------------------------------------------------------------
 
-/// When CWD has local commits on top of an older base, --strategy rebase replays them.
+/// When CWD has local commits on top of an older base, --history linear replays them.
 #[test]
 fn sync_to_rebase_replays_local_commits_on_source_tip() {
     let tmp = common::tempdir().unwrap();
@@ -665,7 +665,7 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww feature"]);
 
     // ww/main (C_ww) and primary main (C2) have both diverged from C1.
-    // --strategy rebase should replay C_ww onto C2.
+    // --history linear should replay C_ww onto C2.
     //
     // Both sides also independently committed locks → ww and primary's project
     // repos diverged too. Phase 1's ancestor precondition refuses divergent

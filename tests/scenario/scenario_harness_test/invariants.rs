@@ -33,7 +33,10 @@
 //!   names as its `target`, and for each member the target declares, the
 //!   branch it lands in there: the one named like the target when the record
 //!   was written `as = "feature"` and the member is `owned` or `fork`, else
-//!   its declared branch.
+//!   its declared branch. A target merged with its own upstream, that tip as
+//!   first parent, takes the upstream's first-parent chain, as a merge of the
+//!   upstream must: the new tip's first parent is the tip the same branch has
+//!   in another of the repo's stores.
 //!
 //! What they read: every ref (`git rev-list --all`, which takes in each linked
 //! worktree's HEAD) of every remote and every machine's canonical clone; the
@@ -919,7 +922,14 @@ pub fn first_parents_broken(
             .git_ok(&dir, &["rev-list", "--first-parent", to])
             .lines()
             .any(|commit| commit == from);
-        if !on_first_parents {
+        let first_parent = sandbox.git_ok(&dir, &["rev-parse", &format!("{to}^1")]);
+        let merged_with_its_upstream = after
+            .branches
+            .iter()
+            .filter(|((r, s), _)| *r == repo && *s != store)
+            .filter_map(|(_, tips)| tips.get(branch))
+            .any(|upstream| upstream != from && upstream == first_parent.trim());
+        if !on_first_parents && !merged_with_its_upstream {
             violations.push(Violation::FirstParentsBroken {
                 repo,
                 store,

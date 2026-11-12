@@ -177,8 +177,8 @@ fn make_workweave_ahead_fixture(
 //     target's manifest repo (primary's server) post-sync
 //   - `project_repo_advance` is present and non-null (project repo advanced)
 //
-// We use `--strategy=rebase` so the replay phase runs and produces per-repo
-// outcomes (with `step3_advance` attached). `--strategy=ff` skips replay in
+// We use `--history=linear` so the replay phase runs and produces per-repo
+// outcomes (with `step3_advance` attached). `--history=ff-only` skips replay in
 // land (CWD is strictly ahead), leaving `outcomes` empty.
 // ===========================================================================
 
@@ -438,7 +438,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     common::record_feature(&ww_project, "web-app--noop-ww", "main");
 
     // No additional commits in ww; primary and ww are at the same tip.
-    // land --strategy=ff from ww to primary: step 1 is a no-op, step 3
+    // land --history=ff-only from ww to primary: step 1 is a no-op, step 3
     // is also a no-op (already at the same tip).
     let assert = rwv()
         .args(["land", "--history=ff-only", "--json"])
