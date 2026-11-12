@@ -2922,7 +2922,8 @@ fn judge_source_relations(
 }
 
 /// The source's own refusals, which a landing owes whatever its target: edits
-/// in its checkouts and where each stands to the source's lock.
+/// in its checkouts and where each stands to the source's lock. The landing
+/// refuses, so drift is refreshed only in a checkout whose edits it refused.
 pub(crate) fn judge_landing_source(
     ctx: &WorkspaceContext,
     report: &mut Report,
@@ -2930,10 +2931,16 @@ pub(crate) fn judge_landing_source(
     let project = ctx.require_bound_project()?.clone();
     let root = ctx.active_path();
     let dir = project_dir(root, &project);
-    let vcs = project_vcs();
     let source = Project::from_dir(&dir, project)?;
     let mut drifted = Vec::new();
     judge_edits_source_preflight(&source, root, &dir, report, &mut drifted);
+    let stdout_lock = Mutex::new(());
+    let text = TextHandler {
+        stdout_lock: &stdout_lock,
+    };
+    for refreshed in refresh_drifted(&drifted, true)? {
+        emit_landing_report(&text, &refreshed);
+    }
     let class = {
         let (resolved, unresolvable) = match source.lock.as_ref() {
             Some(raw) => {
