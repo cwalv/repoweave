@@ -1863,6 +1863,15 @@ fn landing_reports() -> Vec<LandingReportOutput> {
             was: id('c'),
             now: id('d'),
         },
+        LandingReportOutput::EntryChanged {
+            path: "local/remotes/lib".to_owned(),
+            field: "branch".to_owned(),
+            was: "main".to_owned(),
+            now: "dev".to_owned(),
+        },
+        LandingReportOutput::EntryRemoved {
+            path: "local/remotes/docs".to_owned(),
+        },
     ]
 }
 

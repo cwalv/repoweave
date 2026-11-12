@@ -1539,7 +1539,7 @@ impl State {
                         whose entries match the feature's is listed as a `--target` candidate",
                 refused_by: "`rwv land`, before anything moves, unless `--allow-member-change` \
                              names the repo: the member's path, or `projects/<p>` for the \
-                             top-level `history`; and `rwv land --continue`, judging `rwv.toml` \
+                             top-level `history`; and its `--continue`, judging `rwv.toml` \
                              as the stop's resolution leaves it, unless the landing's start or \
                              the `--continue` names the repo",
                 offers: &[
@@ -2602,7 +2602,7 @@ impl Form {
             },
             Self::C31Continue => &FormRow {
                 choice: C::C31,
-                steps: &[Rwv("rwv land --continue --allow-member-change <m>")],
+                steps: &[Rerun("--allow-member-change <m>")],
                 at: W::WithFeature,
                 shipped: true,
             },

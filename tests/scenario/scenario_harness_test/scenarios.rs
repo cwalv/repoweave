@@ -6505,7 +6505,7 @@ fn stop_resolved_to_the_features_manifest() -> Vec<Step> {
             .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
             .claim(Claim::OutputContains("removed"))
             .claim(Claim::OutputInOrder(&[
-                "rwv land --continue --allow-member-change local/remotes/docs",
+                "rerun with --allow-member-change local/remotes/docs",
                 "rwv abort",
             ]))
             .claim(Claim::LocalStateUnchanged(a())),
