@@ -660,6 +660,7 @@ every_scenario!(
     history_ff_only,
     history_merge,
     history_range_with_merge,
+    history_ff_only_range_with_merge,
     history_sync_from_declared,
     history_member_override_lands,
     rebased_backup_lifetime,
@@ -4303,6 +4304,11 @@ fn history_merge_is_green() {
 #[test]
 fn history_range_with_merge_is_green() {
     runner::run(scenarios::history_range_with_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_ff_only_range_with_merge_is_green() {
+    runner::run(scenarios::history_ff_only_range_with_merge()).assert_fully_decided_green();
 }
 
 #[test]

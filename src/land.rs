@@ -1898,9 +1898,8 @@ struct Composing<'a> {
 /// setting where the receiving tip sits on the source's first-parent chain,
 /// or composed first, with the merge its range holds where that makes a
 /// rebasing setting merge. A source that holds the receiving tip only through
-/// a merge's second parent lands by a merge commit under `linear` and
-/// `merge`, so the receiving branch keeps its own first parents; `ff-only`
-/// fast-forwards it, as its name says.
+/// a merge's second parent lands by a merge commit under every setting, so
+/// the receiving branch keeps its own first parents.
 enum Composed {
     FastForward,
     By(Integration, Option<CommitId>),
@@ -1937,9 +1936,8 @@ impl Composing<'_> {
         };
         if contained {
             return Ok(match history {
-                History::FfOnly => Composed::FastForward,
                 History::Merge => Composed::By(Integration::Merge, None),
-                History::Linear => Composed::By(
+                History::Linear | History::FfOnly => Composed::By(
                     Integration::Merge,
                     crate::set_history::merge_in_range(vcs, dir, head, onto)?,
                 ),

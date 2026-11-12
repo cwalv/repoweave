@@ -34,8 +34,8 @@ nothing could be landed into. Then, under an op record:
    `rwv sync`, where the rebase happens. A member whose branch already holds
    the receiving tip on its first-parent chain needs no setting: the
    receiving branch fast-forwards. One holding it only through a merge's
-   second parent (after `rwv sync --from`) lands by a merge commit, first
-   parent the receiving tip, under `linear` and `merge`. A range a rebase
+   second parent (after `rwv sync`, or `rwv sync --from`) lands by a merge
+   commit, first parent the receiving tip, under every setting. A range a rebase
    would replay that holds a merge commit is never rebased: it lands by a
    merge commit instead, reported `merged`. The project branch is composed
    with the target's tip, again the newer of the target and its upstream, the

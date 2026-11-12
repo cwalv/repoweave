@@ -10589,6 +10589,74 @@ pub fn history_range_with_merge() -> Scenario {
     )
 }
 
+/// `history-ff-only-range-with-merge`: an `ff-only` target that moved, a seat
+/// whose `lib` range holds a raw merge. The landing refuses, naming `sync`;
+/// `sync` takes `main` in by a merge, the seat's branch first; the landing
+/// then integrates `lib` by a merge commit whose first parent is `main`'s old
+/// tip, so `main`'s first-parent chain never runs through the seat.
+pub fn history_ff_only_range_with_merge() -> Scenario {
+    scenario(
+        "history: ff-only lands a range holding a merge by merge",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "ff-only"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "-c", "side"]),
+            Step::commit(&ww("w"), Repo::Lib, "side-lib"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "proj--w"]),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["merge", "--no-ff", "-m", "raw-merge", "side"],
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::HistoryNotFastForward))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/lib: merged"))
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::Lib,
+                    rev: "proj--w^1",
+                    mark: "side-lib",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::Lib,
+                    rev: "proj--w^2",
+                    mark: "main-lib",
+                }),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/lib: merged"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^1",
+                    mark: "main-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^2",
+                    mark: "side-lib",
+                }),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["log", "--first-parent", "--format=%s", "main"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("raw-merge")),
+        ],
+    )
+}
+
 /// `history-sync-from-declared`: a declared workspace on a `linear` `main`
 /// takes `stable` in with `sync --from stable`: a merge, `main` never
 /// rebased.
