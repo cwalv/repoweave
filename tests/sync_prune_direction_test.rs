@@ -8,6 +8,8 @@ use std::process::Output;
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const PROJECT: &str = "app";
 const LIB: &str = "local/owner/lib";
 const EXTRA: &str = "local/owner/extra";
@@ -182,7 +184,7 @@ fn a_parent_seat_keeps_a_member_it_added_through_its_childs_landing_and_its_own(
     common::git_in(&lib, &["commit", "-m", "work"]);
     succeed(&child, &["lock", "--commit"]);
 
-    let child_landing = succeed(&child, &["land"]);
+    let child_landing = succeed(&child, &["land", "--retire"]);
     assert_not_pruned(&child_landing, &home);
 
     let home_landing = succeed(&home, &["land"]);
@@ -200,12 +202,13 @@ fn a_pull_from_a_seat_forked_before_the_add_keeps_the_added_member() {
     let home = seat(&weave, &weave.root, "home");
     let child = seat(&weave, &home, "child");
     add_and_commit(&home, &weave.extra_url, "owned");
+    commit_note(&project_dir(&child), "child: note");
 
-    let stdout = succeed(&home, &["land", "--target", "app--child", "--strategy", "rebase"]);
+    let stdout = succeed(&child, &["land", "--strategy", "rebase"]);
     assert_not_pruned(&stdout, &home);
     assert!(
         names_extra(&home),
-        "the pulling seat must still name the member"
+        "the seat landed into must still name the member"
     );
 }
 
@@ -231,24 +234,6 @@ fn a_member_the_source_dropped_is_pruned() {
         !common::under(&s1, EXTRA).exists(),
         "the seat's checkout of the dropped member must be gone"
     );
-}
-
-#[test]
-fn discarding_local_commits_prunes_the_member_they_added() {
-    let weave = weave();
-    let s1 = seat(&weave, &weave.root, "s1");
-    add_and_commit(&s1, &weave.extra_url, "owned");
-
-    let stdout = succeed(
-        &s1,
-        &["land", "--strategy", "rebase", "--discard-local-commits"],
-    );
-    assert!(
-        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
-        "a discarded add leaves the member in no lock, so its checkout goes:\n{stdout}"
-    );
-    assert!(!common::under(&s1, EXTRA).exists());
-    assert!(!names_extra(&s1) && !names_extra(&weave.root));
 }
 
 /// Replaying CWD's whole history onto a source it shares no commit with keeps
@@ -321,7 +306,7 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     for workspace in [&s1, &target] {
         assert!(
             names_extra(workspace),
-            "{} must name the member",
+            "{} must name the member:\n{stdout}",
             workspace.display()
         );
         let lock = std::fs::read_to_string(project_dir(workspace).join("rwv.lock")).unwrap();
@@ -423,11 +408,9 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
         "{stdout}"
     );
 
-    let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
-    assert!(
-        !stdout.contains(&format!("{EXTRA}: materialized")),
-        "a member the seat dropped must not be re-created:\n{stdout}"
-    );
+    let out = run(&s1, &["land", "--strategy", "rebase"]);
+    let stderr = common::cli::refused(&out, State::TargetMemberChanges);
+    assert!(stderr.contains("removed"), "{stderr}");
     assert!(!common::under(&s1, EXTRA).exists());
     assert!(!names_extra(&s1));
 }
@@ -542,23 +525,6 @@ fn pruning_a_member_the_source_dropped_releases_the_primarys_clone() {
     );
 
     let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
-    assert!(
-        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
-        "{stdout}"
-    );
-    assert_the_clone_is_released(&weave);
-}
-
-#[test]
-fn pruning_a_member_only_the_seat_added_releases_the_primarys_clone() {
-    let weave = weave();
-    let s1 = seat(&weave, &weave.root, "s1");
-    add_and_commit(&s1, &weave.extra_url, "owned");
-
-    let stdout = succeed(
-        &s1,
-        &["land", "--strategy", "rebase", "--discard-local-commits"],
-    );
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "{stdout}"
@@ -738,46 +704,19 @@ fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
 }
 
 /// The route line a refusal ends with, and the only one in `stderr`.
-fn assert_routes_to(stderr: &str, token: &str) {
-    let routed: Vec<&str> = stderr
-        .lines()
-        .filter_map(|l| l.strip_prefix("rwv explain "))
-        .collect();
-    assert_eq!(routed, vec![token], "stderr was:\n{stderr}");
-    assert!(
-        stderr.ends_with(&format!("\n\nrwv explain {token}\n")),
-        "the route line must be the last line, stderr was:\n{stderr}"
-    );
-}
-
-/// Retire refused over the edits in the checkout replay could not prune: the
-/// workweave, the checkout and the work in it are intact, and the op is parked
-/// at retire in both workspaces.
+/// Retire refused over the edits in the checkout replay could not prune: they
+/// are judged before anything moves, so the workweave, the checkout, the work
+/// in it are intact, and no op was started.
 fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &Path) {
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = common::cli::refused(out, State::EditsDirty);
     assert_eq!(
         std::fs::read_to_string(common::under(s1, EXTRA).join("scratch.txt")).ok(),
         Some("untracked\n".to_owned()),
         "the uncommitted work must survive the refused retire:\n{stderr}"
     );
     assert!(s1.join("projects").join(PROJECT).join("rwv.toml").is_file());
-    assert!(!out.status.success(), "retire must refuse:\n{stderr}");
-    assert_routes_to(&stderr, "edits");
-    for expected in [
-        format!("{EXTRA}: edits dirty (not a manifest member)"),
-        "--retire: the landing is done and the workweave was not deleted".to_owned(),
-        "rwv land --continue".to_owned(),
-        "`rwv abort`".to_owned(),
-    ] {
-        assert!(
-            stderr.contains(&expected),
-            "expected {expected:?}:\n{stderr}"
-        );
-    }
-    let record: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(s1.join(".rwv-op")).unwrap()).unwrap();
-    assert_eq!(record["phase"], "retire", "{record:#}");
-    assert!(weave.root.join(".rwv-op-lease").exists());
+    assert!(!s1.join(".rwv-op").exists());
+    assert!(!weave.root.join(".rwv-op-lease").exists());
 }
 
 #[test]
@@ -787,21 +726,14 @@ fn a_retire_refuses_over_the_edits_in_a_checkout_replay_could_not_prune() {
 
     let out = run(&s1, &["land", "--retire"]);
     assert_retire_refused_with_the_work_intact(&out, &weave, &s1);
-    assert!(
-        !names_extra(&weave.root),
-        "the landing itself completed before retire"
-    );
 }
 
 #[test]
-fn a_continued_retire_refuses_until_the_edits_are_gone_then_retires() {
+fn a_refused_retire_lands_and_retires_once_the_edits_are_gone() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
-    let parked = run(&s1, &["land", "--retire"]);
-    assert!(!parked.status.success());
-
-    let still = run(&s1, &["land", "--continue"]);
-    assert_retire_refused_with_the_work_intact(&still, &weave, &s1);
+    let refused = run(&s1, &["land", "--retire"]);
+    assert_retire_refused_with_the_work_intact(&refused, &weave, &s1);
 
     let checkout = common::under(&s1, EXTRA);
     std::fs::rename(
@@ -814,7 +746,7 @@ fn a_continued_retire_refuses_until_the_edits_are_gone_then_retires() {
         &["worktree", "remove", &checkout.to_string_lossy()],
     );
 
-    let out = run(&s1, &["land", "--continue"]);
+    let out = run(&s1, &["land", "--retire"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     assert!(stderr.contains("retired workweave s1"), "{stderr}");
@@ -906,29 +838,6 @@ fn json_a_parked_sync_is_not_complete() {
         )
     });
     assert_eq!(envelope["complete"], false, "{envelope:#}");
-}
-
-/// The case `complete` exists for: a `prune-refused` member AND exit 1, from
-/// an op parked after replay (here at retire) rather than a complete one.
-#[test]
-fn json_a_sync_to_parked_at_retire_after_a_refused_prune_is_not_complete() {
-    let weave = weave();
-    let s1 = seat_with_an_unprunable_drop(&weave);
-
-    let out = run(&s1, &["land", "--retire", "--json"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(
-        s1.join(".rwv-op").exists(),
-        "retire must park the op:\n{stderr}"
-    );
-    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(envelope["complete"], false, "{envelope:#}");
-    assert_one_member(
-        envelope["members"].as_array().unwrap(),
-        "prune-refused",
-        &s1,
-    );
 }
 
 #[test]

@@ -191,12 +191,7 @@ fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
 
     // First sync parks mid-replay on the real conflict.
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -317,15 +312,8 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
-    // --discard-local-commits bypasses the Phase 1 ancestor precondition
-    // (project repos diverged). Adapted from --force.
     let out = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -478,27 +466,6 @@ fn continue_with_strategy_flag_is_rejected() {
     );
 }
 
-/// --force is removed from sync/land; passing it must produce an actionable
-/// error (from the early-dispatch did-you-mean hint in `cli::dispatch`).
-#[test]
-fn sync_to_force_flag_is_removed_and_produces_friendly_error() {
-    let tmp = common::tempdir().unwrap();
-    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    // --force must be rejected with a migration hint.
-    let assertion = rwv()
-        .args(["land", "--force"])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("--allow-stale-lock") || stderr.contains("--discard-local-commits"),
-        "expected migration hint mentioning the named overrides; got: {stderr}"
-    );
-}
-
 /// Plain `sync`'s `--json` still conflicts with `--continue`. The land
 /// side relaxed this (its envelope reports the machine's own coordinates and
 /// a `resumed` disclosure); the sync envelope carries no such disclosure, so
@@ -519,44 +486,6 @@ fn sync_continue_with_json_flag_is_rejected() {
     assert!(
         stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for sync --json + --continue; got: {stderr}"
-    );
-}
-
-/// --allow-stale-lock alongside --continue must be rejected (conflicts_with).
-#[test]
-fn continue_with_allow_stale_lock_flag_is_rejected() {
-    let tmp = common::tempdir().unwrap();
-    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    let assertion = rwv()
-        .args(["land", "--allow-stale-lock", "--continue"])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for --allow-stale-lock + --continue; got: {stderr}"
-    );
-}
-
-/// --discard-local-commits alongside --continue must be rejected (conflicts_with).
-#[test]
-fn continue_with_discard_local_commits_flag_is_rejected() {
-    let tmp = common::tempdir().unwrap();
-    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    let assertion = rwv()
-        .args(["land", "--discard-local-commits", "--continue"])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for --discard-local-commits + --continue; got: {stderr}"
     );
 }
 
@@ -1056,12 +985,7 @@ fn op_state_file_written_during_sync_to_and_removed_on_success() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();

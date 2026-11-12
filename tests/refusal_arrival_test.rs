@@ -612,110 +612,6 @@ fn each_selector_condition_routes_to_its_own_token() {
 // The resume path
 // ---------------------------------------------------------------------------
 
-/// Park an op at replay re-entry over a source `prepare` has made refusable,
-/// and return what the operator reads.
-fn parked_resume_stderr(tmp: &tempfile::TempDir, prepare: impl FnOnce(&Path)) -> String {
-    let (primary, workweave) = primary_and_workweave(tmp.path());
-    prepare(&primary);
-
-    let record = format!(
-        "{{\"id\": \"parked-op-1\", \"verb\": \"land\", \"strategy\": \"rebase\", \
-         \"project\": \"web-app\", \"source\": \"{src}\", \"target\": \"{tgt}\", \
-         \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
-         \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
-        src = common::json_escaped(&workweave),
-        tgt = common::json_escaped(&primary),
-        plan = common::land_plan_json(&workweave, &primary, "web-app"),
-    );
-    std::fs::write(workweave.join(".rwv-op"), record).unwrap();
-
-    let stderr = refusal_stderr(&["land", "--continue"], &workweave);
-    assert!(
-        stderr.contains("still parked at its recorded phase"),
-        "precondition: this is the parked-op decorator's refusal:\n{stderr}"
-    );
-    stderr
-}
-
-/// `--continue` into a re-gate that refuses, routed to the token of the gate
-/// that actually fired — not to the parking that wrapped it.
-///
-/// The decorator took the refusal as a string until this design, which
-/// discarded whatever kind it carried. Asserting the INNER token is what makes
-/// that difference visible from outside the process: with the kind preserved
-/// the operator is routed to the condition, with it discarded to `op-parked`.
-///
-/// **Two arms, and the second one is not redundant.** A decorator that
-/// hard-coded one inner token instead of reading the error's would satisfy a
-/// single-arm test. Two gates whose tokens differ can only both pass if the
-/// decorator really is passing through what it was handed.
-#[test]
-fn the_resume_path_routes_to_the_gate_that_fired() {
-    let tmp = common::tempdir().unwrap();
-    let stderr = parked_resume_stderr(&tmp, |primary| {
-        let source_project = primary.join("projects/web-app");
-        common::fixture_lock(
-            &source_project,
-            &[(SERVER_PATH, SERVER_URL, &"b".repeat(40))],
-        );
-        common::git_in(&source_project, &["add", "rwv.lock"]);
-        common::git_in(&source_project, &["commit", "-m", "lock: unresolvable"]);
-    });
-    assert!(
-        stderr.contains("lock references unknown revisions"),
-        "precondition: the unresolvable-entry gate fired:\n{stderr}"
-    );
-
-    // This drive is also the sample's only multi-line headline reaching a
-    // route line, and a fixture that quietly became single-line would take
-    // that coverage with it while still passing everything below.
-    let headline = stderr
-        .split_once("Error: ")
-        .expect("the refusal is decorated")
-        .1
-        .rsplit_once("\n\nrwv explain")
-        .expect("the route line is last")
-        .0;
-    assert!(
-        headline.contains('\n'),
-        "the headline must span several lines here, got:\n{headline}"
-    );
-
-    assert_routes_to(&stderr, "unresolvable-lock-entry");
-}
-
-#[test]
-fn the_resume_path_routes_to_a_second_gates_own_token() {
-    let tmp = common::tempdir().unwrap();
-    // Lock a commit, then move HEAD off it backwards. The lock now records a
-    // commit HEAD lacks, which is `behind` — anomalous, where `ahead` is the
-    // benign case this gate deliberately lets through.
-    let stderr = parked_resume_stderr(&tmp, |primary| {
-        let server = primary.join(SERVER_PATH);
-        std::fs::write(server.join("second.txt"), "second\n").unwrap();
-        common::git_in(&server, &["add", "-A"]);
-        common::git_in(&server, &["commit", "-m", "second"]);
-        let locked = common::git_in(&server, &["rev-parse", "HEAD"]);
-
-        let source_project = primary.join("projects/web-app");
-        common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &locked)]);
-        common::git_in(&source_project, &["add", "rwv.lock"]);
-        common::git_in(&source_project, &["commit", "-m", "lock: at second"]);
-
-        common::git_in(&server, &["reset", "--hard", "HEAD~1"]);
-    });
-    assert!(
-        stderr.contains("has a stale lock"),
-        "precondition: the stale-relation gate fired:\n{stderr}"
-    );
-    assert_routes_to(&stderr, "stale-lock");
-}
-
-// ---------------------------------------------------------------------------
-// Two more of this slice's producers, in two other files
-// ---------------------------------------------------------------------------
-
 /// `--continue` with nothing recorded. The op-state module's own refusal,
 /// reached without a sync engine in the way.
 #[test]
@@ -758,11 +654,9 @@ fn a_dirty_workweave_at_sync_to_time_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let (primary, workweave) = primary_and_workweave(tmp.path());
 
-    std::fs::write(
-        workweave.join("projects/web-app/rwv.toml"),
-        "[repositories]\n# edited, uncommitted\n",
-    )
-    .unwrap();
+    let manifest = workweave.join("projects/web-app/rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("{text}# edited, uncommitted\n")).unwrap();
 
     let stderr = refusal_stderr(&["land"], &workweave);
     assert!(
@@ -843,7 +737,11 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
         )),
         "precondition: the unreadable half is present too:\n{stderr}"
     );
-    assert_routes_to(&stderr, "edits");
+    assert_eq!(
+        routed_tokens(&stderr).first(),
+        Some(&"edits"),
+        "the actionable half routes first:\n{stderr}"
+    );
 }
 
 /// `rwv member remove --delete` of a clone a workweave's worktree derives from: the
@@ -977,11 +875,9 @@ fn a_landing_judges_the_edits_of_both_sides_in_one_refusal() {
 fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
     let tmp = common::tempdir().unwrap();
     let (primary, workweave) = primary_and_workweave(tmp.path());
-    std::fs::write(
-        workweave.join("projects/web-app/rwv.toml"),
-        "[repositories]\n# edited, uncommitted\n",
-    )
-    .unwrap();
+    let manifest = workweave.join("projects/web-app/rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("{text}# edited, uncommitted\n")).unwrap();
 
     let out = common::rwv()
         .args(["land", "--json"])

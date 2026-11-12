@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 // ---------------------------------------------------------------------------
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
@@ -400,27 +402,14 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     let target_lock_before = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
     let cwd_project_before = head(&f.ww.project_dir);
 
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
+    let out = common::cli::run(&["land"], &f.ww.root);
+    let stderr = common::cli::refused(&out, State::PinUnpinned);
     assert!(
-        stderr.contains("lock-freshness precondition failed")
-            && stderr.contains("target workspace")
-            && stderr.contains(MANIFEST_REPO_PATH)
-            && stderr.contains("HEAD ahead of lock by 2 commits")
+        stderr.contains(MANIFEST_REPO_PATH)
+            && stderr.contains("2 commits beyond the pin")
             && stderr.contains("rwv lock --commit"),
-        "target lock-behind-HEAD must refuse at op start naming the repo, the commit \
-         count and the remedy; got stderr:\n{stderr}"
-    );
-    // The refusal must not sanction the flag that skips it without converging.
-    assert!(
-        !stderr.contains("--allow-stale-lock"),
-        "the target lock-behind refusal must not offer `--allow-stale-lock`; it skips \
-         this check without making the op converge. got stderr:\n{stderr}"
+        "commits on the target's receiving branch nothing records must refuse up front, \
+         naming the repo, the commits and the remedy; got stderr:\n{stderr}"
     );
 
     // NOTHING moved on either side — this is the whole point of refusing at op
@@ -448,16 +437,10 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
 
     // No op-state leaked: a re-run repeats the SAME refusal rather than
     // reporting an in-flight op.
-    let again = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr_again = String::from_utf8_lossy(&again.get_output().stderr).into_owned();
+    let again = common::cli::run(&["land"], &f.ww.root);
+    let stderr_again = common::cli::refused(&again, State::PinUnpinned);
     assert!(
-        stderr_again.contains("lock-freshness precondition failed")
-            && !stderr_again.contains("in-flight")
-            && !stderr_again.contains("--continue"),
+        !stderr_again.contains("--continue"),
         "the op-start refusal must leave no op-state; got stderr:\n{stderr_again}"
     );
 }
@@ -471,25 +454,28 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
 fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
     let f = fixture();
     let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
-    let child = create_workweave(&f.main, &weaveroot, "child");
+    rwv()
+        .args(["workweave", "create", "--project", PROJECT, "child"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    let child_root = weaveroot.join(format!("{PROJECT}--child"));
+    let child = Workweave {
+        project_dir: child_root.join("projects").join(PROJECT),
+        manifest_repo: child_root.join(MANIFEST_REPO_PATH),
+        root: child_root,
+    };
 
     // The parent workweave (ww) picks up a commit without relocking.
     commit_file(&f.ww.manifest_repo, "p1.txt", "p1\n", "ww: parent commit");
     commit_file(&child.project_dir, "note.txt", "n\n", "child: note");
 
     let ww_project_before = head(&f.ww.project_dir);
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&child.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    let out = common::cli::run(&["land"], &child.root);
+    let stderr = common::cli::refused(&out, State::PinUnpinned);
     assert!(
-        stderr.contains("lock-freshness precondition failed")
-            && stderr.contains("target workspace 'ww'")
-            && stderr.contains("HEAD ahead of lock by 1 commits")
-            && stderr.contains("rwv lock --commit"),
-        "a workweave target's lock-behind state must refuse the same way; got:\n{stderr}"
+        stderr.contains("1 commit beyond the pin") && stderr.contains("rwv lock --commit"),
+        "a workweave target's unrecorded commits must refuse the same way; got:\n{stderr}"
     );
     assert_eq!(
         head(&f.ww.project_dir),
@@ -579,159 +565,6 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
     );
 }
 
-/// `--allow-stale-lock` skips the op-start refusal without making the op
-/// converge, so the landing still dies at step 3's fast-forward. That is the one
-/// path where an operator still reads the late failure, and it must not blame a
-/// concurrent modification that did not happen: nothing touched either workspace
-/// between op start and step 3 here.
-#[test]
-fn allow_stale_lock_target_ahead_still_fails_at_step_3_without_blaming_concurrency() {
-    let f = fixture();
-
-    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
-    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
-
-    let assert = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    assert!(
-        stderr.contains("cannot be fast-forwarded"),
-        "the consented path must still refuse the fast-forward; got stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("This indicates concurrent modification"),
-        "step 3 must not assert a concurrent modification it cannot know happened — \
-         nothing modified either workspace during this op. got stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("The target holds commits CWD's tip does not") && stderr.contains("lock"),
-        "step 3 must state what it observed and name the lock-behind cause; got \
-         stderr:\n{stderr}"
-    );
-}
-
-/// Every revision the target's lock names must be one the target actually
-/// holds. A manifest repo that fails to land must therefore stop the project
-/// repo — the one that carries the lock — from being advanced past it. The
-/// consented path is where this is reachable, so it is where it is pinned.
-#[test]
-fn allow_stale_lock_step_3_failure_leaves_the_target_lock_true_about_its_members() {
-    let f = fixture();
-
-    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
-    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
-    commit_file(&f.ww.manifest_repo, "feature.txt", "f\n", "ww: feature");
-
-    let target_project_before = head(&f.main.project_dir);
-    let target_lock_before = std::fs::read(f.main.project_dir.join("rwv.lock")).unwrap();
-
-    let assert = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    assert!(
-        stderr.contains("(project): not advanced"),
-        "the skipped project advance must be named where the per-repo lines are; got \
-         stderr:\n{stderr}"
-    );
-    assert_eq!(
-        head(&f.main.project_dir),
-        target_project_before,
-        "a manifest repo that did not land must leave the target's project repo where it was"
-    );
-    let target_lock_after = std::fs::read(f.main.project_dir.join("rwv.lock")).unwrap();
-    assert_eq!(
-        target_lock_after, target_lock_before,
-        "the target's lock must be byte-identical after a failed landing"
-    );
-
-    // The invariant itself, not a proxy for it: every revision the lock the
-    // target is LEFT WITH pins is reachable from the branch its repo is on.
-    // Read back from disk rather than reusing the pre-op bytes, so this holds
-    // independently of the equality assertion above.
-    let lock = repoweave::manifest::LockFile::from_json_str(
-        &String::from_utf8(target_lock_after).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        lock.len(),
-        1,
-        "the sweep below is vacuous unless the lock has the fixture's one entry"
-    );
-    let target_lib_tip = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
-    for (_repo_path, entry) in lock.iter_entries() {
-        common::git_in(
-            &f.main.manifest_repo,
-            &[
-                "merge-base",
-                "--is-ancestor",
-                entry.version.as_str(),
-                &target_lib_tip,
-            ],
-        );
-    }
-}
-
-/// The full stranded-then-resumed shape, end to end: the consented path strands
-/// the op at advance-target, the operator rebases CWD onto the target's live tip
-/// by hand, and resumes. The resume reports success — so what it delivered has to
-/// be right. The lock the target ends up with must pin the manifest tip the same
-/// resume just gave it, not the revision CWD held before the operator's fix.
-#[test]
-fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the_tip() {
-    let f = fixture();
-
-    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
-    let target_live = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
-    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
-    commit_file(&f.ww.manifest_repo, "feature.txt", "f\n", "ww: feature");
-
-    rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-
-    // The operator's fix: put CWD's manifest repo on top of the target's live
-    // tip so step 3's fast-forward can proceed. Nothing relocks this.
-    common::git_in(&f.ww.manifest_repo, &["rebase", &target_live]);
-    let cwd_lib_after_fix = head(&f.ww.manifest_repo);
-
-    rwv()
-        .args(["land", "--continue"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
-
-    let target_lib = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
-    assert_eq!(
-        target_lib, cwd_lib_after_fix,
-        "the resume must land the manifest tip CWD held after the operator's fix"
-    );
-    let target_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
-    assert!(
-        target_lock.contains(&target_lib),
-        "the lock the resume published must pin the tip the same resume delivered \
-         ({target_lib}); lock:\n{target_lock}"
-    );
-}
-
 // ===========================================================================
 // LockRelation::Ahead on the pull DESTINATION — benign
 // ===========================================================================
@@ -780,8 +613,8 @@ fn sync_with_lock_behind_head_proceeds_and_keeps_member_work() {
 
 /// land: CWD's committed lock records a manifest SHA that HEAD does not have
 /// (HEAD is a strict ancestor of the lock — relation `Behind`). This is the
-/// reset/`update`-without-FF case; it must REFUSE, naming the relation, and
-/// retain `--allow-stale-lock`.
+/// reset/`update`-without-FF case; its relock would move the pin backward, so
+/// it refuses, naming the relation.
 #[test]
 fn relation_behind_sync_to_refuses_and_names_relation() {
     let f = fixture();
@@ -797,36 +630,17 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
     common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
     let target_project_before = head(&f.main.project_dir);
 
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    let out = common::cli::run(&["land"], &f.ww.root);
+    let stderr = common::cli::refused(&out, State::PinBackwards);
     assert!(
-        stderr.contains("lock-freshness precondition failed")
-            && stderr.contains("behind")
-            && stderr.contains("--allow-stale-lock"),
-        "Behind CWD must refuse naming the relation + flag; got:\n{stderr}"
+        stderr.contains("behind"),
+        "a checkout behind its pin must refuse naming the relation; got:\n{stderr}"
     );
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
         "a refused land must leave the target's project repo untouched"
     );
-
-    // Escape hatch still works: --allow-stale-lock bypasses the gate. Use
-    // --strategy=ff (ww is at C1, which is where main also is — an equal-tip
-    // no-op is fine) to confirm the flag opens the door.
-    rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-            "--strategy=ff",
-        ])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
 }
 
 // ===========================================================================
@@ -834,7 +648,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
 // ===========================================================================
 
 /// land: CWD's lock and HEAD have diverged past a shared base (out-of-band
-/// rewrite). Refuse, name `diverged`, and hint `rwv lock --commit` to bless HEAD.
+/// rewrite). Its relock would move the pin backward, so it refuses.
 #[test]
 fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     let f = fixture();
@@ -856,18 +670,12 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     let target_project_before = head(&f.main.project_dir);
     let target_lib_before = head(&f.main.manifest_repo);
 
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    let out = common::cli::run(&["land"], &f.ww.root);
+    let stderr = common::cli::refused(&out, State::PinBackwards);
     assert!(
-        stderr.contains("lock-freshness precondition failed")
-            && stderr.contains("diverged")
-            && stderr.contains("rwv lock --commit")
-            && stderr.contains("--allow-stale-lock"),
-        "Diverged must refuse, name the relation, and hint `rwv lock --commit`; got:\n{stderr}"
+        stderr.contains("diverged") && stderr.contains("rwv member pin"),
+        "a checkout diverged from its pin must refuse naming the relation and the \
+         by-name pin; got:\n{stderr}"
     );
     assert_eq!(
         head(&f.main.project_dir),
@@ -904,14 +712,10 @@ fn unresolvable_target_lock_refuses_naming_unknown_revision() {
     );
 
     let dest_lib_before = head(&f.ww.manifest_repo);
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    let out = common::cli::run(&["land"], &f.ww.root);
+    let stderr = common::cli::refused(&out, State::PinUnreachable);
     assert!(
-        stderr.contains("unknown revision") && stderr.contains("v9.9.9-nope"),
+        stderr.contains("v9.9.9-nope"),
         "unresolvable target lock must name the unknown revision; got:\n{stderr}"
     );
     assert_eq!(
@@ -931,16 +735,8 @@ fn no_lock_sync_to_refuses() {
     common::git_in(&f.ww.project_dir, &["commit", "-m", "drop lock"]);
     let target_project_before = head(&f.main.project_dir);
 
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("lock-freshness precondition failed") && stderr.contains("no-lock"),
-        "a project with no committed lock must refuse as no-lock; got:\n{stderr}"
-    );
+    let out = common::cli::run(&["land"], &f.ww.root);
+    common::cli::refused(&out, State::PinNone);
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
@@ -997,20 +793,8 @@ fn dirty_source_untracked_file_is_ignored() {
     );
 }
 
-fn assert_source_refusal_changed_nothing(f: &Fixture, stderr: &str, state: &str) {
-    assert!(
-        stderr.contains("\nrwv explain head-not-on-branch\n"),
-        "expected the head-not-on-branch route token; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("source workweave is not on a branch in:")
-            && stderr.contains(state)
-            && stderr.contains(&format!(
-                "Run the command under each repo in the source ({}), then re-run.",
-                f.ww.root.display()
-            )),
-        "the refusal must name the repo, its state and the fix; got:\n{stderr}"
-    );
+fn assert_source_refusal_changed_nothing(f: &Fixture, out: &std::process::Output, state: State) {
+    common::cli::refused(out, state);
     assert!(savepoint_refs(&f.main.project_dir).is_empty());
     assert!(savepoint_refs(&f.main.manifest_repo).is_empty());
     assert!(savepoint_refs(&f.ww.project_dir).is_empty());
@@ -1025,13 +809,10 @@ fn unborn(repo: &Path) {
     common::git_in(repo, &["rm", "-rfq", "."]);
 }
 
-fn sync_to_main_refusal(f: &Fixture) -> String {
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+fn land_refused(f: &Fixture) -> std::process::Output {
+    let out = common::cli::run(&["land"], &f.ww.root);
+    assert!(!out.status.success(), "{}", common::cli::describe(&out));
+    out
 }
 
 #[test]
@@ -1043,12 +824,8 @@ fn detached_source_member_refuses_before_any_side_effect() {
         head(&f.main.manifest_repo),
         head(&f.ww.manifest_repo),
     );
-    let stderr = sync_to_main_refusal(&f);
-    assert_source_refusal_changed_nothing(
-        &f,
-        &stderr,
-        &format!("{MANIFEST_REPO_PATH} (detached HEAD at "),
-    );
+    let out = land_refused(&f);
+    assert_source_refusal_changed_nothing(&f, &out, State::AlignmentDetachedElsewhere);
     assert_eq!(tips.0, head(&f.main.project_dir));
     assert_eq!(tips.1, head(&f.main.manifest_repo));
     assert_eq!(tips.2, head(&f.ww.manifest_repo));
@@ -1059,12 +836,8 @@ fn unborn_source_member_refuses_before_any_side_effect() {
     let f = fixture();
     unborn(&f.ww.manifest_repo);
     let tips = (head(&f.main.project_dir), head(&f.main.manifest_repo));
-    let stderr = sync_to_main_refusal(&f);
-    assert_source_refusal_changed_nothing(
-        &f,
-        &stderr,
-        &format!("{MANIFEST_REPO_PATH} (unborn branch 'unborn-src', no commits yet)"),
-    );
+    let out = land_refused(&f);
+    assert_source_refusal_changed_nothing(&f, &out, State::AlignmentOnBranch);
     assert_eq!(tips.0, head(&f.main.project_dir));
     assert_eq!(tips.1, head(&f.main.manifest_repo));
 }
@@ -1078,40 +851,14 @@ fn detached_source_project_repo_refuses_before_any_side_effect() {
         head(&f.main.manifest_repo),
         head(&f.ww.project_dir),
     );
-    let stderr = sync_to_main_refusal(&f);
-    assert_source_refusal_changed_nothing(&f, &stderr, "(detached HEAD at ");
-    assert!(
-        stderr.contains("  (project) (detached HEAD at "),
-        "names the project repo; got:\n{stderr}"
-    );
+    let out = land_refused(&f);
+    assert_source_refusal_changed_nothing(&f, &out, State::AlignmentProjectDetached);
     assert_eq!(tips.0, head(&f.main.project_dir));
     assert_eq!(tips.1, head(&f.main.manifest_repo));
     assert_eq!(tips.2, head(&f.ww.project_dir));
 }
 
-/// Runs every `git -C ...` command the refusal advises, in order, with
-/// `<new-branch>` spelled as `landing`.
-fn follow_advised_git(stderr: &str) {
-    let steps: Vec<String> = stderr
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .filter(|span| span.starts_with("git -C "))
-        .map(|span| span.replace("<new-branch>", "landing"))
-        .collect();
-    assert!(!steps.is_empty(), "no git command advised in:\n{stderr}");
-    for step in steps {
-        let out = common::run_advised(&step, std::env::current_dir().unwrap());
-        assert!(
-            out.status.success(),
-            "advised `{step}` failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-}
-
-fn lands_after_following_advice(f: &Fixture, stderr: &str, commits: &[&str]) {
-    follow_advised_git(stderr);
+fn lands(f: &Fixture, commits: &[&str]) {
     rwv()
         .args(["land"])
         .current_dir(&f.ww.root)
@@ -1134,95 +881,64 @@ fn ephemeral_branch(f: &Fixture) -> String {
     common::git_in(&f.ww.manifest_repo, &["branch", "--show-current"])
 }
 
+/// A member detached with nothing of its own is aligned by the printed
+/// choice, `rwv update`, and then lands.
 #[test]
-fn detached_source_equal_to_its_branch_lands_after_the_advised_switch() {
+fn detached_source_equal_to_its_branch_lands_after_the_printed_update() {
     let f = fixture();
-    let branch = ephemeral_branch(&f);
     let tip = commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
     common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
-    let stderr = sync_to_main_refusal(&f);
-    assert!(stderr.contains(&format!("switch {branch}`")), "{stderr}");
-    lands_after_following_advice(&f, &stderr, &[&tip]);
+    let out = land_refused(&f);
+    let stderr = common::cli::refused(&out, State::AlignmentDetachedElsewhere);
+    assert!(stderr.contains("rwv update"), "{stderr}");
+    common::cli::succeed(&["update"], &f.ww.root);
+    lands(&f, &[&tip]);
 }
 
 #[test]
-fn detached_source_behind_its_branch_lands_after_the_advised_switch() {
+fn detached_source_behind_its_branch_lands_after_the_printed_update() {
     let f = fixture();
-    let branch = ephemeral_branch(&f);
     commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
     let tip = commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
     common::git_in(
         &f.ww.manifest_repo,
         &["checkout", "-q", "--detach", "HEAD~1"],
     );
-    let stderr = sync_to_main_refusal(&f);
-    assert!(
-        stderr.contains(&format!("switch {branch}`")) && !stderr.contains("merge --ff-only"),
-        "{stderr}"
-    );
-    lands_after_following_advice(&f, &stderr, &[&tip]);
+    let out = land_refused(&f);
+    common::cli::refused(&out, State::AlignmentDetachedElsewhere);
+    common::cli::succeed(&["update"], &f.ww.root);
+    lands(&f, &[&tip]);
 }
 
+/// Detached commits of its own are never moved off by a bare switch: the
+/// refusal keeps them first (C14) or copies them onto the branch (C15).
 #[test]
-fn detached_source_ahead_of_its_branch_lands_after_the_advised_switch_and_merge() {
+fn detached_source_ahead_of_its_branch_lands_after_copying_onto_its_branch() {
     let f = fixture();
     let branch = ephemeral_branch(&f);
     common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
     let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
-    let stderr = sync_to_main_refusal(&f);
-    assert!(
-        stderr.contains(&format!("switch {branch}`"))
-            && stderr.contains(&format!("merge --ff-only {work}`")),
-        "{stderr}"
-    );
-    lands_after_following_advice(&f, &stderr, &[&work]);
+    let out = land_refused(&f);
+    let stderr = common::cli::refused(&out, State::AlignmentDetachedUnpushed);
+    assert!(stderr.contains(&work[..12]), "{stderr}");
+    assert!(!stderr.contains("rwv switch"), "{stderr}");
+    common::git_in(&f.ww.manifest_repo, &["switch", "-q", &branch]);
+    common::git_in(&f.ww.manifest_repo, &["merge", "-q", "--ff-only", &work]);
+    lands(&f, &[&work]);
     assert_eq!(ephemeral_branch(&f), branch);
 }
 
 #[test]
-fn detached_source_diverged_from_its_branch_lands_both_sides_and_ends_on_its_branch() {
-    let f = fixture();
-    let branch = ephemeral_branch(&f);
-    let on_branch = commit_file(&f.ww.manifest_repo, "c.txt", "c\n", "ww: on branch");
-    common::git_in(
-        &f.ww.manifest_repo,
-        &["checkout", "-q", "--detach", "HEAD~1"],
-    );
-    let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
-    let stderr = sync_to_main_refusal(&f);
-    assert!(stderr.contains("switch -c <new-branch>`"), "{stderr}");
-    follow_advised_git(&stderr);
-    rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
-    assert_eq!(ephemeral_branch(&f), branch);
-    let landed = |name: &str| {
-        std::process::Command::new("git")
-            .args(["cat-file", "-e", &format!("HEAD:{name}")])
-            .current_dir(&f.main.manifest_repo)
-            .status()
-            .unwrap()
-            .success()
-    };
-    assert!(
-        landed("c.txt"),
-        "the branch's commit {on_branch} did not land"
-    );
-    assert!(landed("d.txt"), "the detached commit {work} did not land");
-}
-
-#[test]
-fn detached_source_whose_branch_is_gone_lands_after_the_advised_switch_c() {
+fn detached_source_whose_branch_is_gone_lands_after_keeping_it_on_its_branch() {
     let f = fixture();
     let branch = ephemeral_branch(&f);
     common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
     let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
     common::git_in(&f.ww.manifest_repo, &["branch", "-D", &branch]);
-    let stderr = sync_to_main_refusal(&f);
-    assert!(stderr.contains(&format!("switch -c {branch}`")), "{stderr}");
-    lands_after_following_advice(&f, &stderr, &[&work]);
+    let out = land_refused(&f);
+    common::cli::refused(&out, State::AlignmentDetachedUnpushed);
+    common::git_in(&f.ww.manifest_repo, &["switch", "-q", "-c", &branch]);
+    lands(&f, &[&work]);
 }
 
 /// Carve-out: a project repo dirty ONLY in `rwv.lock` is NOT dirt (it is the
@@ -1294,56 +1010,9 @@ fn already_ahead_line(stdout: &str) -> String {
         .to_owned()
 }
 
-/// A CWD that contains the source lock entry is not thereby at the source's
-/// tip, and the line has to say which.
-///
-/// Reading "strictly ahead of the source lock entry … (contains it); nothing to
-/// replay" as "nothing outstanding" is the failure: the source here sits three
-/// commits past that same entry, and a pull that stops at the entry delivers
-/// none of them. The two counts are deliberately different (CWD 2, source 3)
-/// so a line that echoes one relation into the other reads as a failure rather
-/// than as agreement.
-#[test]
-fn the_already_ahead_line_states_how_far_the_source_moved_past_its_lock() {
-    let f = fixture();
-    // The source advances three commits past its own committed lock entry.
-    commit_file(&f.main.manifest_repo, "s1.txt", "s1\n", "main: s1");
-    commit_file(&f.main.manifest_repo, "s2.txt", "s2\n", "main: s2");
-    commit_file(&f.main.manifest_repo, "s3.txt", "s3\n", "main: s3");
-    // CWD carries two commits of its own on top of that same entry.
-    commit_file(&f.ww.manifest_repo, "c1.txt", "c1\n", "ww: c1");
-    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
-
-    // `--allow-stale-lock` is what reaches this shape: the freshness gate
-    // otherwise answers a source whose tip has left its lock behind, either by
-    // refusing or by pulling the tips, and neither leaves a lock entry the
-    // source has moved past.
-    let assert = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    assert_eq!(
-        already_ahead_line(&stdout),
-        format!(
-            "{MANIFEST_REPO_PATH}: already-ahead — HEAD is strictly ahead of the source lock \
-             entry by 2 commits (contains it); the source's own HEAD is strictly ahead of the \
-             source lock entry by 3 commits (contains it); nothing to replay"
-        ),
-    );
-}
-
 /// The source clause is a measurement, not a fixed sentence: a source sitting
 /// AT its lock entry is reported as equal to it.
 ///
-/// Without this the previous test passes against a line that says "the source
-/// has moved past it" unconditionally — the reassuring case is the one an
-/// operator acts on, so it is the one a hardcoded clause would get wrong.
 #[test]
 fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
     let f = fixture();

@@ -2494,6 +2494,24 @@ fn judge_target_pins(
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let live = crate::pins::live_pins(primary)?;
+    for (repo_path, raw) in &class.unresolvable {
+        let dir = root.join(repo_path.as_path());
+        let vcs = manifest
+            .get_entry(repo_path)
+            .map(|e| vcs_for(e.vcs_type))
+            .unwrap_or_else(crate::vcs::probe_vcs);
+        report.add(
+            State::PinUnreachable
+                .of(repo_path)
+                .member()
+                .checkout(&dir)
+                .bind("<m>", repo_path)
+                .subject(format!("the target's lock pins {}, which this clone lacks", raw.as_str()))
+                .elsewhere(root)
+                .by_verb("land")
+                .judge(vcs.as_ref()),
+        );
+    }
     for r in &class.relations {
         let (Some(head), Some(pin)) = (&r.tip, &r.lock_pin) else {
             continue;

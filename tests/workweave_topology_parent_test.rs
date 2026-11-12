@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 // ---------------------------------------------------------------------------
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
@@ -216,10 +218,9 @@ fn delete_refuses_while_workweave_is_mid_op() {
         "{{\"id\": \"planted-delete-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
-        plan = common::land_plan_json(&ww.root, &main.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
@@ -260,10 +261,9 @@ fn delete_waivers_do_not_bypass_op_mutex() {
         "{{\"id\": \"planted-delete-op-2\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&main.root),
         tgt = common::json_escaped(&ww.root),
-        plan = common::land_plan_json(&main.root, &ww.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
@@ -534,16 +534,18 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
 }
 
 fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
+    let branch = target.root.file_name().unwrap().to_string_lossy().into_owned();
     rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--retire", "--target", &branch])
         .current_dir(&a.root)
         .output()
         .unwrap()
 }
 
 /// The deletion rule judges against the branch the record lands into, `p1`'s,
-/// so work landed in `p2` is not seen as landed: the workweave is retired, its
-/// branches survive with their commits, and the exit status says so.
+/// so work landed in `p2` for one run is not seen as landed: the workweave is
+/// retired, its branches survive with their commits, and the exit status says
+/// so.
 #[test]
 fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
     let tmp = common::tempdir().unwrap();
@@ -594,10 +596,9 @@ fn continuing_a_parked_retire_refuses_records_that_disagree() {
         "{{\"id\": \"planted-retire-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
-        plan = common::land_plan_json(&ww.root, &main.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
     unlist(&main, &ww);
@@ -734,31 +735,25 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
 /// friendly doctor-remediation text — NOT the raw `failed to canonicalize …
 /// (os error 2)`.
 #[test]
-fn bare_sync_to_dangling_parent_is_friendly() {
+fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let wwa = create_workweave(&main, "wwa", None);
     let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
 
-    // Remove wwa out-of-band; wwb's parent is now dangling.
+    // Remove wwa out-of-band; wwb's target is now checked out nowhere.
     std::fs::remove_dir_all(&wwa.root).unwrap();
 
-    let out = rwv()
-        .args(["land"])
-        .current_dir(&wwb.root)
-        .output()
-        .unwrap();
-    assert!(!out.status.success(), "bare land should refuse");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let out = common::cli::run(&["land"], &wwb.root);
+    let stderr = common::cli::refused(&out, State::TargetNotCheckedOut);
     assert!(
         !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
         "should NOT surface the raw canonicalize IO error; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("recorded parent workspace does not exist")
-            && stderr.contains("rwv doctor --fix"),
-        "should surface friendly doctor-remediation text; got:\n{stderr}"
+        stderr.contains(&format!("rwv workweave create <ww> --branch {PROJECT}--wwa")),
+        "{stderr}"
     );
 }
 

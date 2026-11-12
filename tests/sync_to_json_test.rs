@@ -300,104 +300,6 @@ fn sync_to_retire_json_round_trip() {
 }
 
 // ===========================================================================
-// source_workweave is null when invoked from the primary weave
-// ===========================================================================
-
-#[test]
-fn sync_to_json_source_workweave_is_null_from_primary() {
-    // For this test, we set up two independent primary-like workspaces.
-    // "source" plays the role of a primary workweave; "target" is the destination.
-    // Invoking land from "source" (a Weave, not a Workweave) should yield
-    // source_workweave == null.
-    let tmp = common::tempdir().unwrap();
-    let parent = tmp.path();
-
-    // Source workspace (plays the role of primary / non-workweave).
-    let source = parent.join("source");
-    std::fs::create_dir_all(source.join("github/example")).unwrap();
-    std::fs::create_dir_all(source.join("projects")).unwrap();
-
-    let source_server = source.join(SERVER_PATH);
-    let initial_sha = init_repo(&source_server);
-
-    let source_project = source.join("projects/web-app");
-    init_repo(&source_project);
-    common::set_up_lock_driver(&source_project);
-    write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
-    common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
-    common::git_in(
-        &source_project,
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
-    );
-    common::git_in(&source_project, &["commit", "-m", "lock: initial"]);
-    common::record_trunk(&source_project);
-    std::fs::write(source.join(".rwv-active"), "web-app\n").unwrap();
-
-    // Target workspace: worktrees from source repos.
-    let target = parent.join("target");
-    std::fs::create_dir_all(target.join("github/example")).unwrap();
-    std::fs::create_dir_all(target.join("projects")).unwrap();
-
-    let target_server = target.join(SERVER_PATH);
-    common::git_in(
-        &source_server,
-        &[
-            "worktree",
-            "add",
-            &target_server.to_string_lossy(),
-            "-b",
-            "web-app--target",
-        ],
-    );
-
-    let target_project = target.join("projects/web-app");
-    common::git_in(
-        &source_project,
-        &[
-            "worktree",
-            "add",
-            &target_project.to_string_lossy(),
-            "-b",
-            "web-app--target",
-        ],
-    );
-    common::record_feature(&target_project, "web-app--target", "main");
-    std::fs::write(target.join(".rwv-active"), "web-app\n").unwrap();
-
-    // Advance source so land has work.
-    let c2 = make_commit(
-        &source_server,
-        "source.txt",
-        "source advance\n",
-        "source: advance",
-    );
-    common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    common::git_in(&source_project, &["add", "rwv.lock"]);
-    common::git_in(&source_project, &["commit", "-m", "lock: source at c2"]);
-
-    // Invoke land FROM source (a Weave, not a Workweave) TO target.
-    let assert = rwv()
-        .args([
-            "land",
-            "--strategy=ff",
-            "--json",
-        ])
-        .current_dir(&source)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("envelope must parse ({e}):\n{stdout}"));
-
-    // source_workweave must be null (or missing) since we're in a primary weave.
-    let source_ww = parsed.get("source_workweave");
-    let is_null_or_absent = source_ww.is_none() || source_ww.map(Value::is_null).unwrap_or(false);
-    assert!(
-        is_null_or_absent,
-        "source_workweave must be null when invoked from a primary weave; got:\n{stdout}"
-    );
-}
 
 // ===========================================================================
 // retired is false when --retire is not passed
@@ -468,15 +370,13 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("--retire: the landing is done and the workweave was not deleted"),
-        "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
+        stderr.contains("edits dirty") && stderr.contains("scratch.txt"),
+        "the retire's dirt is refused before anything moves; got stderr:\n{stderr}"
     );
-    // The landing itself happened, so the envelope below describes an op that
-    // did everything except the retire it is being asked about.
-    assert_eq!(
+    assert_ne!(
         common::git_in(&primary_server, &["rev-parse", "HEAD"]),
         advance_sha,
-        "advance-target must have landed the workweave's tip in the target"
+        "a landing refused up front lands nothing"
     );
     assert!(
         ww.exists(),
@@ -484,15 +384,8 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     );
 
     let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("the envelope must still be emitted ({e}):\n{stdout}"));
-    let retired = parsed
-        .get("retired")
-        .and_then(Value::as_bool)
-        .unwrap_or_else(|| panic!("retired must be a bool; got:\n{stdout}"));
-    assert!(
-        !retired,
-        "retired must be false when the workweave is still on disk; got:\n{stdout}"
-    );
+        .unwrap_or_else(|e| panic!("the refusal envelope must be emitted ({e}):\n{stdout}"));
+    assert_eq!(parsed["refused"][0]["axis"], "edits", "{stdout}");
 }
 
 // ===========================================================================
@@ -902,31 +795,3 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
     assert_eq!(doc["retired"], false, "envelope:\n{doc:#}");
 }
 
-/// The consent to rewind past local commits is minted at dispatch, from the
-/// record `--continue` resolves. A library caller resuming such an op holds
-/// none, and resuming without it would run a different Phase 1' than the op
-/// recorded.
-#[test]
-fn a_resume_without_the_recorded_discard_consent_is_refused() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww) = stranded_sync_to_op(tmp.path(), "sample-weave");
-    write_sync_to_owner_record_at_advance_target(&ww, &primary, "\"discard-local-commits\"");
-    let recorded = std::fs::read_to_string(ww.join(".rwv-op")).unwrap();
-
-    let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
-    let run = land_json_run(&invocation, resume_request(&invocation));
-
-    let err = run
-        .project_level_result
-        .expect_err("a resume holding no consent the record names must refuse");
-    assert_eq!(
-        repoweave::refusal::kind_of(&err),
-        Some(repoweave::refusal::RefusalKind::ResumeContradictsRecord),
-        "{err:#}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(ww.join(".rwv-op")).unwrap(),
-        recorded,
-        "a refused resume leaves the record as it found it"
-    );
-}
