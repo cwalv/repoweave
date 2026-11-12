@@ -36,6 +36,23 @@ fn rel(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// `path` with its `.` and `..` components folded away, by spelling alone:
+/// the same file reached through `tests/<area>/../common` and through
+/// `tests/common` is one entry.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -103,7 +120,7 @@ fn walk_binary(binary: &str, root_file: &Path, walk: &mut Walk, root: &Path) {
     let mut stack = vec![root_file.to_path_buf()];
     let mut seen = BTreeSet::new();
     while let Some(file) = stack.pop() {
-        let file = std::fs::canonicalize(&file).unwrap_or(file);
+        let file = lexical(&file);
         if !seen.insert(file.clone()) {
             continue;
         }
@@ -161,8 +178,8 @@ fn walk(root: &Path) -> Walk {
 
 fn findings(root: &Path) -> Vec<String> {
     let tests = root.join("tests");
-    let common = std::fs::canonicalize(tests.join("common")).unwrap_or(tests.join("common"));
-    let fixtures = std::fs::canonicalize(tests.join("fixtures")).unwrap_or(tests.join("fixtures"));
+    let common = tests.join("common");
+    let fixtures = tests.join("fixtures");
     let walk = walk(root);
     let mut out = walk.missing.clone();
     for (_, file) in binaries(&tests) {
@@ -177,8 +194,8 @@ fn findings(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     rust_files(&tests, &mut files);
     for file in files {
-        let file = std::fs::canonicalize(&file).unwrap_or(file);
-        if file.starts_with(&fixtures) {
+        let file = lexical(&file);
+        if file.strip_prefix(&fixtures).is_ok() {
             continue;
         }
         let shown = rel(root, &file);
@@ -186,10 +203,12 @@ fn findings(root: &Path) -> Vec<String> {
             None => out.push(format!(
                 "{shown}: declared by no test binary, so it never runs"
             )),
-            Some(bins) if bins.len() > 1 && !file.starts_with(&common) => out.push(format!(
-                "{shown}: declared by more than one test binary ({})",
-                bins.iter().cloned().collect::<Vec<_>>().join(", ")
-            )),
+            Some(bins) if bins.len() > 1 && file.strip_prefix(&common).is_err() => {
+                out.push(format!(
+                    "{shown}: declared by more than one test binary ({})",
+                    bins.iter().cloned().collect::<Vec<_>>().join(", ")
+                ))
+            }
             Some(_) => {}
         }
     }
@@ -237,14 +256,11 @@ fn compiled_into_this_binary(root: &Path, binary: &str) -> BTreeSet<PathBuf> {
         });
         PathBuf::from(cut)
     };
-    let tests = std::fs::canonicalize(root.join("tests")).expect("tests/ resolves");
+    let tests = root.join("tests");
     deps.iter()
         .filter(|d| d.ends_with(".rs"))
-        .map(|d| {
-            let path = base.join(d);
-            std::fs::canonicalize(&path).unwrap_or(path)
-        })
-        .filter(|d| d.starts_with(&tests))
+        .map(|d| lexical(&base.join(d)))
+        .filter(|d| d.strip_prefix(&tests).is_ok())
         .collect()
 }
 
@@ -254,9 +270,7 @@ fn the_walk_agrees_with_what_rustc_compiled_into_this_binary() {
     let (binary, module) = module_path!()
         .split_once("::")
         .expect("this test is a module of an area binary");
-    let this_file =
-        std::fs::canonicalize(root.join("tests").join(binary).join(format!("{module}.rs")))
-            .expect("this test's own source resolves");
+    let this_file = root.join("tests").join(binary).join(format!("{module}.rs"));
     let walk = walk(&root);
     let walked: BTreeSet<PathBuf> = walk
         .reached
