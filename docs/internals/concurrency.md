@@ -72,6 +72,20 @@ writes, beside the claim, when each remote the fetch completed did
 remote, as the remote-tracking refs it dates are. It is rwv's record of its own
 fetches, so a transfer from a local path or a hand `git fetch` does not move it.
 
+**A landing claims its target: one landing at a time per target.** `rwv land`
+takes the claim on its target branch (`LandingClaim::take` in
+`src/landing_claim.rs`, the file `.rwv-landing.lock` under `rwv-landings/` in
+the project repo's store, one directory per project and branch) before it reads
+the target's tips, so a second landing into the same target waits within the
+shared claim budget and then reads the tips the first one left, rather than
+losing a compare-and-swap or meeting the first one's lease. The claim names its
+op, so that op's `--continue` takes it over and `rwv abort` releases it. It is
+given up once the target's workspace took the last fast-forward and the record
+moved to `retire`, together with the op's lease on the target's workspace; the
+lease goes first, so no landing waiting on the claim ever reads a lease whose
+owner record `--retire` is about to remove. The compare-and-swap of each move
+stays the guard against every writer that takes no claim.
+
 **The workspace state takes no claim.** `rwv-workspace-state` lives in one
 checkout's private directory and only a verb acting on that workspace writes it,
 published whole. Two mutating verbs racing in one workspace are what git leaves

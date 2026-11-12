@@ -371,6 +371,11 @@ signal.
 Retire is only meaningful inside a workweave. Run from a primary weave,
 it emits a warning and is otherwise a no-op.
 
+Before retire runs, once the record says `retire`, a landing clears its lease
+on the target's workspace and releases its claim on the target
+(`release_target`): the target is no longer moved, and a landing waiting on
+the claim then finds no lease of an op whose owner workweave retire removes.
+
 ## cleanup
 
 Drop all savepoints and clear the owner record and lease. Cleanup is
