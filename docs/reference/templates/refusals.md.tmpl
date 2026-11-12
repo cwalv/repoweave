@@ -788,6 +788,22 @@ operation than the one that stopped.
 message names both sides — or `rwv abort` if the record is the thing that is
 wrong.
 
+### `savepoint-unfiled`
+
+**Condition.** An operation that moves repos (`rwv land`, `rwv sync`, `rwv pull`,
+`rwv update --remote`, `rwv cherry-pick`) could not write the savepoint it keeps
+of a repo before moving it, so it did not start, or a resumed port did not go
+on. The message names the repo and what the VCS said.
+
+**Why.** `rwv abort` puts a repo back only from its savepoint. An operation
+that moved a repo it holds none of could not be undone, so it moves nothing
+until every savepoint is written.
+
+**Exits.** Clear what kept the VCS from writing the savepoint (the message says;
+a ref named like the savepoint namespace, a full disk, a store that cannot be
+written), then rerun the verb. The savepoints already written were dropped and
+nothing moved.
+
 ### `shared-clone-referenced`
 
 **Condition.** `--delete`'s clone is referenced by other projects, and

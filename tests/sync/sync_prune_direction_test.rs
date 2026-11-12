@@ -951,8 +951,7 @@ fn a_landing_that_cannot_file_a_savepoint_does_not_start() {
     common::git_in(&primary_lib, &["update-ref", "refs/rwv/pre-op", "HEAD"]);
 
     let out = run(&s1, &["land", "--history", "linear"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::SavepointUnfiled);
     assert!(
         stderr.contains("could not file its savepoints, so it did not start"),
         "{stderr}"

@@ -1513,7 +1513,12 @@ fn ensure_savepoints(
                  nothing would put it back; run `rwv abort` and port again"
             ));
         }
-        vcs.create_savepoint(&dir, &key)?;
+        if let Err(e) = vcs.create_savepoint(&dir, &key) {
+            crate::refuse!(
+                RefusalKind::SavepointUnfiled,
+                "{repo}: its savepoint could not be filed again, so the port does not go on: {e:#}"
+            );
+        }
     }
     Ok(())
 }

@@ -4081,7 +4081,10 @@ fn guard_and_mark<'a>(
             delete_savepoint(vcs.as_ref(), dir, id);
         }
         release_start(&acquired);
-        return Err(e.context("the landing could not file its savepoints, so it did not start"));
+        crate::refuse!(
+            RefusalKind::SavepointUnfiled,
+            "the landing could not file its savepoints, so it did not start: {e:#}"
+        );
     }
 
     // The source relocks forward before composing, after the savepoints so

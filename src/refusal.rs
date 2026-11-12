@@ -62,6 +62,9 @@ pub enum RefusalKind {
     ForeignTip,
     /// No record of a rebase the op ran says which commit became which.
     ReplayUnrecorded,
+    /// A savepoint the operation needs could not be written, so it did not
+    /// start.
+    SavepointUnfiled,
 
     /// The canonical clone a checkout is derived from is missing.
     MissingCanonicalClone,

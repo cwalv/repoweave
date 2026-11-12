@@ -85,10 +85,11 @@ impl Op {
                     vcs.drop_savepoint(dir, &key);
                 }
                 op_state::release_acquired(&held);
-                return Err(anyhow::Error::from(e).context(format!(
-                    "could not file a savepoint in {}, so the operation did not start",
+                crate::refuse!(
+                    RefusalKind::SavepointUnfiled,
+                    "could not file a savepoint in {}, so the operation did not start: {e:#}",
                     dir.display()
-                )));
+                );
             }
             crate::test_pause::point("op-savepoint-taken");
         }
