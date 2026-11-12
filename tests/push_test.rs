@@ -683,14 +683,6 @@ fn a_record_another_machine_published_survives_a_fetch_during_the_publish() {
         &[],
         "another machine's record",
     );
-    common::git_in(
-        &ws.project_bare,
-        &["fetch", "-q", &common::file_url(&project_dir), &theirs],
-    );
-    common::git_in(
-        &ws.project_bare,
-        &["update-ref", "refs/heads/rwv-records", &theirs],
-    );
 
     let mut push = common::rwv_std();
     push.args(["push"]).current_dir(&ws.workspace);
@@ -700,6 +692,14 @@ fn a_record_another_machine_published_survives_a_fetch_during_the_publish() {
         &ws._tmp.path().join("pause"),
     )
     .unwrap_or_else(|e| panic!("{e}"));
+    common::git_in(
+        &ws.project_bare,
+        &["fetch", "-q", &common::file_url(&project_dir), &theirs],
+    );
+    common::git_in(
+        &ws.project_bare,
+        &["update-ref", "refs/heads/rwv-records", &theirs],
+    );
     common::git_in(&project_dir, &["fetch", "-q", "origin"]);
     let out = held.release();
     assert!(
