@@ -178,3 +178,25 @@ fn a_hand_removed_member_is_committed_removed_and_its_checkout_is_kept() {
         "{text}"
     );
 }
+
+#[test]
+fn a_whole_file_commit_refuses_project_edits_before_it_writes_the_lock() {
+    let w = two_members();
+    let hand = format!("{}\n[integrations.vscode-workspace]\nenabled = false\n", manifest(&w));
+    std::fs::write(project(&w).join("rwv.toml"), hand).unwrap();
+    std::fs::write(project(&w).join("README"), "tracked\n").unwrap();
+    git_in(project(&w), &["add", "README"]);
+    git_in(project(&w), &["commit", "-qm", "readme"]);
+    std::fs::write(project(&w).join("README"), "dirty\n").unwrap();
+    commit_in(&member(&w, APP), "app-ahead");
+    let before = (commits(&w), manifest(&w), lock_text(&w));
+
+    let text = refused(&run(&w, &["lock", "--commit"]));
+
+    assert!(text.contains("projects/proj: edits dirty"), "{text}");
+    assert_eq!(
+        (commits(&w), manifest(&w), lock_text(&w)),
+        before,
+        "the lock was written before the refusal"
+    );
+}
