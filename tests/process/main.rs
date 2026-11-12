@@ -7,6 +7,7 @@ mod claude_hook_events_test;
 mod closed_stdout_test;
 mod concurrency_boundaries_test;
 mod ignore_surface_concurrency_test;
+mod landing_claim_contention_test;
 mod main_thread_stack_test;
 mod owned_ledger_concurrency_test;
 mod parallel_test;
