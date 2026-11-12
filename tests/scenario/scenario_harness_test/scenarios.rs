@@ -8869,3 +8869,129 @@ pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
         ],
     )
 }
+
+/// How a landing that changes `lib`'s declared branch to `lib-next` treats `lib-next`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceivingCase {
+    /// `lib-next` exists with work of its own and the feature has no `lib` work:
+    /// the feature's `lib` follows `lib-next`, which does not move.
+    Followed,
+    /// `lib-next` exists with work of its own and the feature has `lib` work:
+    /// `lib-next` moves as a ref onto the composed work.
+    MovedAsRef,
+    /// `lib-next` exists nowhere: the landing creates it at `main`'s pin and
+    /// moves it onto the composed work.
+    Created,
+}
+
+/// The workspace `rwv abort` runs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbortFrom {
+    Source,
+    Target,
+}
+
+/// A landing that changes `lib`'s declared branch to `lib-next` stops after the
+/// target's workspace aligned onto `lib-next`, and `rwv abort` runs from either
+/// workspace: the target's `lib` is switched back onto `main` at its pin,
+/// `lib-next` is put back where it was (or deleted, where the landing created
+/// it) and never reset to `main`'s pin, and no commit is left on no ref.
+pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> Scenario {
+    let mut steps = vec![create("w")];
+    if case != ReceivingCase::Created {
+        steps.extend([
+            Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
+            Step::commit(&a(), Repo::Lib, "dev-own"),
+            Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        ]);
+    }
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &declared_branch_text(Repo::Lib, "lib-next"),
+        ),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["commit", "-qam", "lib onto lib-next"],
+        ),
+    ]);
+    if case != ReceivingCase::Followed {
+        steps.push(Step::commit(&ww("w"), Repo::Lib, "w-lib"));
+    }
+    steps.extend([
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--retire", "--allow-member-change", LIB],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::Lib, &["branch", "--show-current"])
+            .claim(Claim::OutputLine("lib-next")),
+    ]);
+    let at = match from {
+        AbortFrom::Source => ww("w"),
+        AbortFrom::Target => a(),
+    };
+    steps.push(
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::Lib,
+            }),
+    );
+    match case {
+        ReceivingCase::Followed | ReceivingCase::MovedAsRef => steps.extend([
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
+                .claim(Claim::OutputLine("dev-own"))
+                .claim(Claim::OutputLacks("w-lib")),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "-1", "lib-next"])
+                .claim(Claim::OutputLine("dev-own")),
+        ]),
+        ReceivingCase::Created => steps.push(
+            Step::git(&a(), Repo::Lib, &["branch", "--list", "lib-next"])
+                .claim(Claim::OutputLacks("lib-next")),
+        ),
+    }
+    if case != ReceivingCase::Followed {
+        steps.push(
+            Step::git(&ww("w"), Repo::Lib, &["log", "--format=%s", "-1"])
+                .claim(Claim::OutputLine("w-lib")),
+        );
+    }
+    steps.push(
+        Step::rwv(
+            &ww("w"),
+            &["land", "--retire", "--allow-member-change", LIB],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w")))
+        .claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::Lib,
+            branch: "lib-next",
+        }),
+    );
+    if case != ReceivingCase::Created {
+        steps.push(
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
+                .claim(Claim::OutputLine("dev-own")),
+        );
+    }
+    scenario(
+        "abort after the target aligned onto a new receiving branch",
+        steps,
+    )
+}

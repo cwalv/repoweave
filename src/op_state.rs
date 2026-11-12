@@ -85,7 +85,7 @@ use crate::manifest::{ProjectName, RepoKey};
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::state_file::{StateFile, StatePath};
-use crate::vcs::CommitId;
+use crate::vcs::{CommitId, RawRefName};
 use crate::wire_token::wire_token;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -1360,6 +1360,23 @@ pub fn journal_report(workspace_dir: &Path, report: &LandingReport) -> anyhow::R
     take_in.reports.push(report.clone());
     write_owner(workspace_dir, &record)?;
     Ok(true)
+}
+
+/// Whether the op recorded at `workspace_dir` journaled creating `branch` in
+/// `repo`.
+pub fn created_by(
+    workspace_dir: &Path,
+    repo: &RepoKey,
+    branch: &RawRefName,
+) -> anyhow::Result<bool> {
+    Ok(read_owner(workspace_dir)?
+        .and_then(|record| record.take_in)
+        .is_some_and(|take_in| {
+            take_in
+                .created_refs
+                .iter()
+                .any(|made| &made.repo == repo && made.branch == branch.as_str())
+        }))
 }
 
 /// Remove the `.rwv-op` owner record from `workspace_dir`. No-op if absent.

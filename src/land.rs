@@ -1898,12 +1898,14 @@ fn judge_receiving_checkout(
     Ok(Moves::InCheckout)
 }
 
-/// Delete each branch an op created that still sits where it was created and
-/// that another branch reaches, newest first. Returns those left, each with
-/// why.
+/// Delete each branch an op created that still sits where it was created, or
+/// where the op moved it (put back first), and that another branch reaches,
+/// newest first. `dir_of` names a checkout of the member's store. Returns
+/// those left, each with why.
 pub(crate) fn undo_created(
-    workspace: &Path,
+    dir_of: impl Fn(&RepoPath) -> Option<PathBuf>,
     created: &[CreatedRef],
+    wrote: Option<&BTreeMap<RepoKey, CommitId>>,
 ) -> Vec<(RepoKey, String, String)> {
     let vcs = crate::vcs::probe_vcs();
     let mut left = Vec::new();
@@ -1911,21 +1913,51 @@ pub(crate) fn undo_created(
         let RepoKey::Member(path) = &made.repo else {
             continue;
         };
-        let dir = workspace.join(path.as_path());
         let branch = RawRefName::new(made.branch.clone());
-        if let Err(why) = undo_one(vcs.as_ref(), &dir, &branch, &made.at) {
+        let undone = match dir_of(path) {
+            Some(dir) => undo_one(
+                vcs.as_ref(),
+                &dir,
+                &branch,
+                &made.at,
+                wrote.and_then(|w| w.get(&made.repo)),
+            ),
+            None => Err("no checkout of its repo is left to reach it from".to_owned()),
+        };
+        if let Err(why) = undone {
             left.push((made.repo.clone(), made.branch.clone(), why));
         }
     }
     left
 }
 
-fn undo_one(vcs: &dyn Vcs, dir: &Path, branch: &RawRefName, at: &CommitId) -> Result<(), String> {
+fn undo_one(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &RawRefName,
+    at: &CommitId,
+    wrote: Option<&CommitId>,
+) -> Result<(), String> {
     let tip = vcs
         .resolve_local_branch_tip(dir, branch)
         .map_err(|e| format!("{e:#}"))?;
+    let held = vcs
+        .checkouts_of_branch(dir, branch)
+        .map_err(|e| format!("{e:#}"))?;
     match tip {
         None => return Ok(()),
+        Some(_) if !held.is_empty() => {
+            return Err(format!(
+                "it is checked out at {}",
+                held.iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        }
+        Some(tip) if Some(tip.id()) == wrote && tip.id() != at => vcs
+            .restore_branch_ref(dir, branch, tip.id(), at)
+            .map_err(|e| format!("{e:#}"))?,
         Some(tip) if tip.id() != at => {
             return Err(format!(
                 "it moved to {} since the op created it at {}",

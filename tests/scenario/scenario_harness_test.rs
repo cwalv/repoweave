@@ -652,6 +652,30 @@ macro_rules! every_scenario {
 every_scenario!(
     solo_workweave,
     abort_deletes_a_created_receiving_branch,
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::Followed,
+        scenarios::AbortFrom::Source
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::Followed,
+        scenarios::AbortFrom::Target
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::MovedAsRef,
+        scenarios::AbortFrom::Source
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::MovedAsRef,
+        scenarios::AbortFrom::Target
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::Created,
+        scenarios::AbortFrom::Source
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::Created,
+        scenarios::AbortFrom::Target
+    ),
     carried_pin_judged_against_the_receiving_branch,
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
@@ -2311,6 +2335,51 @@ holding_rwv! {
     /// loses, so it fetches, merges and retries, and no entry is lost.
     fn a_records_push_that_loses_the_race_fetches_merges_and_retries() {
         bad_steps("records push race", scenarios::records_push_race()).assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// After the target's workspace aligned onto a followed receiving
+    /// branch, `rwv abort` from either workspace switches it back and leaves
+    /// that branch's own work on it.
+    fn abort_after_aligning_onto_a_followed_branch_keeps_its_work() {
+        for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+            runner::run(scenarios::abort_after_the_target_aligned(
+                scenarios::ReceivingCase::Followed,
+                from,
+            ))
+            .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// After the target's workspace aligned onto a receiving branch the
+    /// landing moved as a ref, `rwv abort` from either workspace switches it
+    /// back, then puts the branch back where it was.
+    fn abort_after_aligning_onto_a_branch_moved_as_a_ref_puts_it_back() {
+        for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+            runner::run(scenarios::abort_after_the_target_aligned(
+                scenarios::ReceivingCase::MovedAsRef,
+                from,
+            ))
+            .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// After the target's workspace aligned onto a receiving branch the
+    /// landing created, `rwv abort` from either workspace switches it back,
+    /// then deletes the branch.
+    fn abort_after_aligning_onto_a_created_branch_deletes_it() {
+        for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+            runner::run(scenarios::abort_after_the_target_aligned(
+                scenarios::ReceivingCase::Created,
+                from,
+            ))
+            .assert_fully_decided_green();
+        }
     }
 }
 

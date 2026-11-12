@@ -22,7 +22,9 @@
 //!   commit that does not contain the old one, unless the step names the repo
 //!   in `may_rewrite` and the branch lands on the tip the same branch has in
 //!   another of the repo's stores, which is a move to or with its own
-//!   upstream. Declared: a member branch some live weave branch's committed
+//!   upstream, or names it in `may_restore` and the branch moves back to a
+//!   commit its old tip contains, as `rwv abort` puts back what its
+//!   operation moved. Declared: a member branch some live weave branch's committed
 //!   `rwv.toml` declares, and for a project its origin's default branch and
 //!   every branch a record holds as `declared`.
 //! - **first parents broken**: a target branch moving forward to a commit
@@ -210,6 +212,9 @@ pub struct Allowance {
     /// Repos the step names for moving a declared branch to or with its
     /// upstream.
     pub may_rewrite: Vec<Repo>,
+    /// Repos the step names for putting a declared branch back to a commit
+    /// its tip contains: `rwv abort` restoring what its operation moved.
+    pub may_restore: Vec<Repo>,
     /// Members whose pin the step may leave at a commit no ref of the
     /// repository that backs it reaches: a lock published ahead of its
     /// member, or a clone of one.
@@ -663,6 +668,7 @@ pub fn check(
         before,
         after,
         &allow.may_rewrite,
+        &allow.may_restore,
     ));
     violations.extend(first_parents_broken(sandbox, before, after));
     violations
@@ -865,6 +871,7 @@ pub fn declared_moved_back(
     before: &Snapshot,
     after: &Snapshot,
     may_rewrite: &[Repo],
+    may_restore: &[Repo],
 ) -> Vec<Violation> {
     let declared = union(before.declared_branches(), after.declared_branches());
     let mut violations = Vec::new();
@@ -878,6 +885,11 @@ pub fn declared_moved_back(
             .filter(|((r, s), _)| *r == repo && *s != store)
             .any(|(_, tips)| tips.get(branch).map(String::as_str) == Some(to));
         if may_rewrite.contains(&repo) && with_its_upstream {
+            continue;
+        }
+        if may_restore.contains(&repo)
+            && is_ancestor(sandbox, &sandbox.store_dir(repo, store), to, from)
+        {
             continue;
         }
         violations.push(Violation::DeclaredMovedBack {

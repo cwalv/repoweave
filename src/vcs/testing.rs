@@ -588,6 +588,35 @@ impl Vcs for FakeVcs {
         unsupported("create_savepoint")
     }
 
+    fn create_ref_savepoint(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+        _branch: &RawRefName,
+        _at: &CommitId,
+    ) -> Result<(), VcsError> {
+        unsupported("create_ref_savepoint")
+    }
+
+    fn ref_savepoints(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+    ) -> Result<Vec<RefSavepoint>, VcsError> {
+        unsupported("ref_savepoints")
+    }
+
+    fn restore_ref_savepoint(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+        _saved: &RefSavepoint,
+        _wrote: Option<&CommitId>,
+        _foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<RefRestoreOutcome, VcsError> {
+        unsupported("restore_ref_savepoint")
+    }
+
     fn savepoint_label(&self, _key: &SavepointKey) -> String {
         unsupported("savepoint_label")
     }

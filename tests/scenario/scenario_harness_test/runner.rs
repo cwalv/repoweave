@@ -888,6 +888,11 @@ impl Step {
         self
     }
 
+    pub fn may_restore(mut self, repos: &[Repo]) -> Step {
+        self.allow.may_restore.extend_from_slice(repos);
+        self
+    }
+
     pub fn may_rewrite(mut self, repos: &[Repo]) -> Step {
         self.allow.may_rewrite.extend_from_slice(repos);
         self

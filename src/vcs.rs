@@ -1056,6 +1056,44 @@ pub enum VerifiedRestoreOutcome {
         /// The backup holding the abandoned tip.
         backup: BackupWitness,
     },
+    /// The checkout was on another branch than the one its savepoint names,
+    /// or detached where it was not, at a tip attributable to the op (or the
+    /// operator abandoned it); it was put back where the savepoint was
+    /// taken, leaving the branch it was on where it stands, and `then` is
+    /// that restored checkout's own outcome.
+    SwitchedBack {
+        /// The branch the checkout was on, or `None` where it was detached.
+        off: Option<RawRefName>,
+        then: Box<VerifiedRestoreOutcome>,
+    },
+}
+
+/// A branch's tip as it was before an operation moved that branch as a ref.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefSavepoint {
+    pub branch: RawRefName,
+    pub at: CommitId,
+}
+
+/// What [`Vcs::restore_ref_savepoint`] did with one branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefRestoreOutcome {
+    /// The branch was still at its savepoint.
+    Untouched,
+    /// The branch was at the tip the op wrote and was put back.
+    Restored,
+    /// The branch is somewhere the op did not put it, or gone, or checked
+    /// out: it is left as it is and the savepoint kept.
+    Foreign {
+        observed: Option<CommitId>,
+        why: String,
+    },
+    /// The branch was at a foreign tip the operator abandoned: the tip was
+    /// kept as an `abandoned` backup and the branch put back.
+    AbandonedForeignTip {
+        abandoned_tip: CommitId,
+        backup: BackupWitness,
+    },
 }
 
 // ===========================================================================
@@ -3290,14 +3328,15 @@ pub trait Vcs: Send + Sync {
         to: &ResolvedRevisionId,
     ) -> Result<usize, VcsError>;
 
-    /// Create a savepoint capturing the current `HEAD` of `repo` under an
-    /// op-namespaced ref.
+    /// Create a savepoint capturing the checkout `repo`: its `HEAD` and the
+    /// branch it is on, or that it is detached, so a restore puts the
+    /// checkout back on that branch and resets no other.
     ///
-    /// For git: writes
-    /// `refs/rwv/pre-op/<key>` pointing at `HEAD`, where `<key>` is the
-    /// key's text form. The ref namespace is an impl detail — callers pass
-    /// the [`SavepointKey`] and never spell the ref directly; those that must
-    /// show an operator where the state went take the name from
+    /// For git: writes `refs/rwv/pre-op/<key>/checkout/<branch>`, or
+    /// `refs/rwv/pre-op/<key>/detached`, pointing at `HEAD`, where `<key>`
+    /// is the key's text form. The ref namespace is an impl detail — callers
+    /// pass the [`SavepointKey`] and never spell the ref directly; those that
+    /// must show an operator where the state went take the name from
     /// [`Vcs::savepoint_label`] or [`Vcs::savepoint_namespace`].
     ///
     /// Returns the captured `HEAD` revision so the caller can record it
@@ -3307,6 +3346,39 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         key: &SavepointKey,
     ) -> Result<ResolvedRevisionId, VcsError>;
+
+    /// Create a savepoint of the local branch `branch` of `repo`'s store at
+    /// `at`, the tip the op read before it moves that branch as a ref.
+    ///
+    /// For git: `refs/rwv/pre-op/<key>/ref/<branch>`.
+    fn create_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        branch: &RawRefName,
+        at: &CommitId,
+    ) -> Result<(), VcsError>;
+
+    /// The branch savepoints filed under `key` in `repo`'s store.
+    fn ref_savepoints(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<Vec<RefSavepoint>, VcsError>;
+
+    /// Put `saved.branch` back at `saved.at` by compare-and-swap against
+    /// `wrote`, the tip the op moved it to, and drop its savepoint. A branch
+    /// at its savepoint is left; one gone, checked out anywhere, or at any
+    /// other tip is foreign, unless `foreign_tip_policy` abandons that tip,
+    /// which is kept as a backup first. A checked-out branch is never moved.
+    fn restore_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        saved: &RefSavepoint,
+        wrote: Option<&CommitId>,
+        foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<RefRestoreOutcome, VcsError>;
 
     /// The operator-spellable, VCS-native name of the savepoint reference
     /// filed under `key`, for recovery hints that must name a resolvable
@@ -3327,9 +3399,10 @@ pub trait Vcs: Send + Sync {
     /// For git: reads `refs/rwv/pre-op/<key>`.
     fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId>;
 
-    /// Drop the savepoint captured under `key` in `repo`. No-op when
-    /// no such savepoint exists; ignores ref-update failures (the
-    /// savepoint is purely a recovery aid — its absence is benign).
+    /// Drop every savepoint filed under `key` in `repo`'s store, the
+    /// checkout's and each branch's. No-op when there is none; ignores
+    /// ref-update failures (a savepoint is purely a recovery aid — its
+    /// absence is benign).
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey);
 
     /// HEAD-verified restore: classify the repo's current tip and restore
@@ -3340,6 +3413,13 @@ pub trait Vcs: Send + Sync {
     /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
     ///   → mid-op is canceled and restore proceeds, returning
     ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
+    /// - the checkout is on another branch than the savepoint names, or
+    ///   detached where it was attached or the reverse → when its tip is one
+    ///   of the attributable ones below, it is put back where the savepoint
+    ///   was taken without moving the branch it leaves, and the restored
+    ///   checkout is classified in turn
+    ///   ([`VerifiedRestoreOutcome::SwitchedBack`]). A dirty checkout cannot
+    ///   be put back and errors.
     /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
     ///   restore is a no-op (HEAD is not touched).
     /// - `tip ==` `recorded_intent_tip` → the op advanced this repo during
@@ -3369,8 +3449,8 @@ pub trait Vcs: Send + Sync {
     /// The caller looks the repo up in the tip tables by its
     /// [`RepoKey`](crate::manifest::RepoKey).
     ///
-    /// For git: when restoring, runs
-    /// `git reset --hard refs/rwv/pre-op/<key>` and drops the savepoint,
+    /// For git: when restoring, runs `git reset --hard` to the checkout's
+    /// savepoint on the branch it names and drops that savepoint,
     /// gated by the classification above. This is the only remaining way
     /// to reach that reset: the unverified `restore_savepoint` it
     /// superseded was deleted with the rest of the old surface, so the

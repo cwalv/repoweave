@@ -11,12 +11,12 @@ use crate::vcs::{
     Holds, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
     NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch, PublishRef, RangeCommit,
     RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
-    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies,
-    RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip,
-    RemoteTracking, Replace, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
-    SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges,
-    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
-    WorkspacePopulation,
+    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RefRestoreOutcome, RefSavepoint,
+    RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle,
+    RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace, ResolvedEndpoint,
+    ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness,
+    TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
+    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -2880,9 +2880,114 @@ impl Vcs for GitVcs {
         key: &SavepointKey,
     ) -> Result<ResolvedRevisionId, VcsError> {
         let head = self.head_revision(repo)?;
-        let ref_name = savepoint_ref(key);
-        Self::run(["update-ref", &ref_name, head.id().as_str()], repo)?;
+        let saved = match self.observe_head(repo)? {
+            HeadObservation::Attached { name } => SavedCheckout::On(name),
+            HeadObservation::Detached { .. } | HeadObservation::Unborn { .. } => {
+                SavedCheckout::Detached
+            }
+        };
+        self.drop_checkout_savepoint(repo, key)?;
+        Self::run(
+            ["update-ref", &saved.ref_name(key), head.id().as_str()],
+            repo,
+        )?;
         Ok(head)
+    }
+
+    fn create_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        branch: &RawRefName,
+        at: &CommitId,
+    ) -> Result<(), VcsError> {
+        Self::run(
+            ["update-ref", &ref_savepoint_ref(key, branch), at.as_str()],
+            repo,
+        )
+        .map(|_| ())
+    }
+
+    fn ref_savepoints(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<Vec<RefSavepoint>, VcsError> {
+        Ok(Self::savepoints_under(repo, key)?
+            .into_iter()
+            .filter_map(|filed| match filed.saved {
+                Saved::Ref(branch) => Some(RefSavepoint {
+                    branch,
+                    at: filed.at,
+                }),
+                Saved::Checkout(_) => None,
+            })
+            .collect())
+    }
+
+    fn restore_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        saved: &RefSavepoint,
+        wrote: Option<&CommitId>,
+        foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<RefRestoreOutcome, VcsError> {
+        let filed = ref_savepoint_ref(key, &saved.branch);
+        let now = self
+            .resolve_local_branch_tip(repo, &saved.branch)?
+            .map(|tip| tip.id().clone());
+        let Some(now) = now else {
+            return Ok(RefRestoreOutcome::Foreign {
+                observed: None,
+                why: "it is gone".to_owned(),
+            });
+        };
+        if now == saved.at {
+            Self::run(["update-ref", "-d", &filed], repo)?;
+            return Ok(RefRestoreOutcome::Untouched);
+        }
+        let held = self.checkouts_of_branch(repo, &saved.branch)?;
+        if !held.is_empty() {
+            return Ok(RefRestoreOutcome::Foreign {
+                observed: Some(now),
+                why: format!(
+                    "it is checked out at {}",
+                    held.iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
+        }
+        if Some(&now) == wrote {
+            Self::update_branch_ref(repo, &saved.branch, &now, &saved.at)?;
+            Self::run(["update-ref", "-d", &filed], repo)?;
+            return Ok(RefRestoreOutcome::Restored);
+        }
+        if foreign_tip_policy == ForeignTipPolicy::Abandon {
+            let backup = self.create_backup(
+                repo,
+                &BackupSource::Branch(saved.branch.clone()),
+                &ResolvedRevisionId::from(now.clone()),
+                Some(BackupMark::Abandoned),
+            )?;
+            Self::update_branch_ref(repo, &saved.branch, &now, &saved.at)?;
+            Self::run(["update-ref", "-d", &filed], repo)?;
+            return Ok(RefRestoreOutcome::AbandonedForeignTip {
+                abandoned_tip: now,
+                backup,
+            });
+        }
+        Ok(RefRestoreOutcome::Foreign {
+            observed: Some(now),
+            why: match wrote {
+                Some(wrote) => {
+                    format!("the op left it at {} and it has moved since", wrote.short())
+                }
+                None => "the op did not move it there".to_owned(),
+            },
+        })
     }
 
     fn savepoint_label(&self, key: &SavepointKey) -> String {
@@ -2894,14 +2999,18 @@ impl Vcs for GitVcs {
     }
 
     fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId> {
-        let ref_name = savepoint_ref(key);
-        let out = Self::run_trimmed(["rev-parse", &ref_name], repo).ok()?;
-        ResolvedRevisionId::from_rev_parse_output(&out)
+        self.checkout_savepoint(repo, key)
+            .ok()
+            .flatten()
+            .map(|(_, at)| ResolvedRevisionId::from(at))
     }
 
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey) {
-        let ref_name = savepoint_ref(key);
-        let _ = Self::run(["update-ref", "-d", &ref_name], repo);
+        if let Ok(filed) = Self::savepoints_under(repo, key) {
+            for filed in filed {
+                let _ = Self::run(["update-ref", "-d", &filed.ref_name], repo);
+            }
+        }
     }
 
     fn verified_restore_savepoint(
@@ -2912,17 +3021,66 @@ impl Vcs for GitVcs {
         recorded_converged_tip: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        // Resolve the savepoint first: no savepoint → nothing to do.
-        let savepoint = match self.resolve_savepoint(repo, key) {
-            Some(sp) => sp,
-            None => return Ok(VerifiedRestoreOutcome::NoSavepoint),
+        let Some((on, savepoint)) = self.checkout_savepoint(repo, key)? else {
+            return Ok(VerifiedRestoreOutcome::NoSavepoint);
         };
+        let savepoint = ResolvedRevisionId::from(savepoint);
 
         // VCS-native mid-op state is wreckage attributable to the op
         // (replay's strategy ops move tips through these states). Cancel
         // the mid-op first, then restore.
-        if self.mid_op(repo).is_some() {
+        let mid_op = self.mid_op(repo).is_some();
+        if mid_op {
             self.cancel_in_flight_op(repo);
+        }
+
+        let head = self.head_revision(repo)?;
+        let head_id = head.id();
+        let attributable = mid_op
+            || head_id == savepoint.id()
+            || recorded_intent_tip == Some(head_id)
+            || recorded_converged_tip == Some(head_id);
+
+        let off = match (&on, self.observe_head(repo)?) {
+            (SavedCheckout::On(b), HeadObservation::Attached { name }) if &name == b => None,
+            (SavedCheckout::Detached, HeadObservation::Detached { .. }) => None,
+            (_, HeadObservation::Attached { name }) => Some(Some(name)),
+            (_, HeadObservation::Detached { .. } | HeadObservation::Unborn { .. }) => Some(None),
+        };
+        if let Some(off) = off {
+            if !attributable && foreign_tip_policy == ForeignTipPolicy::Refuse {
+                return Ok(VerifiedRestoreOutcome::ForeignTip {
+                    observed_tip: head_id.clone(),
+                    savepoint: savepoint.id().clone(),
+                    recorded_converged_tip: recorded_converged_tip.cloned(),
+                });
+            }
+            if !attributable && off.is_none() {
+                self.create_backup(
+                    repo,
+                    &BackupSource::DetachedHead,
+                    &head,
+                    Some(BackupMark::Abandoned),
+                )?;
+            }
+            match &on {
+                SavedCheckout::On(b) => self.attach_head_to(repo, &LocalRefName::of_branch(b))?,
+                SavedCheckout::Detached => self.set_detached_head(repo, &savepoint)?,
+            }
+            let then = self.verified_restore_savepoint(
+                repo,
+                key,
+                recorded_intent_tip,
+                recorded_converged_tip,
+                foreign_tip_policy,
+            )?;
+            return Ok(VerifiedRestoreOutcome::SwitchedBack {
+                off,
+                then: Box::new(then),
+            });
+        }
+
+        if mid_op {
             return self.reset_and_drop_savepoint(
                 repo,
                 key,
@@ -2931,40 +3089,32 @@ impl Vcs for GitVcs {
             );
         }
 
-        // Classify the current tip against the enumerable attributable set.
-        let head = self.head_revision(repo)?;
-        let head_id = head.id();
-
         if head_id == savepoint.id() {
             // Untouched — restore is a no-op. Still drop the savepoint so
             // abort's cleanup leaves no stale refs.
-            self.drop_savepoint(repo, key);
+            self.drop_checkout_savepoint(repo, key)?;
             return Ok(VerifiedRestoreOutcome::Untouched);
         }
 
         // Intent tip: the op advanced this repo during replay (before relock).
         // Exact-match only: a descendant check would accept a tip the op
         // never recorded advancing to.
-        if let Some(intent) = recorded_intent_tip {
-            if head_id == intent {
-                return self.reset_and_drop_savepoint(
-                    repo,
-                    key,
-                    &savepoint,
-                    VerifiedRestoreOutcome::RestoredFromIntent,
-                );
-            }
+        if recorded_intent_tip == Some(head_id) {
+            return self.reset_and_drop_savepoint(
+                repo,
+                key,
+                &savepoint,
+                VerifiedRestoreOutcome::RestoredFromIntent,
+            );
         }
 
-        if let Some(converged) = recorded_converged_tip {
-            if head_id == converged {
-                return self.reset_and_drop_savepoint(
-                    repo,
-                    key,
-                    &savepoint,
-                    VerifiedRestoreOutcome::RestoredFromConverged,
-                );
-            }
+        if recorded_converged_tip == Some(head_id) {
+            return self.reset_and_drop_savepoint(
+                repo,
+                key,
+                &savepoint,
+                VerifiedRestoreOutcome::RestoredFromConverged,
+            );
         }
 
         // Foreign tip: the reset is refused unless the operator named this
@@ -3546,10 +3696,13 @@ impl Vcs for GitVcs {
         let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &prefix], repo)?;
         let mut listing = SavepointListing::default();
         for refname in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            match refname
-                .strip_prefix(&prefix)
-                .and_then(|leaf| leaf.parse().ok())
-            {
+            let filed = refname.strip_prefix(&prefix).and_then(|below| {
+                let (key, rest) = below.split_once('/')?;
+                Saved::parse(rest)?;
+                key.parse::<SavepointKey>().ok()
+            });
+            match filed {
+                Some(key) if listing.keys.contains(&key) => {}
                 Some(key) => listing.keys.push(key),
                 None => listing.unrecognized.push(refname.to_owned()),
             }
@@ -4478,7 +4631,9 @@ impl Vcs for GitVcs {
 /// The ref namespace savepoints live under.
 const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
 
-/// Build the savepoint ref path for `key`.
+/// The ref directory every savepoint filed under `key` lives below: the
+/// checkout's (`checkout/<branch>` or `detached`) and each branch's moved as
+/// a ref (`ref/<branch>`).
 ///
 /// The namespacing is a git impl detail — callers of the [`Vcs`] trait pass
 /// a [`SavepointKey`] and reach the name, when they must show it to an
@@ -4505,9 +4660,102 @@ impl GitVcs {
         outcome: VerifiedRestoreOutcome,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
-        self.drop_savepoint(repo, key);
+        self.drop_checkout_savepoint(repo, key)?;
         Ok(outcome)
     }
+
+    /// Every savepoint filed under `key` in `repo`'s store.
+    fn savepoints_under(repo: &Path, key: &SavepointKey) -> Result<Vec<FiledSavepoint>, VcsError> {
+        let prefix = format!("{}/", savepoint_ref(key));
+        let listing = Self::run_trimmed(
+            ["for-each-ref", "--format=%(objectname) %(refname)", &prefix],
+            repo,
+        )?;
+        Ok(listing
+            .lines()
+            .filter_map(|line| {
+                let (at, ref_name) = line.trim().split_once(' ')?;
+                let saved = Saved::parse(ref_name.strip_prefix(&prefix)?)?;
+                Some(FiledSavepoint {
+                    ref_name: ref_name.to_owned(),
+                    saved,
+                    at: CommitId::parse(at).ok()?,
+                })
+            })
+            .collect())
+    }
+
+    /// The checkout savepoint filed under `key`: where the checkout was, and
+    /// its tip.
+    fn checkout_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<Option<(SavedCheckout, CommitId)>, VcsError> {
+        Ok(Self::savepoints_under(repo, key)?
+            .into_iter()
+            .find_map(|filed| match filed.saved {
+                Saved::Checkout(on) => Some((on, filed.at)),
+                Saved::Ref(_) => None,
+            }))
+    }
+
+    fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError> {
+        for filed in Self::savepoints_under(repo, key)? {
+            if let Saved::Checkout(_) = filed.saved {
+                Self::run(["update-ref", "-d", &filed.ref_name], repo)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where a checkout was when its savepoint was taken.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SavedCheckout {
+    On(RawRefName),
+    Detached,
+}
+
+impl SavedCheckout {
+    fn ref_name(&self, key: &SavepointKey) -> String {
+        match self {
+            Self::On(branch) => format!("{}/checkout/{}", savepoint_ref(key), branch.as_str()),
+            Self::Detached => format!("{}/detached", savepoint_ref(key)),
+        }
+    }
+}
+
+/// What one savepoint ref under a key saves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Saved {
+    Checkout(SavedCheckout),
+    Ref(RawRefName),
+}
+
+impl Saved {
+    /// Read the part of a savepoint ref's name below its key.
+    fn parse(below_key: &str) -> Option<Self> {
+        if below_key == "detached" {
+            return Some(Self::Checkout(SavedCheckout::Detached));
+        }
+        if let Some(branch) = below_key.strip_prefix("checkout/") {
+            return Some(Self::Checkout(SavedCheckout::On(RawRefName::new(branch))));
+        }
+        below_key
+            .strip_prefix("ref/")
+            .map(|branch| Self::Ref(RawRefName::new(branch)))
+    }
+}
+
+struct FiledSavepoint {
+    ref_name: String,
+    saved: Saved,
+    at: CommitId,
+}
+
+fn ref_savepoint_ref(key: &SavepointKey, branch: &RawRefName) -> String {
+    format!("{}/ref/{}", savepoint_ref(key), branch.as_str())
 }
 
 /// One record of `git worktree list --porcelain`.
