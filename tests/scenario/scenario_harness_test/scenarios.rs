@@ -9411,7 +9411,9 @@ pub enum ReceivingCase {
     Created,
 }
 
-/// The workspace `rwv abort` runs in.
+/// The workspace `rwv abort` is first run in. The landing gave up the
+/// target's workspace before its retire, so from there it finds no operation
+/// and changes nothing, and the source's abort restores both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbortFrom {
     Source,
@@ -9467,12 +9469,15 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
         Step::git(&a(), Repo::Lib, &["branch", "--show-current"])
             .claim(Claim::OutputLine("lib-next")),
     ]);
-    let at = match from {
-        AbortFrom::Source => ww("w"),
-        AbortFrom::Target => a(),
-    };
+    if from == AbortFrom::Target {
+        steps.push(
+            Step::rwv(&a(), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
+                .claim(Claim::LocalStateUnchanged(a())),
+        );
+    }
     steps.push(
-        Step::rwv(&at, &["abort"])
+        Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
