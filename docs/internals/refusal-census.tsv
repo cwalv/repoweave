@@ -115,7 +115,7 @@ src/feature_sync.rs	(untokened:environment-passthrough)	-	6
 src/feature_sync.rs	(untokened:owed)	-	1
 src/feature_sync.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/feature_sync.rs	checkout in another workspace	-	1
-src/feature_sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
+src/feature_sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	3
 src/feature_sync.rs	name no-such-branch	-	1
 src/feature_sync.rs	op-parked	-	1
 src/feature_sync.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
@@ -125,7 +125,7 @@ src/feature_sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
 src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	2
 src/feature_sync.rs	push-branch behind	-	1
-src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
+src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	5
 src/feature_sync.rs	target dependents	-	1
 src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1

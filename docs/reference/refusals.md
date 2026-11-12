@@ -156,6 +156,7 @@ The others follow.
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv push` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
+| `diverged`, for `rwv sync` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |

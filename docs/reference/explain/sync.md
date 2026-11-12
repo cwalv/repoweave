@@ -31,7 +31,8 @@ together. Then, under an op record:
      it is integrated by a merge commit instead, reported `merged`. Where the
      target records no setting for the member, the sync refuses as `history`
      `unset` unless `--history` gives one for this run; a `--history` that
-     differs from a recorded setting refuses as `history` `contradicted`.
+     differs from a recorded setting refuses as `history` `contradicted`, whether or
+     not the sync needs the setting.
 2. **The project branch** takes in the target's tip the same way, by the
    target's top-level `history`.
 3. **The lock** is recorded and committed: each member's pin merged three ways
@@ -107,7 +108,7 @@ as landed, and the sync goes on. It refuses when a superseded tip of the
 upstream is all that reaches those commits (the fact `rewritten`: the upstream
 was rewritten), and when it holds commits never pushed.
 
-`inapplicable-flag` refuses `--target` with `--from`, and a `--reset-to-target`
+`inapplicable-flag` refuses `--target` with `--from`, `--history` with `--from`, and a `--reset-to-target`
 naming a repo the sync takes nothing into; `partial-run-aborted` refuses when
 the fetch could not complete. A conflict stops the sync with its op record kept
 (`op-parked`): resolve it in the checkout named, then `rwv sync --continue`, or
@@ -157,11 +158,15 @@ Under `--json`, output is one pretty-printed envelope:
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "complete": true,
   "refused": [ ... ],
-  "advisories": [ ... ]
+  "advisories": [ ... ],
+  "reports": [ { "kind": "merged" | "rebased", "path": "...", ... }, ... ]
 }
 ```
 
-`outcomes` is empty: `rwv land` fills it. Each checkout whose files the sync
+`outcomes` is empty: `rwv land` fills it. `reports` lists each range the sync
+integrated by a merge commit (`merged`, with the `merge`) and each branch it
+rebased (`rebased`, with the tip it `was` and the `backup` holding it); a
+resumed sync reports the ones its earlier runs made as well. Each checkout whose files the sync
 moved gets a placement record under `placements`: `path`, `absolute_path` (the
 checkout the files are in), and `files` (`reflinked`, `hardlinked`, `written`).
 
@@ -195,7 +200,8 @@ Schema:
     "members",
     "outcomes",
     "placements",
-    "refused"
+    "refused",
+    "reports"
   ],
   "properties": {
     "$schema": {
@@ -238,6 +244,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"
+      }
+    },
+    "reports": {
+      "description": "Each range the sync integrated by a merge commit rather than flatten, and each branch a rebase rewrote with the backup holding the tip it left. Empty, not absent, when it made none; a resumed op reports the ones its earlier runs made as well.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LandingReportOutput"
       }
     },
     "resolution": {
@@ -437,6 +450,11 @@ Schema:
         }
       }
     },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
     "ConflictOp": {
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\n`Vcs::mid_op` constructs any variant from a repo's on-disk state, but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
       "oneOf": [
@@ -579,6 +597,15 @@ Schema:
             }
           }
         }
+      ]
+    },
+    "EntryChange": {
+      "description": "How the pulled `rwv.toml` changed a member's entry.",
+      "type": "string",
+      "enum": [
+        "added",
+        "removed",
+        "changed"
       ]
     },
     "FactKind": {
@@ -749,6 +776,448 @@ Schema:
         }
       }
     },
+    "LandingReportOutput": {
+      "description": "One move a landing reported as it made it.",
+      "oneOf": [
+        {
+          "description": "A receiving branch that existed nowhere, created at `at`.",
+          "type": "object",
+          "required": [
+            "at",
+            "branch",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "created"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A member holding no new work moved to its receiving branch's tip `to`; the tip `was` it left is kept in the backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "to",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "followed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A range holding the merge `merge` that a rebasing setting integrated by a merge commit, first parent the receiving tip, rather than flatten.",
+          "type": "object",
+          "required": [
+            "kind",
+            "merge",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "merged"
+              ]
+            },
+            "merge": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A branch a rebase rewrote; the tip `was` it left is kept in the `rebased` backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebased"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A dependent's branch `branch` carried along the landing's rebase, from `was`, kept in the `rebased` backup `backup`, to `now`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "branch",
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "carried"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A pin a replayed project commit held on a commit the rebase of `path` dropped, moved to what that rebase made of the commits before it.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "remapped"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A pin the landing moved backward, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "re-pinned"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A field of the target's entry for `path`, or of its top-level settings, changed from `was` to `now`, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "field",
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-changed"
+              ]
+            },
+            "now": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The target's entry for `path` removed, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-removed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The target's project branch, behind its upstream as last fetched, taken in from `from` to `to`, fast-forward only: the upstream's commits, and each pin and member entry they changed.",
+          "type": "object",
+          "required": [
+            "branch",
+            "commits",
+            "from",
+            "kind",
+            "member_changes",
+            "path",
+            "pins",
+            "to"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "commits": {
+              "description": "The upstream's commits, newest first.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LeftCommitOutput"
+              }
+            },
+            "from": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "taken-in"
+              ]
+            },
+            "member_changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/MemberChangeOutput"
+              }
+            },
+            "path": {
+              "type": "string"
+            },
+            "pins": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/PinTakenInOutput"
+              }
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A checkout, in either workspace, whose branch something outside it moved forward from `moved_from` to `moved_to`: before judging its edits the landing gave `files` (content and index entry) and `index_entries` (index entry alone) `moved_to`'s content, since they still held `moved_from`'s. A refused landing refreshes only a checkout whose own edits it refused.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "files",
+            "index_entries",
+            "kind",
+            "moved_from",
+            "moved_to",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "index_entries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "refreshed"
+              ]
+            },
+            "moved_from": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "moved_to": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The commits `path`'s new pin in the branch `into` holds beyond the pin `into` held, pinned there with the feature's work.",
+          "type": "object",
+          "required": [
+            "commits",
+            "into",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "commits": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LeftCommitOutput"
+              }
+            },
+            "into": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "beyond-pin"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "`branch` holds the landing and its push branch does not: the landing is not published until `branch` is pushed.",
+          "type": "object",
+          "required": [
+            "branch",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "push-branch-ahead"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "LeftCommitOutput": {
+      "type": "object",
+      "required": [
+        "sha",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "MemberChangeOutput": {
+      "description": "A member entry the pulled `rwv.toml` added, removed or changed.",
+      "type": "object",
+      "required": [
+        "change",
+        "fields",
+        "path"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/EntryChange"
+        },
+        "fields": {
+          "description": "For a changed entry, each field that differs as `<field>: <was> -> <now>`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
     "MemberOutput": {
       "description": "What replay did with a member checkout outside its per-repo strategy: the member set the replayed manifest decides.",
       "oneOf": [
@@ -888,6 +1357,37 @@ Schema:
         "mid-revert",
         "mid-bisect"
       ]
+    },
+    "PinTakenInOutput": {
+      "description": "A member's pin as the upstream a landing took in changed it.",
+      "type": "object",
+      "required": [
+        "backward",
+        "path"
+      ],
+      "properties": {
+        "backward": {
+          "description": "`now` does not descend from `was`: reported `re-pinned`.",
+          "type": "boolean"
+        },
+        "now": {
+          "description": "Absent where the upstream's lock does not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "was": {
+          "description": "Absent where the target's lock did not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",
