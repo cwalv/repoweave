@@ -9028,7 +9028,8 @@ mod tests {
     fn the_findings_entry_is_written_from_its_heading_to_the_next_heading() {
         let stub = findings_page(
             "### `unparseable-project`\n\nhand-written\n\n### `pin`\n\nhand-written\n\n\
-             ### `alignment`\n\nhand-written\n\n### `legacy-workweave-index`\n\nhand-written\n\n",
+             ### `alignment`\n\nhand-written\n\n### `legacy-workweave-index`\n\nhand-written\n\n\
+             ### `history-disagreement`\n\nhand-written\n\n",
         );
         let spliced = splice_finding_entries(&stub).unwrap();
         assert!(spliced.contains(

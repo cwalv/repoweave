@@ -490,6 +490,7 @@ fn a_kind_shared_with_a_finding_has_exactly_one_entry_and_explain_resolves_it() 
         shared,
         [
             "alignment",
+            "history-disagreement",
             "legacy-workweave-index",
             "pin",
             "unparseable-project"

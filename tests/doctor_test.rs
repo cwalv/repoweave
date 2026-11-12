@@ -1572,6 +1572,13 @@ mod doctor_json {
     }
 
     #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct WireBranchHistory {
+        project: String,
+        branch: String,
+        history: String,
+    }
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
     #[serde(tag = "kind", rename_all = "kebab-case")]
     enum WireViolation {
         OrphanedClone {
@@ -1599,6 +1606,11 @@ mod doctor_json {
             path: String,
             absolute_path: String,
             roles: Vec<WireProjectRole>,
+        },
+        HistoryDisagreement {
+            path: String,
+            absolute_path: String,
+            histories: Vec<WireBranchHistory>,
         },
         Pin {
             path: String,
