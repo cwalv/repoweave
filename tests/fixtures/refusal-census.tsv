@@ -44,7 +44,7 @@ src/bin/rwv-each/select.rs	(untokened:plugin)	-	6
 src/branch.rs	head-not-on-branch	-	3
 src/branch.rs	invalid-ref-name	-	1
 src/branch.rs	name declared	tests/refusal_arrival_test.rs	1
-src/branch.rs	name exists	tests/refusal_arrival_test.rs	2
+src/branch.rs	name exists	tests/refusal_arrival_test.rs	3
 src/branch.rs	name feature	tests/refusal_arrival_test.rs	1
 src/branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	2
 src/branch.rs	name reserved	tests/refusal_arrival_test.rs	1

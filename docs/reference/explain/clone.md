@@ -249,6 +249,13 @@ Schema:
           "enum": [
             "legacy-workweave-index"
           ]
+        },
+        {
+          "description": "A branch rwv never rewrites, renames or deletes.",
+          "type": "string",
+          "enum": [
+            "protected"
+          ]
         }
       ]
     },

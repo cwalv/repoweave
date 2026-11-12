@@ -698,6 +698,36 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         }
     };
     let mut report = Report::default();
+    if let (Lookup::Value(moved), held) = (view.lookup(&old), view.lookup(&new)) {
+        match held {
+            Lookup::Unrecorded => {}
+            Lookup::Value(ref existing) if *existing == moved => {}
+            held if request.adopt => {
+                let held = match held {
+                    Lookup::Value(existing) => Lookup::Conflict(moved, existing),
+                    other => other,
+                };
+                report.add(judge_lookup(
+                    vcs.as_ref(),
+                    &store,
+                    &project,
+                    &dir,
+                    &new,
+                    held,
+                )?);
+            }
+            _ => report.add(
+                State::NameExists
+                    .of(label(&project))
+                    .project_repo()
+                    .subject(&new)
+                    .checkout(&dir)
+                    .listing([format!("{new} has a record of another value")])
+                    .by_verb("branch rename")
+                    .judge(vcs.as_ref()),
+            ),
+        }
+    }
     let dependents: Vec<BranchName> = view
         .dependents(&old)
         .into_iter()

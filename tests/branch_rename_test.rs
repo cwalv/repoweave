@@ -415,3 +415,52 @@ fn a_declared_mode_project_branch_is_protected_against_an_overwrite_and_an_unlan
     );
     assert_routes_to(&stderr, "protected");
 }
+
+fn record_without_branch(w: &common::PushWorkspace, name: &str, mode: &[&str]) {
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["branch", name]);
+    let mut args = vec!["branch", "set-mode", name];
+    args.extend_from_slice(mode);
+    succeed(&args, &w.workspace);
+    common::git_in(&project, &["branch", "-D", name]);
+}
+
+#[test]
+fn a_new_name_holding_a_record_of_another_value_is_refused_and_nothing_changes() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "anon");
+    let old = minted("anon");
+    record_without_branch(&w, "held", &["declared"]);
+    let before = record_of(&w.workspace, "held");
+
+    let stderr = refuse(&["branch", "rename", "held"], &ww);
+
+    assert!(stderr.contains("name exists (held)"), "{stderr}");
+    assert!(has_branch(&project_dir(&ww), &old));
+    assert!(has_branch(&ww.join(LIB), &old));
+    assert!(record_of(&w.workspace, &old).is_some());
+    assert_eq!(record_of(&w.workspace, "held"), before);
+
+    publish_project_branch(&w, "held", false);
+    let stderr = refuse(&["branch", "rename", "held", "--adopt"], &ww);
+    assert!(stderr.contains("target conflict (held)"), "{stderr}");
+    assert!(
+        stderr.contains("declared") && stderr.contains("feature onto main"),
+        "{stderr}"
+    );
+    assert!(has_branch(&project_dir(&ww), &old));
+    assert_eq!(record_of(&w.workspace, "held"), before);
+}
+
+#[test]
+fn a_new_name_holding_the_same_record_is_taken_up_with_adopt() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "anon");
+    record_without_branch(&w, "held", &["feature", "--target", "main"]);
+    publish_project_branch(&w, "held", false);
+
+    succeed(&["branch", "rename", "held", "--adopt"], &ww);
+
+    assert!(has_branch(&project_dir(&ww), "held"));
+    assert_eq!(record_of(&w.workspace, &minted("anon")), None);
+}

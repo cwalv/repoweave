@@ -97,7 +97,10 @@ that some live weave branch declares is protected and is never renamed.
   commits listed), changing nothing. Without `--adopt` a `<new>` a remote has,
   as last fetched, is refused.
 - The record that moves is the old branch's; where it has none and `<new>`
-  has one, a run that stopped partway left it there and is completed.
+  has one, a run that stopped partway left it there and is completed. A
+  `<new>` that already holds a record of another value is never overwritten:
+  it is refused as `name` `exists`, or with `--adopt` as `target` `conflict`
+  listing both values. An equal record is fine.
 
 Refused, before anything changes, each as its own line: `<old>` with no record
 that reads (`target` `unrecorded`, `conflict`, `unreadable`), a record that
