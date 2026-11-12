@@ -3194,8 +3194,7 @@ pub fn dc14_c3_under_pin_ahead() -> Scenario {
         vec![
             Step::commit(&a(), Repo::App, "app-local"),
             Step::rwv(&a(), &["push"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("local/remotes/app: pin unpinned"))
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
                 .claim(Claim::OutputContains(
                     "rwv update --remote --reset-to-upstream local/remotes/app",
                 )),
@@ -3260,13 +3259,14 @@ pub fn both_sides_move_app_conflictingly() -> Vec<Step> {
         Step::git(&b(), Repo::App, &["commit", "-qam", "beta"]),
         Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&b(), &["pull", "--merge-upstream"])
-            .expect(Exit::Fails)
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .claim(Claim::OutputContains(
                 "merge conflict in local/remotes/app (README)",
             ))
             .claim(Claim::OutputContains("rwv pull --continue"))
             .claim(Claim::OutputContains("rwv abort")),
-        Step::git(&b(), Repo::Proj, &["rev-parse", "--verify", "-q", "HEAD^2"]).expect(Exit::Fails),
+        Step::git(&b(), Repo::Proj, &["rev-parse", "--verify", "-q", "HEAD^2"])
+            .expect(Exit::Code(1)),
         Step::git(&b(), Repo::Docs, &["status", "--porcelain"]).expect(Exit::Succeeds),
     ]
 }
@@ -3293,7 +3293,7 @@ pub fn merge_conflict_aborts() -> Scenario {
             Repo::App,
             &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
         )
-        .expect(Exit::Fails),
+        .expect(Exit::Code(1)),
         Step::git(&b(), Repo::App, &["diff", "--quiet", "HEAD"]).expect(Exit::Succeeds),
         Step::git(&b(), Repo::Docs, &["status", "--porcelain"]).expect(Exit::Succeeds),
     ]);
@@ -3325,8 +3325,7 @@ pub fn merge_upstream_as_refs() -> Scenario {
                 mark: "lib-remote",
             }),
             Step::rwv(&a(), &["update", "--remote", "--repo", "local/remotes/lib"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("push-branch diverged"))
+                .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
                 .claim(Claim::OutputContains("--merge-upstream")),
             Step::rwv(
                 &a(),
@@ -3364,7 +3363,7 @@ pub fn merge_upstream_as_refs() -> Scenario {
                 Repo::Lib,
                 &["ls-files", "--error-unmatch", "lib-remote.txt"],
             )
-            .expect(Exit::Fails),
+            .expect(Exit::Code(1)),
         ],
     )
 }
@@ -3411,7 +3410,7 @@ pub fn reset_acts_only_on_the_named_repo() -> Scenario {
         Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "-q", "HEAD^2"])
             .expect(Exit::Succeeds),
         Step::git(&a(), Repo::App, &["rev-parse", "--verify", "-q", "HEAD^2"])
-            .expect(Exit::Fails)
+            .expect(Exit::Code(1))
             .claim(Claim::Contains {
                 at: a(),
                 repo: Repo::Lib,

@@ -448,9 +448,18 @@ impl IntoSteps for Vec<Step> {
 }
 
 macro_rules! every_scenario {
-    ($($name:ident),* $(,)?) => {
+    ($($name:ident $(($($arg:expr),*))?),* $(,)?) => {
         fn every_scenario() -> Vec<(&'static str, Vec<Step>)> {
-            vec![$((stringify!($name), scenarios::$name().into_steps())),*]
+            #[allow(unused_mut)]
+            let mut every = vec![
+                $((stringify!($name), scenarios::$name($($($arg),*)?).into_steps())),*
+            ];
+            #[cfg(unix)]
+            every.push((
+                "three_way_pins_on_old_git",
+                scenarios::three_way_pins_on_old_git().into_steps(),
+            ));
+            every
         }
     };
 }
@@ -534,18 +543,34 @@ every_scenario!(
     dc15_moved_reports,
     dc16_destroys_name_repos,
     dc18_partial_delete_status,
+    three_way_pins,
+    dc14_c3_under_pin_ahead,
+    dc09_integrations_settle(Seed::default().integration()),
+    both_sides_move_app_conflictingly,
+    merge_conflict_continues,
+    merge_conflict_aborts,
+    resolve_app_conflict_and_continue,
+    merge_upstream_as_refs,
+    reset_acts_only_on_the_named_repo,
 );
 
-/// The `pub fn` constructors of `scenarios.rs`, read from its source.
+/// The `pub fn` constructors of `scenarios.rs`, read from its source, less
+/// those a `#[cfg(unix)]` leaves out of this build.
 fn scenario_constructors() -> std::collections::BTreeSet<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scenario_harness_test/scenarios.rs");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-        .lines()
-        .filter_map(|line| line.strip_prefix("pub fn "))
-        .map(|rest| rest.split('(').next().unwrap().to_owned())
-        .collect()
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut unix_only = false;
+    let mut found = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("pub fn ") {
+            if cfg!(unix) || !unix_only {
+                found.insert(rest.split('(').next().unwrap().to_owned());
+            }
+        }
+        unix_only = line == "#[cfg(unix)]";
+    }
+    found
 }
 
 #[test]
