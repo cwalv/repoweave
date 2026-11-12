@@ -1371,6 +1371,7 @@ fn commit_project(
     if !record.project_started {
         record.project_started = true;
         save(op, record)?;
+        crate::test_pause::point("cherry-pick-project-copy");
         let mut conflicted = vcs.copy_uncommitted(dir, &commit, record.mainline)?;
         if tables.conflicted.is_empty() {
             conflicted.retain(|p| p != Manifest::FILE_NAME);

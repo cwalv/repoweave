@@ -792,6 +792,11 @@ every_scenario!(
     cherry_pick_conflict,
     cherry_pick_conflict_aborts,
     cherry_pick_refusals,
+    cherry_pick_project_copy_killed,
+    cherry_pick_op_start_killed,
+    cherry_pick_continue_rechecks_members,
+    cherry_pick_project_conflict,
+    cherry_pick_project_conflict_aborts,
     pr_closed_unmerged,
     feature_whose_target_moved,
     feature_branches_in_some_members,
@@ -1003,6 +1008,7 @@ pending_on!(
     shared_member_pinned_behind => Land,
     main_change_into_stable => Land,
     cherry_pick_onto_stable => CherryPick,
+    cherry_pick_port_landing_merge => MergeLanding,
 );
 
 #[test]
@@ -4066,8 +4072,33 @@ fn cherry_pick_port_copies_member_ranges_carries_dependencies_and_reports_entrie
 }
 
 #[test]
-fn cherry_pick_of_a_landing_merge_ports_whole_against_its_first_parent() {
-    runner::run(scenarios::cherry_pick_port_landing_merge()).assert_fully_decided_green();
+fn cherry_pick_continue_rechecks_each_member_and_takes_no_hand_commit_for_a_copy() {
+    runner::run(scenarios::cherry_pick_continue_rechecks_members()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_stopped_in_the_project_repo_continues_with_the_rename_and_this_branchs_entries() {
+    runner::run(scenarios::cherry_pick_project_conflict()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_stopped_in_the_project_repo_is_put_back_by_abort() {
+    runner::run(scenarios::cherry_pick_project_conflict_aborts()).assert_fully_decided_green();
+}
+
+holding_rwv! {
+    /// A port killed after it recorded the project copy's start, before the
+    /// copy: `--continue` makes the copy rather than committing the relock
+    /// alone.
+    fn cherry_pick_killed_before_the_project_copy_continues_with_the_copy() {
+        runner::run(scenarios::cherry_pick_project_copy_killed()).assert_fully_decided_green();
+    }
+
+    /// A port killed inside its op's start: `--continue` savepoints a member
+    /// before copying onto it, so abort restores it.
+    fn cherry_pick_killed_in_its_op_start_savepoints_each_member_before_copying() {
+        runner::run(scenarios::cherry_pick_op_start_killed()).assert_fully_decided_green();
+    }
 }
 
 #[test]

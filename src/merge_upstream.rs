@@ -80,6 +80,7 @@ impl Op {
         let _held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
         for (dir, vcs) in repos {
             let _ = vcs.create_savepoint(dir, &SavepointKey::Op(id.clone()));
+            crate::test_pause::point("op-savepoint-taken");
         }
         Ok(Self {
             workspace: workspace.to_path_buf(),

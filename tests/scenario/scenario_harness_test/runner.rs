@@ -20,6 +20,9 @@ pub enum MissingVerb {
     Land,
     /// Port a project commit into a feature or a line.
     CherryPick,
+    /// Land a feature into a branch recording `history = "merge"` by merge
+    /// commits, the project's and each landed member's.
+    MergeLanding,
 }
 
 impl MissingVerb {
@@ -28,6 +31,7 @@ impl MissingVerb {
             MissingVerb::Review => "materialize someone else's pushed branch",
             MissingVerb::Land => "take in or land a feature by its record",
             MissingVerb::CherryPick => "port a project commit into a feature or a line",
+            MissingVerb::MergeLanding => "land a feature by merge commits under a merge history",
         }
     }
 }
