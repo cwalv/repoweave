@@ -224,7 +224,7 @@ The others follow.
 | State | Means | Refused by |
 |---|---|---|
 | `withheld` | the project repo was not pushed: a pin the project branch's lock holds is not reached by the remote-tracking branches that must reach it, or the remote rejected a member's push; the branches that do reach each pin, and what the remote answered, are listed | `rwv push` |
-| `records rejected` | the remote the project branch publishes to refused the branch that holds the weave branches' records, so the branch was withheld; for the remote's default branch, whose record is `declared`, the branch is published and the rejection reported as a fact. What the remote answered is listed | `rwv push`, for a branch that is not the remote's default branch recorded as `declared`; reported for that one |
+| `records rejected` | a fact: the remote the project branch publishes to refused the branch that holds the weave branches' records, and the project branch was published without its record there. What the remote answered is listed. Another machine opening the branch finds it unrecorded and is asked once how to treat it (`target` `unrecorded`) | nothing: `rwv push` reports it and publishes the branch |
 | `no pin` | the project branch's lock has no entry for a member the push does not act on, so the project repo was not pushed with a lock that pins nothing there | `rwv push` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -235,7 +235,6 @@ The others follow.
 | `withheld` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `records rejected` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 
 ### `target`

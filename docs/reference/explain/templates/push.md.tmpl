@@ -91,9 +91,10 @@ record whose branch is gone everywhere, is published to the project branch's
 push target before the project branch, as one commit on that remote's records
 branch: no other record on this machine is sent, and a conflicted or unreadable
 one never is. A remote that moved meanwhile is fetched and the commit rebuilt.
-A remote that refuses its records branch withholds the project branch
-(`publish` `records rejected`); for the remote's default branch, whose record
-is `declared`, the branch is published and the rejection reported as a fact.
+A remote that refuses its records branch does not stop the push: the project
+branch is published without its record there and the rejection is reported as
+a fact (`publish` `records rejected`), which names what another machine
+opening the branch will be asked.
 
 **Replacing a push branch.** `--overwrite <repo>`, naming each repo, replaces a
 diverged push branch of a branch no weave branch declares and that is not a
@@ -150,8 +151,7 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 Outcome `kind` tags for member repos: `pushed`, `skipped` (e.g. filtered
 by selector), `failed`. The branch's record follows as `records-published`
 (listing the entries it dropped from the remote) or `records-rejected` (with
-the remote's answer, and whether the project branch was withheld because of
-it). The project-repo record is always the last entry in `outcomes` and
+the remote's answer; the project branch is published all the same). The project-repo record is always the last entry in `outcomes` and
 uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
 only way to distinguish it from member-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
@@ -175,7 +175,7 @@ Schema:
   published, and the project repo pushed.
 - non-zero — a refusal before anything was pushed; a member push failed
   (project repo not pushed); the project branch was withheld because a pin it
-  holds is not reached or the remote refused the record; or the project-repo
+  holds is not reached; or the project-repo
   push failed after the member pushes succeeded.
 
 ## Examples
@@ -247,9 +247,11 @@ rwv push -j 4
   members that pushed are published. Publish the member (`rwv push --repo
   <member>`, naming a `dependency` or `reference` one), or choose where it
   pushes, then re-run `rwv push`.
-- *`projects/<name>: publish records rejected`* — the remote refused the branch
-  that holds the records, so the project branch was withheld. Choose another
-  remote for the branch, or have the remote accept the records branch.
+- *`projects/<name>: publish records rejected`* — a fact, not a refusal: the
+  remote refused the branch that holds the records, and the project branch was
+  published without its record there. Another machine opening the branch finds
+  it unrecorded and is asked once how to treat it (`rwv fetch` where the record
+  may be published elsewhere, else `rwv branch set-mode`).
 - *target unrecorded* — the checked-out branch of the project repo has no record
   of how it is used, so this verb, which publishes, refuses before changing
   anything. The record may be published but not yet fetched (`rwv fetch`);

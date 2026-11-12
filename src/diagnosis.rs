@@ -831,14 +831,13 @@ impl State {
             Self::PublishRecordsRejected => &StateRow {
                 axis: Axis::Publish,
                 name: "records rejected",
-                means: "the remote the project branch publishes to refused the branch that \
-                        holds the weave branches' records, so the branch was withheld; for the \
-                        remote's default branch, whose record is `declared`, the branch is \
-                        published and the rejection reported as a fact. What the remote \
-                        answered is listed",
-                refused_by: "`rwv push`, for a branch that is not the remote's default branch \
-                             recorded as `declared`; reported for that one",
-                offers: &[Form::C17],
+                means: "a fact: the remote the project branch publishes to refused the branch \
+                        that holds the weave branches' records, and the project branch was \
+                        published without its record there. What the remote answered is \
+                        listed. Another machine opening the branch finds it unrecorded and is \
+                        asked once how to treat it (`target` `unrecorded`)",
+                refused_by: "nothing: `rwv push` reports it and publishes the branch",
+                offers: &[],
                 verb_offers: &[],
             },
             Self::PublishNoPin => &StateRow {

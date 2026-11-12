@@ -424,8 +424,7 @@
             "kind",
             "message",
             "path",
-            "project",
-            "withheld"
+            "project"
           ],
           "properties": {
             "absolute_path": {
@@ -438,7 +437,7 @@
               ]
             },
             "message": {
-              "description": "What the remote answered.",
+              "description": "What the remote answered. The project branch is published all the same, without its record there.",
               "type": "string"
             },
             "path": {
@@ -446,10 +445,6 @@
             },
             "project": {
               "type": "string"
-            },
-            "withheld": {
-              "description": "Whether the project branch was withheld because of it.",
-              "type": "boolean"
             }
           }
         },

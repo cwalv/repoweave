@@ -1864,30 +1864,35 @@ pub fn records_conflict() -> Scenario {
     )
 }
 
-/// records-rejected: a remote refusing the records branch withholds a
-/// feature's project branch and loses nothing, and publishes the trunk, whose
-/// record is `declared`, reporting the rejection as a fact.
+/// records-rejected: a remote refusing the records branch takes a feature's
+/// project branch and the trunk all the same, the rejection reported as a
+/// fact; another machine opening the feature finds it unrecorded and is asked
+/// once how to treat it.
 pub fn records_rejected() -> Scenario {
     let mut steps = feature_branch_in_primary();
     steps.extend([
         Step::rwv(&a(), &["push"])
             .pushes(Remote::origin(Repo::App), "feat-x")
-            .expect(Exit::refuses(Repo::Proj, State::PublishRecordsRejected))
-            .claim(Claim::OutputContains("projects/proj feat-x was not pushed"))
-            .claim(Claim::OutputContains("choose where it pushes"))
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: publish records rejected",
+            ))
+            .claim(Claim::OutputContains("is asked once how to treat it"))
             .claim(Claim::RemoteContains {
                 remote: Remote::origin(Repo::App),
                 branch: "feat-x",
                 mark: "feat-app",
             })
-            .claim(Claim::RemoteLacks {
-                repo: Repo::Proj,
-                branch: "feat-x",
-            })
             .claim(Claim::RemoteRecordIs {
                 branch: "feat-x",
                 record: None,
             }),
+        Step::new_machine(Machine::B),
+        Step::rwv(&b(), &["switch", "feat-x"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetUnrecorded))
+            .claim(Claim::OutputContains("rwv fetch"))
+            .claim(Claim::OutputContains("rwv branch set-mode")),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
         Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "trunk-app"),

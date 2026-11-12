@@ -664,7 +664,7 @@ fn a_records_conflict_stays_on_the_machine_that_met_it_and_is_never_published() 
 }
 
 #[test]
-fn a_remote_refusing_the_records_branch_withholds_a_feature_and_publishes_the_trunk() {
+fn a_remote_refusing_the_records_branch_publishes_a_feature_and_the_trunk_with_the_fact() {
     runner::run(scenarios::records_rejected()).assert_fully_decided_green();
 }
 

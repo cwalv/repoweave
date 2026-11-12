@@ -696,8 +696,8 @@ fn push_json_wire_output_conforms_when_the_record_is_published_and_when_it_is_re
             .as_array()
             .unwrap()
             .iter()
-            .any(|o| o["kind"] == "records-rejected" && o["withheld"] == false),
-        "the default branch's rejected record is a fact: {doc:#}"
+            .any(|o| o["kind"] == "records-rejected" && o.get("withheld").is_none()),
+        "a rejected record is a fact: {doc:#}"
     );
 }
 

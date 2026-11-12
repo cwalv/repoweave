@@ -78,10 +78,9 @@ pub enum PushOutcomeOutput {
         path: String,
         absolute_path: crate::path_spelling::WirePath,
         project: ProjectName,
-        /// What the remote answered.
+        /// What the remote answered. The project branch is published all the
+        /// same, without its record there.
         message: String,
-        /// Whether the project branch was withheld because of it.
-        withheld: bool,
     },
     /// Project repo was pushed successfully (always the last record).
     ProjectRepoPushed {
@@ -267,7 +266,8 @@ fn refuse_json(
 ///
 /// Every refusal is reported before anything is published, and the project
 /// branch is withheld while any pin its lock holds is not reached as the pin
-/// gate requires, any member push failed, or the remote refused the record.
+/// gate requires or any member push failed. A remote that refuses the record
+/// is reported, and the project branch is published without it.
 pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Result<()> {
     let pvcs = project_vcs();
     let pushed = resolve(ctx, &request, pvcs.as_ref())?;
@@ -1755,46 +1755,35 @@ fn publish(
             });
         }
         Published::Rejected(message) => {
-            let default_branch = pvcs
-                .remote_default_branch(&pushed.project_dir, &project_plan.target)?
-                .map(|default| default.local_counterpart());
-            let is_default = default_branch
-                .as_ref()
-                .is_some_and(|default| default.as_str() == pushed.branch.as_str());
-            let is_fact = is_default && pushed.record == Record::Declared;
             let line = State::PublishRecordsRejected
                 .of(&project_path)
                 .project_repo()
                 .checkout(&pushed.project_dir)
-                .listing([message.clone()])
+                .subject(&project_plan.target)
+                .listing([
+                    format!("{} answered: {message}", project_plan.target),
+                    format!(
+                        "{} is published without its record on {}",
+                        pushed.branch, project_plan.target
+                    ),
+                    format!(
+                        "another machine opening {} is asked once how to treat it: `rwv fetch` \
+                         where the record may be published elsewhere, else \
+                         `rwv branch set-mode {} …`",
+                        pushed.branch, pushed.branch
+                    ),
+                ])
                 .judge(pvcs);
             json_outcomes.push(PushOutcomeOutput::RecordsRejected {
                 path: project_path.clone(),
                 absolute_path: project_abs.clone(),
                 project: pushed.project.clone(),
                 message,
-                withheld: !is_fact,
             });
-            if is_fact {
+            if output == OutputMode::Text {
                 let mut fact = Report::default();
                 fact.add(line);
-                if output == OutputMode::Text {
-                    eprint!("{}", fact.render("push"));
-                }
-            } else {
-                let mut refusal = Report::default();
-                refusal.add(line);
-                refusal.note(format!(
-                    "projects/{} {} was not pushed; the members' branches that were pushed are published",
-                    pushed.project, pushed.branch
-                ));
-                let refusal = refusal
-                    .into_result()
-                    .expect_err("a rejected record is judged withheld");
-                if output.is_json() {
-                    print_envelope(json_outcomes, &refusal, reported, ctx);
-                }
-                return Err(refusal);
+                eprint!("{}", fact.render("push"));
             }
         }
     }
@@ -1817,10 +1806,10 @@ fn publish(
             &judged,
             &project_plan.replace,
         )
-        .map_err(|e| anyhow::anyhow!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))
         .and_then(|()| {
             give_upstream(pvcs, &pushed.project_dir, &pushed.raw, &project_plan.target)
-                .map_err(anyhow::Error::from)
+                .map_err(|e| format!("pushed, but could not record the upstream: {e:#}"))
         });
         match &result {
             Ok(()) => json_outcomes.push(PushOutcomeOutput::ProjectRepoPushed {
@@ -1833,9 +1822,9 @@ fn publish(
                     path: project_path,
                     absolute_path: project_abs,
                     project: pushed.project.clone(),
-                    message: format!("{e:#}"),
+                    message: e.clone(),
                 });
-                project_error = Some(format!("{e:#}"));
+                project_error = Some(e.clone());
             }
         }
     }
