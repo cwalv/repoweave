@@ -25,7 +25,14 @@ nothing could be landed into. Then, under an op record:
    pin are listed before composing: the landing pins them into the target. The project branch is
    rebased onto the target's tip, again the newer of the target and its
    upstream, unless it already contains that tip. A target or receiving
-   branch behind its upstream is so taken in, fast-forward only. Every
+   branch behind its upstream is so taken in, fast-forward only, and the
+   landing reports what it took in of the target's upstream: its commits,
+   each pin they changed (`re-pinned` where the new pin does not descend
+   from the old) and each member entry they changed (`member-changed`). Each
+   pin of the target's lock, or of its upstream's, that this clone lacks
+   refuses (`pin` `unreachable`), naming `rwv fetch`. A declared branch the
+   upstream changed is taken in as a ref, and the target's workspace moves
+   onto it when it aligns. Every
    rebase happens in this workspace; nothing outside it moves. A range a
    rebase would replay that holds a merge commit is never rebased: the
    landing refuses as `not-fast-forwardable`, naming the merge.
@@ -159,7 +166,7 @@ the landing.
 | `target` | `dependents` | another weave branch lands into this one |
 | `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
 | `pin` | `off lineage` | a member's base is not on its receiving branch |
-| `pin` | `unreachable` | the target pins a commit this clone lacks |
+| `pin` | `unreachable` | the target, or its upstream as last fetched, pins a commit this clone lacks |
 | `pin` | `not on declared branch` | a receiving branch does not reach the target's pin, or a `dependency` or `reference` member's branch does not reach the feature's pin |
 | `pin` | `unmerged` | the feature and the target changed a `dependency` or `reference` member's pin, neither containing the other |
 | `pin` | `unpinned` | a receiving branch holds commits nothing records |
@@ -241,7 +248,8 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
   "complete": true,
   "refused": [],
   "project_repo_advance": { "from_sha": "...", "to_sha": "..." },
-  "left_behind": [ { "path": "...", "was": "...", "now": "...", "commits": [ ... ], "choices": [ ... ] }, ... ]
+  "left_behind": [ { "path": "...", "was": "...", "now": "...", "commits": [ ... ], "choices": [ ... ] }, ... ],
+  "reports": [ { "kind": "...", "path": "...", ... }, ... ]
 }
 ```
 
@@ -255,7 +263,11 @@ branch lacks, newest first, with the copy that ports them; the text output
 prints the same list. `--continue --json` emits the same envelope with a
 `resumed` field naming the phase the stopped landing had reached; a value past
 `replay` leaves `outcomes` empty. A resumed landing lists `left_behind` again,
-in text and under `--json`.
+in text and under `--json`. `reports` holds each move the landing reported as
+it made it: a receiving branch it `created`, a member that `followed`, a
+`re-pinned` member, and `taken-in`, the target's upstream it took in (`from`,
+`to`, the upstream's `commits`, each pin it changed in `pins` with `backward`,
+and each entry in `member_changes`); a resumed landing reports them again.
 
 Schema:
 
@@ -684,6 +696,15 @@ Schema:
         }
       ]
     },
+    "EntryChange": {
+      "description": "How the pulled `rwv.toml` changed a member's entry.",
+      "type": "string",
+      "enum": [
+        "added",
+        "removed",
+        "changed"
+      ]
+    },
     "FactKind": {
       "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
       "oneOf": [
@@ -989,6 +1010,59 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "description": "The target's project branch, behind its upstream as last fetched, taken in from `from` to `to`, fast-forward only: the upstream's commits, and each pin and member entry they changed.",
+          "type": "object",
+          "required": [
+            "branch",
+            "commits",
+            "from",
+            "kind",
+            "member_changes",
+            "path",
+            "pins",
+            "to"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "commits": {
+              "description": "The upstream's commits, newest first.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LeftCommitOutput"
+              }
+            },
+            "from": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "taken-in"
+              ]
+            },
+            "member_changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/MemberChangeOutput"
+              }
+            },
+            "path": {
+              "type": "string"
+            },
+            "pins": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/PinTakenInOutput"
+              }
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
         }
       ]
     },
@@ -1042,6 +1116,30 @@ Schema:
           "$ref": "#/definitions/CommitId"
         },
         "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "MemberChangeOutput": {
+      "description": "A member entry the pulled `rwv.toml` added, removed or changed.",
+      "type": "object",
+      "required": [
+        "change",
+        "fields",
+        "path"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/EntryChange"
+        },
+        "fields": {
+          "description": "For a changed entry, each field that differs as `<field>: <was> -> <now>`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
           "type": "string"
         }
       }
@@ -1218,6 +1316,37 @@ Schema:
           ]
         }
       ]
+    },
+    "PinTakenInOutput": {
+      "description": "A member's pin as the upstream a landing took in changed it.",
+      "type": "object",
+      "required": [
+        "backward",
+        "path"
+      ],
+      "properties": {
+        "backward": {
+          "description": "`now` does not descend from `was`: reported `re-pinned`.",
+          "type": "boolean"
+        },
+        "now": {
+          "description": "Absent where the upstream's lock does not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "was": {
+          "description": "Absent where the target's lock did not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",

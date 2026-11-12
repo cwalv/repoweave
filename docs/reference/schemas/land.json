@@ -422,6 +422,15 @@
         }
       ]
     },
+    "EntryChange": {
+      "description": "How the pulled `rwv.toml` changed a member's entry.",
+      "type": "string",
+      "enum": [
+        "added",
+        "removed",
+        "changed"
+      ]
+    },
     "FactKind": {
       "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
       "oneOf": [
@@ -727,6 +736,59 @@
               "type": "string"
             }
           }
+        },
+        {
+          "description": "The target's project branch, behind its upstream as last fetched, taken in from `from` to `to`, fast-forward only: the upstream's commits, and each pin and member entry they changed.",
+          "type": "object",
+          "required": [
+            "branch",
+            "commits",
+            "from",
+            "kind",
+            "member_changes",
+            "path",
+            "pins",
+            "to"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "commits": {
+              "description": "The upstream's commits, newest first.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LeftCommitOutput"
+              }
+            },
+            "from": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "taken-in"
+              ]
+            },
+            "member_changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/MemberChangeOutput"
+              }
+            },
+            "path": {
+              "type": "string"
+            },
+            "pins": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/PinTakenInOutput"
+              }
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
         }
       ]
     },
@@ -780,6 +842,30 @@
           "$ref": "#/definitions/CommitId"
         },
         "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "MemberChangeOutput": {
+      "description": "A member entry the pulled `rwv.toml` added, removed or changed.",
+      "type": "object",
+      "required": [
+        "change",
+        "fields",
+        "path"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/EntryChange"
+        },
+        "fields": {
+          "description": "For a changed entry, each field that differs as `<field>: <was> -> <now>`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
           "type": "string"
         }
       }
@@ -956,6 +1042,37 @@
           ]
         }
       ]
+    },
+    "PinTakenInOutput": {
+      "description": "A member's pin as the upstream a landing took in changed it.",
+      "type": "object",
+      "required": [
+        "backward",
+        "path"
+      ],
+      "properties": {
+        "backward": {
+          "description": "`now` does not descend from `was`: reported `re-pinned`.",
+          "type": "boolean"
+        },
+        "now": {
+          "description": "Absent where the upstream's lock does not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "was": {
+          "description": "Absent where the target's lock did not pin the member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",
