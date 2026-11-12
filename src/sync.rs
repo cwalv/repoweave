@@ -1449,7 +1449,7 @@ pub(crate) fn compose_merge(
 ) -> Result<bool, VcsError> {
     match stage_merge(vcs, repo, onto)? {
         Staged::OnFirstParents => Ok(false),
-        Staged::FastForwarded => Ok(true),
+        Staged::FastForwarded | Staged::Committed => Ok(true),
         Staged::Merge => {
             let head = vcs.head_revision(repo)?;
             crate::repin::commit_merge(
@@ -1475,6 +1475,9 @@ enum Staged {
     OnFirstParents,
     /// The branch was behind `onto` and now sits at it.
     FastForwarded,
+    /// The merge was committed and only its in-flight state remained, now
+    /// cleared.
+    Committed,
     /// The merge's content is staged, uncommitted; its commit takes `onto`
     /// as first parent and the checkout's HEAD as second.
     Merge,
@@ -1489,14 +1492,19 @@ fn stage_merge(vcs: &dyn Vcs, repo: &Path, onto: &ResolvedRevisionId) -> Result<
         repo: repo.to_path_buf(),
         op: ConflictOp::Merge,
     };
-    if vcs.merge_in_flight(repo)?.as_ref() == Some(onto.id()) {
+    let in_flight = vcs.merge_in_flight(repo)? == Some(onto.id().clone());
+    if vcs.on_first_parents(repo, head.id(), onto.id())? {
+        if in_flight {
+            vcs.end_merge(repo)?;
+            return Ok(Staged::Committed);
+        }
+        return Ok(Staged::OnFirstParents);
+    }
+    if in_flight {
         if !vcs.unmerged_paths(repo)?.is_empty() {
             return Err(conflicted());
         }
         return Ok(Staged::Merge);
-    }
-    if vcs.first_parent_chain(repo, head.id())?.contains(onto.id()) {
-        return Ok(Staged::OnFirstParents);
     }
     if vcs.is_ancestor(repo, &head, onto)? {
         vcs.advance_if_fast_forward(repo, onto)?;
@@ -2832,7 +2840,7 @@ impl OpContext<'_> {
             return Ok(Integration::Rebase);
         }
         let contained = vcs.is_ancestor(dir, &onto_rev, &head_rev)?;
-        if contained && vcs.first_parent_chain(dir, &head)?.contains(&onto) {
+        if contained && vcs.on_first_parents(dir, &head, &onto)? {
             return Ok(Integration::Rebase);
         }
         let target = target_name(self);
@@ -6317,7 +6325,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let head = vcs.head_revision(dir)?;
     let staged_merge = vcs.merge_in_flight(dir)?.as_ref() == Some(target)
         || (vcs.is_ancestor(dir, &ResolvedRevisionId::from(target.clone()), &head)?
-            && !vcs.first_parent_chain(dir, head.id())?.contains(target));
+            && !vcs.on_first_parents(dir, head.id(), target)?);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
         crate::repin::commit_merge(
@@ -9516,6 +9524,69 @@ mod tests {
     use super::*;
     use crate::git::git_vcs;
     use crate::path_spelling::resolve;
+
+    #[test]
+    fn a_merge_killed_after_its_commit_is_not_committed_twice() {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        git(&repo, &["checkout", "-b", "feat"]);
+        let feature = commit(&repo, "feature");
+        git(&repo, &["checkout", "main"]);
+        let onto = commit(&repo, "target");
+        git(&repo, &["checkout", "feat"]);
+        let vcs = git_vcs();
+        assert!(vcs.start_merge(&repo, onto.id()).unwrap().is_empty());
+        let tree = git(&repo, &["write-tree"]);
+        let merged = git(
+            &repo,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                onto.id().as_str(),
+                "-p",
+                feature.id().as_str(),
+                "-m",
+                "m",
+            ],
+        );
+        git(&repo, &["update-ref", "HEAD", &merged]);
+        assert_eq!(
+            vcs.merge_in_flight(&repo).unwrap().as_ref(),
+            Some(onto.id())
+        );
+
+        assert!(compose_merge(vcs.as_ref(), &repo, &onto).unwrap());
+
+        assert_eq!(vcs.head_revision(&repo).unwrap().id().as_str(), merged);
+        assert_eq!(vcs.merge_in_flight(&repo).unwrap(), None);
+    }
+
+    #[test]
+    fn on_first_parents_reads_only_to_the_first_commit_the_candidate_reaches() {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let base = git_vcs().head_revision(&repo).unwrap().id().clone();
+        git(&repo, &["checkout", "-b", "feat"]);
+        let first = commit(&repo, "f1");
+        git(&repo, &["checkout", "main"]);
+        let target = commit(&repo, "t1");
+        git(&repo, &["checkout", "feat"]);
+        git(&repo, &["merge", "--no-ff", "main", "-m", "merge"]);
+        let tip = commit(&repo, "f2");
+        let vcs = git_vcs();
+
+        assert!(vcs.on_first_parents(&repo, tip.id(), tip.id()).unwrap());
+        assert!(vcs.on_first_parents(&repo, tip.id(), first.id()).unwrap());
+        assert!(vcs.on_first_parents(&repo, tip.id(), &base).unwrap());
+        assert!(
+            !vcs.on_first_parents(&repo, tip.id(), target.id()).unwrap(),
+            "held only through the merge's second parent"
+        );
+        assert!(!vcs.on_first_parents(&repo, target.id(), tip.id()).unwrap());
+    }
 
     #[test]
     fn settling_speaks_when_nothing_handles_the_run_and_when_the_handler_does() {

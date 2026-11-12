@@ -2014,7 +2014,7 @@ impl Composing<'_> {
             return Ok(Composed::FastForward);
         }
         let contained = vcs.is_ancestor(dir, &rev(onto), &rev(head))?;
-        if contained && vcs.first_parent_chain(dir, head)?.contains(onto) {
+        if contained && vcs.on_first_parents(dir, head, onto)? {
             return Ok(Composed::FastForward);
         }
         let history = match crate::set_history::governing(recorded, one_run, member, &scoped, vcs) {

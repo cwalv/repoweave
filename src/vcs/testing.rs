@@ -870,6 +870,10 @@ impl Vcs for FakeVcs {
         unsupported("rebase_in_flight")
     }
 
+    fn end_merge(&self, _checkout: &Path) -> Result<(), VcsError> {
+        unsupported("end_merge")
+    }
+
     fn copy_commit(
         &self,
         _checkout: &Path,
@@ -1300,6 +1304,15 @@ impl Vcs for FakeVcs {
 
     fn first_parent_chain(&self, _repo: &Path, _tip: &CommitId) -> Result<Vec<CommitId>, VcsError> {
         unsupported("first_parent_chain")
+    }
+
+    fn on_first_parents(
+        &self,
+        _repo: &Path,
+        _tip: &CommitId,
+        _commit: &CommitId,
+    ) -> Result<bool, VcsError> {
+        unsupported("on_first_parents")
     }
 
     fn commits_changing(

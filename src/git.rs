@@ -4322,6 +4322,27 @@ impl Vcs for GitVcs {
             .collect()
     }
 
+    fn on_first_parents(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        commit: &CommitId,
+    ) -> Result<bool, VcsError> {
+        let args = [
+            "rev-list",
+            "--parents",
+            "--first-parent",
+            tip.as_str(),
+            "--not",
+            commit.as_str(),
+        ];
+        let listed = Self::run_trimmed(args, repo)?;
+        let Some(last) = listed.lines().rev().find(|l| !l.is_empty()) else {
+            return Ok(tip == commit);
+        };
+        Ok(last.split_whitespace().nth(1) == Some(commit.as_str()))
+    }
+
     fn commits_changing(
         &self,
         repo: &Path,
@@ -5015,6 +5036,10 @@ impl Vcs for GitVcs {
             }
         }
         Ok(None)
+    }
+
+    fn end_merge(&self, checkout: &Path) -> Result<(), VcsError> {
+        Self::run(["merge", "--quit"], checkout).map(|_| ())
     }
 
     fn copy_commit(

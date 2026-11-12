@@ -4106,6 +4106,18 @@ pub trait Vcs: Send + Sync {
     /// For git: `git rev-list --first-parent <tip>`.
     fn first_parent_chain(&self, repo: &Path, tip: &CommitId) -> Result<Vec<CommitId>, VcsError>;
 
+    /// Whether `commit` is `tip` or one of its first parents, read only as
+    /// far back as the first commit `commit` reaches.
+    ///
+    /// For git: `git rev-list --parents --first-parent <tip> --not <commit>`,
+    /// whose last line names the chain's first commit `commit` reaches.
+    fn on_first_parents(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        commit: &CommitId,
+    ) -> Result<bool, VcsError>;
+
     /// Every commit `tip` reaches, through any parent, whose content of
     /// `path` differs from one of its parents', or that adds it, newest
     /// first: the commits that hold each version of the file `tip`'s history
@@ -4873,6 +4885,12 @@ pub trait Vcs: Send + Sync {
 
     /// The commit a rebase stopped in `checkout` replays onto, if one is.
     fn rebase_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// Forget a merge in flight in `checkout`, leaving its HEAD, index and
+    /// working tree as they are.
+    ///
+    /// For git: `git merge --quit`.
+    fn end_merge(&self, checkout: &Path) -> Result<(), VcsError>;
 
     /// Apply what `commit` introduced, against its parent number `mainline`
     /// (from 1; a merge commit needs one), as a new commit on the checkout,
