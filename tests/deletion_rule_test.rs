@@ -15,6 +15,8 @@
 //!   branch whatever `--discard-unlanded` says;
 //! - no receipts are minted, and a recreated feature branch draws no finding.
 
+use repoweave::diagnosis::State;
+use repoweave::refusal::RefusalKind;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -54,6 +56,41 @@ fn succeed(args: &[&str], dir: &Path) -> std::process::Output {
         describe(&out)
     );
     out
+}
+
+/// Status 1, ending in the route lines, `route` among them.
+fn ends_in_route(out: &std::process::Output, route: &str) {
+    assert_eq!(out.status.code(), Some(1), "{}", describe(out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .rev()
+        .take_while(|l| l.starts_with("rwv explain "))
+        .collect();
+    assert!(
+        routes.contains(&format!("rwv explain {route}").as_str()),
+        "{}",
+        describe(out)
+    );
+}
+
+/// A refusal judging each repo in its state, each state's axis routed.
+fn refused_judging(out: &std::process::Output, judged: &[(&str, State)]) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for (repo, state) in judged {
+        let line = format!("{repo}: {} {}", state.axis().token(), state.name());
+        assert!(
+            stderr.lines().any(|l| l.ends_with(&line)),
+            "no line ends {line:?}: {}",
+            describe(out)
+        );
+        ends_in_route(out, &state.axis().token());
+    }
+}
+
+fn refused_as(out: &std::process::Output, kind: RefusalKind) {
+    ends_in_route(out, &kind.token());
 }
 
 fn minted(name: &str) -> String {
@@ -252,7 +289,13 @@ fn a_report_by_kind_lists_edits_and_detached_commits_the_discard_flags_kept() {
     commit_in(&ww.join(APP), "detached.txt");
 
     let refused = run(&["workweave", "delete", "feat"], &w.workspace);
-    assert!(!refused.status.success(), "{}", describe(&refused));
+    refused_judging(
+        &refused,
+        &[
+            (LIB, State::EditsDirty),
+            (APP, State::AlignmentDetachedUnpushed),
+        ],
+    );
     assert!(ww.exists(), "a refusal removes nothing");
 
     let out = run(
@@ -374,6 +417,13 @@ fn delete_remote_unlanded_without_discard_unlanded_is_a_usage_error() {
     );
 
     assert_eq!(out.status.code(), Some(2), "{}", describe(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("required arguments were not provided")
+            && stderr.contains("--discard-unlanded"),
+        "{}",
+        describe(&out)
+    );
 }
 
 #[test]
@@ -393,7 +443,13 @@ fn delete_remote_unlanded_naming_a_repo_the_branch_is_not_in_is_refused() {
         &w.workspace,
     );
 
-    assert!(!out.status.success(), "{}", describe(&out));
+    refused_as(&out, RefusalKind::InapplicableFlag);
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("names no repo that `p--feat` has a branch in"),
+        "{}",
+        describe(&out)
+    );
     assert!(ww.exists(), "a refusal removes nothing");
 }
 
