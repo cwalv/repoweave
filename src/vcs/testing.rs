@@ -287,8 +287,8 @@ impl Vcs for FakeVcs {
             .then_some(self as &dyn WorkspacePopulation)
     }
 
-    /// Deletes only at the proof's tip, as git's `update-ref -d <ref> <old>`
-    /// does: a branch that moved since the proof stays.
+    /// Deletes only at the proof's tip, as git's delete of a ref at an
+    /// expected old value does: a branch that moved since the proof stays.
     fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError> {
         self.enter(VcsCall::DeleteBranch)?;
         let key = Self::key(proof.store(), proof.branch());
@@ -297,8 +297,7 @@ impl Vcs for FakeVcs {
         match branches.get(&key) {
             Some(tip) if tip.id().as_str() != expected => Err(VcsError::CommandFailed {
                 args: vec![
-                    "update-ref".to_owned(),
-                    "-d".to_owned(),
+                    "delete".to_owned(),
                     format!("refs/heads/{}", proof.branch()),
                     expected.to_owned(),
                 ],

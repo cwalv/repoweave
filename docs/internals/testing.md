@@ -395,7 +395,7 @@ to do, read only by the invariants:
   mirror included), a pin containing a mark, a workweave gone, a line
   judging a repo in a state (`Judged`), the step's output holding a text,
   or one of its lines being exactly a text (`OutputLine`, for a listing,
-  where a substring would match its neighbours), a checkout on a branch, a
+  where a substring would match its neighbors), a checkout on a branch, a
   branch's upstream on a remote (`UpstreamOn`), the project a weave root
   presents (`Presents`), a machine's entry on the records branch
   (`RecordIs`), and `LocalStateUnchanged`, which compares every checkout at
