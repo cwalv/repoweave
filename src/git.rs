@@ -27,6 +27,8 @@ mod argv;
 mod backup;
 mod merge;
 mod records;
+#[cfg(test)]
+mod wording_tests;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -126,6 +128,36 @@ macro_rules! under_both_line_endings {
 }
 #[cfg(test)]
 pub(crate) use under_both_line_endings;
+
+#[cfg(test)]
+pub(crate) use argv::speech;
+
+/// Each named test function runs as one test with git's locale pinned and
+/// one with git unpinned and speaking German: `pinned::<name>` and
+/// `translated::<name>`.
+#[cfg(test)]
+macro_rules! in_both_languages {
+    ($($name:ident),* $(,)?) => {
+        mod pinned {
+            $(
+                #[test]
+                fn $name() {
+                    super::$name()
+                }
+            )*
+        }
+        mod translated {
+            $(
+                #[test]
+                fn $name() {
+                    $crate::git::speech::in_translated_git(super::$name)
+                }
+            )*
+        }
+    };
+}
+#[cfg(test)]
+pub(crate) use in_both_languages;
 
 /// What git names the first remote of a repo that has none. It names a remote
 /// being added to such a repo and stands for no role: every use of a remote
@@ -881,10 +913,10 @@ impl GitVcs {
     /// [`GitVcs::run_trimmed`].
     ///
     /// Maps process I/O failure to [`VcsError::Io`] and non-zero exit to
-    /// [`VcsError::CommandFailed`] with the args and stderr captured. Callers
-    /// that can detect more specific failures (revision not found, branch
-    /// already exists, ...) should match on the resulting `CommandFailed`
-    /// stderr and remap.
+    /// [`VcsError::CommandFailed`] with the args and stderr captured. The
+    /// stderr is carried for the operator, never matched: a caller that tells
+    /// failures apart asks by exit status, a machine format or the
+    /// repository's state.
     fn run(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         let args = args.into();
         let output = git_command()
@@ -966,6 +998,50 @@ impl GitVcs {
         Self::run(args, dir).map(|s| s.trim().to_string())
     }
 
+    /// [`GitVcs::run`] for a command that answers "nothing there" with the
+    /// exit status `absent`: `None` for that answer, an error for any other
+    /// failure.
+    fn run_or_absent(
+        args: impl Into<Argv>,
+        dir: &Path,
+        absent: Absent,
+    ) -> Result<Option<String>, VcsError> {
+        let args = args.into();
+        let output = git_command()
+            .args(&args)
+            .current_dir(dir)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        if output.status.code() == Some(absent.status()) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err(VcsError::CommandFailed {
+                args: args.into_words(),
+                repo: dir.to_path_buf(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        String::from_utf8(output.stdout)
+            .map(Some)
+            .map_err(|_| VcsError::CommandFailed {
+                args: args.into_words(),
+                repo: dir.to_path_buf(),
+                stderr: "git output not valid UTF-8".to_string(),
+            })
+    }
+
+    fn run_trimmed_or_absent(
+        args: impl Into<Argv>,
+        dir: &Path,
+        absent: Absent,
+    ) -> Result<Option<String>, VcsError> {
+        Self::run_or_absent(args, dir, absent).map(|s| s.map(|s| s.trim().to_string()))
+    }
+
     /// [`GitVcs::run`] for a command whose stderr is its progress report:
     /// returns what git wrote there once it has succeeded.
     fn run_logged(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
@@ -991,15 +1067,13 @@ impl GitVcs {
 
     /// Whether `repo`'s config holds any `branch.<branch>.*` key.
     fn has_branch_section(repo: &Path, branch: &str) -> Result<bool, VcsError> {
-        let listing = match Self::run(
+        let Some(listing) = Self::run_or_absent(
             ["config", "-z", "--name-only", "--get-regexp", r"^branch\."],
             repo,
-        ) {
-            Ok(listing) => listing,
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                return Ok(false)
-            }
-            Err(e) => return Err(e),
+            Absent::ConfigKey,
+        )?
+        else {
+            return Ok(false);
         };
         let prefix = format!("branch.{branch}.");
         Ok(listing.split_terminator('\0').any(|key| {
@@ -1010,26 +1084,10 @@ impl GitVcs {
 
     /// The value of config `key` in `repo`, or `None` when it is unset.
     fn config_get(repo: &Path, key: &str) -> Result<Option<String>, VcsError> {
-        let output = git_command()
-            .args(["config", "--get", key])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git config --get {key}"),
-                source: e,
-            })?;
-        if output.status.success() {
-            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            return Ok((!value.is_empty()).then_some(value));
-        }
-        if output.stdout.is_empty() && output.stderr.is_empty() {
-            return Ok(None);
-        }
-        Err(VcsError::CommandFailed {
-            args: vec!["config".into(), "--get".into(), key.to_owned()],
-            repo: repo.to_path_buf(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+        Ok(
+            Self::run_trimmed_or_absent(["config", "--get", key], repo, Absent::ConfigKey)?
+                .filter(|value| !value.is_empty()),
+        )
     }
 
     /// The names of `repo`'s remotes.
@@ -1184,11 +1242,26 @@ impl GitVcs {
     /// registrations before it changes anything.
     fn run_awaiting_peers(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         let args = args.into();
-        Self::awaiting_peer_registration(dir, UNWRITTEN_REGISTRATION_WAIT, || Self::run(&args, dir))
+        Self::awaiting_peer_registration(dir, None, UNWRITTEN_REGISTRATION_WAIT, || {
+            Self::run(&args, dir)
+        })
     }
 
     fn run_trimmed_awaiting_peers(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         Self::run_awaiting_peers(args, dir).map(|s| s.trim().to_string())
+    }
+
+    /// [`GitVcs::run_awaiting_peers`] for a `worktree add` registering
+    /// `adding`.
+    fn add_awaiting_peers(
+        args: impl Into<Argv>,
+        dir: &Path,
+        adding: &Path,
+    ) -> Result<String, VcsError> {
+        let args = args.into();
+        Self::awaiting_peer_registration(dir, Some(adding), UNWRITTEN_REGISTRATION_WAIT, || {
+            Self::run(&args, dir)
+        })
     }
 
     /// Run `attempt` again for up to `wait` while it fails because a peer's
@@ -1197,74 +1270,121 @@ impl GitVcs {
     /// `git worktree add` creates the new worktree's registration under the
     /// shared repo and writes its `commondir` a moment later, in two steps. A
     /// git command that enumerates the repo's worktrees in between reads the
-    /// file empty and dies naming it. The writer finishes in microseconds on a
-    /// local disk and in milliseconds where file operations are slow, so while
-    /// a registration under the repo has an empty `commondir` the failure is
-    /// the peer's, not the repo's. The state is what is checked, not git's
-    /// wording, which is translated.
+    /// file empty and dies. The writer finishes in microseconds on a local
+    /// disk and in milliseconds where file operations are slow. So a failure
+    /// can be the peer's only while a registration is unwritten, or when one
+    /// that was not written before the attempt has appeared since; any other
+    /// failure is believed at once. `adding` is the worktree the attempt
+    /// itself registers, whose registration is no peer's.
     ///
     /// Only an `attempt` that has changed nothing when it dies can be run
     /// again as it was.
     fn awaiting_peer_registration<T>(
         dir: &Path,
+        adding: Option<&Path>,
         wait: std::time::Duration,
         mut attempt: impl FnMut() -> Result<T, VcsError>,
     ) -> Result<T, VcsError> {
+        let Some(registrations) = Registrations::of(dir) else {
+            return attempt();
+        };
         let deadline = std::time::Instant::now() + wait;
         let mut looked_clean = false;
         loop {
-            match attempt() {
-                Err(VcsError::CommandFailed { args, repo, stderr })
-                    if stderr.contains("commondir") =>
-                {
-                    let Some(unwritten) = Self::unwritten_registration(dir) else {
-                        // The writer may have finished between the failure
-                        // and this look, so a clean look earns one more
-                        // attempt; two in a row, with no unfinished
-                        // registration seen between them, are believed.
-                        if !std::mem::replace(&mut looked_clean, true) {
-                            continue;
-                        }
-                        return Err(VcsError::CommandFailed { args, repo, stderr });
-                    };
-                    looked_clean = false;
-                    if std::time::Instant::now() < deadline {
-                        std::thread::sleep(UNWRITTEN_REGISTRATION_POLL);
-                        continue;
-                    }
-                    return Err(VcsError::CommandFailed {
-                        args,
-                        repo,
-                        stderr: format!(
-                            "{}\n{} has been empty for {}s: the `git worktree add` that was \
-                             writing it stopped before finishing, and git cannot list this \
-                             repository's worktrees until that registration is completed or \
-                             removed",
-                            stderr.trim_end(),
-                            unwritten.display(),
-                            wait.as_secs_f64()
-                        ),
-                    });
-                }
+            let written_before = registrations.written();
+            let failure = match attempt() {
+                Err(failure @ VcsError::CommandFailed { .. }) => failure,
                 result => return result,
+            };
+            let peers: Vec<PathBuf> = registrations
+                .present()
+                .into_iter()
+                .filter(|r| adding.is_none_or(|adding| !Registrations::registers(r, adding)))
+                .collect();
+            if let Some(unwritten) = peers.iter().find(|r| !Registrations::is_written(r)) {
+                looked_clean = false;
+                if std::time::Instant::now() < deadline {
+                    std::thread::sleep(UNWRITTEN_REGISTRATION_POLL);
+                    continue;
+                }
+                let VcsError::CommandFailed { args, repo, stderr } = failure else {
+                    unreachable!("only a failed command is waited on")
+                };
+                return Err(VcsError::CommandFailed {
+                    args,
+                    repo,
+                    stderr: format!(
+                        "{stderr}\n{} has been empty for {}s: the `git worktree add` that \
+                         was writing it stopped before finishing, and git cannot list this \
+                         repository's worktrees until that registration is completed or \
+                         removed",
+                        unwritten.join(COMMONDIR).display(),
+                        wait.as_secs_f64()
+                    ),
+                });
             }
+            let appeared = peers.iter().any(|r| !written_before.contains(r));
+            // The writer may have finished between the failure and this
+            // look, so a registration written since earns one more attempt;
+            // two in a row, with no unfinished registration seen between
+            // them, are believed.
+            if appeared && !std::mem::replace(&mut looked_clean, true) {
+                continue;
+            }
+            return Err(failure);
         }
     }
+}
 
-    /// The `commondir` of a worktree registration under the repo `dir` is in
-    /// that is empty right now.
-    fn unwritten_registration(dir: &Path) -> Option<PathBuf> {
-        let common = Self::run_trimmed(
+const COMMONDIR: &str = "commondir";
+
+/// The worktree registrations of one repo, as directories under its common
+/// git directory.
+struct Registrations {
+    root: PathBuf,
+}
+
+impl Registrations {
+    fn of(dir: &Path) -> Option<Registrations> {
+        let common = GitVcs::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             dir,
         )
         .ok()?;
-        let common = CanonicalPath::of(Path::new(&common));
-        std::fs::read_dir(common.as_path().join("worktrees"))
-            .ok()?
-            .flatten()
-            .map(|registration| registration.path().join("commondir"))
-            .find(|commondir| std::fs::metadata(commondir).is_ok_and(|m| m.len() == 0))
+        Some(Registrations {
+            root: CanonicalPath::of(Path::new(&common))
+                .as_path()
+                .join("worktrees"),
+        })
+    }
+
+    fn present(&self) -> Vec<PathBuf> {
+        std::fs::read_dir(&self.root)
+            .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+            .unwrap_or_default()
+    }
+
+    fn written(&self) -> BTreeSet<PathBuf> {
+        self.present()
+            .into_iter()
+            .filter(|r| Self::is_written(r))
+            .collect()
+    }
+
+    fn is_written(registration: &Path) -> bool {
+        std::fs::metadata(registration.join(COMMONDIR)).is_ok_and(|m| m.len() > 0)
+    }
+
+    /// Whether `registration` is the one for the worktree at `worktree`: its
+    /// `gitdir` names that worktree's `.git`, absolutely or relative to the
+    /// registration.
+    fn registers(registration: &Path, worktree: &Path) -> bool {
+        std::fs::read_to_string(registration.join("gitdir")).is_ok_and(|gitdir| {
+            registration
+                .join(gitdir.trim_end_matches(['\n', '\r']))
+                .parent()
+                .is_some_and(|named| same_location(named, worktree))
+        })
     }
 }
 
@@ -1468,22 +1588,17 @@ impl GitVcs {
 
     /// The commit `spelled` names in `repo`, as git resolves a revision.
     ///
-    /// `--quiet` makes an unknown revision an exit with no stderr, so the
-    /// absence is recognized by its shape rather than by git's wording, which
-    /// is translated. Peeling to a commit is what keeps a spelling git would
+    /// Peeling to a commit is what keeps a spelling git would
     /// read as an option from resolving to anything.
     fn endpoint_commit(repo: &Path, spelled: &str) -> Result<CommitId, VcsError> {
         let deref = format!("{spelled}^{{commit}}");
         let args = ["rev-parse", "--verify", "--quiet", &deref];
-        match Self::run_trimmed(args, repo) {
-            Ok(printed) => commit_id_printed(&printed, &args, repo),
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                Err(VcsError::RevisionNotFound {
-                    repo: repo.to_path_buf(),
-                    rev: spelled.to_owned(),
-                })
-            }
-            Err(e) => Err(e),
+        match Self::run_trimmed_or_absent(args, repo, Absent::Revision)? {
+            Some(printed) => commit_id_printed(&printed, &args, repo),
+            None => Err(VcsError::RevisionNotFound {
+                repo: repo.to_path_buf(),
+                rev: spelled.to_owned(),
+            }),
         }
     }
 
@@ -1729,12 +1844,27 @@ fn range_endpoints(range: &str) -> Vec<&str> {
     sides.into_iter().filter(|side| !side.is_empty()).collect()
 }
 
-/// True when stderr signals "revision unknown / no such object".
-fn is_revision_not_found(stderr: &str) -> bool {
-    stderr.contains("unknown revision")
-        || stderr.contains("not a valid object name")
-        || stderr.contains("ambiguous argument")
-        || stderr.contains("Needed a single revision")
+/// The exit status by which a git command answers "nothing there". Any other
+/// non-zero status is a failure.
+#[derive(Clone, Copy)]
+enum Absent {
+    /// `rev-parse --verify --quiet`: the spelling names no object of the
+    /// type asked for.
+    Revision,
+    /// `config --get` and `config --get-regexp`: no key matches. A key with
+    /// no section exits 1 as well, and every key the backend asks for has
+    /// one.
+    ConfigKey,
+    /// `merge-base --all`: the commits share no history.
+    MergeBase,
+}
+
+impl Absent {
+    fn status(self) -> i32 {
+        match self {
+            Absent::Revision | Absent::ConfigKey | Absent::MergeBase => 1,
+        }
+    }
 }
 
 /// True for transient/internal tags that must not be chosen as a lock's
@@ -1973,13 +2103,13 @@ impl Vcs for GitVcs {
     }
 
     fn recorded_urls(&self, repo: &Path) -> Result<Vec<RecordedUrl>, VcsError> {
-        let listing = match Self::run(["config", "-z", "--get-regexp", r"^remote\..*\.url$"], repo)
-        {
-            Ok(listing) => listing,
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                return Ok(Vec::new())
-            }
-            Err(e) => return Err(e),
+        let Some(listing) = Self::run_or_absent(
+            ["config", "-z", "--get-regexp", r"^remote\..*\.url$"],
+            repo,
+            Absent::ConfigKey,
+        )?
+        else {
+            return Ok(Vec::new());
         };
         let mut seen = BTreeSet::new();
         let mut out = Vec::new();
@@ -2072,10 +2202,10 @@ impl Vcs for GitVcs {
                     unconfirmed.push(UnconfirmedRemote {
                         remote: remote.to_owned(),
                         cause: stderr
+                            .trim()
                             .lines()
-                            .map(str::trim)
-                            .find(|l| !l.is_empty())
-                            .unwrap_or("fetch failed")
+                            .next()
+                            .map_or("fetch failed", str::trim_end)
                             .to_owned(),
                     });
                 }
@@ -2137,10 +2267,9 @@ impl Vcs for GitVcs {
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
-        match Self::run_trimmed(["rev-parse", "HEAD"], repo) {
-            Err(VcsError::CommandFailed { stderr, .. })
-                if stderr.contains("ambiguous argument") =>
-            {
+        let args = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"];
+        match Self::run_trimmed_or_absent(args, repo, Absent::Revision)? {
+            None => {
                 // git cannot resolve HEAD. Whether that is because the repo
                 // has no commits yet is a question about HEAD's state, so it
                 // is asked where such questions are answered — this arm only
@@ -2152,7 +2281,7 @@ impl Vcs for GitVcs {
                     _ => "(unknown)".to_owned(),
                 };
                 Err(VcsError::CommandFailed {
-                    args: vec!["rev-parse".to_owned(), "HEAD".to_owned()],
+                    args: args.map(str::to_owned).to_vec(),
                     repo: repo.to_path_buf(),
                     stderr: format!(
                         "unborn HEAD (no commits yet, on branch '{branch_hint}'): \
@@ -2160,13 +2289,12 @@ impl Vcs for GitVcs {
                     ),
                 })
             }
-            Err(e) => Err(e),
-            Ok(sha) => {
+            Some(sha) => {
                 // A tag at HEAD becomes the display form, so human-readable output
                 // can name it (e.g. `v0.3.4`) without an extra resolve step. It is
                 // never what a lock records.
                 let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
-                let id = commit_id_printed(&sha, &["rev-parse", "HEAD"], repo)?;
+                let id = commit_id_printed(&sha, &args, repo)?;
                 Ok(ResolvedRevisionId::from_canonical(id, display))
             }
         }
@@ -2174,19 +2302,16 @@ impl Vcs for GitVcs {
 
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        let args = ["rev-parse", "--verify", &deref];
-        match Self::run_trimmed(args, repo) {
-            Ok(canonical) => Ok(ResolvedRevisionId::from_canonical(
+        let args = ["rev-parse", "--verify", "--quiet", &deref];
+        match Self::run_trimmed_or_absent(args, repo, Absent::Revision)? {
+            Some(canonical) => Ok(ResolvedRevisionId::from_canonical(
                 commit_id_printed(&canonical, &args, repo)?,
                 Some(rev.to_string()),
             )),
-            Err(VcsError::CommandFailed { stderr, .. }) if is_revision_not_found(&stderr) => {
-                Err(VcsError::RevisionNotFound {
-                    repo: repo.to_path_buf(),
-                    rev: rev.to_string(),
-                })
-            }
-            Err(e) => Err(e),
+            None => Err(VcsError::RevisionNotFound {
+                repo: repo.to_path_buf(),
+                rev: rev.to_string(),
+            }),
         }
     }
 
@@ -3395,7 +3520,7 @@ impl Vcs for GitVcs {
                 .text(at.id().as_str()),
             None => add.path(&staged_arg).text(branch.as_str()),
         };
-        if let Err(e) = Self::run_awaiting_peers(add, &store) {
+        if let Err(e) = Self::add_awaiting_peers(add, &store, &staged) {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
         }
@@ -3612,25 +3737,25 @@ impl Vcs for GitVcs {
         file_path: &Path,
     ) -> Result<String, VcsError> {
         let file = GitArg::from_path(file_path, "file path")?;
-        // `git show <rev>:<path>` prints the blob at the given revision.
-        // Non-zero exit when the revision is missing or the file doesn't
-        // exist at that revision; both surface as CommandFailed and the
-        // caller can inspect stderr.
         let rev_path = format!("{}:{}", revision.id().as_str(), file.as_str());
-        match Self::run(["show", &rev_path], repo) {
-            Ok(content) => Ok(content),
-            Err(VcsError::CommandFailed { stderr, .. })
-                if is_revision_not_found(&stderr)
-                    || stderr.contains("does not exist")
-                    || stderr.contains("exists on disk")
-                    || stderr.contains("Not a valid object") =>
-            {
-                Err(VcsError::RevisionNotFound {
-                    repo: repo.to_path_buf(),
-                    rev: rev_path,
-                })
-            }
-            Err(e) => Err(e),
+        let failure = match Self::run(["show", &rev_path], repo) {
+            Ok(content) => return Ok(content),
+            Err(failure @ VcsError::CommandFailed { .. }) => failure,
+            Err(e) => return Err(e),
+        };
+        // Naming the entry reads only trees, so a partial clone answers
+        // without fetching the blob whose absence may be the failure.
+        let named = Self::run_or_absent(
+            ["rev-parse", "--verify", "--quiet", &rev_path],
+            repo,
+            Absent::Revision,
+        );
+        match named {
+            Ok(None) => Err(VcsError::RevisionNotFound {
+                repo: repo.to_path_buf(),
+                rev: rev_path,
+            }),
+            _ => Err(failure),
         }
     }
 
@@ -4789,7 +4914,7 @@ impl GitVcs {
             // ADOPT. The branch is checked out as it stands, never deleted
             // and made again: deleting a ref takes a `DestroyProof`, and a
             // name match is not one.
-            Self::run_awaiting_peers(Argv::from(add).path(&dest_arg).text(branch), &store)
+            Self::add_awaiting_peers(Argv::from(add).path(&dest_arg).text(branch), &store, dest)
                 .map_err(classify)?;
             return Ok(RefOrigin::Adopted);
         }
@@ -4801,7 +4926,7 @@ impl GitVcs {
         // attempt that dies on a peer's has already authored it: the next one
         // checks the branch out instead of creating it, and the call is still
         // the one that authored it.
-        Self::awaiting_peer_registration(&store, UNWRITTEN_REGISTRATION_WAIT, || {
+        Self::awaiting_peer_registration(&store, Some(dest), UNWRITTEN_REGISTRATION_WAIT, || {
             let created = self.resolve_local_branch_tip(&store, name)?.is_some();
             let argv = if created {
                 Argv::from(add).path(&dest_arg).text(branch)
@@ -4833,7 +4958,7 @@ impl GitVcs {
             WorktreeFiles::Written => &["worktree", "add", "--detach"],
             WorktreeFiles::Unwritten => &["worktree", "add", "--detach", "--no-checkout"],
         };
-        Self::awaiting_peer_registration(&store, UNWRITTEN_REGISTRATION_WAIT, || {
+        Self::awaiting_peer_registration(&store, Some(dest), UNWRITTEN_REGISTRATION_WAIT, || {
             Self::run(
                 Argv::from(add).path(&dest_arg).text(at.id().as_str()),
                 &store,
@@ -5312,15 +5437,13 @@ impl WorkspacePopulation for GitVcs {
         submodule: &RecordedSubmodule,
         source: &Path,
     ) -> Result<(), VcsError> {
-        let remotes = match Self::run(
+        let Some(remotes) = Self::run_or_absent(
             ["config", "--local", "-z", "--get-regexp", r"^remote\."],
             source,
-        ) {
-            Ok(listing) => listing,
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                return Ok(())
-            }
-            Err(e) => return Err(e),
+            Absent::ConfigKey,
+        )?
+        else {
+            return Ok(());
         };
         let dest = workspace.join(&submodule.path);
         let cloned_remote = Self::only_remote(&dest)?;
@@ -5451,12 +5574,8 @@ impl GitVcs {
             args.extend(["--file", ".gitmodules"]);
         }
         args.extend(["-z", "--get-regexp", &pattern]);
-        let listing = match Self::run(args, workspace) {
-            Ok(listing) => listing,
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                return Ok(HashMap::new())
-            }
-            Err(e) => return Err(e),
+        let Some(listing) = Self::run_or_absent(args, workspace, Absent::ConfigKey)? else {
+            return Ok(HashMap::new());
         };
         let suffix = format!(".{setting}");
         Ok(listing
@@ -7846,7 +7965,6 @@ mod peer_registration_tests {
         assert!(found.is_err(), "{found:?}");
     }
 
-    #[test]
     fn listing_worktrees_waits_for_a_peer_to_finish_its_registration() {
         let fx = Fixture::new();
         let finishing = fx.leave_peer_unwritten(LATER);
@@ -7858,7 +7976,6 @@ mod peer_registration_tests {
         assert_eq!(listed.len(), 3, "{listed:?}");
     }
 
-    #[test]
     fn removing_a_worktree_waits_for_a_peer_to_finish_its_registration() {
         let fx = Fixture::new();
         let finishing = fx.leave_peer_unwritten(LATER);
@@ -7870,7 +7987,6 @@ mod peer_registration_tests {
         assert!(!fx.path("other").exists());
     }
 
-    #[test]
     fn destroying_a_branch_waits_for_a_peer_to_finish_its_registration() {
         let fx = Fixture::new();
         git(&fx.store, &["branch", "spare"]);
@@ -7902,7 +8018,6 @@ mod peer_registration_tests {
     /// Peers that keep starting registrations while a command keeps losing to
     /// them: a failure the look finds clean is asked again, and only two in a
     /// row with nothing unfinished seen between are believed.
-    #[test]
     fn clean_looks_count_only_while_nothing_unfinished_was_seen_between_them() {
         let fx = Fixture::new();
         let commondir = fx.commondir_of_peer();
@@ -7914,27 +8029,27 @@ mod peer_registration_tests {
             stderr: "fatal: failed to read x/commondir: Success".to_owned(),
         };
 
-        let outcome = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
-            attempts.set(attempts.get() + 1);
-            match attempts.get() {
-                // Lost to a peer still writing, then the peer finishes.
-                1 | 3 => {
-                    std::fs::write(&commondir, b"").unwrap();
-                    Err(lost())
+        let outcome =
+            GitVcs::awaiting_peer_registration(&fx.store, None, Duration::from_secs(5), || {
+                attempts.set(attempts.get() + 1);
+                match attempts.get() {
+                    // Lost to a peer still writing, then the peer finishes.
+                    1 | 3 => {
+                        std::fs::write(&commondir, b"").unwrap();
+                        Err(lost())
+                    }
+                    2 | 4 => {
+                        std::fs::write(&commondir, &written).unwrap();
+                        Err(lost())
+                    }
+                    _ => Ok(()),
                 }
-                2 | 4 => {
-                    std::fs::write(&commondir, &written).unwrap();
-                    Err(lost())
-                }
-                _ => Ok(()),
-            }
-        });
+            });
 
         outcome.expect("each clean look was separated from the next by an unfinished one");
         assert_eq!(attempts.get(), 5);
     }
 
-    #[test]
     fn creating_a_worktree_on_a_new_branch_still_authors_it_after_waiting() {
         let fx = Fixture::new();
         let start = GitVcs.head_revision(&fx.store).unwrap();
@@ -7956,10 +8071,11 @@ mod peer_registration_tests {
         std::fs::write(fx.commondir_of_peer(), b"").unwrap();
 
         let started = std::time::Instant::now();
-        let err = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_millis(80), || {
-            GitVcs::run(["worktree", "list", "--porcelain"], &fx.store)
-        })
-        .expect_err("a registration nobody finishes stays a failure");
+        let err =
+            GitVcs::awaiting_peer_registration(&fx.store, None, Duration::from_millis(80), || {
+                GitVcs::run(["worktree", "list", "--porcelain"], &fx.store)
+            })
+            .expect_err("a registration nobody finishes stays a failure");
 
         assert!(started.elapsed() >= Duration::from_millis(80));
         let VcsError::CommandFailed { stderr, .. } = err else {
@@ -7972,36 +8088,19 @@ mod peer_registration_tests {
         );
     }
 
-    #[test]
     fn a_failure_that_is_not_an_unwritten_registration_is_not_waited_on() {
         let fx = Fixture::new();
         let attempts = std::cell::Cell::new(0);
 
         let unrelated =
-            GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
+            GitVcs::awaiting_peer_registration(&fx.store, None, Duration::from_secs(5), || {
                 attempts.set(attempts.get() + 1);
                 GitVcs::run(["rev-parse", "--verify", "no-such-ref"], &fx.store)
             });
         assert!(unrelated.is_err());
         assert_eq!(attempts.get(), 1);
-
-        // Naming `commondir` is not enough: a registration must be empty. With
-        // none, the writer may only have finished since the failure, so the
-        // attempt is made once more and then the failure stands.
-        attempts.set(0);
-        let named = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
-            attempts.set(attempts.get() + 1);
-            Err::<(), _>(VcsError::CommandFailed {
-                args: vec!["worktree".to_owned(), "list".to_owned()],
-                repo: fx.store.clone(),
-                stderr: "fatal: failed to read x/commondir: No such file".to_owned(),
-            })
-        });
-        assert!(named.is_err());
-        assert_eq!(attempts.get(), 2);
     }
 
-    #[test]
     fn creating_a_worktree_on_an_existing_branch_still_adopts_it_after_waiting() {
         let fx = Fixture::new();
         let start = GitVcs.head_revision(&fx.store).unwrap();
@@ -8016,6 +8115,16 @@ mod peer_registration_tests {
         assert_eq!(origin.unwrap(), RefOrigin::Adopted);
         assert_eq!(git(&dest, &["symbolic-ref", "--short", "HEAD"]), "p--w");
     }
+
+    in_both_languages!(
+        listing_worktrees_waits_for_a_peer_to_finish_its_registration,
+        removing_a_worktree_waits_for_a_peer_to_finish_its_registration,
+        destroying_a_branch_waits_for_a_peer_to_finish_its_registration,
+        clean_looks_count_only_while_nothing_unfinished_was_seen_between_them,
+        creating_a_worktree_on_a_new_branch_still_authors_it_after_waiting,
+        a_failure_that_is_not_an_unwritten_registration_is_not_waited_on,
+        creating_a_worktree_on_an_existing_branch_still_adopts_it_after_waiting,
+    );
 }
 
 #[cfg(test)]

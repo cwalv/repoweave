@@ -30,9 +30,10 @@ const GIT_ENV_VARS: &[&str] = &[
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
-/// The locale every git runs in. git translates its messages into the
-/// operator's locale, and the backend tells some failures apart by git's
-/// wording, which only the untranslated messages hold to.
+/// The locale every git runs in. Nothing the backend decides rests on git's
+/// wording, which changes between releases as well as between languages;
+/// the untranslated messages are what an operator reading a failure rwv
+/// carries can search for.
 const MESSAGE_LOCALE: &str = "C";
 
 /// A path in the form git is told it: its UTF-8 text, unchanged.
@@ -150,6 +151,11 @@ impl GitCommand {
         for var in GIT_ENV_VARS {
             command.env_remove(var);
         }
+        #[cfg(test)]
+        if speech::translated() {
+            speech::translate(&mut command);
+            return GitCommand { command };
+        }
         command.env("LC_ALL", MESSAGE_LOCALE);
         GitCommand { command }
     }
@@ -201,6 +207,63 @@ impl GitCommand {
     #[cfg(test)]
     pub(super) fn into_command(self) -> Command {
         self.command
+    }
+}
+
+/// The language a test has git speak. Every git a thread spawns while
+/// [`speech::in_translated_git`] runs is spawned without the locale pin and
+/// asked for German, so a decision that rests on git's wording fails there.
+#[cfg(test)]
+pub(crate) mod speech {
+    use std::cell::Cell;
+    use std::process::Command;
+
+    const LANGUAGE: &str = "de";
+
+    /// glibc ignores `LANGUAGE` while the messages locale is `C`.
+    const MESSAGES_LOCALE: &str = "en_US.UTF-8";
+
+    thread_local! {
+        static TRANSLATED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn translated() -> bool {
+        TRANSLATED.with(Cell::get)
+    }
+
+    pub(super) fn translate(command: &mut Command) {
+        command
+            .env_remove("LC_ALL")
+            .env("LANGUAGE", LANGUAGE)
+            .env("LC_MESSAGES", MESSAGES_LOCALE);
+    }
+
+    /// Run `body` with every git this thread spawns unpinned and asked for
+    /// German. A host whose git has no German says so on stderr, and `body`
+    /// still runs without the pin.
+    pub(crate) fn in_translated_git<T>(body: impl FnOnce() -> T) -> T {
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                TRANSLATED.with(|t| t.set(false));
+            }
+        }
+        TRANSLATED.with(|t| t.set(true));
+        let _restore = Restore;
+        if !speaks_german() {
+            eprintln!("this host's git has no German: the run is unpinned but untranslated");
+        }
+        body()
+    }
+
+    fn speaks_german() -> bool {
+        let mut probe = Command::new("git");
+        translate(&mut probe);
+        probe
+            .args(["rev-parse", "--verify", "no-such-revision-here"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .is_ok_and(|out| !out.stderr.starts_with(b"fatal:"))
     }
 }
 

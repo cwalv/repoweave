@@ -538,8 +538,13 @@ serializable mirror, `VcsErrorOutput`, for `--json`.
 outside `git.rs` spawns git or assembles its argv: `git_command` is private to
 the module, and every git a production frame spawns is built by
 `GitCommand::new` (`src/git/argv.rs`), which removes the `GIT_*` variables that
-redirect it and pins `LC_ALL=C`, since the backend tells some failures apart by
-git's untranslated wording. A `#[cfg(test)]` fixture that spawns git outside
+redirect it and pins `LC_ALL=C`, so a failure rwv carries is in the words an
+operator can search for. No decision rests on git's wording, which is
+translated and changes between releases: the backend tells outcomes apart by
+exit status, by formats git documents for machines (`push --porcelain`,
+`rev-parse --verify --quiet`), or by the repository's state, and
+`tests/git_backend_reads_no_wording_test.rs` fails on any stderr text it
+matches. A `#[cfg(test)]` fixture that spawns git outside
 that constructor inherits `GIT_DIR` when the suite runs under the pre-push
 hook; `git_command_in_test` builds the same command for one. A remote is held the same way — it crosses
 the seam as a `RemoteHandle`, which only a backend constructs and which

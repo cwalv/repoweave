@@ -2,7 +2,7 @@
 //! written with object plumbing, never checked out, advanced by a
 //! compare-and-swap of its ref.
 
-use super::{git_command, remote_tracking, Argv, GitVcs, LOCAL_BRANCH_NAMESPACE};
+use super::{git_command, remote_tracking, Absent, Argv, GitVcs, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
     CommitId, CommittedFile, FileChange, NamedBranch, RecordsAdvance, RecordsPublish, RecordsSite,
     RemoteHandle, VcsError,
@@ -30,6 +30,39 @@ pub(super) fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
         repo: repo.to_path_buf(),
         stderr,
     }
+}
+
+/// What `git push --porcelain` reports for one ref: its status line is
+/// `<flag>\t<from>:<to>\t<summary>`, and a rejection's summary opens with the
+/// bracketed kind git-push(1) documents.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PushedRef {
+    Updated,
+    /// Not sent: the remote's ref is not an ancestor of what was pushed.
+    Rejected,
+    RemoteRejected {
+        summary: String,
+    },
+    Failed,
+}
+
+pub(super) fn pushed_ref(porcelain: &str, refname: &str) -> Option<PushedRef> {
+    porcelain.lines().find_map(|line| {
+        let mut fields = line.splitn(3, '\t');
+        let (flag, refs, summary) = (fields.next()?, fields.next()?, fields.next()?);
+        let (_, to) = refs.rsplit_once(':')?;
+        if to != refname {
+            return None;
+        }
+        Some(match flag {
+            "!" if summary.starts_with("[rejected]") => PushedRef::Rejected,
+            "!" if summary.starts_with("[remote rejected]") => PushedRef::RemoteRejected {
+                summary: summary.to_owned(),
+            },
+            "!" => PushedRef::Failed,
+            _ => PushedRef::Updated,
+        })
+    })
 }
 
 pub(super) fn commit_id(text: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
@@ -95,29 +128,69 @@ impl GitVcs {
         remote: &RemoteHandle,
         commit: &CommitId,
     ) -> Result<RecordsPublish, VcsError> {
-        let refspec = format!(
-            "{}:{LOCAL_BRANCH_NAMESPACE}{RECORDS_BRANCH}",
-            commit.as_str()
-        );
-        match Self::run(["push", remote.name(), refspec.as_str()], repo) {
-            Ok(_) => Ok(RecordsPublish::Published),
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.contains("[remote rejected]") => {
+        let refname = format!("{LOCAL_BRANCH_NAMESPACE}{RECORDS_BRANCH}");
+        let refspec = format!("{}:{refname}", commit.as_str());
+        let args = ["push", "--porcelain", remote.name(), refspec.as_str()];
+        let output = git_command()
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        match pushed_ref(&stdout, &refname) {
+            Some(PushedRef::Updated) => Ok(RecordsPublish::Published),
+            Some(PushedRef::Rejected) => Ok(RecordsPublish::RemoteMoved),
+            Some(PushedRef::RemoteRejected { summary })
+                if !Self::remote_moved_from(repo, remote, &refname, commit)? =>
+            {
                 Ok(RecordsPublish::Rejected(
-                    stderr
-                        .lines()
-                        .map(|line| line.trim_start_matches("remote: ").trim())
-                        .filter(|line| {
-                            !line.is_empty() && !line.starts_with("error: failed to push")
-                        })
+                    std::iter::once(summary.as_str())
+                        .chain(stderr.lines().map(str::trim))
+                        .filter(|line| !line.is_empty())
                         .collect::<Vec<_>>()
                         .join("; "),
                 ))
             }
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.contains("[rejected]") => {
-                Ok(RecordsPublish::RemoteMoved)
-            }
-            Err(e) => Err(e),
+            Some(PushedRef::RemoteRejected { .. }) => Ok(RecordsPublish::RemoteMoved),
+            Some(PushedRef::Failed) | None => Err(failed(&args, repo, stderr)),
         }
+    }
+
+    /// Whether `remote`'s `refname` now holds a commit that `commit` does
+    /// not descend from. The remote compares-and-swaps the ref after
+    /// accepting the push, and reports losing that race as a refusal.
+    fn remote_moved_from(
+        repo: &Path,
+        remote: &RemoteHandle,
+        refname: &str,
+        commit: &CommitId,
+    ) -> Result<bool, VcsError> {
+        let listing = Self::run(["ls-remote", remote.name(), refname], repo)?;
+        let Some(tip) = listing
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .find_map(|(tip, name)| (name == refname).then_some(tip))
+        else {
+            return Ok(false);
+        };
+        let held = Self::run_trimmed_or_absent(
+            [
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{tip}^{{commit}}"),
+            ],
+            repo,
+            Absent::Revision,
+        )?;
+        Ok(match held {
+            Some(tip) => !Self::descends(repo, &tip, commit.as_str())?,
+            None => true,
+        })
     }
 
     pub(super) fn run_bytes(args: &[&str], repo: &Path, input: &[u8]) -> Result<Vec<u8>, VcsError> {
@@ -313,16 +386,11 @@ impl GitVcs {
         b: &CommitId,
     ) -> Result<Vec<CommitId>, VcsError> {
         let args = ["merge-base", "--all", a.as_str(), b.as_str()];
-        match Self::run_trimmed(args, repo) {
-            Ok(out) => out
-                .lines()
-                .map(|line| commit_id(line, &args, repo))
-                .collect(),
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                Ok(Vec::new())
-            }
-            Err(e) => Err(e),
-        }
+        Self::run_trimmed_or_absent(args, repo, Absent::MergeBase)?
+            .unwrap_or_default()
+            .lines()
+            .map(|line| commit_id(line, &args, repo))
+            .collect()
     }
 
     pub(super) fn merge_base_of_merge(
@@ -360,20 +428,16 @@ impl GitVcs {
     }
 
     fn branch_remote_settings(repo: &Path) -> Result<BTreeMap<String, RemoteSettings>, VcsError> {
-        let listing = match Self::run(
+        let listing = Self::run_or_absent(
             [
                 "config",
                 "--get-regexp",
                 r"^branch\..*\.(pushremote|remote)$",
             ],
             repo,
-        ) {
-            Ok(listing) => listing,
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                String::new()
-            }
-            Err(e) => return Err(e),
-        };
+            Absent::ConfigKey,
+        )?
+        .unwrap_or_default();
         let mut settings: BTreeMap<String, RemoteSettings> = BTreeMap::new();
         for line in listing.lines() {
             let Some((key, value)) = line.split_once(' ') else {
