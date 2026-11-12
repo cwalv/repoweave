@@ -136,7 +136,7 @@ fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &st
         "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(source, target, "web-app"),
@@ -240,7 +240,7 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
         "{{\"id\": \"reentry-test-advance\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(workspace, target, "web-app"),
@@ -460,7 +460,7 @@ fn write_sync_to_owner_record_at_phase(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(source, target, "web-app"),
@@ -718,7 +718,7 @@ fn write_sync_to_retire_record(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json_after_advancing(source, target, "web-app"),
@@ -1075,7 +1075,7 @@ fn write_sync_to_record_with_history(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"history\": {history}, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(owner, target, "web-app"),

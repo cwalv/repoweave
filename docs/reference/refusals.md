@@ -1164,7 +1164,12 @@ interleave writes. The budget exists so a hung peer surfaces as a refusal
 rather than an indefinite hang.
 
 **Exits.** Wait for the other process and re-run. If no rwv is running, the
-claim is stale: delete the claim file the refusal names, then re-run.
+claim is stale: delete the claim file the refusal names, then re-run. A
+landing's claim on its target is the exception: it is held by a landing
+operation, not a process, for as long as the operation stands, and the refusal
+names that landing's workspace. End the landing there with `rwv land
+--continue` or `rwv abort`; never delete its claim. A landing claim whose
+operation is no longer recorded is taken over by the next landing.
 
 ### `surfacing-path-occupied`
 

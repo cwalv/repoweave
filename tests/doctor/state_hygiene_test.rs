@@ -153,7 +153,7 @@ fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
         "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"/tmp/src\", \"target\": \"/tmp/tgt\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
     );
     std::fs::write(workspace_dir.join(".rwv-op"), json).unwrap();
 }
@@ -920,7 +920,7 @@ fn a_record_of_another_schema_keeps_its_savepoints_under_fix() {
     let record = root.join(".rwv-op");
     let older = std::fs::read_to_string(&record)
         .unwrap()
-        .replace("\"schema\": 5", "\"schema\": 3");
+        .replace("\"schema\": 6", "\"schema\": 3");
     std::fs::write(&record, older).unwrap();
     add_savepoint(&repo_abs, op_id, &saved);
 

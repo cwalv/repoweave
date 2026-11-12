@@ -1,6 +1,6 @@
 //! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv land`.
 //!
-//! # Schema v5 (no back-compat with v4)
+//! # Schema v6 (no back-compat with v5)
 //!
 //! A record carries its `schema`. One that carries another, or none, is
 //! refused by every reader, naming the release that wrote it: it is finished
@@ -96,7 +96,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// The schema every record this release writes carries.
-pub(crate) const OP_RECORD_SCHEMA: u32 = 5;
+pub(crate) const OP_RECORD_SCHEMA: u32 = 6;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
@@ -2477,7 +2477,7 @@ mod tests {
         let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
-  "schema": 5,
+  "schema": 6,
   "release": "{release}",
   "id": "1779769917405921588",
   "verb": "land",
@@ -2720,7 +2720,7 @@ mod tests {
   "phase": "replay",
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2749,7 +2749,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2780,7 +2780,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2805,7 +2805,7 @@ mod tests {
   "advanced_tips": {{}},
   "converged_tips": {{}},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }}
 "#
         )
@@ -2860,7 +2860,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2886,7 +2886,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3008,7 +3008,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3026,7 +3026,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
-                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 5, "release": "0.0.0", "take_in": null}}"#
+                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");

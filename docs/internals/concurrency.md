@@ -75,16 +75,31 @@ fetches, so a transfer from a local path or a hand `git fetch` does not move it.
 **A landing claims its target: one landing at a time per target.** `rwv land`
 takes the claim on its target branch (`LandingClaim::take` in
 `src/landing_claim.rs`, the file `.rwv-landing.lock` under `rwv-landings/` in
-the project repo's store, one directory per project and branch) before it reads
-the target's tips, so a second landing into the same target waits within the
-shared claim budget and then reads the tips the first one left, rather than
-losing a compare-and-swap or meeting the first one's lease. The claim names its
-op, so that op's `--continue` takes it over and `rwv abort` releases it. It is
-given up once the target's workspace took the last fast-forward and the record
-moved to `retire`, together with the op's lease on the target's workspace; the
-lease goes first, so no landing waiting on the claim ever reads a lease whose
-owner record `--retire` is about to remove. The compare-and-swap of each move
-stays the guard against every writer that takes no claim.
+the project repo's store, one directory per project and branch, named by a
+digest) after it writes its op record and before it reads the target's tips
+or leases the target's workspace, so a second landing into the same target
+waits and then reads the tips the first one left, rather than losing a
+compare-and-swap or meeting the first one's lease. The wait lasts while the
+holder's op record keeps changing and the shared claim budget past its last
+change. The claim is held for as long as the op stands, across every stop:
+dropping the value releases nothing, so a stopped landing as refs, which
+leases no workspace, still keeps others off what it moved. It is given up when
+the record moves to `retire` and when an op with no retire ends
+(`release_target`), the lease on the target's workspace first, and by `rwv
+abort` by op id, whatever the record holds. A release removes the claim only
+while it names its own op.
+
+The claim names its op and the workspace holding the op's record (JSON). The
+record is written before the claim is taken and cleared only after it is
+released, so a claim whose workspace records no op with its id, or no record
+at all, is dead: the next `take` moves it aside under a name of its own,
+compares what it moved with what it judged, and removes it, linking it back
+if it was not the dead one. No process id, host or clock is consulted, so a
+claim whose op is recorded is never taken from it. A claim whose bytes this
+rwv does not read is never judged dead. Taking it is a hard-link publish of a
+fully written temp (`durable_file::create_new`), which fails on an occupied
+path, as the op record's is. The compare-and-swap of each move stays the
+guard against every writer that takes no claim.
 
 **The workspace state takes no claim.** `rwv-workspace-state` lives in one
 checkout's private directory and only a verb acting on that workspace writes it,

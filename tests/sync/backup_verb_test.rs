@@ -583,7 +583,7 @@ fn list_runs_mid_operation_and_drop_and_prune_do_not() {
              \"project\": \"demo\", \"source\": \"{root}\", \"target\": \"{root}\", \
              \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
              \"converged_tips\": {{}}, \"overrides\": [], \
-             \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": null}}",
+             \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
             root = common::json_escaped(&weave.ws),
         ),
     )

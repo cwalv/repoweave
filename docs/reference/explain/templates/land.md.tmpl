@@ -252,20 +252,24 @@ the op and its two exits: `rwv land --continue` from the owning workspace, or
 `rwv abort`.
 
 Landings into one target run one at a time. Before it reads the target's tips,
-a landing claims the target; a second landing into it waits for that claim,
-then lands on the tips the first one left. Waiting runs out after a few
-seconds and refuses as `state-claim-held`, naming the landing that holds the
-claim and the file to delete when no rwv is landing there. The claim and the
-lease on the target's workspace are given up once the target's workspace has
-taken the landing, before `--retire` removes this workspace. `rwv land
---continue` takes the claim back, and `rwv abort` releases it.
+a landing claims the target, and it holds the claim for as long as its
+operation stands: stopped on a conflict or a lost race, it still holds it. A
+second landing into the target waits for that claim, then lands on the tips
+the first one left. While the landing ahead stops making progress, waiting runs
+out after a few seconds and refuses as `state-claim-held`, naming the landing
+that holds the claim, the workspace it runs in, and its two exits there,
+`rwv land --continue` and `rwv abort`. The claim and the lease on the target's
+workspace are given up once the target's workspace has taken the landing, or
+the operation ends, before `--retire` removes this workspace. A landing killed
+before it released the claim leaves it to its operation, which `rwv land
+--continue` resumes and `rwv abort` ends; a claim whose operation is no
+longer recorded is taken over by the next landing.
 
-A landing can be undone until it gives up the target. Stopped in its retire,
-it has: another landing may already have read the target or built on it, and
-another operation may hold the target's workspace. `rwv abort` from the
-target's workspace then finds no operation, and from this workspace it ends
-the operation and restores nothing on either side: the landing stands, and
-`rwv land --retire` run again retires the workweave.
+`rwv abort` restores every ref a landing moved, at any phase. Stopped in its
+retire, the landing has given up the target: abort, from this workspace or the
+target's, first takes the claim and the target's workspace back, refusing
+while another operation holds either, then restores. A ref another landing has
+since built on is a foreign tip.
 
 A resume recorded at `advance-target` re-enters `relock` first, and says so:
 relock is what makes the lock it lands agree with the tips it lands.

@@ -421,7 +421,7 @@ fn abort_restores_a_reference_member_like_any_other() {
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{target}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{\"{REF_PATH}\": \"{advanced}\"}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 5, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(&ww.root),
         target = common::json_escaped(&primary.root),
     );

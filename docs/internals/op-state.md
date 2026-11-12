@@ -26,7 +26,7 @@ It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
-Schema v5. Every reader refuses a record whose `schema` is another number or
+Schema v6. Every reader refuses a record whose `schema` is another number or
 absent, naming the release that wrote it (`release`, or "a release before" the
 running one for a record that has none): it is finished or aborted with that
 release, and nothing of it is read. JSON, every field mandatory — a record
@@ -34,7 +34,7 @@ missing a key fails to parse rather than defaulting.
 
 ```json
 {
-  "schema": 5,
+  "schema": 6,
   "release": "0.25.0",
   "id": "1779769917405921588",
   "verb": "sync",
@@ -124,8 +124,10 @@ is what turns one that holds the last reference to its commits into a backup.
 Written at every **other workspace the op mutates** (never at the owner
 workspace). Immutable once written. Provides mutex semantics (prevents
 concurrent ops on the same workspace) and a pointer back to the owner record
-for `--continue` and `rwv abort`. Cleared after the owning op completes or is
-aborted.
+for `--continue` and `rwv abort`. A landing clears it as its record moves to
+`retire` or as it ends, and `rwv abort` of a landing at `retire` writes it
+again before it restores. A lease that points at another owner is never
+cleared by this op.
 
 ```json
 {
