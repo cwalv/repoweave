@@ -7311,8 +7311,8 @@ impl DriftRefresh {
 
     /// The line saying the refresh went unrecorded, after the checkout's label.
     pub fn describe_unrecorded(&self) -> Option<String> {
-        self.unrecorded.as_ref().map(|e| {
-            format!("the refresh was written but could not be recorded in the checkout: {e}")
+        self.unrecorded.as_ref().map(|said| {
+            format!("the refresh was written but could not be recorded in the checkout: {said}")
         })
     }
 }
