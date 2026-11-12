@@ -7823,9 +7823,10 @@ pub fn run_abort(
                             ),
                         ));
                     } else {
+                        let why = error.map(|e| format!(": {e:#}")).unwrap_or_default();
                         eprintln!(
                             "  {named}: '{branch}' moved since the op wrote it, so it is left \
-                             where it is: {error:#}"
+                             where it is{why}"
                         );
                         if !tally.abandonable.contains(&named) {
                             tally.abandonable.push(named);

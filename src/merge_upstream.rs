@@ -256,7 +256,7 @@ pub(crate) enum RefMoveLeft {
         dir: PathBuf,
         now: Option<CommitId>,
         held_at: Vec<PathBuf>,
-        error: VcsError,
+        error: Option<VcsError>,
     },
     /// Put back over a tip the operator abandoned, kept first as a backup.
     Abandoned {
@@ -295,12 +295,18 @@ pub(crate) fn restore_ref_moves(
             continue;
         }
         let held_at = vcs.checkouts_of_branch(&dir, &branch).unwrap_or_default();
+        if now.is_some() && !held_at.is_empty() {
+            left.push(RefMoveLeft::Foreign {
+                repo: moved.repo.clone(),
+                branch: moved.branch.clone(),
+                dir,
+                now,
+                held_at,
+                error: None,
+            });
+            continue;
+        }
         let restored = match &now {
-            Some(_) if !held_at.is_empty() => Err(VcsError::CommandFailed {
-                args: vec!["update-ref".to_owned(), moved.branch.clone()],
-                repo: dir.clone(),
-                stderr: "a checkout holds it".to_owned(),
-            }),
             Some(now) if *now != moved.to && abandon(&moved.repo) => vcs
                 .create_backup(
                     &dir,
@@ -327,7 +333,7 @@ pub(crate) fn restore_ref_moves(
                 dir,
                 now,
                 held_at,
-                error,
+                error: Some(error),
             });
         }
     }
