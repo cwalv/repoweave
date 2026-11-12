@@ -175,17 +175,23 @@ fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_wa
     succeed(&s1, &["land", "--history", "linear"]);
 }
 
-/// The seat and the primary both moved the member, so the replay rebases it
-/// and Phase 3 must commit a lock pinning the rebased tip.
+/// The seat declares the member on another branch and holds no work of its
+/// own there, so the landing moves the member to that branch's tip and
+/// Phase 3 must commit a lock pinning it.
 fn park_in_relock(weave: &Weave) -> PathBuf {
     let s1 = weave.seat("s1");
-    commit_file(&common::under(&weave.root, LIB), "primary.txt");
-    succeed(&weave.root, &["lock", "--commit"]);
-    commit_file(&common::under(&s1, LIB), "seat.txt");
-    succeed(&s1, &["lock", "--commit"]);
+    let lib = common::under(&weave.root, LIB);
+    common::git_in(&lib, &["branch", "dev"]);
+    common::git_in(&lib, &["switch", "-q", "dev"]);
+    commit_file(&lib, "dev.txt");
+    common::git_in(&lib, &["switch", "-q", "main"]);
+    succeed(&s1, &["member", "set-branch", LIB, "dev"]);
     weave.refuse_commits();
 
-    let out = run(&s1, &["land", "--history", "linear"]);
+    let out = run(
+        &s1,
+        &["land", "--history", "linear", "--allow-member-change", LIB],
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),

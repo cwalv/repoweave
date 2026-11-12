@@ -72,9 +72,12 @@ known.
 excluded from the project-repo merge phase (Phase 1') and regenerated
 in Phase 3 from the now-aligned manifest tips. `rwv sync` records its lock
 once every member has taken in: each pin merged three ways against the
-merge base's lock, with every member it moved at its new tip. Any lock-only commit on
-the source side becomes an empty patch on the target side and is
-dropped automatically. The phase model is described in
+merge base's lock, with every member it moved at its new tip. Where a rebase
+replays the project branch, each replayed commit pins what the member rebases
+made of the commits it pinned: the VCS reports which old commit became which,
+and a pin outside the rebased ranges is kept. A pin on a commit the rebase
+dropped, already on the target, moves to what the rebase made of the commits
+before it, reported `re-pinned`. The phase model is described in
 [sync-semantics](./sync-semantics.md).
 
 A merge rwv does not make — a `git merge` or `git pull` run by hand — merges

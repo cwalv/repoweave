@@ -619,19 +619,22 @@ fn a_refused_prune_fails_sync_to_once_it_completes() {
 }
 
 /// Replay refuses the prune, then the op `args` starts reaches a relock commit
-/// the project repo's hook refuses. Returns the seat, the hook, and the run.
+/// the project repo's hook refuses: the seat declares the member on a branch
+/// it holds no work of its own on, so the landing moves the member there and
+/// relocks. Returns the seat, the hook, and the run.
 fn park_in_relock_after_a_refused_prune(
     weave: &Weave,
     args: &[&str],
 ) -> (PathBuf, PathBuf, Output) {
     let s1 = seat_behind_a_drop(weave);
-    for (workspace, file) in [(&weave.root, "primary.txt"), (&s1, "seat.txt")] {
-        let lib = lib_dir(workspace);
-        std::fs::write(lib.join(file), "work\n").unwrap();
-        common::git_in(&lib, &["add", file]);
-        common::git_in(&lib, &["commit", "-m", file]);
-        succeed(workspace, &["lock", "--commit"]);
-    }
+    let lib = lib_dir(&weave.root);
+    common::git_in(&lib, &["branch", "dev"]);
+    common::git_in(&lib, &["switch", "-q", "dev"]);
+    std::fs::write(lib.join("dev.txt"), "work\n").unwrap();
+    common::git_in(&lib, &["add", "dev.txt"]);
+    common::git_in(&lib, &["commit", "-m", "dev.txt"]);
+    common::git_in(&lib, &["switch", "-q", "main"]);
+    succeed(&s1, &["member", "set-branch", LIB, "dev"]);
     std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
     let hooks = weave.root.parent().unwrap().join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
@@ -664,8 +667,10 @@ fn assert_parked_after_the_refused_prune(parked: &Output, s1: &Path) {
 #[test]
 fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
     let weave = weave();
-    let (s1, hook, parked) =
-        park_in_relock_after_a_refused_prune(&weave, &["land", "--history", "linear"]);
+    let (s1, hook, parked) = park_in_relock_after_a_refused_prune(
+        &weave,
+        &["land", "--history", "linear", "--allow-member-change", LIB],
+    );
     assert!(!parked.status.success(), "the hook must have refused");
     assert_parked_after_the_refused_prune(&parked, &s1);
 
@@ -683,8 +688,10 @@ fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
 #[test]
 fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
     let weave = weave();
-    let (s1, hook, parked) =
-        park_in_relock_after_a_refused_prune(&weave, &["land", "--history", "linear"]);
+    let (s1, hook, parked) = park_in_relock_after_a_refused_prune(
+        &weave,
+        &["land", "--history", "linear", "--allow-member-change", LIB],
+    );
     assert!(!parked.status.success(), "the hook must have refused");
     assert_parked_after_the_refused_prune(&parked, &s1);
 

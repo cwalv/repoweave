@@ -169,10 +169,29 @@ fn replayed_lock(
     LockFile { repositories }
 }
 
+fn changes_nothing_but_the_lock(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    commit: &CommitId,
+) -> anyhow::Result<bool> {
+    let Some(parent) = vcs.parents(dir, commit)?.into_iter().next() else {
+        return Ok(false);
+    };
+    Ok(vcs
+        .changed_paths_between(
+            dir,
+            &ResolvedRevisionId::from(parent),
+            &ResolvedRevisionId::from(commit.clone()),
+        )?
+        .iter()
+        .all(|path| path == LockFile::FILE_NAME))
+}
+
 /// Rewrite each commit the project rebase `replayed` wrote onto `onto` so its
 /// lock pins what the member rebases made of the commits it pinned, then move
 /// the branch `on` witnesses to the rewritten tip. Commits already pinning so
-/// are kept as they are. Returns each pin a dropped commit's re-map moved.
+/// are kept as they are; one left changing nothing, as the rebase drops a
+/// commit it leaves empty, is dropped. Returns each pin a dropped commit's re-map moved.
 pub(crate) fn remap_project(
     vcs: &dyn Vcs,
     on: &AttachedRef,
@@ -217,6 +236,15 @@ pub(crate) fn remap_project(
                 Path::new(LockFile::FILE_NAME),
             )
             .ok();
+        let pins_as_before = before
+            .as_ref()
+            .map(crate::lock::render)
+            .transpose()?
+            .is_some_and(|text| text == rendered);
+        if pins_as_before && changes_nothing_but_the_lock(vcs, dir, written)? {
+            rewritten = true;
+            continue;
+        }
         let keep = !rewritten && current.as_deref() == Some(rendered.as_str());
         parent = if keep {
             written.clone()

@@ -400,7 +400,7 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn sync_to_auto_relock_commit_appears_after_rebase() {
+fn a_landing_replays_a_lock_commit_pinning_the_rebased_member() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
@@ -418,18 +418,9 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
 
-    // Workweave makes a DIVERGENT commit to its server branch (both primary and
-    // ww branch from initial_sha, so their server commits are independent).
-    // ww then updates its lock to match its server tip (lock fresh) and also
-    // adds a unique non-lock project commit.
-    //
-    // During land step 1 (ww syncs FROM primary's lock = primary_c2):
-    //   Phase 2 must REBASE ww's server onto primary_c2 (divergent, not ff).
-    //   The rebased server gets a NEW sha (different from primary_c2).
-    //   Phase 1' rebases ww's project onto primary's tip (lock=primary_c2).
-    //   The lock commit is dropped (merge=rwv-ours), "feat: ww unique commit" replays.
-    //   After Phase 1', lock = primary_c2 (from rebase base), but server = rebased sha.
-    //   Phase 3 detects the mismatch and emits "lock: auto-relock after sync from...".
+    // The seat moves the server on its own and pins that in a lock commit,
+    // then adds a project commit of its own: the landing rebases the server
+    // and replays both project commits onto the primary's.
     let ww_c2 = make_commit(
         &ww.server_dir,
         "ww-server.txt",
@@ -454,29 +445,31 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
         .assert()
         .success();
 
-    // Read the log of ww's project repo.
     let log = common::git_in(&ww.project_dir, &["log", "--oneline", "--no-decorate"]);
-
-    // Phase 3 detects the rebased-server sha != primary_c2 and emits
-    // "lock: auto-relock after sync from <source>".
     assert!(
-        log.contains("auto-relock"),
-        "expected auto-relock commit in ww project log; log:\n{log}"
+        !log.contains("auto-relock"),
+        "the replayed lock commit already pins the rebased server; log:\n{log}"
     );
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    assert_ne!(server_tip.trim(), ww_c2.trim(), "the server was rebased");
+    for rev in ["HEAD", "HEAD~1"] {
+        let lock = common::git_in(&ww.project_dir, &["show", &format!("{rev}:rwv.lock")]);
+        assert!(
+            lock.contains(server_tip.trim()) && !lock.contains(ww_c2.trim()),
+            "the replayed commit {rev} pins the rebased server tip:\n{lock}"
+        );
+    }
 
-    // Primary's project should be at the same tip as ww after step 3 ff-advances.
     let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_tip, ww_tip,
         "primary and ww project tips should converge"
     );
-
-    // History-shape assertion: the auto-relock commit must sit ON TOP of
-    // ww's unique non-lock commit in the project log — it was emitted by
-    // Phase 3 after replaying ww's commits, so it must be the newest entry.
-    // ww's unique non-lock commit must appear below it.
-    common::assert_log_ordering(&ww.project_dir, &["auto-relock", "feat: ww unique commit"]);
+    common::assert_log_ordering(
+        &ww.project_dir,
+        &["feat: ww unique commit", "lock: ww C2", "lock: primary C2"],
+    );
 }
 
 // ---------------------------------------------------------------------------

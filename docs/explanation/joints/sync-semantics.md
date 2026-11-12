@@ -186,8 +186,12 @@ parent; landing it under `linear` or `merge` makes a merge commit whose first
 parent is the receiving tip, so the target keeps its own first-parent chain.
 
 A rebase replays each commit as a three-way merge; rwv holds the lock merge
-driver for the replay, so a lock-only commit replays as an empty patch rather
-than a conflict, and the relock records the result. The replay reads the
+driver for the replay, so a lock-only commit replays without a conflict, and
+once the member rebases are done each replayed project commit is given the
+lock that pins what they made of the commits it pinned: the VCS reports which
+old commit became which, including for a rebase the operator finished with the
+VCS's own continue. A replayed commit left changing nothing is dropped, as
+the rebase drops one. The relock records anything beyond. The replay reads the
 attribute line the tree it replays onto commits: `rwv land` refuses
 `missing-lock-merge-driver` for the source's project checkout as well as for
 the workspace it writes, and `rwv doctor --fix`, run where the refusal names,

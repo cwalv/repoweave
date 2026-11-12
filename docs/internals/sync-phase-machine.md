@@ -207,12 +207,20 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
 
 - **Phase 1' — project repo, lock-excluded**: replay CWD's unique
   project commits onto the named workspace's project tip, as the plan
-  records: rebased, with `rwv.lock` excluded from each commit's effective
-  diff, so lock-only commits become empty patches git's `--empty=drop`
-  drops; or, for a repo in the plan's `merged`, joined by a merge commit
+  records: rebased with the target side's `rwv.lock` held through the
+  replay and every replayed commit kept (`DerivedContentPolicy::rewritten_after`),
+  the rebase journaled first (`TakeInRecord.rebases`); or, for a repo in the plan's `merged`, joined by a merge commit
   whose first parent is the target's tip (`sync::compose_merge`), the lock
   merge driver held so the source's lock survives for relock. A tip that
   already holds the target's on its first-parent chain moves nothing.
+
+- **Pin re-map**, once Phase 2 is done: each project commit Phase 1'
+  replayed is rewritten so its lock pins what the journaled member rebases
+  made of the commits it pinned (`remap::remap_rebased_project`, reading
+  each rebase back through `Vcs::replayed`, so a rebase finished by the
+  VCS's own continue reads the same); a commit left changing nothing is
+  dropped. `rwv abort` reads a tip that is a replay of a journaled rebase as
+  the op's own.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, rebased or merged as the

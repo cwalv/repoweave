@@ -4,8 +4,9 @@
 //!   that no ref reaches after it, with no patch-equivalent commit reachable
 //!   in its place, in a repo the step does not name in `may_strand`. A reflog
 //!   may still hold it; that is the case this exists to report. A project
-//!   commit that changes only `rwv.lock` is derived state rwv re-creates when
-//!   it relocks, and is left to the two pin checks.
+//!   commit that changes only `rwv.lock`, or nothing (a lock-only commit a
+//!   replay kept before rwv wrote its lock), is derived state rwv re-creates
+//!   when it relocks, and is left to the two pin checks.
 //! - **unresolved pin**: an `rwv.lock` entry whose commit no ref reaches in
 //!   the repository that backs that member where the lock sits: a machine's
 //!   canonical clone for a lock on that machine, the remote the entry's own
@@ -1021,9 +1022,14 @@ fn touches_only_the_lock(sandbox: &Sandbox, repo: Repo, commit: &str) -> bool {
         .iter()
         .find(|store| is_commit(sandbox, store, commit))
         .is_some_and(|store| {
-            sandbox.git_ok(
-                store,
-                &["show", "--no-renames", "--name-only", "--format=", commit],
-            ) == "rwv.lock"
+            matches!(
+                sandbox
+                    .git_ok(
+                        store,
+                        &["show", "--no-renames", "--name-only", "--format=", commit],
+                    )
+                    .as_str(),
+                "rwv.lock" | ""
+            )
         })
 }
