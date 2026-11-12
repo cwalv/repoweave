@@ -74,11 +74,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 
     let primary_project = primary.join("projects/web-app");
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
@@ -228,11 +224,7 @@ fn sync_to_json_parallel_emits_the_envelope() {
 
     let primary_project = primary.join("projects/web-app");
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     let manifest_pairs: Vec<(&str, String)> = repo_paths
         .iter()
         .map(|p| (*p, format!("https://github.com/{p}.git")))

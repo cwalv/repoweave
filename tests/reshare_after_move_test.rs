@@ -30,11 +30,7 @@ fn weave_and_seat(parent: &Path, endings: LineEndings) -> (PathBuf, PathBuf, Pat
     endings.pin(&member);
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(

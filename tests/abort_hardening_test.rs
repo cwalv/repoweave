@@ -125,11 +125,7 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
     common::git_in(
@@ -233,11 +229,7 @@ fn make_multi_repo_fixture(parent: &Path, name: &str, repo_paths: &[&str]) -> Mu
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
 
     let urls: Vec<String> = repo_paths
         .iter()
@@ -602,11 +594,7 @@ fn abort_foreign_tip_options_block_printed_once() {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     // Manifest is TOML — hand-rolled shape is fine. Lock is JSON — route it
     // through `write_lock` (round-trips via the production parser) so the
     // fixture's on-disk shape matches production.

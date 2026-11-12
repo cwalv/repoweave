@@ -66,6 +66,9 @@ pub enum Axis {
     LegacyWorkweaveIndex,
     /// A branch rwv never rewrites, renames or deletes.
     Protected,
+    /// A project repo whose lock merge driver is not set up as this release
+    /// sets it up.
+    MissingLockMergeDriver,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -76,7 +79,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 13] = [
+    pub const ALL: [Axis; 14] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -90,6 +93,7 @@ impl Axis {
         Self::Alignment,
         Self::LegacyWorkweaveIndex,
         Self::Protected,
+        Self::MissingLockMergeDriver,
     ];
 
     pub fn token(self) -> String {
@@ -278,6 +282,24 @@ impl Axis {
                 sits: "[Weave root](../explanation/joints/weave-root.md); \
                        [Upgrade rwv](../how-to/upgrade-rwv.md).",
             },
+            Self::MissingLockMergeDriver => &KindRow {
+                condition: "A project repo's lock merge driver is not set up as this release \
+                            sets it up: the checked-out branch's committed attribute line for \
+                            `rwv.lock` is absent or names a driver an earlier release wrote, or \
+                            the clone's config does not define the driver's command or still \
+                            defines the earlier one.",
+                why: "A merge rwv does not make merges `rwv.lock` through the lock merge \
+                      driver: pins merge three-way, and a merge the driver cannot settle is \
+                      left conflicted with both pins marked. Without the attribute line git \
+                      merges the lock as text; without the config it falls back to text, or \
+                      fails into a conflict. The driver an earlier release set up kept one \
+                      side of every lock merge silently, so its line and config are migrated, \
+                      never honored. Every verb that writes the project repo or its lock \
+                      refuses until `rwv doctor --fix` migrates it, and `rwv doctor` reports \
+                      it instead.",
+                sits: "[Lock as derived](../explanation/joints/lock-as-derived.md); \
+                       [Upgrade rwv](../how-to/upgrade-rwv.md).",
+            },
         }
     }
 
@@ -300,6 +322,15 @@ impl Axis {
                     fix: crate::check::FixDisposition::ReportOnly,
                     entry: HISTORY_DISAGREEMENT_ENTRY,
                 },
+            )),
+            Self::MissingLockMergeDriver => Some(Finding::of(
+                crate::check::ViolationKind::MissingLockMergeDriver,
+                crate::check::MissingLockMergeDriverKind::ALL.map(|sub_kind| SubKindRow {
+                    token: crate::wire_token::wire_token(&sub_kind),
+                    severity: sub_kind.severity(),
+                    fix: sub_kind.fix_disposition(),
+                    entry: sub_kind.entry(),
+                }),
             )),
             Self::Pin => Some(Finding::of(
                 crate::check::ViolationKind::Pin,
@@ -348,6 +379,12 @@ impl Axis {
         }
     }
 }
+
+const LOCK_DRIVER_REFUSED_BY: &str = "every verb that writes the project repo or its lock, \
+before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a \
+rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, \
+`delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports \
+it instead";
 
 const BEFORE_RECEIPTS_ENTRY: &str = "The old file has no `receipts` key: an earlier release \
 wrote it before that key was kept. `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` \
@@ -459,6 +496,7 @@ pub enum State {
     EditsDirty,
     EditsMidOperation,
     EditsLockFilesUncommitted,
+    EditsLockUnresolved,
     CheckoutInAnotherWorkspace,
     CheckoutInRawWorktree,
     PushBranchDiverged,
@@ -485,6 +523,10 @@ pub enum State {
     UnparseableProjectMalformed,
     UnparseableProjectAt,
     LegacyWorkweaveIndexOldPath,
+    MissingLockMergeDriverAttributeAbsent,
+    MissingLockMergeDriverAttributeLegacy,
+    MissingLockMergeDriverConfigAbsent,
+    MissingLockMergeDriverConfigLegacy,
     PinWouldBeUnreachable,
     TargetNoTarget,
     TargetUnrecorded,
@@ -537,10 +579,11 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 64] = [
+    pub const ALL: [State; 69] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
+        Self::EditsLockUnresolved,
         Self::CheckoutInAnotherWorkspace,
         Self::CheckoutInRawWorktree,
         Self::PushBranchDiverged,
@@ -580,6 +623,10 @@ impl State {
         Self::UnparseableProjectMalformed,
         Self::UnparseableProjectAt,
         Self::LegacyWorkweaveIndexOldPath,
+        Self::MissingLockMergeDriverAttributeAbsent,
+        Self::MissingLockMergeDriverAttributeLegacy,
+        Self::MissingLockMergeDriverConfigAbsent,
+        Self::MissingLockMergeDriverConfigLegacy,
         Self::TargetNoTarget,
         Self::TargetUnrecorded,
         Self::TargetConflict,
@@ -635,6 +682,19 @@ impl State {
                 refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
                              fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a \
                              shared member as `dirty` is",
+                offers: &[Form::C32],
+                verb_offers: &[],
+            },
+            Self::EditsLockUnresolved => &StateRow {
+                axis: Axis::Edits,
+                name: "lock unresolved",
+                means: "the project repo's `rwv.lock` is unmerged: a merge, rebase or copy \
+                        the lock merge driver could not settle left it conflicted with both \
+                        pins marked, or a driver that could not run left one side in the \
+                        working file with the conflict recorded only by the VCS. Resolve it \
+                        to the pins you mean and stage it",
+                refused_by: "every verb resolved for a project, until it is resolved; `rwv \
+                             doctor` and `rwv abort` run",
                 offers: &[Form::C32],
                 verb_offers: &[],
             },
@@ -987,6 +1047,44 @@ impl State {
                              `list`, `delete`, `set-default-create-basedir` and `-w` addressing; \
                              `rwv doctor` reports it instead",
                 offers: &[Form::ConvertIndex],
+                verb_offers: &[],
+            },
+            Self::MissingLockMergeDriverAttributeAbsent => &StateRow {
+                axis: Axis::MissingLockMergeDriver,
+                name: "attribute absent",
+                means: "the checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
+                        no merge driver, so a merge rwv does not make merges the lock as text",
+                refused_by: LOCK_DRIVER_REFUSED_BY,
+                offers: &[Form::MigrateLockDriver],
+                verb_offers: &[],
+            },
+            Self::MissingLockMergeDriverAttributeLegacy => &StateRow {
+                axis: Axis::MissingLockMergeDriver,
+                name: "attribute legacy",
+                means: "the checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
+                        `merge=rwv-ours` or `merge=ours`, a driver an earlier release wrote \
+                        that kept one side of every lock merge",
+                refused_by: LOCK_DRIVER_REFUSED_BY,
+                offers: &[Form::MigrateLockDriver],
+                verb_offers: &[],
+            },
+            Self::MissingLockMergeDriverConfigAbsent => &StateRow {
+                axis: Axis::MissingLockMergeDriver,
+                name: "config absent",
+                means: "the clone's config does not define the lock merge driver's command, \
+                        so git merges the lock as text",
+                refused_by: LOCK_DRIVER_REFUSED_BY,
+                offers: &[Form::MigrateLockDriver],
+                verb_offers: &[],
+            },
+            Self::MissingLockMergeDriverConfigLegacy => &StateRow {
+                axis: Axis::MissingLockMergeDriver,
+                name: "config legacy",
+                means: "the clone's config defines a driver that keeps one side: the \
+                        `merge.rwv-ours` entry an earlier release wrote, or `merge.rwv-lock` \
+                        naming a command other than `rwv lock --merge-driver %O %A %B`",
+                refused_by: LOCK_DRIVER_REFUSED_BY,
+                offers: &[Form::MigrateLockDriver],
                 verb_offers: &[],
             },
             Self::PinWouldBeUnreachable => &StateRow {
@@ -1453,6 +1551,7 @@ pub enum ChoiceId {
     ConvertIndex,
     RecordCommitted,
     KeepRecordedHistory,
+    MigrateLockDriver,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1671,6 +1770,12 @@ impl ChoiceId {
                 keeps_work: "every recorded workweave is kept; the old file is removed only \
                              after the new one is written",
             },
+            Self::MigrateLockDriver => &ChoiceRow {
+                id: None,
+                phrase: "set up the lock merge driver: rewrite the attribute line, committing \
+                         only that, and replace the config",
+                keeps_work: "commits only the rewritten line; other edits stay uncommitted",
+            },
         }
     }
 }
@@ -1819,6 +1924,7 @@ pub enum Form {
     LockDirty,
     UpdateRemoteDirty,
     KeepRecordedHistory,
+    MigrateLockDriver,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -1830,7 +1936,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 72] = [
+    pub const ALL: [Form; 73] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1903,6 +2009,7 @@ impl Form {
         Self::LockDirty,
         Self::UpdateRemoteDirty,
         Self::KeepRecordedHistory,
+        Self::MigrateLockDriver,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -2351,6 +2458,12 @@ impl Form {
                 steps: &[RerunWithout("--history")],
                 at: W::Here,
                 shipped: false,
+            },
+            Self::MigrateLockDriver => &FormRow {
+                choice: C::MigrateLockDriver,
+                steps: &[Rwv("rwv doctor --fix")],
+                at: W::Checkout,
+                shipped: true,
             },
         }
     }

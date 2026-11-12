@@ -8,12 +8,12 @@ use crate::vcs::{
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond,
     DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
-    LocalRefName, MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PinOutcome,
+    LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PinOutcome,
     PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId,
     RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge,
     RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch,
     RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace,
-    ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
+    ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
     SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
     Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
@@ -252,260 +252,142 @@ fn local_branch_tip_args(name: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Replay-exclusion (rwv.lock) — merge-driver constants
+// The lock merge driver
 // ---------------------------------------------------------------------------
 //
-// git's per-path merge driver mechanism has two halves:
-//
-//   1. `.gitattributes` line: `<path> merge=<driver-name>` — assigns a driver
-//      by name to the path. This lives in the tree and travels with commits.
-//   2. `merge.<driver-name>.driver` config: the shell command git runs to
-//      resolve the merge. If the driver name is not defined in *any* config
-//      git can see (system/global/local/inline), git falls back to a normal
-//      3-way merge — so a `.gitattributes` assignment with no matching
-//      `merge.<name>.driver` entry does NOTHING useful for `rwv.lock`.
-//
-// The driver name is a namespaced key — `rwv-ours` rather than the
-// gitattributes(5) example name `ours`. Namespacing pairs the assignment
-// and the definition: only rwv writes `merge=rwv-ours`, only rwv defines
-// `merge.rwv-ours.driver`. Two accidental collisions the plain `ours` name
-// created are closed by this choice:
-//
-//   - A third-party repo with an unrelated `<somepath> merge=ours` line
-//     would previously get rwv's inline `merge.ours.driver=true` applied to
-//     it during any rwv-driven rebase, silently keeping the target-side
-//     version. `rwv-ours` never collides that way.
-//   - A user's global `merge.ours.driver=true` would previously apply to
-//     `rwv.lock merge=ours` when the operator ran bare `git rebase
-//     --continue` (bug 1). Under `rwv-ours` an unrelated global cannot
-//     activate the driver by accident.
-//
-// The constants are declared here so the inline `-c` flags in
-// [`GitVcs::rebase`], the `.gitattributes` writer in
-// [`GitVcs::set_replay_exclusion`], the readers in
-// [`GitVcs::replay_exclusion_state`] and
-// [`GitVcs::has_committed_replay_exclusion`], the invariant in
-// `sync::verify_replay_exclusion_invariant`, and the doctor `--fix`
-// migrator all reference a single source of truth for the name.
+// A git merge driver has two halves. A `.gitattributes` line assigns a driver
+// to a path by name, and travels with commits. A `merge.<name>.driver` config
+// entry names the command git runs, and travels with nothing: a clone carries
+// none, while a linked worktree shares its clone's. A name no config git can
+// see defines falls back to git's textual merge, silently.
 
-/// Merge-driver name assigned to `rwv.lock` in `.gitattributes` and defined
-/// via `merge.<name>.driver` config.
-pub const RWV_MERGE_DRIVER_NAME: &str = "rwv-ours";
+/// The driver name `rwv.lock` is assigned in `.gitattributes`.
+pub const RWV_MERGE_DRIVER_NAME: &str = "rwv-lock";
 
-/// `merge.<name>.driver` config key that defines the driver's shell command.
-/// Setting this to `true` (the shell command `/bin/true`, i.e. no-op success)
-/// tells git "keep the current (target-side) content unchanged when the
-/// assigned path would otherwise 3-way merge".
-pub const RWV_MERGE_DRIVER_CONFIG_KEY: &str = "merge.rwv-ours.driver";
+/// The config key defining the driver's command.
+pub const RWV_MERGE_DRIVER_CONFIG_KEY: &str = "merge.rwv-lock.driver";
 
-/// `merge.<name>.name` config key — human-readable description git shows in
-/// `git config --list` and diagnostic output. Not functional; paired with the
-/// `.driver` entry so an operator inspecting config sees why the entry exists.
-pub const RWV_MERGE_DRIVER_NAME_KEY: &str = "merge.rwv-ours.name";
+const RWV_MERGE_DRIVER_NAME_KEY: &str = "merge.rwv-lock.name";
+const RWV_MERGE_DRIVER_NAME_DESC: &str = "the rwv.lock merge driver";
 
-/// Human-readable description written to [`RWV_MERGE_DRIVER_NAME_KEY`].
-pub const RWV_MERGE_DRIVER_NAME_DESC: &str = "keep ours during replay (rwv replay-exclusion)";
+/// The command the driver's config names. git runs it through its shell from
+/// the repo's top directory, finding `rwv` on `PATH` as it finds git-lfs for
+/// its filters, so no absolute path is recorded to go stale and nothing in the
+/// command needs quoting; git substitutes the three temporary files itself.
+pub const RWV_MERGE_DRIVER_COMMAND: &str = "rwv lock --merge-driver %O %A %B";
 
-/// Legacy driver name from before the rename. Read-only: the
-/// migrator in [`Vcs::set_replay_exclusion`] rewrites `merge=ours` lines
-/// to the new name, and `sync::verify_replay_exclusion_invariant` produces
-/// a targeted "run rwv doctor --fix" bail when it finds the legacy line
-/// committed in `.gitattributes`.
-pub const LEGACY_RWV_MERGE_DRIVER_NAME: &str = "ours";
+/// The driver name a repo assigns to paths it declares derived. Nothing
+/// defines it durably: rwv's own replays define it inline as a side-pick
+/// keeping the target's copy, and the repo's gates force the regeneration.
+pub const DERIVED_CONTENT_DRIVER_NAME: &str = "rwv-ours";
+const DERIVED_CONTENT_DRIVER_CONFIG_KEY: &str = "merge.rwv-ours.driver";
 
-/// Namespace prefix every driver name rwv defines falls under (today, just
-/// [`RWV_MERGE_DRIVER_NAME`]). Only rwv writes `merge=rwv-…` and only rwv
-/// defines `merge.rwv-….driver`, so a `.gitattributes` line naming a driver
-/// under this prefix that rwv does not define is one nothing else will
-/// define either — `check::phantom_merge_drivers_in` uses the prefix to
-/// find such lines.
+/// Driver names earlier releases assigned to the lock. A lock line naming one
+/// is migrated, never honored: each kept one side of every lock merge.
+const SUPERSEDED_LOCK_DRIVERS: [&str; 2] = [DERIVED_CONTENT_DRIVER_NAME, "ours"];
+
+/// The config earlier releases planted in a project repo for the first of
+/// those names.
+const SUPERSEDED_DRIVER_KEYS: [&str; 2] =
+    [DERIVED_CONTENT_DRIVER_CONFIG_KEY, "merge.rwv-ours.name"];
+
+/// Namespace prefix every driver name rwv defines falls under. Only rwv
+/// writes `merge=rwv-…` and only rwv defines `merge.rwv-….driver`, so a
+/// `.gitattributes` line naming a driver under this prefix that rwv does not
+/// define is one nothing else will define either — `check::phantom_merge_drivers_in`
+/// uses the prefix to find such lines.
 pub const RWV_MERGE_DRIVER_PREFIX: &str = "rwv-";
 
-/// Build the `.gitattributes` line that assigns the rwv driver to `path`.
-///
-/// Callers compare against this via `.trim() == needle` so leading/trailing
-/// whitespace variations in a hand-edited `.gitattributes` don't defeat the
-/// idempotence check.
-pub fn rwv_replay_exclusion_needle(path_str: &str) -> String {
-    format!("{path_str} merge={RWV_MERGE_DRIVER_NAME}")
+
+fn lock_attribute_line(driver: &str) -> String {
+    format!("{} merge={driver}", crate::manifest::LockFile::FILE_NAME)
 }
 
-/// Legacy needle (`<path> merge=ours`) recognized by the migrator so
-/// `doctor --fix` and `set_replay_exclusion` can rewrite it in place.
-pub fn legacy_rwv_replay_exclusion_needle(path_str: &str) -> String {
-    format!("{path_str} merge={LEGACY_RWV_MERGE_DRIVER_NAME}")
+/// Whether `line` assigns a driver an earlier release wrote to the lock.
+pub(crate) fn is_superseded_lock_attribute(line: &str) -> bool {
+    SUPERSEDED_LOCK_DRIVERS
+        .iter()
+        .any(|driver| line.trim() == lock_attribute_line(driver))
 }
 
-/// Plant the durable repo-local `merge.rwv-ours.*` config that keeps the
-/// exclusion working during bare `git rebase --continue` (the resume path
-/// git itself advertises in conflict stderr). Idempotent — repeated writes
-/// are no-ops.
-///
-/// rwv's own rebase invocations pass the definition inline as `-c` flags
-/// (see [`Vcs::rebase`]) so they don't depend on config state. But when
-/// a rebase stops on a genuine non-lock conflict and the operator resumes
-/// with plain `git rebase --continue`, that new git process has no inline
-/// `-c` — without the durable config, every subsequent lock-only pick would
-/// 3-way merge on `rwv.lock` and conflict.
-///
-/// Worktrees share `.git/config` with the canonical repo, so a single plant
-/// covers every workweave checkout — `git config` resolves the right file
-/// itself. Every path that brings a project repo under rwv's management or
-/// repairs one plants it, so the definition is in place before any replay in
-/// that repo can stop.
-pub fn plant_rwv_merge_driver_config(repo: &Path) -> Result<(), VcsError> {
-    let driver_status = git_command()
-        .args(["config", RWV_MERGE_DRIVER_CONFIG_KEY, "true"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!(
-                "failed to spawn git config {RWV_MERGE_DRIVER_CONFIG_KEY} in {}",
-                repo.display()
-            ),
-            source: e,
-        })?;
-    if !driver_status.status.success() {
-        let stderr = String::from_utf8_lossy(&driver_status.stderr).into_owned();
-        return Err(VcsError::CommandFailed {
-            args: vec![
-                "config".to_owned(),
-                RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
-                "true".to_owned(),
-            ],
-            repo: repo.to_path_buf(),
-            stderr,
-        });
+/// How a `.gitattributes` text declares the lock's merge driver.
+fn lock_attribute_in(text: Option<&str>) -> LockDriverPart {
+    let lines = || text.into_iter().flat_map(str::lines);
+    if lines().any(is_superseded_lock_attribute) {
+        return LockDriverPart::Superseded;
     }
-
-    let name_status = git_command()
-        .args([
-            "config",
-            RWV_MERGE_DRIVER_NAME_KEY,
-            RWV_MERGE_DRIVER_NAME_DESC,
-        ])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!(
-                "failed to spawn git config {RWV_MERGE_DRIVER_NAME_KEY} in {}",
-                repo.display()
-            ),
-            source: e,
-        })?;
-    if !name_status.status.success() {
-        let stderr = String::from_utf8_lossy(&name_status.stderr).into_owned();
-        return Err(VcsError::CommandFailed {
-            args: vec![
-                "config".to_owned(),
-                RWV_MERGE_DRIVER_NAME_KEY.to_owned(),
-                RWV_MERGE_DRIVER_NAME_DESC.to_owned(),
-            ],
-            repo: repo.to_path_buf(),
-            stderr,
-        });
+    let current = lock_attribute_line(RWV_MERGE_DRIVER_NAME);
+    if lines().any(|line| line.trim() == current) {
+        LockDriverPart::Current
+    } else {
+        LockDriverPart::Absent
     }
-    Ok(())
 }
 
-/// Read `.gitattributes` from the committed tree at HEAD, if any.
-///
-/// Returns `Ok(None)` when the file isn't tracked at HEAD (fresh repo, or
-/// `.gitattributes` was never added) — that's a definitive "no committed
-/// content", not an error. Returns `Ok(Some(contents))` when the file is
-/// tracked. Used by the sync precondition and doctor: they must consult
-/// the committed form because a working-tree-only `.gitattributes` doesn't
-/// survive a rebase and won't help subsequent operators.
-pub fn read_committed_gitattributes(repo: &Path) -> Result<Option<String>, VcsError> {
-    let output = git_command()
-        .args(["show", "HEAD:.gitattributes"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!(
-                "failed to spawn git show HEAD:.gitattributes in {}",
-                repo.display()
-            ),
-            source: e,
-        })?;
-    if !output.status.success() {
-        return Ok(None);
+/// `text` with every superseded lock line dropped and the current one
+/// present once; `None` when it already is exactly that.
+fn declare_lock_driver_in(text: Option<&str>) -> Option<String> {
+    let existing = text.unwrap_or("");
+    if lock_attribute_in(text) == LockDriverPart::Current {
+        return None;
     }
-    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+    let current = lock_attribute_line(RWV_MERGE_DRIVER_NAME);
+    let mut out = String::with_capacity(existing.len() + current.len() + 1);
+    let mut wrote = false;
+    for line in existing.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if is_superseded_lock_attribute(bare) || bare.trim() == current {
+            if !wrote {
+                out.push_str(&current);
+                out.push_str(&line[bare.len()..]);
+                wrote = true;
+            }
+            continue;
+        }
+        out.push_str(line);
+    }
+    if !wrote {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&current);
+        out.push('\n');
+    } else if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
 }
 
-/// `true` when the committed `.gitattributes` at HEAD still carries the
-/// **legacy** `<path> merge=ours` line (the rename replaced it
-/// with `merge=rwv-ours`). Used by `sync::verify_replay_exclusion_invariant`
-/// so its bail message can direct the operator at `rwv doctor --fix` for
-/// migration rather than the generic "add the line" fix.
-pub fn has_committed_legacy_replay_exclusion(repo: &Path, path: &Path) -> Result<bool, VcsError> {
-    let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
-    let legacy = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
-    let content = match read_committed_gitattributes(repo)? {
-        Some(c) => c,
-        None => return Ok(false),
-    };
-    Ok(content.lines().any(|line| line.trim() == legacy))
-}
-
-/// Build the two `KEY=VALUE` argument strings that inline-define the
-/// `rwv-ours` merge driver for a single git invocation.
-///
-/// The one caller is [`derived_content_git_args`], which prepends
-/// `-c <name>=<desc>` and `-c <config-key>=true` from these strings when a
-/// [`DerivedContentPolicy`] asks for the target-side pick. That single caller
-/// is what now guarantees the property this pair has always needed: the
-/// driver name / description / value spread across
-/// [`RWV_MERGE_DRIVER_NAME_KEY`], [`RWV_MERGE_DRIVER_NAME_DESC`], and
-/// [`RWV_MERGE_DRIVER_CONFIG_KEY`] stay in lockstep across every rwv-spawned
-/// replay step, so a `rwv sync --continue` mid-rebase resume cannot reach a
-/// different resolution than the phase that stopped there. It used to be a
-/// discipline shared by two hand-written call sites; the policy made it
-/// structural.
-///
-/// Returns `(name_arg, driver_arg)` where each is a single `KEY=VALUE`
-/// string suitable as the argument after a `-c` flag.
-pub(crate) fn rwv_ours_driver_flag_args() -> (String, String) {
-    (
-        format!("{RWV_MERGE_DRIVER_NAME_KEY}={RWV_MERGE_DRIVER_NAME_DESC}"),
+/// The `-c` pair under which a git command keeps the lock merge driver from
+/// running: the driver resolves to `true`, which leaves the side git already
+/// holds. rwv writes the lock of every merge and replay it makes itself, so
+/// its own commands neither depend on `rwv` being on `PATH` nor stop on a lock
+/// the driver would conflict.
+fn lock_driver_held_args() -> [String; 2] {
+    [
+        "-c".to_owned(),
         format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
-    )
+    ]
 }
 
 /// Translate a [`DerivedContentPolicy`] into the leading `git` arguments
 /// that put it in force for a single invocation.
 ///
-/// Git's half of the derived-content primitive: a `.gitattributes` line
-/// assigns a merge driver to a path *by name*, and the name resolves to
-/// nothing unless some config git can see defines `merge.<name>.driver`. The
-/// definition does not travel with the repo, so whoever runs the command
-/// carries it — which is precisely what the policy parameter makes explicit
-/// at the seam.
-///
-/// [`DerivedContentResolution::KeepTargetSide`] becomes the `rwv-ours`
-/// definition, `driver = true`: the shell command `true`, which exits 0
-/// without touching the file, leaving git holding the target-side version it
-/// already had. That is the whole resolution — a side-pick. No generator is
-/// invoked and nothing about the running machine is consulted, so two
-/// replays of the same histories produce the same tree.
-///
-/// [`DerivedContentResolution::VcsDefault`] contributes no arguments. Note
-/// what that does and does not mean: this invocation defines no driver, so a
-/// declared path resolves textually *unless* the repo already carries a
-/// durable definition of its own (see [`plant_rwv_merge_driver_config`],
-/// which exists so a bare `git rebase --continue` stays safe). Config rwv
-/// planted earlier is not something a later invocation can un-supply.
+/// [`DerivedContentResolution::KeepTargetSide`] defines the derived-content
+/// driver, and holds the lock merge driver, at `true`: the shell command that
+/// exits 0 without touching the file, leaving the version already on the side
+/// being replayed onto. A commit touching only such paths replays as an empty
+/// patch. [`DerivedContentResolution::VcsDefault`] contributes no arguments,
+/// so the repo's own config decides.
 fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
     match policy.resolution() {
         DerivedContentResolution::KeepTargetSide => {
-            let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
-            vec![
+            let mut args = vec![
                 "-c".to_owned(),
-                driver_name_flag,
-                "-c".to_owned(),
-                driver_flag,
-            ]
+                format!("{DERIVED_CONTENT_DRIVER_CONFIG_KEY}=true"),
+            ];
+            args.extend(lock_driver_held_args());
+            args
         }
         DerivedContentResolution::VcsDefault => Vec::new(),
     }
@@ -524,48 +406,84 @@ fn nul_terminated_fields(stream: &str) -> Vec<String> {
         .collect()
 }
 
-/// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
-/// scope git can see for `repo`. Used by `rwv doctor` to detect projects
-/// that haven't had the durable plant run yet.
+/// The value of `key` in `repo`'s config at `scope` (`None` reads every scope
+/// git reads), `None` when unset.
 ///
-/// Checked ahead of the `--get` rather than folded into its exit code: a
-/// repo lacking the key and a directory that isn't a repo at all both exit 1,
-/// so the code alone can't tell "unset" from "no repo to read."
-pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
+/// Checked ahead of the read rather than folded into its exit code: a repo
+/// lacking the key and a directory that isn't a repo at all both exit 1.
+fn config_value(repo: &Path, scope: Option<&str>, key: &str) -> Result<Option<String>, VcsError> {
     if !GitVcs.is_repo(repo) {
         return Err(VcsError::NotARepo(repo.to_path_buf()));
     }
+    let mut args = vec!["config"];
+    args.extend(scope);
+    args.extend(["--get", key]);
     let output = git_command()
-        .args(["config", "--get", RWV_MERGE_DRIVER_CONFIG_KEY])
+        .args(&args)
         .current_dir(repo)
         .output()
         .map_err(|e| VcsError::Io {
-            ctx: format!(
-                "failed to spawn git config --get {RWV_MERGE_DRIVER_CONFIG_KEY} in {}",
-                repo.display()
-            ),
+            ctx: format!("failed to spawn git {args:?} in {}", repo.display()),
             source: e,
         })?;
-    // `git config --get` exits 0 when the key is set, 1 when unset. Other
-    // non-zero exits (invalid key syntax, config file unreadable) are rare
-    // enough that we surface them as errors rather than silently treating
-    // as "unset".
     if output.status.success() {
-        return Ok(true);
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_owned(),
+        ));
     }
     if output.status.code() == Some(1) {
-        return Ok(false);
+        return Ok(None);
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     Err(VcsError::CommandFailed {
-        args: vec![
-            "config".to_owned(),
-            "--get".to_owned(),
-            RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
-        ],
+        args: args.iter().map(|a| (*a).to_owned()).collect(),
         repo: repo.to_path_buf(),
-        stderr,
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+fn lock_driver_config_part(repo: &Path) -> Result<LockDriverPart, VcsError> {
+    for key in SUPERSEDED_DRIVER_KEYS {
+        if config_value(repo, Some("--local"), key)?.is_some() {
+            return Ok(LockDriverPart::Superseded);
+        }
+    }
+    Ok(
+        match config_value(repo, None, RWV_MERGE_DRIVER_CONFIG_KEY)?.as_deref() {
+            None => LockDriverPart::Absent,
+            Some(RWV_MERGE_DRIVER_COMMAND) => LockDriverPart::Current,
+            Some(_) => LockDriverPart::Superseded,
+        },
+    )
+}
+
+/// The commits a merge in progress in `repo` joins, read from what git hands
+/// a merge driver it runs.
+///
+/// `git merge` (and `git pull`) export `GITHEAD_<id>=<name>` for each head it
+/// merges in, before `MERGE_HEAD` is written. A rebase, cherry-pick, revert or
+/// stash apply exports none, and its three sides are not two heads and their
+/// base; `merge-tree` leaves no state at all. Exactly one exported head, with
+/// no sequencer state beside it, is the only case where both commits are named.
+fn merging_heads(repo: &Path) -> Option<(CommitId, CommitId)> {
+    if GitVcs::mid_op_state(repo).is_some_and(|op| op != MidOperation::Conflict(ConflictOp::Merge))
+    {
+        return None;
+    }
+    let mut heads = std::env::vars_os().filter_map(|(name, _)| {
+        name.to_str()?
+            .strip_prefix("GITHEAD_")
+            .and_then(|id| CommitId::parse(id).ok())
+    });
+    let theirs = heads.next()?;
+    if heads.next().is_some() {
+        return None;
+    }
+    let ours = GitVcs::run_trimmed(["rev-parse", "--verify", "-q", "HEAD^{commit}"], repo)
+        .ok()
+        .and_then(|id| CommitId::parse(&id).ok())?;
+    Some((ours, theirs))
 }
 
 /// Git-based version control operations.
@@ -2817,7 +2735,9 @@ impl Vcs for GitVcs {
         let fields = nul_terminated_fields(&attrs);
         Ok(fields
             .chunks_exact(3)
-            .filter(|triple| triple[2] == RWV_MERGE_DRIVER_NAME)
+            .filter(|triple| {
+                triple[2] == DERIVED_CONTENT_DRIVER_NAME || triple[2] == RWV_MERGE_DRIVER_NAME
+            })
             .map(|triple| triple[0].clone())
             .collect())
     }
@@ -2840,135 +2760,75 @@ impl Vcs for GitVcs {
         )?))
     }
 
-    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<Option<PathBuf>, VcsError> {
-        let attrs_path = repo.join(ATTRIBUTES_FILE);
-        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
-        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
-
-        let existing = match std::fs::read_to_string(&attrs_path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => {
-                return Err(VcsError::Io {
-                    ctx: format!("failed to read {}", attrs_path.display()),
-                    source: e,
-                })
+    fn lock_driver_setup(&self, repo: &Path) -> Result<LockDriverSetup, VcsError> {
+        let born =
+            Self::run_trimmed(["rev-parse", "--verify", "-q", "HEAD^{commit}"], repo).is_ok();
+        let declaring = if born {
+            let listed = Self::run_trimmed(
+                ["ls-tree", "--name-only", "HEAD", "--", ATTRIBUTES_FILE],
+                repo,
+            )?;
+            if listed.is_empty() {
+                None
+            } else {
+                Some(Self::run(
+                    ["show", &format!("HEAD:{ATTRIBUTES_FILE}")],
+                    repo,
+                )?)
             }
-        };
-
-        // Migration path: if the file still carries the legacy
-        // `<path> merge=ours` line, rewrite it in place to the namespaced
-        // `<path> merge=rwv-ours` name. Rewrite — don't append alongside —
-        // because two conflicting `merge=` assignments on the same path in
-        // the same .gitattributes file are ill-defined (last-wins, in
-        // reading order), and leaving the old line in place would activate
-        // any user's global `merge.ours.driver` on rwv.lock during bare
-        // `git rebase --continue` (the exact hazard the rename closes).
-        // Detection is trim-only so a hand-edited file with a trailing
-        // space or CRLF still migrates.
-        let has_legacy = existing.lines().any(|line| line.trim() == legacy_needle);
-        let has_new = existing.lines().any(|line| line.trim() == needle);
-        if has_new && !has_legacy {
-            return Ok(None);
-        }
-
-        let (mut next, migrated) = if has_legacy {
-            let mut out = String::with_capacity(existing.len());
-            let mut wrote_new = has_new;
-            for line in existing.split_inclusive('\n') {
-                // `split_inclusive('\n')` preserves the trailing newline
-                // (and yields a final line without one when the file
-                // doesn't end in `\n`). Compare the trimmed form so a
-                // trailing `\r` (CRLF) or stray whitespace on the legacy
-                // line still matches.
-                let bare = line.trim_end_matches(['\n', '\r']);
-                if bare.trim() == legacy_needle {
-                    if !wrote_new {
-                        // Preserve the caller's ending style: if the
-                        // legacy line had a trailing newline, so does the
-                        // replacement.
-                        out.push_str(&needle);
-                        if line.ends_with('\n') {
-                            out.push('\n');
-                        }
-                        wrote_new = true;
-                    }
-                    // Drop this line (either replaced above or dropped as
-                    // a duplicate of the already-present new needle).
-                } else {
-                    out.push_str(line);
+        } else {
+            match std::fs::read_to_string(repo.join(ATTRIBUTES_FILE)) {
+                Ok(text) => Some(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    return Err(VcsError::Io {
+                        ctx: format!("failed to read {}", repo.join(ATTRIBUTES_FILE).display()),
+                        source: e,
+                    })
                 }
             }
-            (out, true)
-        } else {
-            (existing, false)
         };
-
-        // Append the new needle if it wasn't planted via migration and
-        // wasn't already present. Ensure exactly one trailing newline
-        // before the new line so concatenation is clean whether the file
-        // ended with a newline or not.
-        if !migrated && !has_new {
-            if !next.is_empty() && !next.ends_with('\n') {
-                next.push('\n');
-            }
-            next.push_str(&needle);
-            next.push('\n');
-        }
-
-        std::fs::write(&attrs_path, next).map_err(|e| VcsError::Io {
-            ctx: format!("failed to write {}", attrs_path.display()),
-            source: e,
-        })?;
-        Ok(Some(PathBuf::from(ATTRIBUTES_FILE)))
-    }
-
-    fn replay_exclusion_state(
-        &self,
-        repo: &Path,
-        path: &Path,
-    ) -> Result<ReplayExclusionState, VcsError> {
-        let attrs_path = repo.join(ATTRIBUTES_FILE);
-        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
-        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
-
-        let contents = match std::fs::read_to_string(&attrs_path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(ReplayExclusionState::Absent)
-            }
-            Err(e) => {
-                return Err(VcsError::Io {
-                    ctx: format!("failed to read {}", attrs_path.display()),
-                    source: e,
-                })
-            }
-        };
-
-        let mut has_new = false;
-        let mut has_legacy = false;
-        for line in contents.lines().map(str::trim) {
-            has_new |= line == needle;
-            has_legacy |= line == legacy_needle;
-        }
-        Ok(match (has_new, has_legacy) {
-            (true, true) => ReplayExclusionState::LegacyAlongsideCurrent,
-            (true, false) => ReplayExclusionState::Current,
-            (false, true) => ReplayExclusionState::LegacyOnly,
-            (false, false) => ReplayExclusionState::Absent,
+        Ok(LockDriverSetup {
+            declaration: lock_attribute_in(declaring.as_deref()),
+            definition: lock_driver_config_part(repo)?,
         })
     }
 
-    fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
-        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
-        let content = match read_committed_gitattributes(repo)? {
-            Some(c) => c,
-            None => return Ok(false),
-        };
-        Ok(content.lines().any(|line| line.trim() == needle))
+    fn lock_driver_declaration_file(&self) -> &'static str {
+        ATTRIBUTES_FILE
+    }
+
+    fn declare_lock_driver_in(&self, text: Option<&str>) -> Option<String> {
+        declare_lock_driver_in(text)
+    }
+
+    fn define_lock_driver(&self, repo: &Path) -> Result<(), VcsError> {
+        Self::run(
+            [
+                "config",
+                RWV_MERGE_DRIVER_CONFIG_KEY,
+                RWV_MERGE_DRIVER_COMMAND,
+            ],
+            repo,
+        )?;
+        Self::run(
+            [
+                "config",
+                RWV_MERGE_DRIVER_NAME_KEY,
+                RWV_MERGE_DRIVER_NAME_DESC,
+            ],
+            repo,
+        )?;
+        for key in SUPERSEDED_DRIVER_KEYS {
+            if config_value(repo, Some("--local"), key)?.is_some() {
+                Self::run(["config", "--local", "--unset-all", key], repo)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn merging_commits(&self, repo: &Path) -> Option<(CommitId, CommitId)> {
+        merging_heads(repo)
     }
 
     fn advance_if_fast_forward(
@@ -7111,48 +6971,23 @@ mod derived_content_tests {
     use super::*;
 
     #[test]
-    fn keeping_the_target_side_supplies_the_driver_definition_inline() {
+    fn keeping_the_target_side_defines_both_drivers_inline_as_a_side_pick() {
         let args = derived_content_git_args(DerivedContentPolicy::keep_target_side());
-
-        // Two `-c KEY=VALUE` pairs, in that shape: git only accepts the
-        // value as a separate argument after the flag.
-        assert_eq!(
-            args.len(),
-            4,
-            "expected two `-c KEY=VALUE` pairs; got {args:?}"
-        );
-        assert_eq!(args[0], "-c", "flag must precede its value; got {args:?}");
-        assert_eq!(args[2], "-c", "flag must precede its value; got {args:?}");
-
-        // The pair git needs is the *definition*: the assignment side lives
-        // in the repo's .gitattributes, and a name with no definition
-        // resolves to an ordinary textual merge.
-        assert_eq!(
-            args[3],
-            format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
-            "the definition git acts on must be present; got {args:?}"
-        );
+        let pairs: Vec<&[String]> = args.chunks(2).collect();
         assert!(
-            args[1].starts_with(&format!("{RWV_MERGE_DRIVER_NAME_KEY}=")),
-            "the human-readable description is paired with it; got {args:?}"
+            pairs.iter().all(|pair| pair.len() == 2 && pair[0] == "-c"),
+            "each definition is a `-c KEY=VALUE` pair; got {args:?}"
         );
-    }
-
-    #[test]
-    fn the_supplied_definition_is_a_side_pick_and_not_an_exec() {
-        let args = derived_content_git_args(DerivedContentPolicy::keep_target_side());
-        let definition = args
-            .iter()
-            .find_map(|a| a.strip_prefix(&format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=")))
-            .unwrap_or_else(|| panic!("no driver definition in {args:?}"));
-
-        // `true` exits 0 without touching the file, which is what leaves the
-        // target-side version standing. Anything else here would be a
-        // command running mid-replay, with whatever the machine's
-        // environment happens to give it.
+        let mut defined: Vec<&str> = pairs.iter().map(|pair| pair[1].as_str()).collect();
+        defined.sort_unstable();
         assert_eq!(
-            definition, "true",
-            "the driver must be the no-op side-pick, not a command that regenerates content"
+            defined,
+            [
+                format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
+                format!("{DERIVED_CONTENT_DRIVER_CONFIG_KEY}=true"),
+            ],
+            "`true` exits 0 without touching the file, which is what leaves the target-side \
+             version standing; anything else would run a command mid-replay"
         );
     }
 
@@ -7208,16 +7043,36 @@ mod derived_content_tests {
 mod merge_driver_vocabulary_tests {
     //! `check::phantom_merge_drivers_in` filters `.gitattributes` driver
     //! names through [`RWV_MERGE_DRIVER_PREFIX`] before checking them
-    //! against [`RWV_MERGE_DRIVER_NAME`]. Nothing but this test ties the
-    //! two together — a rename of one that drops the other out of the
-    //! prefix would compile cleanly and doctor's phantom-driver scan
-    //! would silently stop matching the live driver name.
+    //! against the names rwv defines. Nothing but this test ties the two
+    //! together — a rename of one that drops the other out of the prefix
+    //! would compile cleanly and doctor's phantom-driver scan would silently
+    //! stop matching a live driver name.
 
     use super::*;
 
     #[test]
-    fn the_driver_name_falls_under_its_own_scan_prefix() {
+    fn the_driver_names_fall_under_their_own_scan_prefix() {
         assert!(RWV_MERGE_DRIVER_NAME.starts_with(RWV_MERGE_DRIVER_PREFIX));
+        assert!(DERIVED_CONTENT_DRIVER_NAME.starts_with(RWV_MERGE_DRIVER_PREFIX));
+    }
+
+    #[test]
+    fn a_declaration_rewrite_drops_every_superseded_lock_line_and_keeps_the_rest() {
+        let text =
+            "docs/** merge=rwv-ours\nrwv.lock merge=ours\r\n* text=auto\nrwv.lock merge=rwv-ours";
+        assert_eq!(lock_attribute_in(Some(text)), LockDriverPart::Superseded);
+        let rewritten = declare_lock_driver_in(Some(text)).expect("a superseded line is rewritten");
+        assert_eq!(
+            rewritten,
+            "docs/** merge=rwv-ours\nrwv.lock merge=rwv-lock\r\n* text=auto\n"
+        );
+        assert_eq!(lock_attribute_in(Some(&rewritten)), LockDriverPart::Current);
+        assert_eq!(declare_lock_driver_in(Some(&rewritten)), None);
+        assert_eq!(
+            declare_lock_driver_in(None).as_deref(),
+            Some("rwv.lock merge=rwv-lock\n")
+        );
+        assert_eq!(lock_attribute_in(None), LockDriverPart::Absent);
     }
 }
 

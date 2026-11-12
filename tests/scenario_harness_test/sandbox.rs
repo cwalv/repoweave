@@ -14,9 +14,6 @@ pub const IDENTITY: &[(&str, &str)] = &[
 /// edit of an entry spell it from here.
 pub const DECLARED_BRANCH_KEY: &str = "branch";
 
-/// The `.gitattributes` line every seeded weave branch commits for its lock.
-pub const LOCK_MERGE_ATTRIBUTE: &str = "rwv.lock merge=rwv-ours";
-
 pub const RECORDS_BRANCH: &str = "rwv-records";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -857,11 +854,7 @@ impl Sandbox {
             pins.push((member.rel_path(), url, pin));
         }
         std::fs::write(seed.join("rwv.toml"), manifest).unwrap();
-        std::fs::write(
-            seed.join(".gitattributes"),
-            format!("{LOCK_MERGE_ATTRIBUTE}\n"),
-        )
-        .unwrap();
+        std::fs::write(seed.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
         let entries: Vec<(&str, &str, &str)> = pins
             .iter()
             .map(|(k, u, p)| (k.as_str(), u.as_str(), p.as_str()))

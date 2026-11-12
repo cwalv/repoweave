@@ -32,8 +32,8 @@
 //!
 //! Keying on the destination argument rather than on the line is the
 //! precision that makes the report readable: writing `.gitattributes` with
-//! `"rwv.lock merge=ours\n"` as the *payload* is how every replay exclusion in
-//! this tree is spelled, and a line-keyed matcher reports all of them. Every
+//! `"rwv.lock merge=rwv-lock\n"` as the *payload* is how a lock merge driver
+//! declaration is spelled, and a line-keyed matcher reports every one. Every
 //! token the scan keys on is checked against [`code_mask`] first, so source
 //! quoted in a string literal — which is what the fixtures at the bottom of
 //! this file are — is read as the fixture it is.
@@ -706,15 +706,14 @@ fn a_builder_call_is_not_a_byte_write() {
 fn a_gitattributes_write_naming_the_lock_in_its_payload_is_not_reported() {
     let found = findings(
         r#"fn fixture(dir: &std::path::Path) {
-    std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-lock\n").unwrap();
 }
 "#,
     );
     assert!(
         found.is_empty(),
         "the literal is the payload, not the destination. This is the \
-         discrimination that keeps the report readable: the tree has fifteen \
-         of these: {found:?}"
+         discrimination that keeps the report readable: {found:?}"
     );
 }
 

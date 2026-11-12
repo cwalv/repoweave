@@ -215,11 +215,7 @@ fn make_weave(tmp: &Path) -> Weave {
     common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     weave.commit_manifest(&project_dir, "owned", "reference");
     common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -660,11 +656,7 @@ fn add_project(weave: &Weave, name: &str, ref_role: &str) {
     common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     weave.commit_manifest(&project_dir, "owned", ref_role);
     common::record_trunk(&project_dir);
 }

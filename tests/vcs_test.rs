@@ -1,7 +1,8 @@
 use repoweave::git::git_vcs;
 use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, DiscardOutcome, MidOperation, RawRefName, RegistrationPrune,
-    RemoteRef, ReplayExclusionState, ResolvedRevisionId, TrackingRef, VcsError,
+    ConflictOp, DerivedContentPolicy, DiscardOutcome, LockDriverPart, LockDriverSetup,
+    MidOperation, RawRefName, RegistrationPrune, RemoteRef, ResolvedRevisionId, TrackingRef,
+    VcsError,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -866,314 +867,115 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
 }
 
 // ============================================================================
-// Vcs::set_replay_exclusion / replay_exclusion_state
+// The lock merge driver's setup
 // ============================================================================
-//
-// The replay-exclusion mechanism wires git's per-path merge driver
-// (`.gitattributes <path> merge=rwv-ours`) so sync's native rebase keeps the
-// rebase target's version of `rwv.lock` through every replay. The trait
-// hides the file format so other VCS impls can use their own mechanism.
 
-#[test]
-fn set_replay_exclusion_creates_gitattributes_when_missing() {
-    let dir = init_repo();
-    let vcs = git_vcs();
+fn setup(dir: &Path) -> LockDriverSetup {
+    git_vcs().lock_driver_setup(dir).unwrap()
+}
 
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    let attrs = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        ".gitattributes should contain the replay-exclusion line; got: {attrs:?}"
-    );
+fn commit_attributes(dir: &Path, text: &str) {
+    fs::write(dir.join(".gitattributes"), text).unwrap();
+    common::git_in(dir, &["add", ".gitattributes"]);
+    common::git_in(dir, &["commit", "-m", "attributes"]);
 }
 
 #[test]
-fn set_replay_exclusion_appends_to_existing_gitattributes() {
+fn the_declaration_is_read_from_the_checked_out_commit() {
     let dir = init_repo();
-    let vcs = git_vcs();
-    let attrs_path = dir.path().join(".gitattributes");
+    let p = dir.path();
+    assert_eq!(setup(p).declaration, LockDriverPart::Absent);
 
-    // Pre-existing user content (no trailing newline to exercise the
-    // newline-fixup branch in the impl).
-    fs::write(&attrs_path, "*.png binary").unwrap();
-
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    let attrs = fs::read_to_string(&attrs_path).unwrap();
-    assert!(
-        attrs.contains("*.png binary"),
-        "pre-existing entries must be preserved; got: {attrs:?}"
-    );
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        "new entry must be added; got: {attrs:?}"
-    );
-}
-
-#[test]
-fn set_replay_exclusion_is_idempotent() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-    let after_first = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-    let after_second = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
-
+    fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
     assert_eq!(
-        after_first, after_second,
-        "second call must not duplicate the entry; got:\nafter_first={after_first:?}\nafter_second={after_second:?}"
+        setup(p).declaration,
+        LockDriverPart::Absent,
+        "an uncommitted line does not travel with the branch"
     );
-    let line_count = after_second
-        .lines()
-        .filter(|l| l.trim() == "rwv.lock merge=rwv-ours")
-        .count();
-    assert_eq!(
-        line_count, 1,
-        "exactly one replay-exclusion line expected; got {line_count} in: {after_second:?}"
-    );
+
+    commit_attributes(p, common::LOCK_DRIVER_ATTRIBUTE);
+    assert_eq!(setup(p).declaration, LockDriverPart::Current);
 }
 
 #[test]
-fn replay_exclusion_state_absent_when_gitattributes_missing() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-
-    assert_eq!(
-        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
-            .unwrap(),
-        ReplayExclusionState::Absent
-    );
-}
-
-#[test]
-fn replay_exclusion_state_absent_when_line_absent() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    fs::write(dir.path().join(".gitattributes"), "*.png binary\n").unwrap();
-
-    assert_eq!(
-        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
-            .unwrap(),
-        ReplayExclusionState::Absent
-    );
-}
-
-#[test]
-fn replay_exclusion_state_current_when_line_present() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    assert_eq!(
-        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
-            .unwrap(),
-        ReplayExclusionState::Current
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Legacy `merge=ours` migration
-// ---------------------------------------------------------------------------
-
-/// The legacy `merge=ours` line must NOT read as configured. If it did,
-/// `rwv doctor` and the sync invariant would silently treat a legacy-only
-/// project as fixed and never migrate it to `rwv-ours` — the exact hazard
-/// the rename closes.
-#[test]
-fn replay_exclusion_state_legacy_only_when_only_legacy_line_present() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    fs::write(dir.path().join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-
-    assert_eq!(
-        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
-            .unwrap(),
-        ReplayExclusionState::LegacyOnly
-    );
-}
-
-/// A file carrying both lines is its own state, not "configured". The
-/// legacy name is live whichever way git's reading order resolves the pair,
-/// so reading this as satisfied is what let `--fix` rewrite and commit a
-/// project the report had called clean.
-#[test]
-fn replay_exclusion_state_names_both_lines_when_both_present() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    fs::write(
-        dir.path().join(".gitattributes"),
-        "*.png binary\nrwv.lock merge=ours\nrwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
-
-    assert_eq!(
-        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
-            .unwrap(),
-        ReplayExclusionState::LegacyAlongsideCurrent
-    );
-}
-
-/// `set_replay_exclusion` on a `.gitattributes` that carries only the
-/// LEGACY `<path> merge=ours` line must REWRITE it in place to
-/// `<path> merge=rwv-ours` — not append the new line alongside the old
-/// one. Two conflicting `merge=` assignments on the same path are
-/// ill-defined (last-wins in reading order), and leaving the legacy line
-/// resurrects the global-config collision hazard.
-#[test]
-fn set_replay_exclusion_migrates_legacy_line_in_place() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    let attrs_path = dir.path().join(".gitattributes");
-    fs::write(&attrs_path, "*.png binary\nrwv.lock merge=ours\n").unwrap();
-
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    let attrs = fs::read_to_string(&attrs_path).unwrap();
-    assert!(
-        attrs.contains("*.png binary"),
-        "unrelated pre-existing entries must be preserved; got: {attrs:?}"
-    );
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        "new needle must be present after migration; got: {attrs:?}"
-    );
-    assert!(
-        !attrs.contains("rwv.lock merge=ours\n") && !attrs.ends_with("rwv.lock merge=ours"),
-        "legacy line must be REWRITTEN, not left alongside the new one; got: {attrs:?}"
-    );
-    // Exactly one replay-exclusion line — no duplication either way.
-    let count = attrs
-        .lines()
-        .filter(|l| l.trim() == "rwv.lock merge=rwv-ours")
-        .count();
-    assert_eq!(
-        count, 1,
-        "exactly one new needle line expected; got {count} in: {attrs:?}"
-    );
-}
-
-/// The migration is idempotent when the new line is already the only one
-/// (the common state post-migration or on fresh projects). No unnecessary
-/// churn or duplication.
-#[test]
-fn set_replay_exclusion_is_noop_when_new_line_already_only_present() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    let attrs_path = dir.path().join(".gitattributes");
-    fs::write(&attrs_path, "rwv.lock merge=rwv-ours\n").unwrap();
-    let before = fs::read_to_string(&attrs_path).unwrap();
-
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    let after = fs::read_to_string(&attrs_path).unwrap();
-    assert_eq!(
-        before, after,
-        "call must be a no-op when the new needle is the only line; \
-         before={before:?} after={after:?}"
-    );
-}
-
-/// If a file *somehow* has both the legacy and the new lines (e.g. a bad
-/// manual merge in the pre-migration transition), the migration keeps
-/// exactly one — the NEW one — and drops the legacy. Preserves surrounding
-/// content.
-#[test]
-fn set_replay_exclusion_dedupes_when_both_lines_present() {
-    let dir = init_repo();
-    let vcs = git_vcs();
-    let attrs_path = dir.path().join(".gitattributes");
-    fs::write(
-        &attrs_path,
-        "*.png binary\nrwv.lock merge=ours\nrwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
-
-    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap();
-
-    let attrs = fs::read_to_string(&attrs_path).unwrap();
-    assert!(
-        attrs.contains("*.png binary"),
-        "unrelated entries preserved; got: {attrs:?}"
-    );
-    let legacy_count = attrs
-        .lines()
-        .filter(|l| l.trim() == "rwv.lock merge=ours")
-        .count();
-    assert_eq!(legacy_count, 0, "legacy line must be gone; got: {attrs:?}");
-    let new_count = attrs
-        .lines()
-        .filter(|l| l.trim() == "rwv.lock merge=rwv-ours")
-        .count();
-    assert_eq!(
-        new_count, 1,
-        "exactly one new needle expected; got {new_count} in: {attrs:?}"
-    );
-}
-
-/// `plant_rwv_merge_driver_config` sets both `merge.rwv-ours.driver=true`
-/// and `merge.rwv-ours.name=<desc>` in the repo-local config, and is
-/// idempotent (calling twice does not error and preserves the values).
-#[test]
-fn plant_rwv_merge_driver_config_sets_repo_local_entries() {
-    let dir = init_repo();
-    repoweave::git::plant_rwv_merge_driver_config(dir.path()).unwrap();
-
-    let driver = common::git_in(
-        dir.path(),
-        &["config", "--local", "--get", "merge.rwv-ours.driver"],
-    );
-    assert_eq!(
-        driver.trim(),
-        "true",
-        "driver config not planted; got: {driver:?}"
-    );
-    let name = common::git_in(
-        dir.path(),
-        &["config", "--local", "--get", "merge.rwv-ours.name"],
-    );
-    assert!(
-        !name.trim().is_empty(),
-        "name config not planted; got: {name:?}"
-    );
-
-    // Idempotent — a second plant must not fail.
-    repoweave::git::plant_rwv_merge_driver_config(dir.path()).unwrap();
-    let driver2 = common::git_in(
-        dir.path(),
-        &["config", "--local", "--get", "merge.rwv-ours.driver"],
-    );
-    assert_eq!(driver2.trim(), "true");
-}
-
-/// `has_rwv_merge_driver_config` reports `false` on a fresh repo and
-/// `true` after `plant_rwv_merge_driver_config`.
-#[test]
-fn has_rwv_merge_driver_config_reflects_plant() {
-    let dir = init_repo();
-    assert!(!repoweave::git::has_rwv_merge_driver_config(dir.path()).unwrap());
-    repoweave::git::plant_rwv_merge_driver_config(dir.path()).unwrap();
-    assert!(repoweave::git::has_rwv_merge_driver_config(dir.path()).unwrap());
-}
-
-/// A directory that is not a git repo at all must not read the same as one
-/// where the key is merely unset — `git config --get` exits 1 for both, and
-/// folding them into the same `Ok(false)` is what let `doctor --fix` attempt
-/// the plant and surface git's own `fatal: not in a git directory` instead
-/// of naming the actual condition.
-#[test]
-fn has_rwv_merge_driver_config_reports_not_a_repo() {
+fn an_unborn_branch_reads_the_working_declaration() {
     let dir = common::tempdir().unwrap();
-    match repoweave::git::has_rwv_merge_driver_config(dir.path()) {
+    let p = dir.path();
+    git_vcs().init_repo(p).unwrap();
+    fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
+    assert_eq!(setup(p).declaration, LockDriverPart::Current);
+}
+
+#[test]
+fn every_driver_an_earlier_release_assigned_the_lock_is_superseded() {
+    for text in [
+        "rwv.lock merge=rwv-ours\n",
+        "rwv.lock merge=ours\n",
+        "*.png binary\nrwv.lock merge=ours\nrwv.lock merge=rwv-lock\n",
+    ] {
+        let dir = init_repo();
+        commit_attributes(dir.path(), text);
+        assert_eq!(
+            setup(dir.path()).declaration,
+            LockDriverPart::Superseded,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn the_definition_is_current_only_when_it_names_rwvs_command() {
+    let dir = init_repo();
+    let p = dir.path();
+    assert_eq!(setup(p).definition, LockDriverPart::Absent);
+
+    common::git_in(p, &["config", "merge.rwv-ours.driver", "true"]);
+    assert_eq!(setup(p).definition, LockDriverPart::Superseded);
+
+    git_vcs().define_lock_driver(p).unwrap();
+    assert_eq!(setup(p).definition, LockDriverPart::Current);
+    assert_eq!(
+        common::git_in(p, &["config", "--get", "merge.rwv-lock.driver"]).trim(),
+        common::LOCK_DRIVER_COMMAND
+    );
+    assert!(
+        !common::git()
+            .args(["config", "--get", "merge.rwv-ours.driver"])
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success(),
+        "defining the driver replaces the earlier definition"
+    );
+
+    git_vcs().define_lock_driver(p).unwrap();
+    assert_eq!(setup(p).definition, LockDriverPart::Current);
+
+    common::git_in(p, &["config", "merge.rwv-lock.driver", "true"]);
+    assert_eq!(
+        setup(p).definition,
+        LockDriverPart::Superseded,
+        "a driver that keeps one side is not rwv's"
+    );
+}
+
+#[test]
+fn a_linked_worktree_shares_its_clones_definition() {
+    let dir = init_repo();
+    let p = dir.path();
+    git_vcs().define_lock_driver(p).unwrap();
+    let linked = dir.path().join("linked");
+    common::git_in(
+        p,
+        &["worktree", "add", "-b", "other", linked.to_str().unwrap()],
+    );
+    assert_eq!(setup(&linked).definition, LockDriverPart::Current);
+}
+
+#[test]
+fn reading_the_setup_outside_a_repo_is_an_error_not_an_absence() {
+    let dir = common::tempdir().unwrap();
+    match git_vcs().lock_driver_setup(dir.path()) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
         other => panic!("expected NotARepo, got {other:?}"),
     }
@@ -1317,10 +1119,8 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     let p = dir.path();
     write_lock_marker(p, "v0\n");
     common::git_in(p, &["add", "rwv.lock"]);
-    // Configure replay-exclusion BEFORE the commits that mutate the lock.
-    git_vcs()
-        .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
-        .unwrap();
+    // The driver is declared BEFORE the commits that mutate the lock.
+    fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
     common::git_in(p, &["add", ".gitattributes"]);
     common::git_in(p, &["commit", "-m", "lock + .gitattributes"]);
     let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
@@ -1571,7 +1371,7 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
 
 /// Golden path at the Vcs level: after staging the operator's resolution,
 /// `rebase_continue` drives the rebase to completion, leaves the repo clean,
-/// and re-supplies the `rwv-ours` merge-driver flags inline so any remaining
+/// and re-supplies the held lock merge driver inline so any remaining
 /// lock-only pick is resolved to the target's version (no conflict on
 /// `rwv.lock`) even when the durable driver config is unset. This is what
 /// makes `rebase_continue` the equivalent of `rwv sync`'s fresh
@@ -1582,14 +1382,11 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     let p = dir.path();
 
     // Base commit: rwv.lock + shared exist, and `.gitattributes` assigns the
-    // `rwv-ours` driver to `rwv.lock` via the production path (so committed
-    // trees carry the assignment).
+    // lock merge driver to `rwv.lock` (so committed trees carry it).
     write_lock_marker(p, "v0\n");
     fs::write(p.join("shared"), "v0\n").unwrap();
     common::git_in(p, &["add", "rwv.lock", "shared"]);
-    git_vcs()
-        .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
-        .unwrap();
+    fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
     common::git_in(p, &["add", ".gitattributes"]);
     common::git_in(p, &["commit", "-m", "base + attrs"]);
     let c1 = common::git_in(p, &["rev-parse", "HEAD"]);

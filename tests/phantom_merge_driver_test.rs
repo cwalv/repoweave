@@ -70,11 +70,6 @@ impl Weave {
             ),
         )
         .unwrap();
-        // Both of the project repo's replay-exclusion preconditions. Without
-        // the declaration it reports `missing-replay-exclusion`; without the
-        // driver definition, `missing-merge-driver-config`. Either leaves the
-        // baseline unclean.
-        std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
         let project_git = |args: &[&str]| {
             let out = common::git()
                 .args(args)
@@ -88,7 +83,9 @@ impl Weave {
             );
         };
         project_git(&["init", "-b", "main"]);
-        project_git(&["config", "merge.rwv-ours.driver", "true"]);
+        // Without the lock merge driver set up the baseline reports
+        // `missing-lock-merge-driver`, and is not clean.
+        common::set_up_lock_driver(&project);
 
         Self { _tmp: tmp, root }
     }
@@ -179,7 +176,7 @@ fn a_phantom_in_the_project_repo_is_reported() {
     let weave = Weave::new();
     weave.write_attributes(
         &weave.project_repo(),
-        "rwv.lock merge=rwv-ours\ndocs/** merge=rwv-typo\n",
+        "rwv.lock merge=rwv-lock\ndocs/** merge=rwv-typo\n",
     );
 
     let phantoms = weave.phantoms();

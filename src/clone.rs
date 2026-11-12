@@ -7,7 +7,6 @@
 use crate::activate::ActivateOptions;
 use crate::diagnosis::{Judged, JudgedOutput, Report, State};
 use crate::exit_status::CompletedWithRemainder;
-use crate::manifest::LockFile;
 use crate::member_selection::MemberSelection;
 use crate::parallel::OutputMode;
 use crate::placement::PlacementOutput;
@@ -15,7 +14,7 @@ use crate::refusal::RefusalKind;
 use crate::registry;
 use crate::skipped::SkippedEffect;
 use crate::update::{bring_members, CloneDuty, MemberOutcomeOutput, MemberPin};
-use crate::vcs::{project_vcs, vcs_for, PinOutcome, ReplayExclusionState};
+use crate::vcs::{project_vcs, vcs_for, PinOutcome};
 use crate::workspace::{projects_dir, Resolution};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -153,24 +152,14 @@ pub fn run_clone(
         )
     })?;
 
-    // Unlike `init`/`init_adopt`, clone never calls `set_replay_exclusion` —
-    // it clones a project that already exists, and whether `rwv.lock` is
-    // declared derived is that project's own prior choice. Complete the
-    // config only when the clone already carries the declaration; otherwise
-    // there is no `rwv-ours` assignment for the driver to serve.
-    let declares_rwv_ours = matches!(
-        project_vcs
-            .replay_exclusion_state(&project_dir, Path::new(LockFile::FILE_NAME))
-            .with_context(|| format!(
-                "failed to read .gitattributes in {}",
+    project_vcs
+        .define_lock_driver(&project_dir)
+        .with_context(|| {
+            format!(
+                "failed to define the lock merge driver in {}",
                 project_dir.display()
-            ))?,
-        ReplayExclusionState::Current | ReplayExclusionState::LegacyAlongsideCurrent
-    );
-    if declares_rwv_ours {
-        crate::git::plant_rwv_merge_driver_config(&project_dir)
-            .context("failed to plant merge.rwv-ours config")?;
-    }
+            )
+        })?;
 
     let run = match bring_members(
         "clone",

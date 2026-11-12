@@ -71,12 +71,7 @@ fn weave_committing(parent: &Path, manifest: &str) -> Weave {
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    common::git_in(&project, &["config", "merge.rwv-ours.driver", "true"]);
-    common::git_in(
-        &project,
-        &["config", "merge.rwv-ours.name", "keep ours during replay"],
-    );
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     std::fs::write(project.join("rwv.toml"), manifest).unwrap();
     std::fs::write(project.join("notes.txt"), "kept\n").unwrap();
     common::git_in(&project, &["add", "-A"]);
@@ -398,7 +393,7 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
     let project = root.join("projects/web-app");
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     std::fs::write(
         project.join("rwv.toml"),
         format!(

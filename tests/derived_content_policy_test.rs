@@ -13,7 +13,7 @@
 //! different derived path here is what shows the primitive is general and
 //! keeps the two from being read as one test of the same thing.
 
-use repoweave::git::{git_vcs, has_rwv_merge_driver_config};
+use repoweave::git::{git_vcs, DERIVED_CONTENT_DRIVER_NAME};
 use repoweave::vcs::{
     ConflictOp, DerivedContentPolicy, MidOperation, ResolvedRevisionId, VcsError,
 };
@@ -45,7 +45,7 @@ fn read(dir: &Path, rel: &str) -> String {
 /// which defines no resolver for it anywhere.
 ///
 /// The second half is the precondition that gives every assertion below its
-/// meaning: with a durable `merge.rwv-ours.*` plant in the repo's config, a
+/// meaning: with a durable `merge.rwv-ours.driver` in the repo's config, a
 /// declared path would resolve mechanically no matter what any operation
 /// passed, and a policy parameter that did nothing would still look right.
 fn repo_declaring_derived_content() -> TempDir {
@@ -58,9 +58,11 @@ fn repo_declaring_derived_content() -> TempDir {
 
     write(p, DERIVED, "generated: v0\n");
     write(p, AUTHORED, "authored: v0\n");
-    git_vcs()
-        .set_replay_exclusion(p, Path::new(DERIVED))
-        .expect("declaring a path derived writes the repo's tracked metadata");
+    write(
+        p,
+        ".gitattributes",
+        &format!("{DERIVED} merge={DERIVED_CONTENT_DRIVER_NAME}\n"),
+    );
     common::git_in(p, &["add", "."]);
     common::git_in(
         p,
@@ -68,7 +70,12 @@ fn repo_declaring_derived_content() -> TempDir {
     );
 
     assert!(
-        !has_rwv_merge_driver_config(p).unwrap(),
+        !common::git()
+            .args(["config", "--get", "merge.rwv-ours.driver"])
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success(),
         "fixture precondition: no resolver may be defined durably in {}, \
          or these tests cannot tell a working policy from an ignored one \
          (is `merge.rwv-ours.driver` set in your global git config?)",

@@ -88,11 +88,7 @@ fn make_primary(parent: &Path) -> Primary {
 
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir, "PLACEHOLDER", "p\n");
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     let manifest = format!(
         "[repositories.\"{OWNED_PATH}\"]\ntype = \"git\"\nurl = \"file://{owned}\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"{REF_PATH}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nbranch = \"main\"\nrole = \"reference\"\n",
         owned = common::url_path(&owned),

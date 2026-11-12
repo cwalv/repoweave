@@ -67,15 +67,10 @@ fn make_workspace(parent: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn seal_project_repo(project_dir: &Path) {
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     common::git_in(project_dir, &["init", "-b", "main"]);
     common::git_in(project_dir, &["add", "."]);
     common::git_in(project_dir, &["commit", "-m", "initial"]);
-    common::git_in(project_dir, &["config", "merge.rwv-ours.driver", "true"]);
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {

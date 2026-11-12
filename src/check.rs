@@ -11,7 +11,7 @@ use crate::manifest::{
 use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
+use crate::vcs::{RawRevisionId, ResolvedRevisionId};
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -125,38 +125,17 @@ pub enum CheckViolation {
         kind: WorkingTreeDriftKind,
     },
 
-    /// A project repo is missing the `rwv.lock merge=rwv-ours` entry in
-    /// `.gitattributes`. Without it, `rwv sync`'s native rebase would carry
-    /// user lock-edits through the merge inputs instead of letting Phase 3
-    /// regenerate them. The committed-form check is the one sync's invariant
-    /// reads; the migration commit is what makes it visible on the next
-    /// rebase.
-    MissingReplayExclusion {
+    /// A project repo's lock merge driver is not set up as this release sets
+    /// it up. Every verb that writes the project repo or its lock refuses the
+    /// same state.
+    MissingLockMergeDriver {
         project: ProjectName,
-        sub_kind: ReplayExclusionKind,
+        sub_kind: MissingLockMergeDriverKind,
     },
 
-    /// Reading a project repo's `.gitattributes` for the replay-exclusion
-    /// entry failed, so the invariant is neither satisfied nor violated.
-    ReplayExclusionUnreadable { project: ProjectName, error: String },
-
-    /// A project repo does not define the `rwv-ours` merge driver in its own
-    /// git config. `rwv sync` passes the definition per invocation, so its own
-    /// rebase is unaffected; a bare `git rebase --continue` the operator runs
-    /// afterwards is not, and git treats an undefined driver as `merge=binary`
-    /// — conflict markers in `rwv.lock` where Phase 3 expects to regenerate.
-    MissingMergeDriverConfig {
-        project: ProjectName,
-        config_key: String,
-    },
-
-    /// Reading a project repo's git config for the `rwv-ours` merge-driver
-    /// definition failed, so the invariant is neither satisfied nor violated.
-    MergeDriverConfigUnreadable {
-        project: ProjectName,
-        config_key: String,
-        error: String,
-    },
+    /// Reading a project repo's lock merge driver setup failed, so it is
+    /// neither confirmed nor reported missing.
+    LockMergeDriverUnreadable { project: ProjectName, error: String },
 
     /// A repo present under a registry directory whose HEAD `rwv doctor` could
     /// not read. Every freshness comparison for that repo is unevaluated, so
@@ -670,8 +649,7 @@ impl CheckViolation {
             | CheckViolation::CargoVersionSkew { .. }
             | CheckViolation::CargoPatchShadowing { .. }
             | CheckViolation::MissingCanonicalClone { .. }
-            | CheckViolation::ReplayExclusionUnreadable { .. }
-            | CheckViolation::MergeDriverConfigUnreadable { .. }
+            | CheckViolation::LockMergeDriverUnreadable { .. }
             | CheckViolation::HeadUnreadable { .. }
             | CheckViolation::ProjectsDirUnreadable { .. }
             | CheckViolation::ProjectlessDir { .. }
@@ -681,8 +659,7 @@ impl CheckViolation {
             | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
-            CheckViolation::MissingMergeDriverConfig { .. }
-            | CheckViolation::DanglingActiveProject { .. }
+            CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::DeadOpLease { .. }
@@ -691,11 +668,7 @@ impl CheckViolation {
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.fix_disposition(),
-            CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
-                ReplayExclusionKind::Absent
-                | ReplayExclusionKind::LegacySpelling
-                | ReplayExclusionKind::LegacyAlongsideCurrent => Auto,
-            },
+            CheckViolation::MissingLockMergeDriver { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::UninitializedSubmodule { sub_kind, .. } => match sub_kind {
                 SubmoduleCommitKind::Fetched => Auto,
                 SubmoduleCommitKind::Unfetched => ReportOnly,
@@ -786,10 +759,8 @@ impl CheckViolation {
             | CheckViolation::HistoryDisagreement { .. }
             | CheckViolation::IndexDrift { .. }
             | CheckViolation::WorkingTreeDrift { .. }
-            | CheckViolation::MissingReplayExclusion { .. }
-            | CheckViolation::ReplayExclusionUnreadable { .. }
-            | CheckViolation::MissingMergeDriverConfig { .. }
-            | CheckViolation::MergeDriverConfigUnreadable { .. }
+            | CheckViolation::MissingLockMergeDriver { .. }
+            | CheckViolation::LockMergeDriverUnreadable { .. }
             | CheckViolation::ProjectlessDir { .. }
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::LockPinnedByName { .. }
@@ -842,15 +813,9 @@ impl CheckViolation {
             CheckViolation::WorkweaveDrift { .. } => ViolationKind::WorkweaveDrift,
             CheckViolation::IndexDrift { .. } => ViolationKind::IndexDrift,
             CheckViolation::WorkingTreeDrift { .. } => ViolationKind::WorkingTreeDrift,
-            CheckViolation::MissingReplayExclusion { .. } => ViolationKind::MissingReplayExclusion,
-            CheckViolation::ReplayExclusionUnreadable { .. } => {
-                ViolationKind::ReplayExclusionUnreadable
-            }
-            CheckViolation::MissingMergeDriverConfig { .. } => {
-                ViolationKind::MissingMergeDriverConfig
-            }
-            CheckViolation::MergeDriverConfigUnreadable { .. } => {
-                ViolationKind::MergeDriverConfigUnreadable
+            CheckViolation::MissingLockMergeDriver { .. } => ViolationKind::MissingLockMergeDriver,
+            CheckViolation::LockMergeDriverUnreadable { .. } => {
+                ViolationKind::LockMergeDriverUnreadable
             }
             CheckViolation::HeadUnreadable { .. } => ViolationKind::HeadUnreadable,
             CheckViolation::ProjectsDirUnreadable { .. } => ViolationKind::ProjectsDirUnreadable,
@@ -910,10 +875,8 @@ pub enum ViolationKind {
     WorkweaveDrift,
     IndexDrift,
     WorkingTreeDrift,
-    MissingReplayExclusion,
-    ReplayExclusionUnreadable,
-    MissingMergeDriverConfig,
-    MergeDriverConfigUnreadable,
+    MissingLockMergeDriver,
+    LockMergeDriverUnreadable,
     HeadUnreadable,
     ProjectsDirUnreadable,
     ProjectlessDir,
@@ -946,7 +909,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 41] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -957,10 +920,8 @@ impl ViolationKind {
         Self::WorkweaveDrift,
         Self::IndexDrift,
         Self::WorkingTreeDrift,
-        Self::MissingReplayExclusion,
-        Self::ReplayExclusionUnreadable,
-        Self::MissingMergeDriverConfig,
-        Self::MergeDriverConfigUnreadable,
+        Self::MissingLockMergeDriver,
+        Self::LockMergeDriverUnreadable,
         Self::HeadUnreadable,
         Self::ProjectsDirUnreadable,
         Self::ProjectlessDir,
@@ -1329,39 +1290,97 @@ pub enum DriftKind {
     DanglingLinkUnfetched,
 }
 
-/// Which spelling of the replay exclusion the project repo carries, which
-/// decides whether `--fix` writes the entry fresh or migrates one in place.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+/// Which part of a project repo's lock merge driver setup is missing or left
+/// as an earlier release wrote it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum ReplayExclusionKind {
-    /// `.gitattributes` carries no entry for `rwv.lock` at all.
-    Absent,
-    /// `.gitattributes` carries the legacy `merge=ours` spelling. The driver
-    /// was renamed to close a collision with a global-config `ours` driver;
-    /// the old name reads as the invariant being met while sync's check —
-    /// which matches the current name — sees nothing.
-    LegacySpelling,
-    /// `.gitattributes` carries both spellings for `rwv.lock`. Which one git
-    /// applies is decided by reading order, and the legacy name is live
-    /// either way: a global `merge.ours.driver` binds to it during a bare
-    /// `git rebase --continue`.
-    LegacyAlongsideCurrent,
+pub enum MissingLockMergeDriverKind {
+    /// The checked-out commit's `.gitattributes` assigns `rwv.lock` no driver.
+    AttributeAbsent,
+    /// It assigns `merge=rwv-ours` or `merge=ours`, written by an earlier
+    /// release.
+    AttributeLegacy,
+    /// The clone's config does not define the driver's command.
+    ConfigAbsent,
+    /// The clone's config defines a driver that keeps one side.
+    ConfigLegacy,
 }
 
-/// The finding a project's replay-exclusion state raises, `None` for the one
-/// state that raises none.
-///
-/// Doctor decides this once. The scan turns the answer into a finding and
-/// `--fix` turns it into a repair, so `--fix` cannot act on a state the scan
-/// called clean — the two read one classification of one read of the file
-/// rather than each deriving its own.
-fn replay_exclusion_finding(state: ReplayExclusionState) -> Option<ReplayExclusionKind> {
-    match state {
-        ReplayExclusionState::Current => None,
-        ReplayExclusionState::Absent => Some(ReplayExclusionKind::Absent),
-        ReplayExclusionState::LegacyOnly => Some(ReplayExclusionKind::LegacySpelling),
-        ReplayExclusionState::LegacyAlongsideCurrent => {
-            Some(ReplayExclusionKind::LegacyAlongsideCurrent)
+impl MissingLockMergeDriverKind {
+    pub const ALL: [Self; 4] = [
+        Self::AttributeAbsent,
+        Self::AttributeLegacy,
+        Self::ConfigAbsent,
+        Self::ConfigLegacy,
+    ];
+
+    pub fn severity(self) -> crate::integration::Severity {
+        crate::integration::Severity::Warning
+    }
+
+    pub fn fix_disposition(self) -> FixDisposition {
+        FixDisposition::Auto
+    }
+
+    pub(crate) fn state(self) -> crate::diagnosis::State {
+        use crate::diagnosis::State;
+        match self {
+            Self::AttributeAbsent => State::MissingLockMergeDriverAttributeAbsent,
+            Self::AttributeLegacy => State::MissingLockMergeDriverAttributeLegacy,
+            Self::ConfigAbsent => State::MissingLockMergeDriverConfigAbsent,
+            Self::ConfigLegacy => State::MissingLockMergeDriverConfigLegacy,
+        }
+    }
+
+    /// Every part of `setup` that is not as this release sets it up.
+    pub(crate) fn of(setup: crate::vcs::LockDriverSetup) -> Vec<Self> {
+        use crate::vcs::LockDriverPart;
+        let declaration = match setup.declaration {
+            LockDriverPart::Current => None,
+            LockDriverPart::Absent => Some(Self::AttributeAbsent),
+            LockDriverPart::Superseded => Some(Self::AttributeLegacy),
+        };
+        let definition = match setup.definition {
+            LockDriverPart::Current => None,
+            LockDriverPart::Absent => Some(Self::ConfigAbsent),
+            LockDriverPart::Superseded => Some(Self::ConfigLegacy),
+        };
+        declaration.into_iter().chain(definition).collect()
+    }
+
+    pub fn entry(self) -> &'static str {
+        match self {
+            Self::AttributeAbsent => {
+                "The checked-out branch's committed `.gitattributes` has no `rwv.lock \
+                 merge=rwv-lock` line, so a merge rwv does not make merges the lock as text.\n\n\
+                 **What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the \
+                 line to the working file and to the checked-out commit's file and commits only \
+                 that line; any other edit to `.gitattributes` stays uncommitted. It declines, \
+                 changing nothing, while another file is staged or a merge, rebase or \
+                 cherry-pick is in progress in the project repo. Another branch carries its own \
+                 file and is migrated where it is checked out."
+            }
+            Self::AttributeLegacy => {
+                "The checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
+                 `merge=rwv-ours` or `merge=ours`, the driver an earlier release wrote, which \
+                 kept one side of every lock merge. It is not honored.\n\n\
+                 **What to do:** `rwv doctor --fix`, as above: it rewrites the line to \
+                 `rwv.lock merge=rwv-lock`, committing only that."
+            }
+            Self::ConfigAbsent => {
+                "The clone's config does not define `merge.rwv-lock.driver`. Config does not \
+                 travel with a clone, so a clone rwv did not make has none; every workweave \
+                 shares its clone's.\n\n\
+                 **What to do:** `rwv doctor --fix`. It sets `merge.rwv-lock.driver` to \
+                 `rwv lock --merge-driver %O %A %B`, which git runs by finding `rwv` on `PATH`."
+            }
+            Self::ConfigLegacy => {
+                "The clone's config still defines `merge.rwv-ours.driver`, the driver an \
+                 earlier release planted, or defines `merge.rwv-lock.driver` as a command other \
+                 than `rwv lock --merge-driver %O %A %B`.\n\n\
+                 **What to do:** `rwv doctor --fix`. It replaces the config: the earlier \
+                 entries are removed and `merge.rwv-lock.driver` names rwv's command."
+            }
         }
     }
 }
@@ -2012,22 +2031,13 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: WorkingTreeDriftKind,
     },
-    MissingReplayExclusion {
+    MissingLockMergeDriver {
         project: ProjectName,
         #[serde(rename = "sub_kind")]
-        sub_kind: ReplayExclusionKind,
+        sub_kind: MissingLockMergeDriverKind,
     },
-    ReplayExclusionUnreadable {
+    LockMergeDriverUnreadable {
         project: ProjectName,
-        error: String,
-    },
-    MissingMergeDriverConfig {
-        project: ProjectName,
-        config_key: String,
-    },
-    MergeDriverConfigUnreadable {
-        project: ProjectName,
-        config_key: String,
         error: String,
     },
     HeadUnreadable {
@@ -2446,34 +2456,18 @@ impl ViolationOutput {
                 workweave: workweave.clone(),
                 sub_kind: kind,
             },
-            CheckViolation::MissingReplayExclusion { project, sub_kind } => {
-                Self::MissingReplayExclusion {
+            CheckViolation::MissingLockMergeDriver { project, sub_kind } => {
+                Self::MissingLockMergeDriver {
                     project: project.clone(),
                     sub_kind,
                 }
             }
-            CheckViolation::ReplayExclusionUnreadable { project, error } => {
-                Self::ReplayExclusionUnreadable {
+            CheckViolation::LockMergeDriverUnreadable { project, error } => {
+                Self::LockMergeDriverUnreadable {
                     project: project.clone(),
                     error,
                 }
             }
-            CheckViolation::MissingMergeDriverConfig {
-                project,
-                config_key,
-            } => Self::MissingMergeDriverConfig {
-                project: project.clone(),
-                config_key,
-            },
-            CheckViolation::MergeDriverConfigUnreadable {
-                project,
-                config_key,
-                error,
-            } => Self::MergeDriverConfigUnreadable {
-                project: project.clone(),
-                config_key,
-                error,
-            },
             CheckViolation::HeadUnreadable { repo, error } => Self::HeadUnreadable {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
@@ -3137,85 +3131,6 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
         )
     })?;
     Ok(true)
-}
-
-// ---------------------------------------------------------------------------
-// Replay-exclusion (.gitattributes) migration commit helper
-// ---------------------------------------------------------------------------
-
-/// Result of an rwv-authored .gitattributes commit attempt.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CommitOutcome {
-    /// The migration was staged and committed.
-    Committed,
-    /// The project repo had unrelated staged changes; the migration was
-    /// left in the working tree unstaged (or with only `.gitattributes`
-    /// staged) so the operator can review before committing. Skipping is
-    /// the safe behavior: never bundle a user's WIP with an rwv-authored
-    /// fix.
-    SkippedUnrelatedStaged,
-    /// The migration produced no diff (e.g. race — the file was already
-    /// on the new spelling by the time we tried to commit). Idempotent no-op.
-    NothingToCommit,
-}
-
-/// Stage and commit the `.gitattributes` change written by
-/// [`crate::vcs::Vcs::set_replay_exclusion`] during the legacy `merge=ours` →
-/// `merge=rwv-ours` migration.
-///
-/// Refuses to commit when the project repo has any staged change other than
-/// `.gitattributes` — returns [`CommitOutcome::SkippedUnrelatedStaged`] and
-/// leaves the working-tree migration in place. This mirrors
-/// `lock::commit_lock_file`'s bundling refusal, adapted for `.gitattributes`.
-///
-/// Commit message follows the same convention as
-/// `chore: add rwv.lock replay-exclusion` mentioned in
-/// `sync::verify_replay_exclusion_invariant`'s fallback hint so the two
-/// forms of the fix (auto and hand-run) sit on adjacent commits with
-/// consistent framing.
-///
-/// MIGRATORY arm: repairs the legacy replay-exclusion spelling written by
-/// rwv <= v0.12.1. Removable once every owned weave's health floor records
-/// a clean doctor at >= v0.18 (see [`crate::health_floor`]).
-pub(crate) fn commit_replay_exclusion_migration(
-    vcs: &dyn crate::vcs::Vcs,
-    project_dir: &Path,
-) -> anyhow::Result<CommitOutcome> {
-    const ATTRIBUTES_FILE: &str = ".gitattributes";
-
-    // Read what is already staged BEFORE touching the index, so unrelated
-    // work is never swept into an rwv-authored commit.
-    let already_staged = vcs
-        .staged_paths(project_dir)
-        .with_context(|| format!("failed to read staged paths in {}", project_dir.display()))?;
-    if already_staged.iter().any(|p| p != ATTRIBUTES_FILE) {
-        return Ok(CommitOutcome::SkippedUnrelatedStaged);
-    }
-
-    vcs.stage_paths(project_dir, &[ATTRIBUTES_FILE])
-        .with_context(|| {
-            format!(
-                "failed to stage {ATTRIBUTES_FILE} in {}",
-                project_dir.display()
-            )
-        })?;
-
-    let staged = vcs.has_staged_changes(project_dir).with_context(|| {
-        format!(
-            "failed to check staged changes in {}",
-            project_dir.display()
-        )
-    })?;
-    if !staged {
-        return Ok(CommitOutcome::NothingToCommit);
-    }
-
-    vcs.commit(
-        project_dir,
-        "chore: migrate rwv.lock merge=ours → merge=rwv-ours (rwv doctor --fix)",
-    )
-    .with_context(|| format!("failed to commit in {}", project_dir.display()))?;
-    Ok(CommitOutcome::Committed)
 }
 
 // ---------------------------------------------------------------------------
@@ -4358,16 +4273,14 @@ pub fn scan_provenance(
 ///
 /// Answered against rwv's own vocabulary — the names this code knows how to
 /// define — and deliberately NOT against `merge.<name>.driver` in the repo's
-/// config. rwv supplies that definition two ways: durably, via
-/// [`crate::git::plant_rwv_merge_driver_config`], and per-invocation, via the
+/// config. The derived-content driver is defined only per invocation, by the
 /// `-c` flags a stated derived-content policy contributes to a single git
-/// command. The second leaves nothing on disk to detect, so a config probe
-/// would answer "no such driver" for a name rwv defines every time it replays,
-/// and the verdict would turn on which commands happened to run last in that
-/// repo. The static answer holds in every repo at every moment, which is what
-/// a check the operator is meant to act on needs.
+/// command, which leaves nothing on disk to detect: a config probe would
+/// answer "no such driver" for a name rwv defines every time it replays. The
+/// static answer holds in every repo at every moment, which is what a check
+/// the operator is meant to act on needs.
 fn rwv_defines_merge_driver(name: &str) -> bool {
-    name == crate::git::RWV_MERGE_DRIVER_NAME
+    name == crate::git::RWV_MERGE_DRIVER_NAME || name == crate::git::DERIVED_CONTENT_DRIVER_NAME
 }
 
 /// Scan managed repos for `.gitattributes` lines that assign an
@@ -4386,11 +4299,10 @@ fn rwv_defines_merge_driver(name: &str) -> bool {
 /// predates this scan and stays exactly where it is: `rwv.lock`, which
 /// `rwv init` writes and `rwv doctor --fix` repairs.
 ///
-/// Reads the working-tree `.gitattributes`, like
-/// [`Vcs::replay_exclusion_state`](crate::vcs::Vcs::replay_exclusion_state): the
-/// operator's next commit is the one worth catching, and a file read costs no
-/// subprocess. Report-only — repairing a phantom means guessing whether the
-/// operator meant `rwv-ours` or meant nothing at all.
+/// Reads the working-tree `.gitattributes`: the operator's next commit is the
+/// one worth catching, and a file read costs no subprocess. Report-only —
+/// repairing a phantom means guessing which driver the operator meant, or
+/// that they meant nothing at all.
 ///
 /// Each repo is scanned once even when several projects list it.
 pub fn scan_phantom_merge_drivers(
@@ -6502,41 +6414,14 @@ impl CheckViolation {
                 };
                 format!("{location}: {detail}")
             }
-            CheckViolation::MissingReplayExclusion { project, sub_kind } => match sub_kind {
-                ReplayExclusionKind::Absent => format!(
-                    "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
-                         (run `rwv doctor --fix` to add)"
-                ),
-                ReplayExclusionKind::LegacySpelling => format!(
-                    "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
-                         the driver was renamed to close a global-config collision hazard \
-                         (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
-                         and commit)"
-                ),
-                ReplayExclusionKind::LegacyAlongsideCurrent => format!(
-                    "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
-                         `rwv.lock merge=ours` in .gitattributes; git picks between them by \
-                         reading order, and the legacy name binds to any `merge.ours.driver` \
-                         a global git config defines (run `rwv doctor --fix` to drop the \
-                         legacy line and commit)"
-                ),
-            },
-            CheckViolation::ReplayExclusionUnreadable { project, error } => format!(
-                "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
+            CheckViolation::MissingLockMergeDriver { project, sub_kind } => format!(
+                "{project}: lock merge driver {}: {} (run `rwv doctor --fix` to set it up)",
+                sub_kind.state().row().name,
+                sub_kind.state().row().means
             ),
-            CheckViolation::MissingMergeDriverConfig {
-                project,
-                config_key,
-            } => format!(
-                "{project}: project repo missing `{config_key}` config \
-                     (defines the `rwv-ours` merge driver used by bare \
-                     `git rebase --continue`; run `rwv doctor --fix` to plant)"
-            ),
-            CheckViolation::MergeDriverConfigUnreadable {
-                project,
-                config_key,
-                error,
-            } => format!("{project}: failed to read `{config_key}` config: {error}"),
+            CheckViolation::LockMergeDriverUnreadable { project, error } => {
+                format!("{project}: failed to read the lock merge driver setup: {error}")
+            }
             CheckViolation::HeadUnreadable { repo, error } => {
                 format!("{repo}: HEAD unreadable ({error})")
             }
@@ -7189,7 +7074,7 @@ impl CheckViolation {
                 pattern,
                 driver,
             } => {
-                // No fix: `rwv-ours` is a guess at what the operator meant,
+                // No fix: a driver name is a guess at what the operator meant,
                 // and deleting the line is a guess that they meant nothing.
                 safe_to_fix = false;
                 format!(
@@ -7199,7 +7084,7 @@ impl CheckViolation {
                          and the line silently does nothing (git falls back to a \
                          textual merge). Use `merge={defined}` for a derived path \
                          whose target-side copy should win, or drop the line",
-                    defined = crate::git::RWV_MERGE_DRIVER_NAME,
+                    defined = crate::git::DERIVED_CONTENT_DRIVER_NAME,
                 )
             }
         };
@@ -7610,88 +7495,40 @@ fn apply_workspace_repairs(
 
     for project in &world.input.projects {
         let project_repo = project_dir(&world.workspace_dir, &project.name);
-        if !project_repo.is_dir() {
+        if !project_repo.is_dir() || !vcs.is_repo(&project_repo) {
             continue;
         }
-        let Ok(state) =
-            vcs.replay_exclusion_state(&project_repo, std::path::Path::new(LockFile::FILE_NAME))
-        else {
-            continue;
-        };
-        let Some(sub_kind) = replay_exclusion_finding(state) else {
-            continue;
-        };
-        let migration = match sub_kind {
-            ReplayExclusionKind::Absent => None,
-            ReplayExclusionKind::LegacySpelling => {
-                Some("migrated `rwv.lock merge=ours` → `rwv.lock merge=rwv-ours`")
-            }
-            ReplayExclusionKind::LegacyAlongsideCurrent => Some(
-                "dropped the legacy `rwv.lock merge=ours` line, leaving `rwv.lock merge=rwv-ours`",
-            ),
-        };
-        // Rewrites a legacy line to the new name in place rather than
-        // appending alongside it, and is a no-op once the new line is the
-        // only one.
-        match vcs.set_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
-            Ok(_) => {
-                if let Some(migration) = migration {
-                    // The invariant reads the *committed* form, so a migration
-                    // that stops at the working tree is not yet in effect. A
-                    // repo with unrelated staged work is left uncommitted —
-                    // user work is never bundled with an rwv-authored fix.
-                    match commit_replay_exclusion_migration(vcs, &project_repo) {
-                        Ok(CommitOutcome::Committed) => outln!(
-                            "[fixed] core: {migration} in {}/.gitattributes (committed)",
-                            project.name
-                        ),
-                        Ok(CommitOutcome::SkippedUnrelatedStaged) => outln!(
-                            "[fixed] core: {migration} in {}/.gitattributes (NOT committed: \
-                             project repo has unrelated staged changes; commit them, then \
-                             re-run `rwv doctor --fix` to complete the migration)",
-                            project.name
-                        ),
-                        Ok(CommitOutcome::NothingToCommit) => outln!(
-                            "[fixed] core: {migration} in {}/.gitattributes",
-                            project.name
-                        ),
-                        Err(e) => fix_errors.push(format!(
-                            "{}: migrated .gitattributes but commit failed: {e:#}",
-                            project.name
-                        )),
-                    }
-                } else {
+        match crate::lock_driver::migrate(vcs, &project_repo) {
+            Ok(migrated) => {
+                if migrated.committed {
                     outln!(
-                        "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
+                        "[fixed] core: set up the lock merge driver's attribute line in {}, \
+                         committing only that",
+                        project.name
+                    );
+                } else if migrated.declared {
+                    outln!(
+                        "[fixed] core: wrote the lock merge driver's attribute line in {}",
+                        project.name
+                    );
+                }
+                if let Some(why) = migrated.withheld {
+                    fix_errors.push(format!(
+                        "{}: the lock merge driver's attribute line was not migrated: {why}",
+                        project.name
+                    ));
+                }
+                if migrated.defined {
+                    outln!(
+                        "[fixed] core: defined the lock merge driver in {}'s config",
                         project.name
                     );
                 }
             }
             Err(e) => fix_errors.push(format!(
-                "{}: failed to write replay-exclusion: {e:#}",
+                "{}: failed to set up the lock merge driver: {e:#}",
                 project.name
             )),
-        }
-    }
-
-    for project in &world.input.projects {
-        let project_repo = project_dir(&world.workspace_dir, &project.name);
-        if !project_repo.is_dir() {
-            continue;
-        }
-        if let Ok(false) = crate::git::has_rwv_merge_driver_config(&project_repo) {
-            match crate::git::plant_rwv_merge_driver_config(&project_repo) {
-                Ok(()) => outln!(
-                    "[fixed] core: planted `{}` config in {}",
-                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                    project.name
-                ),
-                Err(e) => fix_errors.push(format!(
-                    "{}: failed to plant `{}`: {e:#}",
-                    project.name,
-                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY
-                )),
-            }
         }
     }
 }
@@ -9369,32 +9206,18 @@ fn collect_doctor_violations(
 
     for project in &input.projects {
         let project_repo = project_dir(workspace_dir, &project.name);
-        if !project_repo.is_dir() {
+        if !project_repo.is_dir() || !vcs.is_repo(&project_repo) {
             continue;
         }
-        match vcs.replay_exclusion_state(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
-            Ok(state) => {
-                if let Some(sub_kind) = replay_exclusion_finding(state) {
-                    violations.push(CheckViolation::MissingReplayExclusion {
-                        project: project.name.clone(),
-                        sub_kind,
-                    });
-                }
-            }
-            Err(e) => violations.push(CheckViolation::ReplayExclusionUnreadable {
+        match vcs.lock_driver_setup(&project_repo) {
+            Ok(setup) => violations.extend(MissingLockMergeDriverKind::of(setup).into_iter().map(
+                |sub_kind| CheckViolation::MissingLockMergeDriver {
+                    project: project.name.clone(),
+                    sub_kind,
+                },
+            )),
+            Err(e) => violations.push(CheckViolation::LockMergeDriverUnreadable {
                 project: project.name.clone(),
-                error: format!("{e:#}"),
-            }),
-        }
-        match crate::git::has_rwv_merge_driver_config(&project_repo) {
-            Ok(true) => {}
-            Ok(false) => violations.push(CheckViolation::MissingMergeDriverConfig {
-                project: project.name.clone(),
-                config_key: crate::git::RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
-            }),
-            Err(e) => violations.push(CheckViolation::MergeDriverConfigUnreadable {
-                project: project.name.clone(),
-                config_key: crate::git::RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
                 error: format!("{e:#}"),
             }),
         }

@@ -86,11 +86,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     // Mirror what `rwv init` writes: `.gitattributes` so `rwv sync-to`'s
     // native rebase keeps source's rwv.lock through the replay (the
     // `merge=rwv-ours` driver).
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(

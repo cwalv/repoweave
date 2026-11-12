@@ -69,7 +69,7 @@ fn smudging_weave(tmp: &Path) -> (PathBuf, PathBuf) {
     let app = ws.join("projects/app");
     std::fs::create_dir_all(&app).unwrap();
     git(&home, &app, &["init", "-q", "-b", "main"]);
-    std::fs::write(app.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&app);
     std::fs::write(
         app.join("rwv.toml"),
         format!(

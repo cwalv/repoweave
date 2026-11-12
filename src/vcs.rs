@@ -460,8 +460,8 @@ pub enum ConflictOp {
     /// `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS
     /// hint for this variant stops at staging (`git add <files>`); rwv core
     /// appends the `rwv <verb> --continue` line. Bare `git rebase --continue`
-    /// remains a safe fallback (the durable `merge.rwv-ours.driver` config
-    /// plant carries the exclusion), but it is not the primary operator path.
+    /// resumes without rwv's hold on the lock merge driver, so the clone's
+    /// own definition merges the lock of each remaining pick.
     Rebase,
     /// Merge (`git merge`) — resumes with `git merge --continue`.
     Merge,
@@ -2365,7 +2365,7 @@ impl DestroyProof {
 //
 //   - WHICH paths are derived is the repo's own declaration, recorded in
 //     tracked metadata so it travels with a clone (for git: `.gitattributes`
-//     — see [`Vcs::set_replay_exclusion`]). Per-repo, opt-in, self-contained.
+//     — see [`Vcs::lock_driver_setup`]). Per-repo, self-contained.
 //   - HOW a derived path resolves is a definition the declaration only names
 //     and cannot carry. rwv is the carrier, supplying it per operation.
 //
@@ -2445,8 +2445,7 @@ impl DerivedContentPolicy {
     ///
     /// Not a promise that no resolver is defined: a definition the repo
     /// already carries durably in its own configuration still applies (for
-    /// git, the `merge.rwv-ours.*` plant that keeps a bare `git rebase
-    /// --continue` safe). This value governs what the operation supplies,
+    /// git, the clone's `merge.rwv-lock.driver`). This value governs what the operation supplies,
     /// which is the only half rwv owns per invocation.
     pub fn vcs_default() -> Self {
         Self(DerivedContentResolution::VcsDefault)
@@ -2462,25 +2461,25 @@ impl DerivedContentPolicy {
     }
 }
 
-/// Which replay-exclusion assignments a repo carries for one path, as of a
-/// single read.
-///
-/// One value rather than a pair of predicates: the exclusion is configured or
-/// not, and superseded-but-still-present is a third state, not the absence of
-/// the second. Two independent predicates let one caller answer "configured"
-/// while another answers "needs migrating" about the same file, which is how
-/// a repair came to act on a state the report called clean.
+/// One half of the lock merge driver's setup in a project repo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplayExclusionState {
-    /// No assignment for the path.
-    Absent,
-    /// The superseded assignment only.
-    LegacyOnly,
-    /// Both, which resolves by position rather than by intent and leaves the
-    /// superseded name live.
-    LegacyAlongsideCurrent,
-    /// The current assignment, and nothing superseded beside it.
+pub enum LockDriverPart {
+    /// Set up as this release sets it up.
     Current,
+    /// Not set up.
+    Absent,
+    /// Set up by an earlier release, for a driver that kept one side. It is
+    /// never honored.
+    Superseded,
+}
+
+/// How the lock merge driver stands in a project repo, as of one read: the
+/// declaration the checked-out commit carries, and the command the clone
+/// defines for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockDriverSetup {
+    pub declaration: LockDriverPart,
+    pub definition: LockDriverPart,
 }
 
 /// What [`Vcs::discard_captured_change`] did with one path.
@@ -3003,9 +3002,9 @@ pub trait Vcs: Send + Sync {
     ///
     /// # Derived content
     ///
-    /// WHICH paths are derived is the repo's own declaration, made once via
-    /// [`set_replay_exclusion`] and carried in tracked metadata (for git:
-    /// `merge=rwv-ours` in `.gitattributes`). HOW they resolve is `derived`,
+    /// WHICH paths are derived is the repo's own declaration, the lock merge
+    /// driver's, carried in tracked metadata (for git: `merge=rwv-lock` in
+    /// `.gitattributes`). HOW they resolve is `derived`,
     /// stated per call: [`DerivedContentPolicy::keep_target_side`] resolves a
     /// declared path to the version at `onto` without stopping the replay,
     /// and [`DerivedContentPolicy::vcs_default`] lets it conflict like any
@@ -3019,8 +3018,6 @@ pub trait Vcs: Send + Sync {
     /// it is in force for exactly this operation and leaves no configuration
     /// behind; the trait hides that spelling so other VCS impls can use their
     /// own mechanism.
-    ///
-    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
     fn rebase(
         &self,
         repo: &Path,
@@ -3122,62 +3119,38 @@ pub trait Vcs: Send + Sync {
         to: &ResolvedRevisionId,
     ) -> Result<Vec<String>, VcsError>;
 
-    /// Configure `repo` so that during replay (rebase, merge) any changes to
-    /// `path` are silently overridden — the replay target's version of `path`
-    /// always wins.
+    /// How the lock merge driver stands in the project repo `repo`.
     ///
-    /// For git: appends a
-    /// `<path> merge=rwv-ours` line to `<repo>/.gitattributes` (idempotent
-    /// — re-running is a no-op if the line is already present). If the
-    /// file still carries the legacy `<path> merge=ours` line, the writer
-    /// migrates it in place rather than appending a
-    /// second, ambiguous assignment. Other VCS impls choose their own
-    /// mechanism.
+    /// The declaration is read from the checked-out commit, or from the
+    /// working copy where no commit is checked out yet: the committed form is
+    /// the one that travels with the branch. The definition is read from every
+    /// scope of configuration the VCS consults.
     ///
-    /// Used by rwv to keep `rwv.lock` out of the merge inputs during sync's
-    /// project-repo rebase: the lock is regenerated from manifest tips in
-    /// Phase 3, so carrying user lock-edits through a rebase would only
-    /// produce noise. Configuring this once (in `rwv init`) replaces the
-    /// custom cherry-pick loop that previously did per-commit exclusion.
-    ///
-    /// Returns the file it rewrote, relative to `repo`, or `None` when the
-    /// configuration was already in place and nothing was written.
-    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<Option<PathBuf>, VcsError>;
+    /// For git: `.gitattributes` carrying `rwv.lock merge=rwv-lock`, and
+    /// `merge.rwv-lock.driver` naming `rwv lock --merge-driver %O %A %B`.
+    /// A `merge=rwv-ours` or `merge=ours` line for the lock, a local
+    /// `merge.rwv-ours.*` entry, or `merge.rwv-lock.driver` naming another
+    /// command, is superseded.
+    fn lock_driver_setup(&self, repo: &Path) -> Result<LockDriverSetup, VcsError>;
 
-    /// How [`set_replay_exclusion`] stands for `path` in `repo`, from one
-    /// read.
-    ///
-    /// For git: reads `<repo>/.gitattributes` once and reports which of
-    /// `<path> merge=rwv-ours` and the legacy `<path> merge=ours` it carries.
-    /// The legacy spelling never counts as configured — on its own or beside
-    /// the current line, it names a driver an unrelated global
-    /// `merge.ours.driver` can define.
-    ///
-    /// `rwv doctor` both reports and repairs off this one value, so what it
-    /// reports and what `--fix` acts on are the same classification.
-    ///
-    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    fn replay_exclusion_state(
-        &self,
-        repo: &Path,
-        path: &Path,
-    ) -> Result<ReplayExclusionState, VcsError>;
+    /// The file, relative to a project repo's root, that declares the lock
+    /// merge driver.
+    fn lock_driver_declaration_file(&self) -> &'static str;
 
-    /// `true` when [`set_replay_exclusion`] has been configured for `path` in
-    /// `repo`'s **committed** tree (not just the working tree).
-    ///
-    /// Different from [`replay_exclusion_state`]: that one reads the on-disk
-    /// `.gitattributes`; this one reads the committed-at-HEAD copy. The
-    /// committed form is the one that survives a rebase (the replay starts
-    /// from the committed tree, not the working tree), so sync's precondition
-    /// check ("can rebase/merge rely on `merge=rwv-ours` to keep `rwv.lock`
-    /// out of the merge inputs?") must consult the committed form.
-    ///
-    /// Returns `false` when the file isn't committed yet.
-    ///
-    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    /// [`replay_exclusion_state`]: Vcs::replay_exclusion_state
-    fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
+    /// `text`, the content of [`Vcs::lock_driver_declaration_file`] (`None`
+    /// for no file), rewritten to declare the lock merge driver once and
+    /// nothing superseded beside it; `None` when it already does exactly that.
+    fn declare_lock_driver_in(&self, text: Option<&str>) -> Option<String>;
+
+    /// Define the lock merge driver's command in `repo`'s clone, replacing a
+    /// superseded definition. Every checkout of the clone shares it.
+    fn define_lock_driver(&self, repo: &Path) -> Result<(), VcsError>;
+
+    /// The two commits a merge in progress in `repo` joins, checked-out side
+    /// first, when the VCS names both to a merge driver it runs; `None` for a
+    /// replay, a copy, or a merge computed without a checkout, whose sides
+    /// are not two heads.
+    fn merging_commits(&self, repo: &Path) -> Option<(CommitId, CommitId)>;
 
     /// Fast-forward `repo`'s current branch to `to`, refusing rather than
     /// clobbering if a fast-forward isn't possible.

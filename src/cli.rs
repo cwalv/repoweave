@@ -260,6 +260,14 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Plumbing: merge three rwv.lock files as the lock merge driver. This is the command `merge.rwv-lock.driver` names, which git runs from the project repo with the base, ours and theirs files it wrote: pins merge three-way, the result is written over OURS and the exit is 0; a merge it cannot settle writes both locks between conflict markers over OURS and exits 1, leaving rwv.lock conflicted
+        #[arg(
+            long = "merge-driver",
+            num_args = 3,
+            value_names = ["BASE", "OURS", "THEIRS"],
+            conflicts_with_all = ["dirty", "repos", "commit", "message", "project"]
+        )]
+        merge_driver: Option<Vec<std::path::PathBuf>>,
     },
     /// Show per-repo state of the CWD workspace
     Status {

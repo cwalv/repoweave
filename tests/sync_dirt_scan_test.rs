@@ -112,11 +112,7 @@ fn fixture() -> Fixture {
 
     let primary_project = primary_root.join("projects").join(PROJECT);
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     let url = common::file_url(&primary_repo);
     let manifest = format!(
         "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"

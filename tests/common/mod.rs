@@ -392,7 +392,23 @@ pub fn git() -> Command {
     // `GIT_CONFIG_*` env vars (see git-config(1)) stacks on top of any
     // existing config without touching files.
     cmd.envs(git_config_env(&[]));
+    cmd.env("PATH", path_finding_this_rwv());
     cmd
+}
+
+/// `PATH` with the directory of the `rwv` under test first, so a merge a test
+/// runs with git finds this build's `rwv` for the lock merge driver, never an
+/// installed one.
+pub fn path_finding_this_rwv() -> std::ffi::OsString {
+    let built = std::path::Path::new(env!("CARGO_BIN_EXE_rwv"))
+        .parent()
+        .expect("the binary sits in a directory")
+        .to_path_buf();
+    let mut paths = vec![built];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    std::env::join_paths(paths).expect("PATH entries join")
 }
 
 /// The `GIT_CONFIG_*` environment setting `init.defaultBranch=main` and then
@@ -499,6 +515,24 @@ pub fn commit_staged(dir: impl AsRef<std::path::Path>, message: &str) {
 /// of which did not.
 pub fn git_in(dir: impl AsRef<std::path::Path>, args: &[&str]) -> String {
     git_in_configured(dir, &[], args)
+}
+
+/// The `.gitattributes` text assigning `rwv.lock` the lock merge driver.
+pub const LOCK_DRIVER_ATTRIBUTE: &str = "rwv.lock merge=rwv-lock\n";
+
+/// The command the lock merge driver's config names.
+pub const LOCK_DRIVER_COMMAND: &str = "rwv lock --merge-driver %O %A %B";
+
+/// Set the lock merge driver up in a fixture's project repo as `rwv init`
+/// does: `.gitattributes` holding [`LOCK_DRIVER_ATTRIBUTE`], for the caller to
+/// commit, and the driver's command in the clone's config.
+pub fn set_up_lock_driver(project_dir: impl AsRef<std::path::Path>) {
+    let project_dir = project_dir.as_ref();
+    std::fs::write(project_dir.join(".gitattributes"), LOCK_DRIVER_ATTRIBUTE).unwrap();
+    git_in(
+        project_dir,
+        &["config", "merge.rwv-lock.driver", LOCK_DRIVER_COMMAND],
+    );
 }
 
 /// [`git_in`], with each of `settings` given as [`git_config_env`] gives it.

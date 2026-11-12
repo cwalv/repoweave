@@ -55,8 +55,8 @@ fn init_git_repo(path: &Path) -> String {
     run(&["rev-parse", "HEAD"], path)
 }
 
-/// Make `project_dir` the git repo a real project directory is, with the
-/// replay exclusion committed and the `rwv-ours` merge driver defined.
+/// Make `project_dir` the git repo a real project directory is, with the lock
+/// merge driver set up.
 ///
 /// A fixture that merely writes `.gitattributes` into a plain directory is
 /// still missing what `rwv sync`'s rebase needs, and both renderers say so —
@@ -79,15 +79,10 @@ fn make_project_repo_clean(project_dir: &Path) {
             String::from_utf8_lossy(&out.stderr)
         );
     };
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
     run(&["init", "-b", "main"]);
+    common::set_up_lock_driver(project_dir);
     run(&["add", "."]);
     run(&["commit", "-m", "initial"]);
-    run(&["config", "merge.rwv-ours.driver", "true"]);
 }
 
 /// Write an `rwv.toml` manifest into a project directory.
@@ -687,305 +682,12 @@ fn doctor_command_is_recognized() {
         .stdout(predicate::str::contains("unrecognized").not());
 }
 
-// ===========================================================================
-// Replay-exclusion (.gitattributes `rwv.lock merge=rwv-ours`)
-// ===========================================================================
-
-/// `rwv doctor` warns when a project repo is missing the
-/// `rwv.lock merge=rwv-ours` line in `.gitattributes`.
-#[test]
-fn check_warns_when_project_missing_replay_exclusion() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    // Project dir exists with a manifest but no .gitattributes.
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-
-    rwv_cmd().arg("doctor").current_dir(&root).assert().stdout(
-        predicate::str::contains("rwv.lock merge=rwv-ours")
-            .and(predicate::str::contains("my-app"))
-            .and(predicate::str::contains("rwv doctor --fix")),
-    );
-}
-
-/// `rwv doctor --fix` writes the missing `rwv.lock merge=rwv-ours` line.
-#[test]
-fn check_fix_writes_replay_exclusion() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-
-    // Pre-condition: no .gitattributes exists.
-    assert!(!project_dir.join(".gitattributes").exists());
-
-    rwv_cmd()
-        .args(["doctor", "--fix"])
-        .current_dir(&root)
-        .assert()
-        .stdout(predicate::str::contains("rwv.lock merge=rwv-ours"));
-
-    // Post-condition: .gitattributes now contains the line, and re-running
-    // `rwv doctor` no longer warns about this project.
-    let attrs = std::fs::read_to_string(project_dir.join(".gitattributes")).unwrap();
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        "post-fix .gitattributes should contain the line; got: {attrs:?}"
-    );
-
-    let assertion = rwv_cmd().arg("doctor").current_dir(&root).assert();
-    let output = assertion.get_output();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("missing `rwv.lock merge=rwv-ours`"),
-        "post-fix doctor must not re-warn; got stdout: {stdout}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Legacy `merge=ours` migration under `doctor --fix`
-// ---------------------------------------------------------------------------
-
-/// `rwv doctor` (no `--fix`) surfaces a project still on the LEGACY
-/// `rwv.lock merge=ours` spelling as a `missing-replay-exclusion` warning,
-/// with a message pointing at `rwv doctor --fix` for migration.
-#[test]
-fn check_warns_when_project_has_legacy_replay_exclusion() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    // Project dir must itself be a git repo so `doctor --fix`'s migration
-    // commit path is exercisable — but doctor's *detection* only reads
-    // `.gitattributes` from disk, so `git init` isn't required for the
-    // warning-only case. Init anyway to keep this test's shape aligned
-    // with the migration test below.
-    init_git_repo(&project_dir);
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-
-    rwv_cmd().arg("doctor").current_dir(&root).assert().stdout(
-        predicate::str::contains("legacy `rwv.lock merge=ours`")
-            .and(predicate::str::contains("rwv doctor --fix")),
-    );
-}
-
-/// `rwv doctor --fix` migrates a legacy `rwv.lock merge=ours` line to
-/// `rwv.lock merge=rwv-ours` AND commits the change, when the project
-/// repo has no other pending work. Post-fix, doctor is quiet.
-#[test]
-fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    init_git_repo(&project_dir);
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    // Commit a legacy .gitattributes so both the working-tree detector
-    // and the committed-tree readers see the old spelling.
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    common::git_in(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
-    common::git_in(
-        &project_dir,
-        &["commit", "-m", "seed manifest + legacy attrs"],
-    );
-    let head_before = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
-
-    rwv_cmd()
-        .args(["doctor", "--fix"])
-        .current_dir(&root)
-        .assert()
-        .stdout(
-            predicate::str::contains("migrated `rwv.lock merge=ours`")
-                .and(predicate::str::contains("rwv.lock merge=rwv-ours")),
-        );
-
-    // Working-tree file rewritten.
-    let attrs = std::fs::read_to_string(project_dir.join(".gitattributes")).unwrap();
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours") && !attrs.contains("rwv.lock merge=ours\n"),
-        "post-fix .gitattributes should have new spelling only; got: {attrs:?}"
-    );
-
-    // A commit was made — HEAD advanced.
-    let head_after = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
-    assert_ne!(
-        head_before, head_after,
-        "doctor --fix must commit the migration; HEAD did not advance"
-    );
-
-    // The committed .gitattributes at HEAD carries the new spelling
-    // (this is what sync's invariant reads).
-    let committed = common::git_in(&project_dir, &["show", "HEAD:.gitattributes"]);
-    assert!(
-        committed.contains("rwv.lock merge=rwv-ours"),
-        "HEAD:.gitattributes must contain the new spelling; got: {committed:?}"
-    );
-
-    // Re-running doctor is quiet on this project (idempotent).
-    let assertion = rwv_cmd().arg("doctor").current_dir(&root).assert();
-    let output = assertion.get_output();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("legacy `rwv.lock merge=ours`"),
-        "post-fix doctor must not re-warn about migration; got: {stdout}"
-    );
-    assert!(
-        !stdout.contains("missing `rwv.lock merge=rwv-ours`"),
-        "post-fix doctor must not warn about missing exclusion; got: {stdout}"
-    );
-}
-
-/// `rwv doctor --fix` refuses to bundle the migration commit with a
-/// user's unrelated staged work. The `.gitattributes` migration still
-/// happens (so the operator can commit it themselves after landing
-/// their own change), but HEAD is unchanged and stdout says so.
-#[test]
-fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    init_git_repo(&project_dir);
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    common::git_in(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
-    common::git_in(
-        &project_dir,
-        &["commit", "-m", "seed manifest + legacy attrs"],
-    );
-    let head_before = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
-
-    // Stage an unrelated file — the operator's WIP that must not be
-    // bundled with rwv's fix.
-    std::fs::write(project_dir.join("wip.txt"), "user work\n").unwrap();
-    common::git_in(&project_dir, &["add", "wip.txt"]);
-
-    rwv_cmd()
-        .args(["doctor", "--fix"])
-        .current_dir(&root)
-        .assert()
-        .stdout(predicate::str::contains(
-            "NOT committed: project repo has unrelated staged changes",
-        ));
-
-    // Working-tree .gitattributes still got migrated (safe: an unstaged
-    // .gitattributes change is a review-able WT diff, not a phantom
-    // commit).
-    let attrs = std::fs::read_to_string(project_dir.join(".gitattributes")).unwrap();
-    assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        "migration should have written the new needle to WT; got: {attrs:?}"
-    );
-
-    // HEAD is UNCHANGED — no auto-commit happened.
-    let head_after = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        head_before, head_after,
-        "HEAD must not advance when other work is staged"
-    );
-
-    // And the user's staged file is still staged, unmolested.
-    let staged = common::git_in(
-        &project_dir,
-        &["diff", "--cached", "--name-only", "wip.txt"],
-    );
-    assert_eq!(
-        staged.trim(),
-        "wip.txt",
-        "user's staged file must remain staged and untouched"
-    );
-}
-
-/// `rwv doctor --fix` plants the durable `merge.rwv-ours.driver` config
-/// entry — the key that keeps the driver defined across a bare
-/// `git rebase --continue`.
-#[test]
-fn check_fix_plants_rwv_ours_driver_config() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    init_git_repo(&project_dir);
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    // Fresh project — no .gitattributes and no driver config.
-
-    // Pre-condition: `merge.rwv-ours.driver` is unset.
-    let pre = common::git()
-        .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
-        .current_dir(&project_dir)
-        .output()
-        .unwrap();
-    assert!(
-        !pre.status.success(),
-        "pre-fix: merge.rwv-ours.driver must be unset (git config --get exits 1); \
-         got stdout={:?} stderr={:?}",
-        String::from_utf8_lossy(&pre.stdout),
-        String::from_utf8_lossy(&pre.stderr)
-    );
-
-    rwv_cmd()
-        .args(["doctor", "--fix"])
-        .current_dir(&root)
-        .assert()
-        .success();
-
-    // Post-fix: `merge.rwv-ours.driver=true` is planted locally.
-    let post = common::git_in(
-        &project_dir,
-        &["config", "--local", "--get", "merge.rwv-ours.driver"],
-    );
-    assert_eq!(
-        post.trim(),
-        "true",
-        "post-fix: merge.rwv-ours.driver must be `true`; got: {post:?}"
-    );
-}
-
 /// A project directory that loses its `.git` while `rwv.toml` and the rest
 /// of the checkout stay in place — the same damage
 /// `push_refuses_when_project_repo_is_not_a_repo` (tests/push_test.rs)
 /// drives against `rwv push` — must reach the operator as a warning naming
 /// the actual state, not as a raw git-config failure with a non-zero exit.
 ///
-/// Before the fix, `has_rwv_merge_driver_config` read this the same as an
-/// ordinary repo simply missing the key, so `--fix` went on to attempt the
-/// plant and surfaced git's own `fatal: not in a git directory` as a raw
-/// `[error]`.
 #[test]
 fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
     let tmp = common::tempdir().unwrap();
@@ -1030,7 +732,7 @@ fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
 //
 // These tests exercise the JSON wire shape end-to-end. They:
 //   - construct a workspace fixture per CheckViolation variant where possible
-//     (orphaned-clone, dangling-reference, pin, missing-replay-exclusion);
+//     (orphaned-clone, dangling-reference, pin, missing-lock-merge-driver);
 //   - drive the remaining variants (workweave-drift, index-drift,
 //     working-tree-drift) directly through
 //     `ViolationOutput::from_violation` so the wire shape is fully covered
@@ -1046,8 +748,8 @@ mod doctor_json {
     use super::*;
     use common::doctor_corpus::{case_token, corpus};
     use repoweave::check::{
-        CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind, UnparseableProjectKind,
-        ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
+        CheckViolation, DriftKind, IndexDriftKind, MissingLockMergeDriverKind,
+        UnparseableProjectKind, ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
     use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
     use repoweave::vcs::ResolvedRevisionId;
@@ -1130,11 +832,7 @@ mod doctor_json {
             &project_dir,
             &[(known, "https://github.com/acme/server.git")],
         );
-        std::fs::write(
-            project_dir.join(".gitattributes"),
-            "rwv.lock merge=rwv-ours\n",
-        )
-        .unwrap();
+        common::set_up_lock_driver(&project_dir);
 
         let (parsed, output) = run_doctor_json(&root);
         assert_schema_url(&parsed);
@@ -1182,11 +880,7 @@ mod doctor_json {
                 (missing, "https://github.com/acme/vanished.git"),
             ],
         );
-        std::fs::write(
-            project_dir.join(".gitattributes"),
-            "rwv.lock merge=rwv-ours\n",
-        )
-        .unwrap();
+        common::set_up_lock_driver(&project_dir);
 
         let (parsed, _) = run_doctor_json(&root);
         let entry = entries(&parsed)
@@ -1214,11 +908,7 @@ mod doctor_json {
             &project_dir,
             &[(repo_path, "https://github.com/acme/server.git")],
         );
-        std::fs::write(
-            project_dir.join(".gitattributes"),
-            "rwv.lock merge=rwv-ours\n",
-        )
-        .unwrap();
+        common::set_up_lock_driver(&project_dir);
 
         // Tag the existing commit, then write a lock that references a
         // different (non-existent) tag of *this* repo so the locked SHA
@@ -1277,11 +967,7 @@ mod doctor_json {
             &project_dir,
             &[(repo_path, "https://github.com/acme/server.git")],
         );
-        std::fs::write(
-            project_dir.join(".gitattributes"),
-            "rwv.lock merge=rwv-ours\n",
-        )
-        .unwrap();
+        common::set_up_lock_driver(&project_dir);
 
         // Lock file exists but covers no repos.
         common::fixture_lock(&project_dir, &[]);
@@ -1301,7 +987,7 @@ mod doctor_json {
     }
 
     #[test]
-    fn json_missing_replay_exclusion_variant() {
+    fn json_missing_lock_merge_driver_variant() {
         let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
@@ -1309,17 +995,20 @@ mod doctor_json {
         init_git_repo(&root.join(repo_path));
 
         let project_dir = root.join("projects").join("my-app");
+        init_git_repo(&project_dir);
         write_manifest(
             &project_dir,
             &[(repo_path, "https://github.com/acme/server.git")],
         );
-        // No .gitattributes -> missing-replay-exclusion fires.
 
         let (parsed, _) = run_doctor_json(&root);
         let entry = entries(&parsed)
             .iter()
-            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("missing-replay-exclusion"))
-            .unwrap_or_else(|| panic!("no missing-replay-exclusion entry in {parsed}"));
+            .find(|v| {
+                v.get("kind").and_then(|k| k.as_str()) == Some("missing-lock-merge-driver")
+                    && v.get("sub_kind").and_then(|k| k.as_str()) == Some("attribute-absent")
+            })
+            .unwrap_or_else(|| panic!("no missing-lock-merge-driver entry in {parsed}"));
         assert_eq!(
             entry.get("project").and_then(|s| s.as_str()),
             Some("my-app")
@@ -1513,9 +1202,9 @@ mod doctor_json {
                 )),
                 listed: Vec::new(),
             },
-            CheckViolation::MissingReplayExclusion {
+            CheckViolation::MissingLockMergeDriver {
                 project: ProjectName::new("p").unwrap(),
-                sub_kind: ReplayExclusionKind::Absent,
+                sub_kind: MissingLockMergeDriverKind::AttributeAbsent,
             },
         ];
 
@@ -1547,7 +1236,7 @@ mod doctor_json {
         assert_eq!(arr[1].get("kind").and_then(|s| s.as_str()), Some("pin"));
         assert_eq!(
             arr[2].get("kind").and_then(|s| s.as_str()),
-            Some("missing-replay-exclusion")
+            Some("missing-lock-merge-driver")
         );
     }
 
@@ -1641,20 +1330,12 @@ mod doctor_json {
             workweave: Option<String>,
             sub_kind: String,
         },
-        MissingReplayExclusion {
+        MissingLockMergeDriver {
             project: String,
+            sub_kind: String,
         },
-        ReplayExclusionUnreadable {
+        LockMergeDriverUnreadable {
             project: String,
-            error: String,
-        },
-        MissingMergeDriverConfig {
-            project: String,
-            config_key: String,
-        },
-        MergeDriverConfigUnreadable {
-            project: String,
-            config_key: String,
             error: String,
         },
         HeadUnreadable {
@@ -2119,9 +1800,9 @@ fn doctor_fix_does_not_error_on_legacy_marker_with_no_project() {
     assert_eq!(unchanged, legacy_marker);
 }
 
-/// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
+/// `rwv doctor` does NOT warn when the project's lock merge driver is set up.
 #[test]
-fn check_silent_when_project_has_replay_exclusion() {
+fn check_silent_when_project_has_the_lock_merge_driver() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -2129,21 +1810,20 @@ fn check_silent_when_project_has_replay_exclusion() {
     init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
+    init_git_repo(&project_dir);
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
+    common::git_in(&project_dir, &["add", ".gitattributes"]);
+    common::git_in(&project_dir, &["commit", "-m", "lock merge driver"]);
 
     let assertion = rwv_cmd().arg("doctor").current_dir(&root).assert();
     let output = assertion.get_output();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stdout.contains("missing `rwv.lock merge=rwv-ours`"),
+        !stdout.contains("missing-lock-merge-driver"),
         "doctor must not warn when the line is present; got stdout: {stdout}"
     );
 }
@@ -2298,11 +1978,7 @@ fn default_scope_no_orphan_when_active_project_set() {
         &project_dir,
         &[(owned_repo, "https://github.com/acme/owned.git")],
     );
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
 
     // An extra repo on disk belongs to no loaded project (would be "orphaned"
     // in weave-wide scan but must not be flagged in single-project scope).
@@ -2343,11 +2019,7 @@ fn all_flag_reports_orphan_even_with_active_project() {
         &project_dir,
         &[(owned_repo, "https://github.com/acme/owned.git")],
     );
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
 
     let orphan_repo = "github/acme/stray";
     init_git_repo(&root.join(orphan_repo));
@@ -2388,11 +2060,7 @@ fn default_scope_no_cross_project_stale_lock() {
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
     );
-    std::fs::write(
-        alpha_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&alpha_dir);
 
     // Project "beta" owns repo-b; lock is STALE.
     let repo_b = "github/acme/repo-b";
@@ -2407,7 +2075,7 @@ fn default_scope_no_cross_project_stale_lock() {
             "0000000000000000000000000000000000000000",
         )],
     );
-    std::fs::write(beta_dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&beta_dir);
 
     // Activate "alpha".
     set_active_project(&root, "alpha");
@@ -2450,11 +2118,7 @@ fn all_flag_reports_cross_project_pin() {
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
     );
-    std::fs::write(
-        alpha_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&alpha_dir);
 
     // beta's repo-b: lock pins the first commit, HEAD advances past it.
     let repo_b = "github/acme/repo-b";
@@ -2466,7 +2130,7 @@ fn all_flag_reports_cross_project_pin() {
         &beta_dir,
         &[(repo_b, "https://github.com/acme/repo-b.git", &old_sha_b)],
     );
-    std::fs::write(beta_dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&beta_dir);
 
     set_active_project(&root, "alpha");
 

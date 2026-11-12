@@ -24,10 +24,10 @@
 
 use repoweave::check::{
     AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind, IndexDriftKind,
-    LegacyWorkweaveIndexKind, OrphanedSavepointKind, PermissionsKind, PinKind,
-    PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind,
-    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
-    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    LegacyWorkweaveIndexKind, MissingLockMergeDriverKind, OrphanedSavepointKind, PermissionsKind,
+    PinKind, PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, SubmoduleCommitKind,
+    UnparseableProjectKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -153,20 +153,21 @@ pub fn case_token(v: &CheckViolation) -> String {
             WorkingTreeDriftKind::SafeToFix => "working-tree-drift/safe-to-fix".into(),
             WorkingTreeDriftKind::LiveEdits => "working-tree-drift/live-edits".into(),
         },
-        CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
-            ReplayExclusionKind::Absent => "missing-replay-exclusion/absent".into(),
-            ReplayExclusionKind::LegacySpelling => {
-                "missing-replay-exclusion/legacy-spelling".into()
+        CheckViolation::MissingLockMergeDriver { sub_kind, .. } => match sub_kind {
+            MissingLockMergeDriverKind::AttributeAbsent => {
+                "missing-lock-merge-driver/attribute-absent".into()
             }
-            ReplayExclusionKind::LegacyAlongsideCurrent => {
-                "missing-replay-exclusion/legacy-alongside-current".into()
+            MissingLockMergeDriverKind::AttributeLegacy => {
+                "missing-lock-merge-driver/attribute-legacy".into()
+            }
+            MissingLockMergeDriverKind::ConfigAbsent => {
+                "missing-lock-merge-driver/config-absent".into()
+            }
+            MissingLockMergeDriverKind::ConfigLegacy => {
+                "missing-lock-merge-driver/config-legacy".into()
             }
         },
-        CheckViolation::ReplayExclusionUnreadable { .. } => "replay-exclusion-unreadable".into(),
-        CheckViolation::MissingMergeDriverConfig { .. } => "missing-merge-driver-config".into(),
-        CheckViolation::MergeDriverConfigUnreadable { .. } => {
-            "merge-driver-config-unreadable".into()
-        }
+        CheckViolation::LockMergeDriverUnreadable { .. } => "lock-merge-driver-unreadable".into(),
         CheckViolation::HeadUnreadable { .. } => "head-unreadable".into(),
         CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable".into(),
         CheckViolation::ProjectlessDir { .. } => "projectless-dir".into(),
@@ -435,30 +436,25 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo: repo(),
             kind: WorkingTreeDriftKind::LiveEdits,
         },
-        CheckViolation::MissingReplayExclusion {
+        CheckViolation::MissingLockMergeDriver {
             project: project(),
-            sub_kind: ReplayExclusionKind::Absent,
+            sub_kind: MissingLockMergeDriverKind::AttributeAbsent,
         },
-        CheckViolation::MissingReplayExclusion {
+        CheckViolation::MissingLockMergeDriver {
             project: project(),
-            sub_kind: ReplayExclusionKind::LegacySpelling,
+            sub_kind: MissingLockMergeDriverKind::AttributeLegacy,
         },
-        CheckViolation::MissingReplayExclusion {
+        CheckViolation::MissingLockMergeDriver {
             project: project(),
-            sub_kind: ReplayExclusionKind::LegacyAlongsideCurrent,
+            sub_kind: MissingLockMergeDriverKind::ConfigAbsent,
         },
-        CheckViolation::ReplayExclusionUnreadable {
+        CheckViolation::MissingLockMergeDriver {
+            project: project(),
+            sub_kind: MissingLockMergeDriverKind::ConfigLegacy,
+        },
+        CheckViolation::LockMergeDriverUnreadable {
             project: project(),
             error: "permission denied".into(),
-        },
-        CheckViolation::MissingMergeDriverConfig {
-            project: project(),
-            config_key: "merge.rwv-ours.driver".into(),
-        },
-        CheckViolation::MergeDriverConfigUnreadable {
-            project: project(),
-            config_key: "merge.rwv-ours.driver".into(),
-            error: "bad config line 3".into(),
         },
         CheckViolation::HeadUnreadable {
             repo: repo(),

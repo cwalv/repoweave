@@ -76,8 +76,6 @@ pub enum RefusalKind {
 
     /// A workweave's recorded parent is gone.
     DanglingParent,
-    /// The replay exclusion a workweave needs is absent or legacy-spelled.
-    MissingReplayExclusion,
     /// The canonical clone a checkout is derived from is missing.
     MissingCanonicalClone,
     /// A clone sits in a topology rwv does not maintain.

@@ -49,14 +49,9 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 fn commit_project(project_dir: &Path, message: &str) {
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     if !project_dir.join(".git").exists() {
         common::git_in(project_dir, &["init", "-b", "main"]);
-        common::git_in(project_dir, &["config", "merge.rwv-ours.driver", "true"]);
     }
     common::git_in(project_dir, &["add", "."]);
     common::git_in(project_dir, &["commit", "-m", message]);

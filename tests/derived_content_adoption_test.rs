@@ -11,16 +11,10 @@
 //! ## Why the fixture is shaped the way it is
 //!
 //! The definition half of the primitive can reach a replay by two routes: the
-//! `DerivedContentPolicy` the call site states, and the durable
-//! `merge.rwv-ours.driver` config `plant_rwv_merge_driver_config` writes.
-//! `verify_replay_exclusion_invariant` plants that config in the **project**
-//! repo before every rebase-strategy phase, so a fixture that watched a
-//! declared path resolve *there* would pass whether or not anything stated a
-//! policy.
-//!
-//! So the subject here is a **manifest** repo, which never receives the plant
-//! — and [`assert_no_durable_definition`] says so out loud before every sync,
-//! because that absence is what leaves the stated policy as the only route.
+//! `DerivedContentPolicy` the call site states, and a durable
+//! `merge.rwv-ours.driver` in the repo's config, which nothing rwv runs writes.
+//! [`assert_no_durable_definition`] says so out loud before every sync, because
+//! that absence is what leaves the stated policy as the only route.
 //! That is also the honest model of repoweave itself: repoweave is a managed
 //! repo inside a weave, not the project repo of one, so its declarations are
 //! honored through `apply_strategy`'s replays and nothing else.
@@ -32,7 +26,7 @@
 //! [`the_templates_the_generator_reads_stay_authored`] holds to its claim.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::git::{git_vcs, has_rwv_merge_driver_config};
+use repoweave::git::git_vcs;
 use repoweave::vcs::ConflictOp;
 use std::path::{Path, PathBuf};
 
@@ -197,8 +191,7 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
 
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
-    // The lock's own replay exclusion, which `--strategy rebase` requires.
-    write(&project_dir, ".gitattributes", "rwv.lock merge=rwv-ours\n");
+    common::set_up_lock_driver(&project_dir);
     write(
         &project_dir,
         "rwv.toml",
@@ -244,14 +237,17 @@ fn create_workweave(primary: &Workspace, weaveroot: &Path, name: &str) -> Worksp
 /// Fixture precondition: no durable definition of the driver is reachable from
 /// this repo's config.
 ///
-/// Load-bearing, not decoration. `plant_rwv_merge_driver_config` writes such a
-/// definition into project repos, and where one exists a declared path
-/// resolves whatever any call site states — so every assertion below about the
-/// *policy* would hold for a call site that stated nothing at all. A managed
-/// repo never receives the plant; this is the assertion that keeps that true.
+/// Where a definition exists a declared path resolves whatever any call site
+/// states, so every assertion below about the *policy* would hold for a call
+/// site that stated nothing at all.
 fn assert_no_durable_definition(repo: &Path) {
     assert!(
-        !has_rwv_merge_driver_config(repo).unwrap(),
+        !common::git()
+            .args(["config", "--get", "merge.rwv-ours.driver"])
+            .current_dir(repo)
+            .status()
+            .unwrap()
+            .success(),
         "fixture precondition: `merge.rwv-ours.driver` must be undefined in {} — \
          with a durable definition present the declared path resolves however \
          the replay is invoked, and this fixture could not tell a stated policy \

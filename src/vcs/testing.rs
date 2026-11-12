@@ -531,24 +531,24 @@ impl Vcs for FakeVcs {
         unsupported("changed_paths_between")
     }
 
-    fn set_replay_exclusion(
-        &self,
-        _repo: &Path,
-        _path: &Path,
-    ) -> Result<Option<PathBuf>, VcsError> {
-        unsupported("set_replay_exclusion")
+    fn lock_driver_setup(&self, _repo: &Path) -> Result<crate::vcs::LockDriverSetup, VcsError> {
+        unsupported("lock_driver_setup")
     }
 
-    fn replay_exclusion_state(
-        &self,
-        _repo: &Path,
-        _path: &Path,
-    ) -> Result<crate::vcs::ReplayExclusionState, VcsError> {
-        unsupported("replay_exclusion_state")
+    fn lock_driver_declaration_file(&self) -> &'static str {
+        ".fake-attributes"
     }
 
-    fn has_committed_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
-        unsupported("has_committed_replay_exclusion")
+    fn declare_lock_driver_in(&self, _text: Option<&str>) -> Option<String> {
+        None
+    }
+
+    fn define_lock_driver(&self, _repo: &Path) -> Result<(), VcsError> {
+        unsupported("define_lock_driver")
+    }
+
+    fn merging_commits(&self, _repo: &Path) -> Option<(CommitId, CommitId)> {
+        None
     }
 
     fn advance_if_fast_forward(

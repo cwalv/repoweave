@@ -62,7 +62,7 @@ fn weave() -> Weave {
     let project = project_dir(&root);
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     std::fs::write(project.join(".gitignore"), "*.code-workspace\ngita/\n").unwrap();
     std::fs::write(
         project.join("rwv.toml"),

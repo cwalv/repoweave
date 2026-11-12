@@ -2,7 +2,7 @@
 //! exists, and in a checkout stopped before its commit where it does not.
 
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
-use super::{git_command, local_branch, GitVcs};
+use super::{git_command, local_branch, lock_driver_held_args, GitVcs};
 use crate::vcs::{
     BackupWitness, CommitId, RawRefName, RefMerge, TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
 };
@@ -24,6 +24,7 @@ impl TreeMerges for GitVcs {
             second.as_str(),
         ];
         let output = git_command()
+            .args(lock_driver_held_args())
             .args(args)
             .current_dir(repo)
             .output()
@@ -92,6 +93,7 @@ impl GitVcs {
             other.as_str(),
         ];
         let output = git_command()
+            .args(lock_driver_held_args())
             .args(args)
             .current_dir(checkout)
             .output()

@@ -44,11 +44,7 @@ fn weave_with_standalone_member(tmp: &Path) -> Weave {
     let project_dir = primary.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project_dir).unwrap();
     common::git_in(&project_dir, &["init", "-b", "main"]);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(

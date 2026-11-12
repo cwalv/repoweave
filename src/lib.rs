@@ -117,6 +117,7 @@ pub mod integrations;
 pub(crate) mod lineage;
 pub mod lock;
 pub mod lock_commit;
+pub mod lock_driver;
 pub mod lock_merge;
 pub mod log;
 pub mod manifest;

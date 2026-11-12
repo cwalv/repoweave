@@ -108,11 +108,7 @@ fn make_weave(tmp: &Path) -> Weave {
     let owned_pin = init_repo(&owned, "OWNED");
     let project_dir = primary.join("projects").join(PROJECT);
     init_repo(&project_dir, "PLACEHOLDER");
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     std::fs::write(
         project_dir.join("rwv.toml"),
         manifest_entry(OWNED_PATH, &owned, "owned"),

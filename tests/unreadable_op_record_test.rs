@@ -98,11 +98,7 @@ fn park() -> Parked {
     );
     std::fs::create_dir_all(&primary.project).unwrap();
     common::git_in(&primary.project, &["init", "-b", "main"]);
-    std::fs::write(
-        primary.project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary.project);
     std::fs::write(primary.project.join(".gitignore"), "*.code-workspace\n").unwrap();
     std::fs::write(
         primary.project.join("rwv.toml"),

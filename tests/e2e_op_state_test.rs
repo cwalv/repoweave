@@ -84,11 +84,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(

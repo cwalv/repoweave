@@ -101,11 +101,7 @@ fn make_workweave_ahead_fixture(
 
     let primary_project = primary.join("projects/web-app");
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(
@@ -327,11 +323,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
 
     let source_project = source.join("projects/web-app");
     init_repo(&source_project);
-    std::fs::write(
-        source_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&source_project);
     write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(
@@ -527,11 +519,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
 
     let primary_project = primary.join("projects/web-app");
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(

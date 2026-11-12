@@ -242,7 +242,7 @@ fn a_landing_warns_on_a_tag_pinned_entry_and_its_relock_records_the_commit() {
     let project = root.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     std::fs::write(project.join(".gitignore"), "*.code-workspace\ngita/\n").unwrap();
     let dep_url = common::file_url(&dep_bare);
     std::fs::write(project.join("rwv.toml"), manifest_toml(&[(DEP, &dep_url)])).unwrap();
@@ -381,7 +381,7 @@ fn a_json_landing_still_warns_on_a_tag_pinned_entry() {
     let project = root.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     std::fs::write(project.join(".gitignore"), "*.code-workspace\ngita/\n").unwrap();
     let dep_url = common::file_url(&dep_bare);
     std::fs::write(project.join("rwv.toml"), manifest_toml(&[(DEP, &dep_url)])).unwrap();

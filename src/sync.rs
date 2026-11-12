@@ -1347,275 +1347,6 @@ fn per_conflict_bail_message(
 // (reachability check before any clobber) lives in the VCS impl rather
 // than being inlined here. See those trait method doc-comments.
 
-/// Precondition + self-heal: the CWD project repo's committed `.gitattributes`
-/// must contain `rwv.lock merge=rwv-ours`, and the repo-local `merge.rwv-ours.*`
-/// config must be planted, before the `Rebase` strategy runs.
-///
-/// `Rebase` is still gated even though `merge` (the strategy) was removed: git
-/// rebase replays each commit as a 3-way merge against the new base, so the
-/// `merge=rwv-ours` driver is required to keep lock-only commits from
-/// conflicting on `rwv.lock`. The requirement is about git's *per-commit
-/// merge* during replay, not the removed merge *strategy*.
-///
-/// The mechanism has two halves that MUST both be present:
-/// 1. The `.gitattributes` line `rwv.lock merge=rwv-ours` *assigns* the
-///    driver to `rwv.lock` — this half lives in the committed tree.
-/// 2. A `merge.rwv-ours.driver` config entry *defines* the driver's shell
-///    command. This half must be visible to whatever git process runs the
-///    replay, and it reaches one by two routes that do not cover each
-///    other. The [`DerivedContentPolicy`] an rwv-driven replay states
-///    passes it inline with `-c`; that is the only route on manifest repos,
-///    which never receive this plant. Bare `git rebase --continue` (the
-///    resume path git itself advertises in conflict stderr) inherits
-///    neither the inline flags nor the environment, so durable config is
-///    the only route there. The two overlap on one case — this repo under
-///    an rwv-driven replay — and dropping either strands the case the other
-///    never covered. This function plants the config as its first act; it
-///    is derived, local, idempotent state, so writing (not just checking)
-///    is the right primitive.
-///
-/// Worktrees share `.git/config` with the canonical repo, so one plant
-/// covers every workweave checkout.
-///
-/// Without half (1), git's default 3-way merge runs on `rwv.lock` and
-/// conflicts whenever both sides have lock edits — regardless of what
-/// drivers are defined in config.
-///
-/// `Ff` does not perform any merge — it advances the branch pointer — so
-/// the invariant is not required.
-///
-/// Checked against the committed file (via `git show HEAD:.gitattributes`)
-/// rather than the working-tree file because:
-/// 1. The invariant must survive rebases (which replay committed trees).
-/// 2. A `.gitattributes` that exists only in the working tree is not
-///    durable — it won't be present after a `git reset --hard` or fresh clone.
-///
-/// If the committed `.gitattributes` still carries the LEGACY `merge=ours`
-/// spelling, the invariant bails with a migration-specific
-/// message directing the operator at `rwv doctor --fix` — which rewrites
-/// AND commits the .gitattributes migration. If neither the new nor the
-/// legacy line is present, the invariant bails with the classic
-/// "add-the-line" message. If BOTH lines are committed, the invariant bails
-/// too, even though the current spelling is present: which line git honors
-/// is decided by attribute reading order, so the legacy name — and whatever
-/// `merge.ours.driver` the operator's global config binds — stays live
-/// either way. `rwv doctor --fix` resolves this state by dropping the
-/// legacy line.
-///
-/// The same three states are also checked against `source_project_dir` —
-/// the tree git checks out as the rebase base, so ITS committed
-/// `.gitattributes` governs `rwv.lock`'s driver for every commit replayed
-/// before this workspace's own tip is reached, regardless of what this
-/// workspace's `.gitattributes` says. A remedy that only names `cwd_project_dir`
-/// can leave the operator fixing one side, retrying, and meeting a raw git
-/// merge conflict instead of a second, equally actionable refusal.
-///
-/// The .gitattributes assignment itself is NOT written by this function
-/// — that's `rwv doctor --fix`'s job, and requires a commit which sync
-/// must not silently make on the operator's behalf.
-fn verify_replay_exclusion_invariant(
-    vcs: &dyn Vcs,
-    cwd_project_dir: &Path,
-    source_project_dir: &Path,
-) -> anyhow::Result<()> {
-    // Plant the durable config first — regardless of whether the
-    // .gitattributes assignment is present, having the driver defined
-    // makes any downstream `git rebase --continue` safe against the
-    // lock-only pick conflict. This is idempotent; if the config is
-    // already planted, `git config` writes the same value.
-    crate::git::plant_rwv_merge_driver_config(cwd_project_dir).with_context(|| {
-        format!(
-            "failed to plant `{}` config in {}",
-            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-            cwd_project_dir.display()
-        )
-    })?;
-
-    let has_new = vcs
-        .has_committed_replay_exclusion(cwd_project_dir, Path::new(LockFile::FILE_NAME))
-        .unwrap_or(false);
-    let has_legacy = crate::git::has_committed_legacy_replay_exclusion(
-        cwd_project_dir,
-        Path::new(LockFile::FILE_NAME),
-    )
-    .unwrap_or(false);
-
-    // A self-sync (cwd and the rebase base are literally the same checkout)
-    // has nothing more to say about "the other side" — skip it rather than
-    // have the same directory's problem echoed back as if it were a second one.
-    let source_problem = if source_project_dir == cwd_project_dir {
-        None
-    } else {
-        committed_replay_exclusion_problem(vcs, source_project_dir)
-    };
-    let also_broken = source_problem
-        .as_ref()
-        .map(|p| replay_exclusion_also_broken_note(source_project_dir, p))
-        .unwrap_or_default();
-
-    if has_new && has_legacy {
-        crate::refuse!(
-            RefusalKind::MissingReplayExclusion,
-            "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
-             in the project repo's committed .gitattributes, but {ga} carries \
-             BOTH that line and the legacy `rwv.lock merge=ours` spelling. \
-             Which one git honors is decided by attribute reading order, and \
-             the legacy name stays live either way: an unrelated \
-             `merge.ours.driver` in the operator's global git config would \
-             silently activate on rwv.lock during a bare `git rebase \
-             --continue` — the collision the rename closed.\n\
-             \n\
-             To fix: run `rwv doctor --fix` from this workspace. It drops \
-             the legacy line, leaving only `rwv.lock merge=rwv-ours`, and \
-             commits the change:\n\
-               cd {dir}\n\
-               rwv doctor --fix{also_broken}",
-            ga = cwd_project_dir.join(".gitattributes").display(),
-            dir = cwd_project_dir.display(),
-        )
-    }
-
-    if has_new {
-        return match source_problem {
-            None => Ok(()),
-            Some(problem) => crate::refuse!(
-                RefusalKind::MissingReplayExclusion,
-                "{}",
-                replay_exclusion_source_only_refusal(source_project_dir, &problem)
-            ),
-        };
-    }
-
-    if has_legacy {
-        crate::refuse!(
-            RefusalKind::MissingReplayExclusion,
-            "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
-             in the project repo's committed .gitattributes, but {ga} still \
-             carries the legacy `rwv.lock merge=ours` spelling. The rename \
-             closes an accidental-collision hazard where an \
-             unrelated `merge.ours.driver` in the operator's global git \
-             config would silently activate on rwv.lock during a bare \
-             `git rebase --continue`.\n\
-             \n\
-             To migrate: run `rwv doctor --fix` from this workspace. It \
-             rewrites the `.gitattributes` line to the new spelling AND \
-             commits the change:\n\
-               cd {dir}\n\
-               rwv doctor --fix{also_broken}",
-            ga = cwd_project_dir.join(".gitattributes").display(),
-            dir = cwd_project_dir.display(),
-        )
-    }
-
-    crate::refuse!(RefusalKind::MissingReplayExclusion,
-        "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
-         in the project repo's committed .gitattributes, but {ga} does not contain \
-         that line.\n\
-         \n\
-         Without it, git's 3-way merge runs on rwv.lock and conflicts whenever \
-         both sides have lock edits.\n\
-         \n\
-         To fix: run `rwv doctor --fix` from this workspace, then commit the result:\n\
-           cd {dir}\n\
-           rwv doctor --fix\n\
-           git add .gitattributes && git commit -m \"chore: add rwv.lock replay-exclusion\"{also_broken}",
-        ga = cwd_project_dir.join(".gitattributes").display(),
-        dir = cwd_project_dir.display(),
-    )
-}
-
-/// Which committed replay-exclusion problem (if any) `project_dir` has, using
-/// the same three-state classification `verify_replay_exclusion_invariant`
-/// applies to `cwd_project_dir` — reused so a second call site cannot drift
-/// from the first's notion of "broken".
-enum ReplayExclusionCommittedProblem {
-    Both,
-    LegacyOnly,
-    Absent,
-}
-
-fn committed_replay_exclusion_problem(
-    vcs: &dyn Vcs,
-    project_dir: &Path,
-) -> Option<ReplayExclusionCommittedProblem> {
-    let has_new = vcs
-        .has_committed_replay_exclusion(project_dir, Path::new(LockFile::FILE_NAME))
-        .unwrap_or(false);
-    let has_legacy = crate::git::has_committed_legacy_replay_exclusion(
-        project_dir,
-        Path::new(LockFile::FILE_NAME),
-    )
-    .unwrap_or(false);
-    match (has_new, has_legacy) {
-        (true, true) => Some(ReplayExclusionCommittedProblem::Both),
-        (true, false) => None,
-        (false, true) => Some(ReplayExclusionCommittedProblem::LegacyOnly),
-        (false, false) => Some(ReplayExclusionCommittedProblem::Absent),
-    }
-}
-
-fn replay_exclusion_problem_summary(problem: &ReplayExclusionCommittedProblem) -> &'static str {
-    match problem {
-        ReplayExclusionCommittedProblem::Both => {
-            "it carries both the current `rwv.lock merge=rwv-ours` line and the legacy \
-             `rwv.lock merge=ours` spelling"
-        }
-        ReplayExclusionCommittedProblem::LegacyOnly => {
-            "it still carries only the legacy `rwv.lock merge=ours` spelling"
-        }
-        ReplayExclusionCommittedProblem::Absent => {
-            "it has no `rwv.lock merge=rwv-ours` entry at all"
-        }
-    }
-}
-
-/// Appended to a `cwd_project_dir` refusal when `source_project_dir` — the
-/// tree the rebase checks out as its base — has the same kind of problem.
-/// Both fixes are named up front rather than discovered one at a time across
-/// two failed sync attempts, the second of which would otherwise be a raw
-/// git merge conflict instead of an actionable refusal.
-fn replay_exclusion_also_broken_note(
-    source_project_dir: &Path,
-    problem: &ReplayExclusionCommittedProblem,
-) -> String {
-    format!(
-        "\n\nThe workspace this rebase replays onto, at {dir}, has the same kind of \
-         problem: {summary}. Fix it there too, separately, before this converges:\n\
-           cd {dir}\n\
-           rwv doctor --fix",
-        dir = source_project_dir.display(),
-        summary = replay_exclusion_problem_summary(problem),
-    )
-}
-
-/// Refusal for the case `cwd_project_dir` is clean but `source_project_dir`
-/// — the rebase base — is not: the invariant's own committed-file check
-/// would otherwise pass while the replay still conflicts on the first
-/// `rwv.lock`-touching pick, because the base's `.gitattributes` (not this
-/// workspace's) governs which driver git resolves during that pick.
-fn replay_exclusion_source_only_refusal(
-    source_project_dir: &Path,
-    problem: &ReplayExclusionCommittedProblem,
-) -> String {
-    format!(
-        "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` in the committed \
-         .gitattributes of the workspace this rebase replays onto — {dir} — not just this \
-         one's: {summary}. That tree is what git checks out as the rebase base, so it \
-         governs rwv.lock's driver for every pick before this workspace's own tip is \
-         reached, regardless of what this workspace's own .gitattributes says.\n\
-         \n\
-         To fix: run `rwv doctor --fix` there:\n\
-           cd {dir}\n\
-           rwv doctor --fix",
-        dir = source_project_dir.display(),
-        summary = replay_exclusion_problem_summary(problem),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Replay helpers: materialize new repos / prune dropped repos
-// ---------------------------------------------------------------------------
-
 /// CWD's project as Phase 1' left it: the manifest the op ends with.
 fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
     let failure = match Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()) {
@@ -3134,8 +2865,12 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    if matches!(strategy, SyncStrategy::Rebase) {
-        verify_replay_exclusion_invariant(project_vcs, cwd_project_dir, source_project_dir)?;
+    if matches!(strategy, SyncStrategy::Rebase) && source_project_dir != cwd_project_dir {
+        crate::lock_driver::refuse_unmigrated(
+            project_vcs,
+            source_project_dir.display(),
+            source_project_dir,
+        )?;
     }
     let cwd_project_tip = project_vcs
         .head_revision(cwd_project_dir)
@@ -5783,9 +5518,9 @@ fn rewind_project_repo(
 }
 
 /// Phase 1': replay CWD's unique project commits onto `source_tip` via
-/// `strategy`, relying on `.gitattributes rwv.lock merge=rwv-ours` (configured
-/// at `rwv init` time) to silently keep source's version of the lock through
-/// the replay. Phase 3 regenerates the lock from manifest tips afterwards.
+/// `strategy`, holding the lock merge driver to source's version of the lock
+/// through the replay. Phase 3 regenerates the lock from manifest tips
+/// afterwards.
 ///
 /// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
 ///   a fast-forward via `git merge --ff-only`.
@@ -5843,8 +5578,8 @@ fn apply_project_strategy(
             }
         }
         SyncStrategy::Rebase => {
-            // The replay states `keep_target_side`, which is what the repo's
-            // committed `rwv.lock merge=rwv-ours` declaration names: lock-only
+            // The replay states `keep_target_side`, which holds the driver the
+            // repo's committed `rwv.lock merge=rwv-lock` line names: lock-only
             // commits become empty patches and git drops them by default
             // (`--empty=drop`), so source's version of `rwv.lock` survives
             // the replay untouched. Phase 3 then regenerates the lock from
@@ -8549,23 +8284,9 @@ mod tests {
     // `apply_strategy` states a derived-content policy
     //
     // These drive `apply_strategy` directly, and the fixture asserts the repo
-    // carries NO durable `merge.rwv-ours` definition. Both are load-bearing,
-    // for the same reason.
-    //
-    // The definition half of the primitive can reach a replay by two routes:
-    // the policy the call site states, and the durable config
-    // `plant_rwv_merge_driver_config` writes. `apply_strategy` runs on
-    // MANIFEST repos, which never receive that plant —
-    // `verify_replay_exclusion_invariant` plants in the project repo only —
-    // so here the stated policy is the only route, and a test can tell a
-    // stated policy from an ignored one. Through the CLI it could not: sync
-    // plants once per rebase-strategy invocation and the config is durable,
-    // so the project-repo call sites in `apply_project_strategy` resolve
-    // declared paths whatever they state. That overlap is deliberate and not
-    // removable: durable config is the only route for a bare `git rebase
-    // --continue`, a stated policy is the only route here, and neither covers
-    // the other's case. What it costs is falsifiability, which is why the
-    // threading is pinned at this layer.
+    // carries NO durable `merge.rwv-lock` definition, so the stated policy is
+    // the only route by which a replay can resolve the declared path, and a
+    // test can tell a stated policy from an ignored one.
     // -----------------------------------------------------------------------
 
     /// A repo whose committed `.gitattributes` declares `generated.txt`
@@ -8574,7 +8295,7 @@ mod tests {
     /// must keep.
     fn diverged_on_a_declared_derived_path(dir: &Path) -> ResolvedRevisionId {
         init_repo(dir);
-        std::fs::write(dir.join(".gitattributes"), "generated.txt merge=rwv-ours\n").unwrap();
+        std::fs::write(dir.join(".gitattributes"), "generated.txt merge=rwv-lock\n").unwrap();
         std::fs::write(dir.join("generated.txt"), "base\n").unwrap();
         std::fs::write(dir.join("shared.txt"), "base\n").unwrap();
         git(dir, &["add", "."]);

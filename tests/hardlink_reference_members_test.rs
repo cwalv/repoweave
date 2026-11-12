@@ -52,11 +52,7 @@ fn primary(parent: &Path) -> PathBuf {
     let project_dir = ws.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project_dir).unwrap();
     common::git_in(&project_dir, &["init", "-b", "main"]);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     let pins: Vec<(&str, &str, &str)> = pins
         .iter()

@@ -52,11 +52,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace) {
 
     let primary_project = primary.join("projects/web-app");
     init_repo(&primary_project);
-    std::fs::write(
-        primary_project.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&primary_project);
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(

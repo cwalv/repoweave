@@ -54,7 +54,7 @@ const OTHER_PROJECT: &str = "other-app";
 fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str, &str, &str)]) {
     let dir = root.join(format!("projects/{name}"));
     init_repo(&dir);
-    std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&dir);
     write_manifest(&dir, repos);
     common::fixture_lock(&dir, locked);
     common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);

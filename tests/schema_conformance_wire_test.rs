@@ -139,7 +139,7 @@ fn weave() -> Weave {
         ),
     )
     .unwrap();
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     write_lock(&project, &url, &sha);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "lock: initial"]);

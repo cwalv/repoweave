@@ -106,7 +106,7 @@ fn world(pin_app: bool) -> World {
     let project = ws.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "-b", "main"]);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     if pin_app {
         std::fs::write(
             project.join("rwv.toml"),

@@ -43,7 +43,7 @@ fn weave() -> (Weave, String) {
         ),
     )
     .unwrap();
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     (
         Weave {
             _tmp: tmp,

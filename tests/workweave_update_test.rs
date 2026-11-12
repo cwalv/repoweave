@@ -98,11 +98,7 @@ fn make_weave(tmp: &Path) -> (Weave, PathBuf) {
     common::git_in(&project_dir, &["init", "-b", "main"]);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     std::fs::write(
         project_dir.join("rwv.toml"),
         manifest_entry(OWNED_PATH, &owned_upstream),

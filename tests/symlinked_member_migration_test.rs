@@ -97,11 +97,7 @@ fn unmigrated_weave(tmp: &Path) -> Weave {
 
     let project_dir = primary.join("projects").join(PROJECT);
     init_repo(&project_dir, "PLACEHOLDER");
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["add", ".gitattributes"]);
     commit_project(
         &project_dir,
@@ -543,11 +539,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     let linked_pin = init_repo(&linked, "LINKED");
     let project_dir = primary.join("projects").join(PROJECT);
     init_repo(&project_dir, "PLACEHOLDER");
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["add", ".gitattributes"]);
     commit_project(
         &project_dir,

@@ -131,7 +131,7 @@ fn weave() -> Weave {
 
     let project = primary.join("projects").join(PROJECT);
     init_repo(&project);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::set_up_lock_driver(&project);
     let url = common::file_url(&origin);
     std::fs::write(project.join("rwv.toml"), entry(MEMBER, &url)).unwrap();
     common::fixture_lock(&project, &[(MEMBER, &url, &sha)]);

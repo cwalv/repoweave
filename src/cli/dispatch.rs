@@ -363,7 +363,7 @@ fn no_such_workweave(raw: &str, recorded: &[crate::manifest::WorkweaveId]) -> an
 /// pointer at invocation time instead of by post-hoc git-status forensics.
 /// Structurally- or explicitly-resolved invocations stay silent.
 ///
-/// When `use_workweave_flag` is true (the `-w` global flag was given),
+/// When `-w` addressed the workweave,
 /// the resolved context's provenance is re-branded from `Marker` to
 /// `WorkweaveFlag` before the target-line check runs, so the explicit
 /// `-w` addressing form is correctly recorded in the chain-step field
@@ -380,20 +380,71 @@ fn no_such_workweave(raw: &str, recorded: &[crate::manifest::WorkweaveId]) -> an
 fn resolve_project_scoped(
     origin_dir: &Path,
     project_override: Option<crate::manifest::ProjectName>,
-    use_workweave_flag: bool,
+    binding: Binding,
 ) -> anyhow::Result<WorkspaceContext> {
     bind_project_scoped(
         WorkspaceContext::resolve_invocation(origin_dir, project_override)?,
-        use_workweave_flag,
+        binding,
     )
 }
 
 fn bind_project_scoped(
     ctx: WorkspaceContext,
-    use_workweave_flag: bool,
+    binding: Binding,
 ) -> anyhow::Result<WorkspaceContext> {
     ctx.refuse_cwd_in_inactive_project()?;
-    Ok(with_target_surfaced(ctx, use_workweave_flag))
+    refuse_unsettled_lock(&ctx, binding)?;
+    Ok(with_target_surfaced(ctx, binding.workweave_flag))
+}
+
+/// How a project-scoped verb binds to its project: whether `-w` addressed it,
+/// and whether the verb writes the project repo or its lock.
+#[derive(Clone, Copy)]
+struct Binding {
+    workweave_flag: bool,
+    writes_project: bool,
+}
+
+/// Whether `command` writes the project repo or its lock, and so refuses a
+/// lock merge driver this release did not set up before it writes anything.
+fn writes_project(command: Option<&Commands>) -> bool {
+    match command {
+        Some(Commands::Member { .. })
+        | Some(Commands::Lock { .. })
+        | Some(Commands::Sync { .. })
+        | Some(Commands::SyncTo { .. })
+        | Some(Commands::Pull { .. }) => true,
+        Some(Commands::Update { remote, .. }) => *remote,
+        Some(Commands::Branch { action }) => !matches!(action, BranchAction::List { .. }),
+        Some(Commands::Workweave {
+            action: Some(action),
+            ..
+        }) => matches!(
+            action,
+            WorkweaveAction::Create { .. } | WorkweaveAction::Delete { .. }
+        ),
+        _ => false,
+    }
+}
+
+/// Refuse while the project's lock is unmerged, and, for a verb that writes
+/// the project repo or its lock, while its lock merge driver is not set up as
+/// this release sets it up.
+fn refuse_unsettled_lock(ctx: &WorkspaceContext, binding: Binding) -> anyhow::Result<()> {
+    let Some(project) = ctx.active_project() else {
+        return Ok(());
+    };
+    let dir = crate::workspace::project_dir(ctx.active_path(), project);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let vcs = crate::vcs::project_vcs();
+    let repo = crate::workspace::project_rel_path(project);
+    crate::lock_driver::refuse_unresolved(vcs.as_ref(), &repo, &dir)?;
+    if binding.writes_project {
+        crate::lock_driver::refuse_unmigrated(vcs.as_ref(), &repo, &dir)?;
+    }
+    Ok(())
 }
 
 /// The context of a `workweave` verb: its project chosen as any verb's is,
@@ -401,10 +452,10 @@ fn bind_project_scoped(
 fn workweave_context(
     origin_dir: &Path,
     project: Option<String>,
-    use_workweave_flag: bool,
+    binding: Binding,
 ) -> anyhow::Result<WorkspaceContext> {
     let project_override = project.map(ProjectName::new).transpose()?;
-    resolve_project_scoped(origin_dir, project_override, use_workweave_flag)
+    resolve_project_scoped(origin_dir, project_override, binding)
 }
 
 /// [`resolve_project_scoped`] for `status`, which reports on a weave root
@@ -417,15 +468,14 @@ fn workweave_context(
 fn resolve_project_scoped_tolerating_disputed_root(
     origin_dir: &Path,
     project_override: Option<crate::manifest::ProjectName>,
-    use_workweave_flag: bool,
+    binding: Binding,
 ) -> anyhow::Result<WorkspaceContext> {
-    Ok(with_target_surfaced(
-        WorkspaceContext::resolve_invocation_tolerating_disputed_root(
-            origin_dir,
-            project_override,
-        )?,
-        use_workweave_flag,
-    ))
+    let ctx = WorkspaceContext::resolve_invocation_tolerating_disputed_root(
+        origin_dir,
+        project_override,
+    )?;
+    refuse_unsettled_lock(&ctx, binding)?;
+    Ok(with_target_surfaced(ctx, binding.workweave_flag))
 }
 
 fn with_target_surfaced(ctx: WorkspaceContext, use_workweave_flag: bool) -> WorkspaceContext {
@@ -610,6 +660,21 @@ pub fn run() -> anyhow::Result<()> {
         }
     };
 
+    if let Some(Commands::Lock {
+        merge_driver: Some(files),
+        ..
+    }) = &cli.command
+    {
+        let [base, ours, theirs] = files.as_slice() else {
+            unreachable!("clap takes exactly three values for --merge-driver")
+        };
+        let dir = acquire_origin_dir()?;
+        return match crate::lock_driver::run(base, ours, theirs, &dir)? {
+            crate::lock_driver::DriverOutcome::Merged => Ok(()),
+            crate::lock_driver::DriverOutcome::Conflicted => std::process::exit(1),
+        };
+    }
+
     // ------------------------------------------------------------------
     // Single resolution point.
     //
@@ -672,10 +737,13 @@ pub fn run() -> anyhow::Result<()> {
             }
         };
     let origin_dir = invocation.as_path();
-    // `use_workweave_flag` is true when `-w` was given; downstream resolver
-    // calls apply `with_workweave_flag_provenance()` to stamp the correct
-    // chain-step provenance on the resolved context.
+    // `-w` addressing re-brands the resolved context's provenance, so the
+    // chain-step record names the flag rather than the marker.
     let use_workweave_flag = workweave_flag_project.is_some();
+    let binding = Binding {
+        workweave_flag: use_workweave_flag,
+        writes_project: writes_project(cli.command.as_ref()),
+    };
 
     // Step 3: the root's marker against the index and the worktree relation,
     // before the verb resolves the root it runs in. A verb that destroys the
@@ -790,7 +858,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 let activation = activate::ActivateOptions { no_materialize };
                 let settings = add_remove::NewMemberSettings {
                     role,
@@ -819,7 +887,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 add_remove::run_remove(
                     &path,
                     add_remove::Removal::from_flags(delete, delete_shared_clone)?,
@@ -835,7 +903,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::member_settings::run_set_role(
                     &repo,
@@ -852,7 +920,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::member_pin::run_pin(
                     &repo,
@@ -872,7 +940,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::member_branch::run_set_branch(
                     crate::member_branch::SetBranch {
@@ -894,7 +962,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::member_url::run_set_url(
                     &repo,
@@ -911,7 +979,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::member_settings::run_set_recurse_submodules(
                     &repo,
@@ -944,7 +1012,7 @@ pub fn run() -> anyhow::Result<()> {
                 };
                 match action {
                     WorkweaveAction::List { project } => {
-                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let ctx = workweave_context(origin_dir, project, binding)?;
                         let names = crate::workweave::list_workweaves(
                             ctx.primary_path(),
                             ctx.require_active_project_on_disk()?,
@@ -962,7 +1030,7 @@ pub fn run() -> anyhow::Result<()> {
                         json,
                         project,
                     } => {
-                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let ctx = workweave_context(origin_dir, project, binding)?;
                         let project = ctx.require_active_project_on_disk()?;
                         let deletion = crate::workweave::delete_workweave(
                             ctx.primary_path(),
@@ -1001,7 +1069,7 @@ pub fn run() -> anyhow::Result<()> {
                         project,
                         no_materialize,
                     } => {
-                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let ctx = workweave_context(origin_dir, project, binding)?;
                         let primary_root = ctx.primary_path();
                         let project = ctx.require_active_project_on_disk()?;
                         let source_root = ctx.active_path().to_path_buf();
@@ -1043,7 +1111,7 @@ pub fn run() -> anyhow::Result<()> {
                         }
                     }
                     WorkweaveAction::SetDefaultCreateBasedir { path, project } => {
-                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let ctx = workweave_context(origin_dir, project, binding)?;
                         let project = ctx.require_active_project_on_disk()?;
                         let recorded = crate::workweave_index::set_basedir(
                             ctx.primary_path(),
@@ -1071,7 +1139,7 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = with_target_surfaced(
                 WorkspaceContext::resolve_for_doctor(origin_dir, project_override)?,
-                use_workweave_flag,
+                binding.workweave_flag,
             );
             let abandon_lost_pins = consent::AbandonLostPinsConsent::from_flag(abandon_lost_pins);
             // Validated at the boundary: an unknown kind refuses here,
@@ -1108,9 +1176,10 @@ pub fn run() -> anyhow::Result<()> {
             commit,
             message,
             project,
+            merge_driver: _,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             refuse_symlinked_members_here(&ctx)?;
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
             let acting = crate::selector::RepoFilter::parse(&[], &repos)?;
@@ -1125,7 +1194,7 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = resolve_project_scoped_tolerating_disputed_root(
                 origin_dir,
                 project_override,
-                use_workweave_flag,
+                binding,
             )?;
             // A project whose manifest does not load is status's to warn about
             // and skip, not to refuse over.
@@ -1153,7 +1222,7 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = resolve_project_scoped_tolerating_disputed_root(
                 origin_dir,
                 project_override,
-                use_workweave_flag,
+                binding,
             )?;
             let query = match against {
                 Some(weave_branch) => crate::log::LogQuery::Against { weave_branch, diff },
@@ -1174,7 +1243,7 @@ pub fn run() -> anyhow::Result<()> {
             BranchAction::List { json, project } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::branch::run_list(&ctx, OutputMode::from_flag(json))?;
             }
             BranchAction::Delete {
@@ -1188,7 +1257,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::branch::run_delete(
                     &ctx,
                     crate::branch::Delete {
@@ -1217,7 +1286,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::switch::run_create(
                     &ctx,
                     crate::switch::Create {
@@ -1235,7 +1304,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::branch::run_rename(&ctx, crate::branch::Rename { new, adopt })?;
             }
             BranchAction::SetHistory {
@@ -1246,7 +1315,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 refuse_symlinked_members_here(&ctx)?;
                 crate::set_history::run(&ctx, crate::set_history::SetHistory { history, repo })?;
             }
@@ -1258,7 +1327,7 @@ pub fn run() -> anyhow::Result<()> {
                 let request = set_mode_request(words, target);
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::branch::run_set_mode(&ctx, request)?;
             }
         },
@@ -1281,14 +1350,14 @@ pub fn run() -> anyhow::Result<()> {
                     .exit(),
             };
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             crate::switch::run_switch(&ctx, request)?;
         }
         Some(Commands::Backup { action }) => match action {
             BackupAction::List { json, project } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::backup::run_list(&ctx, OutputMode::from_flag(json))?;
             }
             BackupAction::Drop {
@@ -1299,7 +1368,7 @@ pub fn run() -> anyhow::Result<()> {
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 let dropping = if all {
                     crate::backup::Dropping::All
                 } else {
@@ -1310,7 +1379,7 @@ pub fn run() -> anyhow::Result<()> {
             BackupAction::Prune { project } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
-                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
                 crate::backup::run_prune(&ctx)?;
             }
         },
@@ -1325,7 +1394,7 @@ pub fn run() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             let run = if do_continue {
                 crate::feature_sync::Run::Continue
             } else {
@@ -1351,8 +1420,7 @@ pub fn run() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx =
-                resolve_project_scoped(origin_dir, project_override.clone(), use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override.clone(), binding)?;
             let jobs = match jobs {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -1423,7 +1491,7 @@ pub fn run() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
             let jobs = match jobs {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
@@ -1454,7 +1522,7 @@ pub fn run() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             let selection = MemberSelection::new(selector.parse_filter()?, no_reference);
             fetch::run_fetch(
                 &ctx,
@@ -1474,7 +1542,7 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             let selection = MemberSelection::new(selector.parse_filter()?, false);
             pull::run_pull(
                 &ctx,
@@ -1508,7 +1576,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = if remote {
-                resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?
+                resolve_project_scoped(origin_dir, project_override, binding)?
             } else {
                 // A bare update selects the weave's only project when none is
                 // active, so a missing selection is not yet a refusal.
@@ -1519,7 +1587,7 @@ pub fn run() -> anyhow::Result<()> {
                             origin_dir.display(),
                         )
                     })?;
-                bind_project_scoped(ctx, use_workweave_flag)?
+                bind_project_scoped(ctx, binding)?
             };
             let jobs = crate::parallel::resolve_jobs(jobs);
             let output = OutputMode::from_flag(json);
