@@ -559,29 +559,21 @@ pub fn run_and_report() -> std::process::ExitCode {
 }
 
 /// The project `--project` names, where the workspace the invocation
-/// resolves to presents another or none: the choices printed for it must
-/// name it too.
-fn unpresented_project(matches: &clap::ArgMatches, at: &clap::ArgMatches) -> Option<ProjectName> {
+/// resolves to presents another: the choices printed for it must name it
+/// too.
+fn unpresented_project(at: &clap::ArgMatches) -> Option<ProjectName> {
     let named = at.try_get_one::<String>("project").ok().flatten()?;
     let named = ProjectName::new(named).ok()?;
-    let here = std::env::current_dir().ok()?;
-    let from = match matches
-        .try_get_one::<Operand>("cwd_override")
-        .ok()
-        .flatten()
-    {
-        Some(operand) => here.join(operand.text()),
-        None => here,
-    };
-    let root = from
+    let root = RESOLVED_ORIGIN
+        .get()?
         .ancestors()
         .find(|dir| crate::workspace::is_workspace_root(dir))?;
-    let presented = crate::workspace::observe_root(root)
-        .as_ref()
-        .and_then(crate::workspace::RootObservation::presented_project)
-        .cloned();
-    (presented.as_ref() != Some(&named)).then_some(named)
+    crate::shared_members::outgoing(root, &named).map(|_| named)
 }
+
+/// The directory the invocation resolved its workspace from, `-C` and `-w`
+/// applied, once dispatch has resolved it.
+static RESOLVED_ORIGIN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// The subcommand path this process was invoked with — `workweave delete` for
 /// `rwv workweave delete <name>` — and the output mode it asked for,
@@ -601,7 +593,7 @@ fn invocation() -> (String, OutputMode, Option<ProjectName>) {
     (
         path.join(" "),
         OutputMode::from_flag(json),
-        unpresented_project(&matches, at),
+        unpresented_project(at),
     )
 }
 
@@ -787,6 +779,7 @@ pub fn run() -> anyhow::Result<()> {
             }
         };
     let origin_dir = invocation.as_path();
+    let _ = RESOLVED_ORIGIN.set(origin_dir.to_path_buf());
     // `-w` addressing re-brands the resolved context's provenance, so the
     // chain-step record names the flag rather than the marker.
     let use_workweave_flag = workweave_flag_project.is_some();
