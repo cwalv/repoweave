@@ -3298,9 +3298,9 @@ pub trait Vcs: Send + Sync {
     /// `old` onto `onto` by [`Vcs::rebase`] wrote `onto..new`, as that
     /// replay recorded it, or as [`Vcs::record_replayed`] recorded a rewrite
     /// of what it wrote. A written commit no commit became is one added
-    /// during the replay. `None` where no record of that replay describes
-    /// `new`: one rwv did not start, or a branch changed since in a way the
-    /// record does not cover.
+    /// during the replay. `None` where `from..old` holds a commit and no
+    /// record of that replay describes `new`: one rwv did not start, or a
+    /// branch changed since in a way the record does not cover.
     fn replayed(
         &self,
         repo: &Path,

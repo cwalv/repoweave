@@ -105,10 +105,17 @@ impl GitVcs {
         onto: &CommitId,
         new: &CommitId,
     ) -> Result<Option<Replayed>, VcsError> {
+        let olds = Self::commits_between(repo, from, old)?;
+        let written = Self::commits_between(repo, onto, new)?;
         let path = Self::record_path(repo, old, onto)?;
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(olds.is_empty().then(|| Replayed {
+                    images: Vec::new(),
+                    written,
+                }))
+            }
             Err(source) => {
                 return Err(VcsError::Io {
                     ctx: format!("failed to read {}", path.display()),
@@ -124,8 +131,6 @@ impl GitVcs {
                 _ => return Ok(None),
             }
         }
-        let olds = Self::commits_between(repo, from, old)?;
-        let written = Self::commits_between(repo, onto, new)?;
         Ok(read_pairs(&pairs, &olds, onto, &written))
     }
 

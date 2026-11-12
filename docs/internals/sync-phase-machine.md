@@ -585,7 +585,8 @@ commit it dropped as left empty against the commit HEAD was on; the reader
 (`src/git/replay.rs`) reads one noted against `onto` or against an earlier
 commit's image as dropped, and one absent from the list (skipped, or dropped
 as already upstream) likewise. `Vcs::replayed` answers `None` where the record
-is missing or names a commit the branch from `onto` no longer holds, and the
+of a replay of any commit is missing, or names a commit the branch from
+`onto` no longer holds (a replay of no commit needs no record), and the
 callers that move pins on it refuse `replay-unrecorded`; abort reads `None`
 as "not this op's tip". When the re-map rewrites the replayed project
 commits, `Vcs::record_replayed` rewrites the record to name the copies.
