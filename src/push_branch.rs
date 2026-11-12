@@ -32,6 +32,9 @@ pub(crate) enum Standing {
     Behind,
     Diverged {
         unpushed: Vec<CommitSummary>,
+        /// Everything the branch holds beyond the push branch is reached
+        /// only by a superseded tip of it: the remote's copy was rewritten.
+        rewritten: bool,
     },
 }
 
@@ -96,6 +99,9 @@ pub(crate) fn standing_of_branch(
                 Relation::Behind => Standing::Behind,
                 Relation::Diverged => Standing::Diverged {
                     unpushed: unpushed()?,
+                    rewritten: vcs
+                        .commits_excluding(repo, &tip, std::slice::from_ref(pushed.tip.id()), true)?
+                        .is_empty(),
                 },
             }
         }
@@ -123,7 +129,7 @@ impl Standing {
     /// The commits only the branch holds, for the standings that list them.
     fn listed(&self) -> &[CommitSummary] {
         match self {
-            Standing::Gone { unpushed } | Standing::Diverged { unpushed } => unpushed,
+            Standing::Gone { unpushed } | Standing::Diverged { unpushed, .. } => unpushed,
             _ => &[],
         }
     }
@@ -131,7 +137,7 @@ impl Standing {
     /// Whether publishing the branch would lose nothing the remote has: it
     /// holds no commit of its own that the push branch lacks and others lack.
     pub(crate) fn diverged_with_unpushed(&self) -> bool {
-        matches!(self, Standing::Diverged { unpushed } if !unpushed.is_empty())
+        matches!(self, Standing::Diverged { unpushed, .. } if !unpushed.is_empty())
     }
 }
 
@@ -179,7 +185,24 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
         judging = judging.bind("<b>", declared);
     }
     judging = judging.bind("<repo>", subject.repo);
+    let nothing_to_settle = matches!(
+        standing,
+        Standing::Diverged { unpushed, rewritten: false } if unpushed.is_empty()
+    );
+    if nothing_to_settle {
+        judging = judging.only(&[]);
+    }
+    if let Standing::Diverged {
+        rewritten: true, ..
+    } = standing
+    {
+        judging = judging.fact(crate::diagnosis::Fact {
+            kind: crate::diagnosis::FactKind::Rewritten,
+            about: None,
+        });
+    }
     if matches!(standing, Standing::Diverged { .. })
+        && !nothing_to_settle
         && !upstream_is_push_branch(
             vcs,
             subject.checkout,

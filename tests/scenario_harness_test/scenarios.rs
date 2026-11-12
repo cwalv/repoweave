@@ -4346,3 +4346,435 @@ pub fn record_unstored_is_stored_by_sync() -> Scenario {
     );
     scenario("no stored record", steps)
 }
+
+/// `feat-x` in the primary, its `app` and `lib` commits published.
+fn published_feature() -> Vec<Step> {
+    let mut steps = two_member_feature_in_primary();
+    steps.push(push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds));
+    steps
+}
+
+/// follow-never-backward: `app`'s PR merges on the forge by a merge commit;
+/// `sync` moves `app` forward to it and pins it, and a second `sync` finds
+/// nothing to do.
+pub fn follow_never_backward() -> Scenario {
+    let mut steps = published_feature();
+    steps.extend([
+        Step::forge(Forge::Merge {
+            repo: Repo::App,
+            branch: "feat-x",
+            how: MergeHow::Merge,
+        }),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: fast-forwarded"))
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "feat-x".to_owned()),
+                member: Repo::App,
+                mark: "pr-app",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "feat-x".to_owned()),
+                member: Repo::Lib,
+                mark: "pr-lib",
+            }),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("already contains main")),
+    ]);
+    scenario("follow-never-backward", steps)
+}
+
+/// no-c3-after-reset: `app`'s PR is squashed on the forge; `sync
+/// --reset-to-target` moves `app` to `main` keeping a backup and listing the
+/// work it drops; the reset branch, diverged from its push branch with nothing
+/// unpushed, is a fact to the next `sync`, and `push` skips it with no C3.
+pub fn no_c3_after_reset() -> Scenario {
+    let mut steps = published_feature();
+    steps.extend([
+        Step::forge(Forge::Merge {
+            repo: Repo::App,
+            branch: "feat-x",
+            how: MergeHow::Squash,
+        }),
+        Step::rwv(&a(), &["sync", "--reset-to-target", "local/remotes/app"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "pr-app",
+                marked: None,
+            })
+            .claim(Claim::OutputContains(
+                "new work the reset leaves in the backup",
+            ))
+            .claim(Claim::OutputContains("cherry-pick"))
+            .claim(Claim::OutputContains("merge --no-ff")),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("(landed)")),
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"]))
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("--reset-to-upstream"))
+            .claim(Claim::OutputLacks("pin unmerged")),
+    ]);
+    scenario("no-c3-after-reset", steps)
+}
+
+/// no-empty-merge: `sync --from main` in a workweave whose `docs` already
+/// holds `main`'s pin merges `app` and the project and leaves `docs`.
+pub fn no_empty_merge() -> Scenario {
+    scenario(
+        "no-empty-merge",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--from", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app: merged"))
+                .claim(Claim::OutputLacks("local/remotes/docs: merged"))
+                .claim(Claim::OutputLacks("local/remotes/lib: merged"))
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w",
+                    mark: "main-app",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w",
+                    mark: "w-app",
+                }),
+            Step::rwv(&ww("w"), &["sync", "--from", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("already contains main")),
+        ],
+    )
+}
+
+/// The lineage rule: `main`'s `app` is rewritten under the feature's base, so
+/// `sync` refuses before anything moves; the reset to target clears it.
+pub fn sync_refuses_off_lineage() -> Scenario {
+    scenario(
+        "sync refuses work built on another lineage",
+        vec![
+            Step::git(&a(), Repo::App, &["branch", "other"]),
+            Step::commit(&a(), Repo::App, "cut-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["member", "set-branch", "local/remotes/app", "other"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("local/remotes/app: pin off lineage"))
+                .claim(Claim::OutputContains(
+                    "rwv sync --reset-to-target local/remotes/app",
+                ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "sync",
+                    "--strategy",
+                    "rebase",
+                    "--reset-to-target",
+                    "local/remotes/app",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "w-app",
+                marked: None,
+            }),
+        ],
+    )
+}
+
+/// A range holding a merge is never rebased: `sync --strategy rebase` refuses
+/// it and names the merge that keeps it.
+pub fn sync_never_rebases_a_merge() -> Scenario {
+    scenario(
+        "sync never rebases a range holding a merge",
+        vec![
+            create("w"),
+            Step::git(&ww("w"), Repo::App, &["switch", "-c", "side"]),
+            Step::commit(&ww("w"), Repo::App, "side-app"),
+            Step::git(&ww("w"), Repo::App, &["switch", "proj--w"]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["merge", "--no-ff", "-m", "bump", "side"],
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("rwv sync --from main"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(&ww("w"), &["sync", "--from", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w",
+                    mark: "side-app",
+                }),
+        ],
+    )
+}
+
+/// A rebase that would rewrite a branch other features land into refuses,
+/// naming them; a fast-forward does not.
+pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
+    scenario(
+        "sync refuses to rewrite a branch with dependents",
+        vec![
+            create("w"),
+            Step::rwv(
+                &ww("w"),
+                &["workweave", "create", "--project", "proj", "w2"],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("target dependents"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
+/// The three ways a member branch stands against a push branch it diverged
+/// from: rewritten upstream (C3, C2), unpushed commits (C2, C3); the third,
+/// landed, is `no_c3_after_reset`'s.
+pub fn sync_judges_a_diverged_push_branch(rewritten: bool) -> Scenario {
+    let mut steps = published_feature();
+    if rewritten {
+        steps.extend(
+            Step::forge_force_push(Repo::App, "feat-x", "rewritten-app")
+                .into_iter()
+                .map(|step| step.may_leave_unresolved(&[Repo::App])),
+        );
+        steps.push(Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds));
+    } else {
+        steps.extend([
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "feat-x",
+                mark: "theirs-app",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "mine-app"),
+        ]);
+    }
+    let mut refusal = Step::rwv(&a(), &["sync"])
+        .expect(Exit::Fails)
+        .claim(Claim::OutputContains(
+            "local/remotes/app: push-branch diverged",
+        ))
+        .claim(Claim::OutputContains("--merge-upstream"));
+    if rewritten {
+        refusal = refusal.claim(Claim::OutputContains("rewritten"));
+    }
+    steps.push(refusal);
+    Scenario {
+        name: if rewritten {
+            "sync refuses a member whose upstream was rewritten"
+        } else {
+            "sync refuses a member holding unpushed commits beside its upstream's"
+        },
+        seed: Seed::default(),
+        steps,
+    }
+}
+
+/// absent-pin-unmerged: `main`'s tip pins a `lib` commit this clone lacks;
+/// `sync` refuses with C17, C25, C19 rather than judge on it.
+pub fn absent_pin_unmerged() -> Scenario {
+    scenario(
+        "absent-pin-unmerged",
+        vec![
+            create("w"),
+            Step::new_machine(Machine::B),
+            Step::commit(&b(), Repo::Lib, "b-lib"),
+            Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .may_leave_unresolved(&[Repo::Lib]),
+            Step::rwv(&ww("w"), &["sync"])
+                .may_leave_unresolved(&[Repo::Lib])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("local/remotes/lib: pin unreachable"))
+                .claim(Claim::OutputContains("rwv member pin"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
+/// `feat-x` in A's primary, onto `main`, published with its members; `stable`
+/// recorded `declared` and published from B.
+fn feat_x_published_beside_stable() -> Vec<Step> {
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    steps.extend(feature_branch_in_primary());
+    steps.extend([
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["branch", "stable"]),
+        Step::rwv(&b(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "stable"]))
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds),
+    ]);
+    steps
+}
+
+/// B retargets `feat-x` onto `stable` and publishes the record; A fetches it.
+fn feat_x_retargeted_on_b() -> Vec<Step> {
+    vec![
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["branch", "feat-x", "origin/feat-x"]),
+        Step::rwv(
+            &b(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "feat-x"])).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A record retargeted on another machine reaches this one by fetch: `status`
+/// reports it, and `sync` refuses before anything moves, offering to accept
+/// it or to restore the old target, until one of them is taken.
+pub fn record_retargeted_elsewhere_is_reported_and_refused() -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            ))
+            .claim(Claim::OutputContains("rwv update"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode feat-x feature --target main",
+            ))
+    };
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend(feat_x_retargeted_on_b());
+    steps.extend([
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            ))
+            .claim(Claim::OutputContains(
+                "was: feature onto main (as declared)",
+            ))
+            .claim(Claim::OutputContains(
+                "now: feature onto stable (as declared)",
+            ))
+            .claim(Claim::OutputContains("arrived by fetch")),
+        refused(Step::rwv(&a(), &["sync"])).claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::App,
+            branch: "feat-x",
+        }),
+        refused(Step::rwv(&a(), &["sync"])).claim(Claim::LocalStateUnchanged(a())),
+    ]);
+    scenario("a record retargeted on another machine", steps)
+}
+
+/// `rwv update` accepts a record changed elsewhere: it reports the change once
+/// and stores it, and the next `sync` takes in the new target.
+pub fn record_retargeted_elsewhere_accepted_by_update() -> Scenario {
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend(feat_x_retargeted_on_b());
+    steps.extend([
+        Step::rwv(&a(), &["update"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            )),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed"))
+            .claim(Claim::OutputContains(
+                "projects/proj: already contains stable",
+            )),
+    ]);
+    scenario("a record changed elsewhere, accepted", steps)
+}
+
+/// A record this workspace writes is never reported to it.
+pub fn record_retargeted_here_is_not_reported() -> Scenario {
+    let mut steps = feature_branch_in_primary();
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["branch", "stable", "main"]),
+        Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed"))
+            .claim(Claim::OutputContains(
+                "projects/proj: already contains stable",
+            )),
+    ]);
+    scenario("a record changed here", steps)
+}
+
+/// A workspace that stored no record takes the one `sync` reads without a
+/// word, and a later change elsewhere is reported against it.
+pub fn record_unstored_is_stored_by_sync() -> Scenario {
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend([
+        Step::delete_workspace_state(&a()),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+    ]);
+    steps.extend(feat_x_retargeted_on_b());
+    steps.push(
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "was: feature onto main (as declared)",
+            )),
+    );
+    scenario("no stored record", steps)
+}

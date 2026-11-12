@@ -1029,6 +1029,14 @@ fn settle_diverged(
     let project_dir = crate::workspace::project_dir(ctx.active_path(), project);
     let mut report = crate::diagnosis::Report::default();
     let mut acting: Vec<(&Divergence, bool)> = Vec::new();
+    let lineage = if state.flags.merge_upstream && !found.is_empty() {
+        crate::feature_sync::feature_lineage(ctx, project)?
+    } else {
+        None
+    };
+    let ours = crate::manifest::Manifest::from_path(
+        &project_dir.join(crate::manifest::Manifest::FILE_NAME),
+    )?;
     for named in &state.flags.reset_to_upstream {
         let is_member = matches!(named, crate::manifest::RepoOperand::Member(path)
             if items.iter().any(|item| item.repo_path == *path));
@@ -1088,6 +1096,21 @@ fn settle_diverged(
                 &mut report,
             );
         } else {
+            if matches!(
+                item.entry.role,
+                crate::manifest::Role::Owned | crate::manifest::Role::Fork
+            ) {
+                if let Some(lineage) = &lineage {
+                    report.extend(lineage.judge_merge_upstream(
+                        &ours,
+                        &item.repo_path,
+                        dir,
+                        vcs,
+                        d.local.id(),
+                        tip.id(),
+                    )?);
+                }
+            }
             match &d.site {
                 Site::Checkout(_) => {
                     let tracked = vcs.tracked_dirty_file_names(dir).unwrap_or_default();

@@ -2611,6 +2611,51 @@ fn sync_takes_in_the_records_target_and_relocks() {
 }
 
 #[test]
+fn a_member_merged_on_the_forge_follows_forward_and_nothing_loops() {
+    runner::run(scenarios::follow_never_backward()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_reset_to_target_keeps_a_backup_and_leaves_no_c3_behind() {
+    runner::run(scenarios::no_c3_after_reset()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_from_merges_only_members_lacking_the_pin() {
+    runner::run(scenarios::no_empty_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_work_built_on_another_lineage_before_anything_moves() {
+    runner::run(scenarios::sync_refuses_off_lineage()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_never_rebases_a_range_holding_a_merge() {
+    runner::run(scenarios::sync_never_rebases_a_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_to_rewrite_a_branch_with_dependents() {
+    runner::run(scenarios::sync_refuses_to_rewrite_under_dependents()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_a_member_whose_upstream_was_rewritten() {
+    runner::run(scenarios::sync_judges_a_diverged_push_branch(true)).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_a_member_holding_unpushed_commits_beside_its_upstreams() {
+    runner::run(scenarios::sync_judges_a_diverged_push_branch(false)).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_a_target_pin_this_clone_lacks() {
+    runner::run(scenarios::absent_pin_unmerged()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_record_retargeted_on_another_machine_is_reported_and_sync_refuses_it() {
     runner::run(scenarios::record_retargeted_elsewhere_is_reported_and_refused())
         .assert_fully_decided_green();

@@ -6,7 +6,7 @@
 //! target's tip, and the relock records the three-way merge of pins with each
 //! moved member at its new tip.
 
-use crate::diagnosis::{Fact, FactKind, Judged, Report, State};
+use crate::diagnosis::{ChoiceId, Fact, FactKind, Judged, Report, State};
 use crate::lineage::{Lineage, PinHistory};
 use crate::lock_merge::{merge_pins, Held, Parent, PinMerge, Reach};
 use crate::manifest::{
@@ -88,6 +88,8 @@ struct Sync<'a> {
     vcs: Box<dyn Vcs>,
     branch: String,
     from: SyncFrom,
+    /// The record's target, where the branch is a feature.
+    target: Option<String>,
     strategy: SyncStrategy,
     jobs: usize,
 }
@@ -142,11 +144,13 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
                 .sync_from
                 .clone()
                 .context("the op record names no branch the sync takes in")?;
+            let target = feature_target(vcs.as_ref(), ctx, &dir, &branch);
             let sync = Sync {
                 ctx,
                 project,
                 dir,
                 vcs,
+                target,
                 branch,
                 from,
                 strategy: owner.strategy,
@@ -154,6 +158,20 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
             };
             act(&sync, &op, &take_in, output)
         }
+    }
+}
+
+fn feature_target(
+    vcs: &dyn Vcs,
+    ctx: &WorkspaceContext,
+    dir: &Path,
+    branch: &str,
+) -> Option<String> {
+    let project = ctx.require_bound_project().ok()?;
+    let name = crate::branch::named(vcs, project, dir, branch).ok()?;
+    match crate::branch::recorded_value(vcs, project, dir, &name).ok()? {
+        Record::Feature { target, .. } => Some(target.to_string()),
+        Record::Declared => None,
     }
 }
 
@@ -229,6 +247,10 @@ fn fresh(
         vcs,
         branch,
         from,
+        target: match &record {
+            Record::Feature { target, .. } => Some(target.to_string()),
+            Record::Declared => None,
+        },
         strategy: args.strategy,
         jobs: args.jobs,
     };
@@ -894,6 +916,28 @@ fn plan_member(
     }
 
     if let SyncFrom::From(_) = sync.from {
+        let declared = |m: &Manifest| {
+            m.get_entry(path)
+                .map(|e| e.branch.local_counterpart().as_str().to_owned())
+        };
+        let theirs = inputs.theirs.and_then(declared);
+        if sync.target.is_none() && theirs.is_some() && theirs != declared(inputs.ours) {
+            report.add(
+                State::PinNotOnDeclaredBranch
+                    .of(path)
+                    .member()
+                    .checkout(&mdir)
+                    .bind("<m>", path)
+                    .bind("<b>", theirs.unwrap_or_default())
+                    .subject(format!(
+                        "{} declares it on another branch; declare that branch here first",
+                        sync.source_name()
+                    ))
+                    .only(&[ChoiceId::C11])
+                    .judge(mvcs),
+            );
+            return Ok(Some(member));
+        }
         if !mvcs.is_ancestor(&mdir, &rev(&pin), &rev(&head))? {
             member.act = Act::Merge(pin);
             judge_member_moves(&member, &attached, report)?;
@@ -953,21 +997,12 @@ fn plan_member(
         judge_member_moves(&member, &attached, report)?;
         return Ok(Some(member));
     }
-    if mvcs.is_ancestor(&mdir, &rev(&source), &rev(&head))? {
-        judge_push_branch(
-            mvcs,
-            &mdir,
-            path.as_str(),
-            &attached,
-            std::slice::from_ref(&source),
-            false,
-            report,
-        )?;
-        return Ok(Some(member));
-    }
     let new_work = crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &pins)?;
     let follows = new_work.is_empty();
-    member.act = if follows {
+    let contained = mvcs.is_ancestor(&mdir, &rev(&source), &rev(&head))?;
+    member.act = if contained {
+        Act::Nothing
+    } else if follows {
         if mvcs.is_ancestor(&mdir, &rev(&head), &rev(&source))? {
             Act::FastForward(source.clone())
         } else {
@@ -986,7 +1021,7 @@ fn plan_member(
             SyncStrategy::Rebase => Act::Rebase(source.clone()),
         }
     };
-    if !follows || inputs.dependents {
+    if !follows || (inputs.dependents && !contained) {
         match crate::lineage::judge(mvcs, &mdir, &head, &pins, &source)? {
             Lineage::Passes { .. } => {}
             Lineage::OffLineage { base } => {
@@ -1294,7 +1329,11 @@ fn take_member(
             &sync_entry(sync, path)?,
             dir,
             source,
-            Order::HeadFirstAlwaysMerge,
+            if sync.target.as_deref() == Some(sync.source_name()) {
+                Order::HeadFirst
+            } else {
+                Order::HeadFirstAlwaysMerge
+            },
             &message,
         ) {
             Ok(joined) => {
@@ -1492,8 +1531,8 @@ fn relock(
         let merged = merge_pins(
             &PinMerge {
                 base: base.as_ref(),
-                first: &theirs,
-                second: &ours,
+                first: &ours,
+                second: &theirs,
                 merged_declared: &merged_declared,
                 member_merges: moved,
             },
@@ -1536,4 +1575,111 @@ fn settle(sync: &Sync<'_>, before: &Manifest) -> anyhow::Result<()> {
         crate::activate::ActivateOptions::default(),
     )?
     .tail
+}
+
+/// What the lineage rule reads for a feature's members: its target's pins
+/// and entries.
+pub(crate) struct FeatureLineage {
+    target: String,
+    as_mode: Mode,
+    pins: PinHistory,
+    theirs: Option<Manifest>,
+}
+
+/// The lineage a feature checked out in `ctx` lands on; `None` for a branch
+/// that is no feature, or whose target exists nowhere.
+pub(crate) fn feature_lineage(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+) -> anyhow::Result<Option<FeatureLineage>> {
+    let dir = project_dir(ctx.active_path(), project);
+    let vcs = project_vcs();
+    let Some(branch) = crate::branch::checked_out(vcs.as_ref(), &dir)? else {
+        return Ok(None);
+    };
+    let name = crate::branch::named(vcs.as_ref(), project, &dir, &branch)?;
+    let Record::Feature { target, as_mode } =
+        crate::branch::recorded_value(vcs.as_ref(), project, &dir, &name)?
+    else {
+        return Ok(None);
+    };
+    let url_remote = vcs.project_url_remote(&dir).ok().flatten();
+    let tip = tip_of(
+        vcs.as_ref(),
+        &dir,
+        &RawRefName::new(target.to_string()),
+        url_remote.as_ref(),
+    )?;
+    let Ok(Some(tip)) = tip.newer() else {
+        return Ok(None);
+    };
+    Ok(Some(FeatureLineage {
+        target: target.to_string(),
+        as_mode,
+        pins: PinHistory::of(vcs.as_ref(), &dir, tip.id())?,
+        theirs: manifest_at(vcs.as_ref(), &dir, tip.id()),
+    }))
+}
+
+impl FeatureLineage {
+    /// Judge a merge of `upstream` into the member's work `local` by the
+    /// lineage rule: refused where the upstream lacks the work's base, with
+    /// C3 where the upstream's own base is on the branch the member lands
+    /// on, else C27.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn judge_merge_upstream(
+        &self,
+        ours: &Manifest,
+        path: &RepoPath,
+        dir: &Path,
+        vcs: &dyn Vcs,
+        local: &CommitId,
+        upstream: &CommitId,
+    ) -> anyhow::Result<Option<Judged>> {
+        let pins = self.pins.of_member(path);
+        let Lineage::OffLineage { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)?
+        else {
+            return Ok(None);
+        };
+        let (present, _) = crate::lineage::split_present(vcs, dir, &pins);
+        let their_base = crate::lineage::base_of(vcs, dir, upstream, &present)?;
+        let receiving = receiving_branch(
+            path,
+            &self.target,
+            Some(self.as_mode),
+            ours,
+            self.theirs.as_ref(),
+            None,
+        );
+        let on_receiving = match (their_base, receiving) {
+            (Some(their_base), Some(receiving)) => {
+                match tip_of(vcs, dir, &receiving, None)?.newer() {
+                    Ok(Some(u)) => vcs.is_ancestor(dir, &rev(&their_base), u)?,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        let choice = if on_receiving {
+            ChoiceId::C3
+        } else {
+            ChoiceId::C27
+        };
+        Ok(Some(
+            State::PinOffLineage
+                .of(path)
+                .member()
+                .checkout(dir)
+                .bind("<m>", path)
+                .bind("<repo>", path)
+                .subject(format!(
+                    "its base {} is not on its upstream ({})",
+                    base.short(),
+                    upstream.short()
+                ))
+                .by_verb("update --remote")
+                .only(&[choice])
+                .judge(vcs),
+        ))
+    }
 }
