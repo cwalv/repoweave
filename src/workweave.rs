@@ -400,8 +400,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 ///
 /// This is the canonical cleanup path used by:
 /// - `create_workweave` rollback — called on any mid-create failure.
-/// - The `create --replace-existing` path — call this before recreating to
-///   clear any orphan registrations left by a previous partial create.
+/// - `create_workweave`'s pre-create pass — clears any orphan registrations
+///   left by a previous partial create.
 ///
 /// # API contract for callers
 ///
@@ -848,9 +848,6 @@ impl Drop for CreateRollbackGuard {
 ///
 /// Designed to be called BEFORE any disk mutation so that a fresh-project
 /// failure leaves no partial workweave directory on disk.
-///
-/// Siblings `.2` (rollback) and `.3` (replace-existing prune) may call this same
-/// function before their own mutations.
 pub fn preflight_check_heads(
     project_vcs: &dyn Vcs,
     source_root: &Path,
