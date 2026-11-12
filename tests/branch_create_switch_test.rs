@@ -828,3 +828,34 @@ fn a_create_onto_itself_is_a_target_cycle_with_or_without_at() {
         assert!(!has_branch(&project, "x"));
     }
 }
+
+#[test]
+fn a_member_aligned_for_a_feature_left_by_a_raw_switch_moves_by_the_features_stored_mode() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "f1"], ws);
+    commit_in(&ws.join(LIB), "work.txt");
+    git_ok(&project, &["switch", "-q", "main"]);
+    common::records::edit_by_hand(&project, &[], &["f1"], "f1 forgotten");
+
+    succeed(&["update"], ws);
+
+    assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("main"));
+}
+
+#[test]
+fn a_created_branch_reusing_a_deleted_ones_name_inherits_nothing_it_stored() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["branch", "create", "rel", "--declared"], ws);
+    succeed(&["switch", "main"], ws);
+    succeed(&["branch", "delete", "rel", "--target", "main"], ws);
+    succeed(&["member", "set-branch", LIB, "dev", "--new"], ws);
+
+    let out = succeed(&["branch", "create", "rel", "--declared"], ws);
+
+    assert!(!out.contains("member-changed"), "{out}");
+    let status = succeed(&["status"], ws);
+    assert!(!status.contains("member-changed"), "{status}");
+}

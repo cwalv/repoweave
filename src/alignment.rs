@@ -61,18 +61,35 @@ pub enum Aligned {
 }
 
 /// The pointer state a workspace keeps for itself: the branch it last aligned
-/// members for, and the member entries it last aligned each branch by.
+/// members for, and what it stored for each branch it aligned.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aligned: Option<Aligned>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub entries: BTreeMap<String, BTreeMap<String, RepoEntry>>,
-    /// The entries each branch last stood in without a change to report: what
+    pub stored: BTreeMap<String, Stored>,
+}
+
+/// What a workspace last aligned one branch by.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stored {
+    pub mode: crate::records::Mode,
+    pub entries: BTreeMap<String, RepoEntry>,
+    /// The entries the branch last stood in without a change to report: what
     /// an entry change is reported against until its push branch carries it.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub baseline: BTreeMap<String, BTreeMap<String, RepoEntry>>,
+    pub baseline: BTreeMap<String, RepoEntry>,
+}
+
+/// Forget what the workspace at `project_dir` stored for `branch`, as for a
+/// branch created under the name. Whether the state file changed is returned.
+pub fn forget_branch(vcs: &dyn Vcs, project_dir: &Path, branch: &str) -> anyhow::Result<bool> {
+    let StateReading { mut state, corrupt } = read_state(vcs, project_dir)?;
+    if corrupt.is_some() || state.stored.remove(branch).is_none() {
+        return Ok(false);
+    }
+    store_state(vcs, project_dir, &state)
 }
 
 pub struct StateReading {
@@ -149,11 +166,8 @@ pub fn rename_branch(
     if state.aligned == Some(Aligned::Branch(from.to_owned())) {
         state.aligned = Some(Aligned::Branch(to.to_owned()));
     }
-    if let Some(baseline) = state.baseline.remove(from) {
-        state.baseline.insert(to.to_owned(), baseline);
-    }
-    if let Some(entries) = state.entries.remove(from) {
-        state.entries.insert(to.to_owned(), entries);
+    if let Some(stored) = state.stored.remove(from) {
+        state.stored.insert(to.to_owned(), stored);
     }
     store_state(vcs, project_dir, &state)
 }
@@ -833,17 +847,15 @@ impl Aligner {
         let Some(Aligned::Branch(aligned)) = &self.state.aligned else {
             return false;
         };
-        let Some(stored) = self
-            .state
-            .entries
-            .get(aligned)
-            .and_then(|entries| entries.get(m.path.as_str()))
-        else {
+        let Some(stored) = self.state.stored.get(aligned) else {
             return false;
         };
-        match (&self.mode, stored.role) {
-            (Mode::Feature { .. }, Role::Owned | Role::Fork) => aligned == branch,
-            _ => stored.branch.local_counterpart().as_str() == branch,
+        let Some(entry) = stored.entries.get(m.path.as_str()) else {
+            return false;
+        };
+        match (stored.mode, entry.role) {
+            (crate::records::Mode::Feature, Role::Owned | Role::Fork) => aligned == branch,
+            _ => entry.branch.local_counterpart().as_str() == branch,
         }
     }
 }
@@ -1307,29 +1319,34 @@ impl Aligner {
         advance_baseline: bool,
     ) -> WorkspaceState {
         let mut next = self.state.clone();
-        match (&self.mode, &self.checked_out) {
-            (Mode::Detached, _) => next.aligned = Some(Aligned::Detached),
-            (_, Some(branch)) => {
-                next.aligned = Some(Aligned::Branch(branch.clone()));
-                {
-                    let current: BTreeMap<String, RepoEntry> = manifest
-                        .iter_entries()
-                        .map(|(path, entry)| (path.to_string(), entry.clone()))
-                        .collect();
-                    if advance_baseline || !next.baseline.contains_key(branch) {
-                        next.baseline.insert(branch.clone(), current);
-                    }
-                    next.entries.insert(
-                        branch.clone(),
-                        manifest
-                            .iter_entries()
-                            .map(|(path, entry)| (path.to_string(), entry.clone()))
-                            .collect(),
-                    );
-                }
+        let mode = match &self.mode {
+            Mode::Detached => {
+                next.aligned = Some(Aligned::Detached);
+                return next;
             }
-            (_, None) => {}
-        }
+            Mode::Feature { .. } => crate::records::Mode::Feature,
+            Mode::Declared => crate::records::Mode::Declared,
+        };
+        let Some(branch) = &self.checked_out else {
+            return next;
+        };
+        next.aligned = Some(Aligned::Branch(branch.clone()));
+        let current: BTreeMap<String, RepoEntry> = manifest
+            .iter_entries()
+            .map(|(path, entry)| (path.to_string(), entry.clone()))
+            .collect();
+        let baseline = match next.stored.remove(branch) {
+            Some(held) if !advance_baseline => held.baseline,
+            _ => current.clone(),
+        };
+        next.stored.insert(
+            branch.clone(),
+            Stored {
+                mode,
+                entries: current,
+                baseline,
+            },
+        );
         next
     }
 }

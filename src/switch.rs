@@ -597,6 +597,7 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     let departure = Departure::of_project_move(vcs, &dir, &start)?;
     vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
         .map_err(|e| refused_move(vcs, &project, &dir, e))?;
+    crate::alignment::forget_branch(vcs, &dir, new.as_str())?;
     outln!(
         "created {new} at {}: {record}",
         short_revision(start.id().as_str())

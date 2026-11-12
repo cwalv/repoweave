@@ -120,8 +120,8 @@ pub(crate) fn standing(
     let baseline = published(vcs, project_dir).or_else(|| {
         aligner
             .checked_out()
-            .and_then(|branch| aligner.state.baseline.get(branch))
-            .cloned()
+            .and_then(|branch| aligner.state.stored.get(branch))
+            .map(|stored| stored.baseline.clone())
     });
     match baseline {
         None => Standing {
