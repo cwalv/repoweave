@@ -4014,3 +4014,145 @@ pub fn detached_review_lib_fix() -> Scenario {
         ],
     )
 }
+
+/// `set-history merge --repo lib`, then `--unset`: each commits, and the
+/// committed `rwv.toml` returns to what it held before.
+pub fn history_set_unset() -> Scenario {
+    let lib = "local/remotes/lib";
+    scenario(
+        "history: set a member's setting, then unset it",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", lib])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history: local/remotes/lib: history unset -> merge",
+                ))
+                .claim(Claim::OutputContains("Committed rwv.toml")),
+            Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("history = \"merge\"")),
+            Step::rwv(&a(), &["branch", "set-history", "--unset", "--repo", lib])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history: local/remotes/lib: history merge -> unset",
+                ))
+                .claim(Claim::OutputContains("Committed rwv.toml")),
+            Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history")),
+            Step::rwv(&a(), &["branch", "set-history", "--unset", "--repo", lib])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("nothing to change"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// `proj` and `proj2` record different `history` for `lib`: `doctor`
+/// reports it. How each project's landings follow its own setting needs
+/// `land`.
+pub fn history_disagreement() -> Scenario {
+    let lib = "local/remotes/lib";
+    Scenario {
+        name: "history: two projects record different settings for a shared member",
+        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", lib])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["doctor"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history disagreement")),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "set-history",
+                    "--project",
+                    "proj2",
+                    "linear",
+                    "--repo",
+                    lib,
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["doctor"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "history disagreement: local/remotes/lib",
+                ))
+                .claim(Claim::OutputContains("proj main: merge"))
+                .claim(Claim::OutputContains("proj2 main: linear")),
+            Step::pending(
+                "land into proj's main by merge and into proj2's by rebase",
+                MissingVerb::Land,
+            ),
+        ],
+    }
+}
+
+/// Top-level `linear`, `lib` overridden to `merge`: what is stored. That one
+/// landing rebases `app` and merges `lib` needs `land`.
+pub fn history_member_override() -> Scenario {
+    let lib = "local/remotes/lib";
+    scenario(
+        "history: a member's own setting beside the top-level one",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history: projects/proj: history unset -> linear",
+                )),
+            Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", lib])
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("history = \"linear\""))
+                .claim(Claim::OutputContains("history = \"merge\"")),
+            create("over"),
+            Step::commit(&ww("over"), Repo::App, "over-app"),
+            Step::commit(&ww("over"), Repo::Lib, "over-lib"),
+            Step::pending("land, rebasing app and merging lib", MissingVerb::Land),
+        ],
+    )
+}
+
+/// Hand edits of `[integrations.cargo-workspace]`, `[workweave]` and the
+/// top-level `history`: `lock --commit` commits all three in one commit,
+/// running set-history's step, and a create then runs.
+pub fn lock_commit_whole_file() -> Scenario {
+    scenario(
+        "lock --commit: the whole hand-edited rwv.toml in one commit",
+        vec![
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                "[integrations.vscode-workspace]\nenabled = false\n\n[repositories]\n",
+                "history = \"merge\"\n\n[integrations.vscode-workspace]\nenabled = false\n\n\
+                 [integrations.cargo-workspace]\nenabled = false\n\n[workweave]\n\
+                 copy = [\"README\"]\n\n[repositories]\n",
+            ),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv lock: projects/proj: history unset -> merge, committed as the file has it",
+                ))
+                .claim(Claim::OutputContains(
+                    "the other tables of rwv.toml changed",
+                )),
+            Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("history = \"merge\""))
+                .claim(Claim::OutputContains("[integrations.cargo-workspace]"))
+                .claim(Claim::OutputContains("[workweave]")),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["diff", "--exit-code", "HEAD", "--", "rwv.toml"],
+            )
+            .expect(Exit::Succeeds),
+            create("seat"),
+        ],
+    )
+}

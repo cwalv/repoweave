@@ -565,6 +565,10 @@ every_scenario!(
     resolve_app_conflict_and_continue,
     merge_upstream_as_refs,
     reset_acts_only_on_the_named_repo,
+    history_set_unset,
+    history_disagreement,
+    history_member_override,
+    lock_commit_whole_file,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -667,6 +671,8 @@ macro_rules! pending_on {
 }
 
 pending_on!(
+    history_disagreement => Land,
+    history_member_override => Land,
     resume_on_machine_b => Land,
     feature_in_primary_while_main_moves => Land,
     feature_off_stable => Land,
@@ -2562,6 +2568,16 @@ fn dc25_url_provenance() {
 #[test]
 fn url_change_raw_merge() {
     runner::run(scenarios::url_change_raw_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_set_unset() {
+    runner::run(scenarios::history_set_unset()).assert_fully_decided_green();
+}
+
+#[test]
+fn lock_commit_whole_file() {
+    runner::run(scenarios::lock_commit_whole_file()).assert_fully_decided_green();
 }
 
 #[test]
