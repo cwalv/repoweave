@@ -183,6 +183,9 @@ pub enum Action {
     /// The held process lets go of its point and runs to its exit, which is
     /// this step's outcome.
     Release(&'static str),
+    /// The held process is killed where it stands, as an interrupted run is:
+    /// whatever it left behind is what the next step meets.
+    Kill(&'static str),
     Unreachable(Remote),
     Reachable(Remote),
     Pending(MissingVerb),
@@ -750,6 +753,14 @@ impl Step {
         )
     }
 
+    pub fn kill(handle: &'static str) -> Step {
+        Step::new(
+            format!("kill {handle}"),
+            Action::Kill(handle),
+            Expect::succeeds(),
+        )
+    }
+
     pub fn unreachable(remote: Remote) -> Step {
         Step::new(
             format!("{remote:?} unreachable"),
@@ -1266,6 +1277,13 @@ impl Run<'_> {
                     let out = held.release();
                     self.last_code = out.status.code();
                     (out.status.success(), rendered(&out))
+                }
+                None => (false, format!("nothing is held as {handle}")),
+            },
+            Action::Kill(handle) => match self.held.remove(handle) {
+                Some(held) => {
+                    drop(held);
+                    (true, String::new())
                 }
                 None => (false, format!("nothing is held as {handle}")),
             },

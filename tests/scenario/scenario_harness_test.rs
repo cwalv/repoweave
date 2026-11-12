@@ -518,6 +518,7 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    abort_deletes_a_created_receiving_branch,
     carried_pin_judged_against_the_receiving_branch,
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
@@ -2124,6 +2125,15 @@ holding_rwv! {
     /// loses, so it fetches, merges and retries, and no entry is lost.
     fn a_records_push_that_loses_the_race_fetches_merges_and_retries() {
         bad_steps("records push race", scenarios::records_push_race()).assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A landing interrupted after creating a receiving branch is undone by
+    /// `rwv abort`, the created branch deleted.
+    fn abort_after_an_interrupted_landing_deletes_the_branch_it_created() {
+        runner::run(scenarios::abort_deletes_a_created_receiving_branch())
+            .assert_fully_decided_green();
     }
 }
 

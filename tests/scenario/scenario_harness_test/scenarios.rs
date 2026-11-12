@@ -6586,3 +6586,41 @@ pub fn landing_creates_a_receiving_branch_that_exists_nowhere() -> Scenario {
         ],
     )
 }
+
+/// A landing interrupted once it has created a receiving branch that existed
+/// nowhere, before it moves it, leaves its op record; `rwv abort` deletes the
+/// branch it created, and the target stays where it was.
+pub fn abort_deletes_a_created_receiving_branch() -> Scenario {
+    scenario(
+        "abort deletes a created receiving branch",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "lib-next"),
+            ),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "lib onto lib-next"]),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--allow-member-change", LIB],
+                "advance-target",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                }),
+            Step::git(&a(), Repo::Lib, &["branch", "--list", "lib-next"])
+                .claim(Claim::OutputLacks("lib-next")),
+        ],
+    )
+}
