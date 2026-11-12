@@ -9230,6 +9230,7 @@ fn abort_leaving_target(
         take_in.and_then(|t| t.source_tip.as_ref()),
         take_in.map(|t| t.rebases.as_slice()).unwrap_or_default(),
         take_in.map(|t| t.carries.as_slice()).unwrap_or_default(),
+        &record.own_steps(),
         abandon,
         &mut tally,
     );
