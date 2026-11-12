@@ -694,7 +694,7 @@ fn fetch_all(
         &[project_url_remote, project_target.as_ref()],
         false,
     );
-    for member in members {
+    for member in members.iter().filter(|m| m.dir.exists()) {
         let expected = pushed.expected(member.entry.role, &member.entry);
         let target =
             member

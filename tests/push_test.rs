@@ -1795,3 +1795,25 @@ fn a_member_overwrite_whose_own_project_branch_is_republished_runs() {
         common::git_in(ws.workspace.join("local/org/a"), &["rev-parse", "HEAD"])
     );
 }
+
+/// The gate judges every pin the project branch's lock holds: a member not
+/// materialized here cannot place its pin, so the branch is withheld.
+#[test]
+fn a_pin_of_a_member_not_materialized_here_withholds_the_project_branch() {
+    let ws = common::build_workspace(
+        "alpha",
+        &[("local/org/a", "owned"), ("local/org/c", "dependency")],
+    );
+    let before = bare_main_sha(&ws.project_bare);
+    std::fs::remove_dir_all(ws.workspace.join("local/org/c")).unwrap();
+
+    let out = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("local/org/c: pin unreachable"), "{stderr}");
+    assert_eq!(bare_main_sha(&ws.project_bare), before);
+}
