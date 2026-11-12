@@ -4374,8 +4374,9 @@ pub fn history_member_override() -> Scenario {
 }
 
 /// Hand edits of `[integrations.cargo-workspace]`, `[workweave]` and the
-/// top-level `history`: `lock --commit` commits all three in one commit,
-/// running set-history's step, and a create then runs.
+/// top-level `history`: a create runs over the uncommitted file, which stays
+/// in the parent, reported; `lock --commit` then commits all three in one
+/// commit, running set-history's step, and a create runs again.
 pub fn lock_commit_whole_file() -> Scenario {
     scenario(
         "lock --commit: the whole hand-edited rwv.toml in one commit",
@@ -4389,6 +4390,11 @@ pub fn lock_commit_whole_file() -> Scenario {
                  [integrations.cargo-workspace]\nenabled = false\n\n[workweave]\n\
                  copy = [\"README\"]\n\n[repositories]\n",
             ),
+            create("early")
+                .claim(Claim::OutputContains(
+                    "holds uncommitted changes that stay there",
+                ))
+                .claim(Claim::OutputContains("projects/proj/rwv.toml")),
             Step::rwv(&a(), &["lock", "--commit"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
