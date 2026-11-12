@@ -162,6 +162,26 @@ pub(crate) fn judge_lookup(
     })
 }
 
+/// `branch` is recorded as `recorded` and something asks it to be `other`:
+/// refused, the record standing, never redirected.
+pub(crate) fn judge_differs(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+    recorded: &Record,
+    other: &Record,
+) -> Judged {
+    State::TargetDiffers
+        .of(label(project))
+        .project_repo()
+        .subject(branch)
+        .checkout(dir)
+        .bind("<W>", branch)
+        .listing([format!("recorded: {recorded}"), format!("asked: {other}")])
+        .judge(vcs)
+}
+
 pub(crate) fn write_refusal(
     vcs: &dyn Vcs,
     store: &Store<'_>,
@@ -293,14 +313,10 @@ pub fn workweave_parent(
         return Ok(None);
     }
     let Some(text) = checked_out(vcs.as_ref(), source_dir)? else {
-        return Err(refusal(
-            RefusalKind::HeadNotOnBranch,
-            format!(
-                "rwv workweave create: the project repo at {} is on a detached HEAD, so the \
-                 new workweave's branch has no branch to land into; switch it to a branch first",
-                source_dir.display()
-            ),
-        ));
+        return Err(crate::alignment::project_detached(source_dir, project)?
+            .by_verb("workweave create")
+            .judge(vcs.as_ref())
+            .refused());
     };
     let parent = named(vcs.as_ref(), project, source_dir, &text)?;
     let store = Store::open(vcs.as_ref(), source_dir)?;
@@ -677,13 +693,12 @@ fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Resul
 pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()> {
     let (project, dir) = find_project(ctx)?;
     let vcs = project_vcs();
-    let old_text = checked_out(vcs.as_ref(), &dir)?.ok_or_else(|| {
-        refusal(
-            RefusalKind::HeadNotOnBranch,
-            "rwv branch rename: the project repo is on a detached HEAD, which has no branch \
-             to rename; switch to the branch first",
-        )
-    })?;
+    let Some(old_text) = checked_out(vcs.as_ref(), &dir)? else {
+        return Err(crate::alignment::project_detached(&dir, &project)?
+            .by_verb("branch rename")
+            .judge(vcs.as_ref())
+            .refused());
+    };
     let old = named(vcs.as_ref(), &project, &dir, &old_text)?;
     let new = named(vcs.as_ref(), &project, &dir, &request.new)?;
     let old_raw = RawRefName::new(old.as_str());
@@ -715,20 +730,22 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         match held {
             Lookup::Unrecorded => {}
             Lookup::Value(ref existing) if *existing == moved => {}
-            held if request.adopt => {
-                let held = match held {
-                    Lookup::Value(existing) => Lookup::Conflict(moved, existing),
-                    other => other,
-                };
-                report.add(judge_lookup(
-                    vcs.as_ref(),
-                    &store,
-                    &project,
-                    &dir,
-                    &new,
-                    held,
-                )?);
-            }
+            Lookup::Value(existing) if request.adopt => report.add(judge_differs(
+                vcs.as_ref(),
+                &project,
+                &dir,
+                &new,
+                &existing,
+                &moved,
+            )),
+            held if request.adopt => report.add(judge_lookup(
+                vcs.as_ref(),
+                &store,
+                &project,
+                &dir,
+                &new,
+                held,
+            )?),
             _ => report.add(
                 State::NameExists
                     .of(label(&project))

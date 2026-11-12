@@ -421,6 +421,7 @@ pub enum State {
     TargetNoTarget,
     TargetUnrecorded,
     TargetConflict,
+    TargetDiffers,
     TargetUnreadable,
     TargetCycle,
     TargetGone,
@@ -462,7 +463,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 56] = [
+    pub const ALL: [State; 57] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -506,6 +507,7 @@ impl State {
         Self::TargetNoTarget,
         Self::TargetUnrecorded,
         Self::TargetConflict,
+        Self::TargetDiffers,
         Self::TargetUnreadable,
         Self::TargetCycle,
         Self::TargetGone,
@@ -940,6 +942,17 @@ impl State {
                 offers: &[Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },
+            Self::TargetDiffers => &StateRow {
+                axis: Axis::Target,
+                name: "differs",
+                means: "a spelling of how the branch is used differs from its record, both \
+                        listed: the record is how every verb reads the branch, and a spelling \
+                        never redirects it; nothing on the records branch is conflicted",
+                refused_by: "an opening spelling of a recorded branch; `rwv branch rename \
+                             --adopt` onto a name recorded otherwise",
+                offers: &[Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
             Self::TargetUnreadable => &StateRow {
                 axis: Axis::Target,
                 name: "unreadable",
@@ -1055,7 +1068,9 @@ impl State {
                 name: "project detached",
                 means: "the project repo's HEAD is on no branch and the workspace was not made \
                         detached; the commits it holds that no branch reaches are listed",
-                refused_by: "`rwv update`; `rwv status` reports it",
+                refused_by: "`rwv update`; `rwv branch create` with no spelling, `rwv branch \
+                             rename` and `rwv workweave create`, which need a checked-out \
+                             branch; `rwv status` reports it",
                 offers: &[Form::C14Keep, Form::C30Switch, Form::C30BranchCreate],
                 verb_offers: &[],
             },

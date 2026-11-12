@@ -525,6 +525,36 @@ fn checked_out_elsewhere(m: &Member<'_>, branch: &RawRefName) -> anyhow::Result<
         .collect())
 }
 
+/// The line for a project repo whose HEAD is on no branch and whose
+/// workspace was not made detached: the commits it holds that no branch
+/// reaches, listed, with the choice that keeps them where it holds any, else
+/// the one that returns the project repo to a branch.
+pub fn project_detached(
+    project_dir: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<crate::diagnosis::Judging> {
+    let vcs = project_vcs();
+    let head = vcs.head_revision(project_dir)?;
+    let held = vcs.stray_commits(project_dir, &head, None, None)?;
+    let choice = if held.is_empty() {
+        crate::diagnosis::ChoiceId::C30
+    } else {
+        crate::diagnosis::ChoiceId::C14
+    };
+    Ok(State::AlignmentProjectDetached
+        .of(crate::workspace::project_rel_path(project))
+        .project_repo()
+        .listing(held.iter().map(|c| {
+            format!(
+                "{} {}",
+                crate::vcs::short_revision(c.id.as_str()),
+                c.subject
+            )
+        }))
+        .checkout(project_dir)
+        .only(&[choice]))
+}
+
 pub struct Aligner {
     pub root: PathBuf,
     pub project: ProjectName,
@@ -671,33 +701,9 @@ impl Aligner {
         self.checked_out.as_deref()
     }
 
-    /// The line for a project repo whose HEAD is on no branch and whose
-    /// workspace was not made detached: the commits it holds that no branch
-    /// reaches, listed, with the choice that keeps them where it holds any,
-    /// else the one that returns the project repo to a branch.
+    /// [`project_detached`] for this workspace's project repo.
     pub fn project_detached(&self) -> anyhow::Result<crate::diagnosis::Judging> {
-        let vcs = project_vcs();
-        let held = match vcs.head_revision(&self.project_dir) {
-            Ok(head) => vcs.stray_commits(&self.project_dir, &head, None, None)?,
-            Err(_) => Vec::new(),
-        };
-        let choice = if held.is_empty() {
-            crate::diagnosis::ChoiceId::C30
-        } else {
-            crate::diagnosis::ChoiceId::C14
-        };
-        Ok(State::AlignmentProjectDetached
-            .of(crate::workspace::project_rel_path(&self.project))
-            .project_repo()
-            .listing(held.iter().map(|c| {
-                format!(
-                    "{} {}",
-                    crate::vcs::short_revision(c.id.as_str()),
-                    c.subject
-                )
-            }))
-            .checkout(&self.project_dir)
-            .only(&[choice]))
+        project_detached(&self.project_dir, &self.project)
     }
 
     /// The aligned branch as a choice spells it: its name, or `detached`.

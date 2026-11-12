@@ -443,7 +443,7 @@ fn a_new_name_holding_a_record_of_another_value_is_refused_and_nothing_changes()
 
     publish_project_branch(&w, "held", false);
     let stderr = refuse(&["branch", "rename", "held", "--adopt"], &ww);
-    assert!(stderr.contains("target conflict (held)"), "{stderr}");
+    assert!(stderr.contains("target differs (held)"), "{stderr}");
     assert!(
         stderr.contains("declared") && stderr.contains("feature onto main"),
         "{stderr}"
@@ -539,4 +539,17 @@ fn a_rename_that_stopped_after_its_record_moved_is_completed_by_running_it_again
     assert!(has_branch(&project, "new") && !has_branch(&project, "old"));
     assert!(has_branch(&ws.join(LIB), "new"));
     assert!(!workspace_state(&project).contains("renaming"));
+}
+
+#[test]
+fn a_rename_from_a_detached_project_repo_is_the_detached_state_with_its_choices() {
+    let w = weave(&[LIB]);
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["switch", "-q", "--detach"]);
+
+    let out = refuse(&["branch", "rename", "new"], &w.workspace);
+
+    assert!(out.contains("alignment project detached"), "{out}");
+    assert!(out.contains("rwv switch"), "{out}");
+    assert_routes_to(&out, "alignment");
 }

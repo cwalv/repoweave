@@ -178,8 +178,8 @@ The others follow.
 | `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv member set-branch`, for a branch the member's repo has neither locally nor on a remote as last fetched; `rwv lock --commit` and `rwv update --remote`, for a declared branch a hand edit named that exists nowhere; `rwv switch`, for a branch the project repo lacks, and `rwv branch create`, for a `--target` or `--at` that names nothing here |
 | `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv branch create`, `rwv switch`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name; `rwv member set-branch` |
 | `minted` | the project branch is the name `rwv workweave create` gave a workweave that was not given one, `<project>--<workweave>`, which is never published, and neither is its record | `rwv push` |
-| `declared` | a feature would take a name that a live weave branch declares as a member's branch, the member and the declaring branches listed: the member's branch of that name is the declared branch, and a feature's own member branch cannot be it | `rwv branch rename`, for a feature; `rwv branch create`, for a feature |
-| `feature` | a feature would take a name that another project's feature of that name already uses for a member both list, the project and the member named: one member branch would serve two features | `rwv branch rename`, for a feature; `rwv branch create`, for a feature; `rwv member set-branch`, for a branch a feature of that name uses |
+| `declared` | a feature would take a name that a live weave branch declares as a member's branch, the member and the declaring branches listed: the member's branch of that name is the declared branch, and a feature's own member branch cannot be it | the verbs that write, open, align or publish a feature |
+| `feature` | a feature would take a name that another project's feature of that name already uses for a member both list, the project and the member named: one member branch would serve two features | the verbs that write, open, align or publish a feature; `rwv member set-branch`, for a branch a feature of that name uses |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -212,8 +212,10 @@ The others follow.
 | `reserved`, for `rwv switch` | use another name | — | here | nothing changes |
 | `minted` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
 | `declared` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
+| `declared` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `declared`, for `rwv branch create` | use another name | — | here | nothing changes |
 | `feature` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
+| `feature` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `feature`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `feature`, for `rwv branch create` | use another name | — | here | nothing changes |
 
@@ -256,6 +258,7 @@ The others follow.
 | `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target` |
 | `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch create` with no spelling, for the branch it starts at, and `--target`, for a target that has no record; `rwv switch` and `rwv workweave create --branch`, for a branch with no record; `rwv branch set-mode`, for a `--target` that has no record |
 | `conflict` | two writers recorded the branch differently and a merge kept both values, listed; the conflict stays on the machine whose merge met it | every verb that reads the branch's record on this machine |
+| `differs` | a spelling of how the branch is used differs from its record, both listed: the record is how every verb reads the branch, and a spelling never redirects it; nothing on the records branch is conflicted | an opening spelling of a recorded branch; `rwv branch rename --adopt` onto a name recorded otherwise |
 | `unreadable` | the branch's entry on the records branch does not read as a record, with why and the rwv release that wrote it when its commit names one; other branches' entries read as usual | every verb that reads the branch's record |
 | `cycle` | the branch's target chain returns to it, listed from the branch | `rwv branch set-mode`, for a `--target` that would close one, and every verb that reads the record of a branch a merge of records put on one |
 | `gone` | the branch the record lands into exists nowhere: not as a local branch, nor on a remote as last fetched | `rwv branch list` reports it |
@@ -271,6 +274,8 @@ The others follow.
 | `unrecorded` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `conflict` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `conflict` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
+| `differs` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `differs` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `unreadable` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `unreadable` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |

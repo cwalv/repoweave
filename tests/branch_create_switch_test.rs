@@ -945,3 +945,17 @@ fn an_untracked_file_the_start_tracks_refuses_a_create_before_its_record_is_writ
     assert!(!has_branch(&project, "f"));
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
 }
+
+#[test]
+fn a_spelling_that_differs_from_the_record_is_not_reported_as_a_records_conflict() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["branch", "create", "rel", "--declared"], ws);
+    succeed(&["switch", "main"], ws);
+
+    let out = refuse(&["switch", "rel", "--target", "main"], ws);
+
+    assert!(out.contains("target differs (rel)"), "{out}");
+    assert!(!out.contains("target conflict"), "{out}");
+    assert!(out.contains("recorded: declared"), "{out}");
+}

@@ -1305,7 +1305,7 @@ A member's checkout, or the project repo's, is not where the checked-out project
 | `unaligned` | the lock has no entry for the member and its expected branch is found nowhere, so it stays where it is and its pin stays out of the lock | `rwv update` and `rwv status` report it |
 | `project moved` | the project repo is on another branch than the one the workspace last aligned its members for, which still exists, named in the subject | nothing refuses at the project level; `rwv status` reports it as a fact, and each member not aligned for the checked-out branch reports its own line |
 | `project unaligned` | the workspace has no record of the branch it last aligned its members for, or that branch is gone | `rwv status` reports it; `rwv update` records it |
-| `project detached` | the project repo's HEAD is on no branch and the workspace was not made detached; the commits it holds that no branch reaches are listed | `rwv update`; `rwv status` reports it |
+| `project detached` | the project repo's HEAD is on no branch and the workspace was not made detached; the commits it holds that no branch reaches are listed | `rwv update`; `rwv branch create` with no spelling, `rwv branch rename` and `rwv workweave create`, which need a checked-out branch; `rwv status` reports it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
