@@ -869,6 +869,7 @@ pub(crate) fn apply_entries(
         edit_lock: touches_lock.then_some(&edit_lock as &dyn Fn(&mut LockFile)),
         authored: &authored,
         message: &format!("{verb}: set member branches\n{listing}"),
+        naming: crate::repin::Naming::by_name(verb, steps.iter().map(|step| step.member.clone())),
     })?;
     for step in steps {
         eprintln!("rwv {verb}: {}: branch -> {}", step.member, step.branch);
@@ -1117,6 +1118,7 @@ pub fn run_set_branch(
         message: &format!(
             "member set-branch {member} {branch_now}\n\n  - {member}: branch {branch_was} -> {branch_now}"
         ),
+        naming: crate::repin::Naming::by_name(VERB, [member.clone()]),
     })?;
 
     eprintln!("rwv {VERB}: {member}: branch {branch_was} -> {branch_now}");

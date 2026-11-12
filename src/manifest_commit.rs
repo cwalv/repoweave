@@ -16,6 +16,7 @@ pub(crate) struct MemberCommit<'a> {
     pub(crate) edit_lock: Option<&'a dyn Fn(&mut LockFile)>,
     pub(crate) authored: &'a BTreeSet<String>,
     pub(crate) message: &'a str,
+    pub(crate) naming: crate::repin::Naming,
 }
 
 /// The files a regeneration across `manifests` may rewrite: the owned paths
@@ -107,6 +108,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         .context("failed to stage rwv.toml")?;
     paths.push(Manifest::FILE_NAME.to_owned());
 
+    let mut staged_lock = None;
     if let Some(edit_lock) = change.edit_lock {
         let mut lock = committed_lock(vcs, dir).unwrap_or(LockFile {
             repositories: Default::default(),
@@ -115,6 +117,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         vcs.stage_content(dir, Path::new(LockFile::FILE_NAME), &lock_bytes(&lock)?)
             .context("failed to stage rwv.lock")?;
         paths.push(LockFile::FILE_NAME.to_owned());
+        staged_lock = Some(lock);
     }
 
     if carries_only_this_change {
@@ -134,7 +137,14 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
     }
 
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-    let committed = match vcs.commit_only(dir, &refs, change.message) {
+    let committed = match crate::repin::commit(
+        vcs,
+        dir,
+        &refs,
+        change.message,
+        staged_lock.as_ref(),
+        &change.naming,
+    ) {
         Ok(committed) => committed,
         Err(refused) => {
             let refused = anyhow::Error::from(refused).context("failed to commit the change");

@@ -40,6 +40,7 @@ fn commit_entry(
         edit_lock: None,
         authored: &authored,
         message: &message,
+        naming: crate::repin::Naming::Unnamed,
     })?;
     Ok(())
 }

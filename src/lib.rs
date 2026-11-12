@@ -141,6 +141,7 @@ pub(crate) mod push_branch;
 pub mod records;
 pub mod refusal;
 pub mod registry;
+pub mod repin;
 pub mod root_write;
 mod schema_url;
 pub mod selector;

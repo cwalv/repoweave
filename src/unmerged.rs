@@ -1,7 +1,8 @@
 //! Merges in a pushed range that joined a member's pins without joining the
 //! member: the pushed lock must hold, for each, a commit containing both
-//! pins, unless the tip declares the member elsewhere or a later lock in the
-//! range abandons the pin the merge left behind.
+//! pins, unless the tip declares the member elsewhere or a later commit in
+//! the range records re-pinning it by name to a commit that abandons the pin
+//! the merge left behind.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -26,8 +27,13 @@ pub(crate) enum Verdict {
     /// The parents declare the member differently, so no one commit could
     /// contain both pins: listed, not refused.
     ListedOnly,
-    /// A lock in the range abandoned the pin the merge left unmerged.
-    Waived { by: CommitId, to: CommitId },
+    /// A commit in the range re-pinned the member backward by name,
+    /// abandoning the pin the merge left unmerged.
+    Waived {
+        by: CommitId,
+        to: CommitId,
+        verb: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +43,9 @@ pub(crate) struct Finding {
     /// The pins the merge's parents held.
     pub(crate) pins: (CommitId, CommitId),
     pub(crate) verdict: Verdict,
+    /// Commits at or after the merge whose record of re-pinning the member
+    /// disagrees with what their lock changed: they waive nothing.
+    pub(crate) untrusted: Vec<CommitId>,
 }
 
 struct Reader<'a> {
@@ -156,19 +165,21 @@ pub(crate) fn analyze(
                         continue;
                     }
                 }
-                let verdict = if !same_branch {
-                    Verdict::ListedOnly
+                let (verdict, untrusted) = if !same_branch {
+                    (Verdict::ListedOnly, Vec::new())
                 } else {
-                    match waiver(&mut reader, member, range, index, &pins) {
-                        Some((by, to)) => Verdict::Waived { by, to },
-                        None => Verdict::Unmerged,
-                    }
+                    let found = waiver(&mut reader, member, range, index, &pins)?;
+                    (
+                        found.waived.unwrap_or(Verdict::Unmerged),
+                        found.untrusted,
+                    )
                 };
                 findings.push(Finding {
                     merge: merge.id.clone(),
                     member: member.path.clone(),
                     pins,
                     verdict,
+                    untrusted,
                 });
             }
         }
@@ -176,17 +187,22 @@ pub(crate) fn analyze(
     Ok(findings)
 }
 
-/// The first lock at or after `range[index]` that re-pins the member
-/// backward, to a commit that reaches neither pin the merge left behind. The
-/// merge's own lock counts only when it pins neither parent's commit: keeping
-/// one side's pin is how a conflict is settled by hand, which names nothing.
+struct Search {
+    waived: Option<Verdict>,
+    untrusted: Vec<CommitId>,
+}
+
+/// The first commit at or after `range[index]`, the merge's own included,
+/// that records re-pinning the member backward by name to a commit reaching
+/// no pin the merge left unmerged. A record whose pins are not the ones the
+/// commit's first parent and the commit itself hold is untrusted.
 fn waiver(
     reader: &mut Reader<'_>,
     member: &Member<'_>,
     range: &[RangeCommit],
     index: usize,
     pins: &(CommitId, CommitId),
-) -> Option<(CommitId, CommitId)> {
+) -> anyhow::Result<Search> {
     let merge = &range[index];
     let left = reader.held(&merge.id).pins.get(member.path).cloned();
     let unmerged: Vec<&CommitId> = [&pins.0, &pins.1]
@@ -196,6 +212,10 @@ fn waiver(
             None => true,
         })
         .collect();
+    let mut search = Search {
+        waived: None,
+        untrusted: Vec::new(),
+    };
     let mut descended: BTreeSet<&CommitId> = BTreeSet::new();
     descended.insert(&merge.id);
     for candidate in &range[index..] {
@@ -208,26 +228,39 @@ fn waiver(
             continue;
         }
         descended.insert(&candidate.id);
-        let Some(to) = reader.held(&candidate.id).pins.get(member.path).cloned() else {
-            continue;
-        };
-        if candidate.id == merge.id && (to == pins.0 || to == pins.1) {
+        let records: Vec<crate::repin::Repin> =
+            crate::repin::recorded(reader.vcs, reader.dir, &candidate.id)?
+                .into_iter()
+                .filter(|repin| &repin.member == member.path)
+                .collect();
+        if records.is_empty() {
             continue;
         }
-        let Some(from) = candidate
+        let to = reader.held(&candidate.id).pins.get(member.path).cloned();
+        let from = candidate
             .parents
             .first()
-            .and_then(|parent| reader.held(parent).pins.get(member.path).cloned())
-        else {
-            continue;
-        };
-        let backward = to != from && reaches(member, &from, &to) == Some(false);
-        let abandons = unmerged
-            .iter()
-            .all(|pin| reaches(member, pin, &to) == Some(false));
-        if backward && abandons {
-            return Some((candidate.id.clone(), to));
+            .and_then(|parent| reader.held(parent).pins.get(member.path).cloned());
+        for repin in records {
+            if Some(&repin.to) != to.as_ref() || repin.from != from {
+                search.untrusted.push(candidate.id.clone());
+                continue;
+            }
+            let backward = repin
+                .from
+                .as_ref()
+                .is_some_and(|from| reaches(member, from, &repin.to) == Some(false));
+            let abandons = unmerged
+                .iter()
+                .all(|pin| reaches(member, pin, &repin.to) == Some(false));
+            if backward && abandons && search.waived.is_none() {
+                search.waived = Some(Verdict::Waived {
+                    by: candidate.id.clone(),
+                    to: repin.to,
+                    verb: repin.verb,
+                });
+            }
         }
     }
-    None
+    Ok(search)
 }

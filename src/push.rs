@@ -1516,6 +1516,13 @@ fn judge_range(
             finding.pins.0.short(),
             finding.pins.1.short()
         );
+        let untrusted = finding.untrusted.iter().map(|commit| {
+            format!(
+                "{} records re-pinning it by name to pins its lock does not hold, so it waives \
+                 nothing",
+                commit.short()
+            )
+        });
         let judging = |state: State| {
             state
                 .of(&finding.member)
@@ -1527,11 +1534,15 @@ fn judge_range(
         match &finding.verdict {
             crate::unmerged::Verdict::Unmerged => refusals.add(
                 judging(State::PinUnmerged)
-                    .listing([
-                        pins,
-                        "the pushed lock holds no commit containing both".to_owned(),
-                    ])
-                    .bind("<rev>", finding.pins.1.short())
+                    .listing(
+                        [
+                            pins,
+                            "the pushed lock holds no commit containing both".to_owned(),
+                        ]
+                        .into_iter()
+                        .chain(untrusted),
+                    )
+                    .bind("<pin>", finding.pins.1.short())
                     .judge(member_vcs),
             ),
             crate::unmerged::Verdict::ListedOnly => reported.add(
@@ -1540,16 +1551,24 @@ fn judge_range(
                         pins,
                         "the parents declare the member differently".to_owned(),
                     ])
-                    .bind("<rev>", finding.pins.1.short())
+                    .bind("<pin>", finding.pins.1.short())
                     .only(&[ChoiceId::C26])
                     .judge(member_vcs),
             ),
-            crate::unmerged::Verdict::Waived { by, to } => reported.add(
+            crate::unmerged::Verdict::Waived { by, to, verb } => reported.add(
                 judging(State::PinWaived)
-                    .listing([
-                        pins,
-                        format!("re-pinned to {} in {}", to.short(), by.short()),
-                    ])
+                    .listing(
+                        [
+                            pins,
+                            format!(
+                                "re-pinned by name to {} in {}, by `rwv {verb}`",
+                                to.short(),
+                                by.short()
+                            ),
+                        ]
+                        .into_iter()
+                        .chain(untrusted),
+                    )
                     .fact(Fact {
                         kind: FactKind::PinLanded,
                         about: None,

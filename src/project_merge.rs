@@ -133,7 +133,14 @@ pub(crate) fn merge_member(
             }
             let head = vcs.head_revision(dir)?.id().clone();
             let (first, second) = parents(order, &head, source);
-            let tip = vcs.commit_merge(dir, &first, &second, message)?;
+            let tip = crate::repin::commit_merge(
+                vcs.as_ref(),
+                dir,
+                (&first, &second),
+                message,
+                None,
+                &crate::repin::Naming::Unnamed,
+            )?;
             journal(&tip)?;
             return Ok(Joined::Merged(tip));
         }
@@ -172,7 +179,14 @@ pub(crate) fn merge_member(
         }));
     }
     let (first, second) = parents(order, head.id(), source);
-    let tip = vcs.commit_merge(dir, &first, &second, message)?;
+    let tip = crate::repin::commit_merge(
+        vcs.as_ref(),
+        dir,
+        (&first, &second),
+        message,
+        None,
+        &crate::repin::Naming::Unnamed,
+    )?;
     journal(&tip)?;
     Ok(Joined::Merged(tip))
 }
@@ -476,7 +490,14 @@ impl ProjectMerge<'_> {
 
         self.settle(vcs, &dir, &manifest)?;
 
-        let commit = vcs.commit_merge(&dir, &sides.first, &sides.second, &self.message)?;
+        let commit = crate::repin::commit_merge(
+            vcs,
+            &dir,
+            (&sides.first, &sides.second),
+            &self.message,
+            Some(&lock),
+            &crate::repin::Naming::Unnamed,
+        )?;
         op_state::journal_tip(
             self.ctx.active_path(),
             crate::manifest::RepoKey::Project,

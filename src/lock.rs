@@ -5,6 +5,7 @@ use crate::diagnosis::{Judged, Report, State};
 use crate::manifest::{
     LockEntry, LockFile, Manifest, Project, RepoPath, ResolvedLockEntry, ResolvedLockFile,
 };
+use crate::repin::Naming;
 use crate::selector::RepoFilter;
 use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, RawRevisionId, Relation, ResolvedRevisionId, Vcs,
@@ -222,8 +223,9 @@ pub(crate) fn commit_lock_file_with_message(
     vcs: &dyn Vcs,
     project_dir: &Path,
     message: &str,
+    naming: &Naming,
 ) -> anyhow::Result<bool> {
-    stage_and_commit(vcs, project_dir, &[LockFile::FILE_NAME], message)
+    stage_and_commit(vcs, project_dir, &[LockFile::FILE_NAME], message, naming)
 }
 
 /// Stage `paths` (relative to `project_dir`) and commit from `project_dir`.
@@ -237,11 +239,13 @@ fn stage_and_commit(
     project_dir: &Path,
     paths: &[&str],
     message: &str,
+    naming: &Naming,
 ) -> anyhow::Result<bool> {
     vcs.stage_paths(project_dir, paths)
         .context("failed to stage paths for the lock commit")?;
+    let staged = LockFile::from_state(&LockFile::path_in(project_dir)).ok();
 
-    match vcs.commit_only(project_dir, paths, message) {
+    match crate::repin::commit(vcs, project_dir, paths, message, staged.as_ref(), naming) {
         Ok(committed) => Ok(committed),
         Err(refused) => {
             let refused = anyhow::Error::from(refused).context("failed to commit the lock");
@@ -336,13 +340,10 @@ pub(crate) fn report_left_edits(
 /// Changes outside that set are left as they are, staged or not, and named.
 fn commit_lock_file(
     vcs: &dyn Vcs,
-    project: &crate::manifest::ProjectName,
-    project_dir: &Path,
-    new_lock: &LockFile,
-    old_lock: Option<&LockFile>,
+    pending: &PendingLockCommit,
     authored: &BTreeSet<String>,
-    message: &CommitMessage,
 ) -> anyhow::Result<()> {
+    let project_dir = pending.project_dir.as_path();
     // Files omitted from the dirty set — absent, or ignored by operator
     // policy — are omitted from the commit.
     let dirty = vcs
@@ -360,18 +361,20 @@ fn commit_lock_file(
             .filter(|path| *path != LockFile::FILE_NAME && carried(path)),
     );
 
-    let message = match message {
-        CommitMessage::Generated => {
-            build_commit_message(new_lock, old_lock, paths.contains(&Manifest::FILE_NAME))
-        }
+    let message = match &pending.message {
+        CommitMessage::Generated => build_commit_message(
+            &pending.new_lock,
+            pending.old_lock.as_ref(),
+            paths.contains(&Manifest::FILE_NAME),
+        ),
         CommitMessage::Given(message) => message.clone(),
     };
-    if stage_and_commit(vcs, project_dir, &paths, &message)? {
+    if stage_and_commit(vcs, project_dir, &paths, &message, &pending.naming)? {
         eprintln!("Committed {}", paths.join(", "));
     } else {
         eprintln!("Lock unchanged, nothing to commit.");
     }
-    report_left_edits(vcs, project, project_dir, authored)
+    report_left_edits(vcs, &pending.project_name, project_dir, authored)
 }
 
 /// Execute `rwv lock` for the current workspace context.
@@ -835,6 +838,7 @@ pub(crate) fn relock(
         new_lock: new,
         old_lock: old,
         message,
+        naming: Naming::Unnamed,
     }))
 }
 
@@ -971,6 +975,7 @@ pub(crate) struct PendingLockCommit {
     new_lock: LockFile,
     old_lock: Option<LockFile>,
     message: CommitMessage,
+    naming: Naming,
 }
 
 impl PendingLockCommit {
@@ -987,7 +992,18 @@ impl PendingLockCommit {
             new_lock,
             old_lock,
             message,
+            naming: Naming::Unnamed,
         }
+    }
+
+    /// The commit re-pins `members` by name, as `verb`.
+    pub(crate) fn by_name(
+        mut self,
+        verb: &'static str,
+        members: impl IntoIterator<Item = RepoPath>,
+    ) -> Self {
+        self.naming = Naming::by_name(verb, members);
+        self
     }
 }
 
@@ -997,13 +1013,5 @@ pub(crate) fn commit_project_lock(
     pending: &PendingLockCommit,
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
-    commit_lock_file(
-        project_vcs().as_ref(),
-        &pending.project_name,
-        &pending.project_dir,
-        &pending.new_lock,
-        pending.old_lock.as_ref(),
-        authored,
-        &pending.message,
-    )
+    commit_lock_file(project_vcs().as_ref(), pending, authored)
 }

@@ -318,6 +318,7 @@ impl SetUrl {
             edit_lock: had_pin.then_some(&edit_lock as &dyn Fn(&mut crate::manifest::LockFile)),
             authored: &authored,
             message: &format!("member set-url {member}\n\n  - {member}: {}", new),
+            naming: crate::repin::Naming::Unnamed,
         })?;
         eprintln!("rwv {VERB}: {member}: url {} -> {}", self.was.url, new);
         if let Some(lines) = self.relink.describe(vcs.as_ref(), member) {

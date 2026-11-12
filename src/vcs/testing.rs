@@ -443,12 +443,26 @@ impl Vcs for FakeVcs {
         unsupported("commit")
     }
 
-    fn commit_only(&self, _repo: &Path, _paths: &[&str], _message: &str) -> Result<bool, VcsError> {
+    fn commit_only(
+        &self,
+        _repo: &Path,
+        _paths: &[&str],
+        _message: &str,
+        _annotations: &[Annotation],
+    ) -> Result<bool, VcsError> {
         unsupported("commit_only")
     }
 
     fn has_commit_identity(&self, _dir: &Path) -> Result<bool, VcsError> {
         unsupported("has_commit_identity")
+    }
+    fn annotation_values(
+        &self,
+        _repo: &Path,
+        _commit: &CommitId,
+        _key: &str,
+    ) -> Result<Vec<String>, VcsError> {
+        unsupported("annotation_values")
     }
 
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RawRefName>, VcsError> {
@@ -782,6 +796,7 @@ impl Vcs for FakeVcs {
         _first: &CommitId,
         _second: &CommitId,
         _message: &str,
+        _annotations: &[Annotation],
     ) -> Result<CommitId, VcsError> {
         unsupported("commit_merge")
     }

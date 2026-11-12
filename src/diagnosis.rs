@@ -1215,9 +1215,14 @@ impl State {
                         member that its parents changed, each under one declared branch, and \
                         the pushed tip pins neither merged with the other: a commit holding \
                         both. The merge and the pins are listed. A member the parents declare \
-                        differently is listed and not refused",
+                        differently is listed and not refused. A commit at or after the merge \
+                        that records re-pinning the member backward by name, to a commit \
+                        reaching neither pin the merge left unmerged, waives it (`pin` \
+                        waived); a commit made outside rwv records none, and a record that \
+                        disagrees with what its commit's lock changed waives nothing and is \
+                        listed",
                 refused_by: "`rwv push`",
-                offers: &[Form::C26],
+                offers: &[Form::C26, Form::C25],
                 verb_offers: &[],
             },
             Self::ProtectedDeclared => &StateRow {
@@ -1250,9 +1255,10 @@ impl State {
                 axis: Axis::Pin,
                 name: "waived",
                 means: "a merge in the range being pushed left one member's pins unmerged, and \
-                        a later lock in the range, the merge's own included, re-pinned the \
-                        member backward by name to a commit that does not reach the pin the \
-                        merge left. The merge and the re-pin that waived it are listed",
+                        a commit in the range at or after it, the merge's own included, \
+                        records re-pinning the member backward by name to a commit that does \
+                        not reach the pin the merge left. The merge, the re-pin that waived it \
+                        and the verb that made it are listed",
                 refused_by: "nothing refuses; `rwv push` reports it and goes on",
                 offers: &[],
                 verb_offers: &[],
@@ -1524,7 +1530,7 @@ impl ChoiceId {
             },
             Self::C26 => &ChoiceRow {
                 id: Some("C26"),
-                phrase: "merge `<rev>` in as a merge commit",
+                phrase: "merge `<pin>` in as a merge commit",
                 keeps_work: "a merge adds only",
             },
             Self::C27 => &ChoiceRow {

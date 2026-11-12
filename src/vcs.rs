@@ -325,6 +325,14 @@ pub struct CommitSummary {
     pub subject: String,
 }
 
+/// A key and value a commit records beside its message, read back by key
+/// with [`Vcs::annotation_values`]. The value holds no line break.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Annotation {
+    pub key: &'static str,
+    pub value: String,
+}
+
 /// A commit of a pushed range and the commits it joins: one for an ordinary
 /// commit, several for a merge, the first the branch the merge was made on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2896,13 +2904,31 @@ pub trait Vcs: Send + Sync {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError>;
 
     /// Record what the index holds for `paths`, and nothing else it holds, as
-    /// a new commit with `message`: every other staged change stays staged,
-    /// and the working files are not read. `false` where `paths` hold no
-    /// change, and no commit is made.
+    /// a new commit with `message` and `annotations`: every other staged
+    /// change stays staged, and the working files are not read. `false` where
+    /// `paths` hold no change, and no commit is made.
     ///
     /// For git: a private index read from `HEAD` takes the index's entries
-    /// for `paths`, and `git commit` runs over it, hooks included.
-    fn commit_only(&self, repo: &Path, paths: &[&str], message: &str) -> Result<bool, VcsError>;
+    /// for `paths`, and `git commit` runs over it, hooks included; each
+    /// annotation is a `<key>: <value>` trailer.
+    fn commit_only(
+        &self,
+        repo: &Path,
+        paths: &[&str],
+        message: &str,
+        annotations: &[Annotation],
+    ) -> Result<bool, VcsError>;
+
+    /// The values `commit` records under the annotation `key`, in the order
+    /// written.
+    ///
+    /// For git: `git log -1 --format=%(trailers:key=<key>,valueonly,unfold)`.
+    fn annotation_values(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        key: &str,
+    ) -> Result<Vec<String>, VcsError>;
 
     /// Whether a commit made in `dir` has an author to record. `dir` need not
     /// be a repository; outside one the user-level setting answers.
@@ -4462,14 +4488,15 @@ pub trait Vcs: Send + Sync {
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError>;
 
     /// Commit what is staged in `checkout` with `first` then `second` as
-    /// parents, moving the checkout's branch (or detached HEAD) to it and
-    /// ending any merge in flight.
+    /// parents, `message` and `annotations`, moving the checkout's branch (or
+    /// detached HEAD) to it and ending any merge in flight.
     fn commit_merge(
         &self,
         checkout: &Path,
         first: &CommitId,
         second: &CommitId,
         message: &str,
+        annotations: &[Annotation],
     ) -> Result<CommitId, VcsError>;
 
     /// The merge of `second` into `first` as a commit, with no checkout and no

@@ -1411,6 +1411,7 @@ fn commit_removal(
         edit_lock: Some(&edit_lock),
         authored: &authored,
         message: &format!("member remove {repo_path}\n\n  - {repo_path}: removed"),
+        naming: crate::repin::Naming::Unnamed,
     })?;
     Ok(())
 }

@@ -6615,7 +6615,12 @@ fn regenerate_lock_phase3(
     crate::lock::write_lock_in(&new_lock, cwd_project_dir)?;
 
     let message = auto_relock_commit_message(source_workspace_name);
-    if !commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {
+    if !commit_lock_file_with_message(
+        vcs,
+        cwd_project_dir,
+        &message,
+        &crate::repin::Naming::Unnamed,
+    )? {
         return Ok(None);
     }
     eprintln!(

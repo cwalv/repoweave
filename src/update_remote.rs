@@ -523,7 +523,8 @@ fn update_for_project(
         },
         commit,
     )
-    .context("failed to write lock after update")?;
+    .context("failed to write lock after update")?
+    .map(|pending| pending.by_name("update --remote", settled.named.iter().cloned()));
 
     // Regeneration reads EVERY manifest member (member presence is gated on
     // `.exists()`, and content-derived fields read member working trees), so it
@@ -922,6 +923,8 @@ struct Settled {
     repos: Vec<(PathBuf, Box<dyn Vcs>)>,
     /// Members whose branch moved as a ref: their checkouts stay where they are.
     as_refs: BTreeSet<usize>,
+    /// Members `--reset-to-upstream` names.
+    named: BTreeSet<RepoPath>,
 }
 
 enum Site {
@@ -1005,6 +1008,16 @@ fn settle_diverged(
         op: None,
         repos: Vec::new(),
         as_refs: BTreeSet::new(),
+        named: items
+            .iter()
+            .map(|item| &item.repo_path)
+            .filter(|path| {
+                state
+                    .flags
+                    .resets(&crate::manifest::RepoOperand::Member((*path).clone()))
+            })
+            .cloned()
+            .collect(),
     };
     let found = divergences(items, fetched);
     let project_vcs = crate::vcs::project_vcs();

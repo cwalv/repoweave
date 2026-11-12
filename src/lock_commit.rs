@@ -315,7 +315,11 @@ pub(crate) fn run(
     )?;
     report(ctx, &loaded, &changes, &moving)?;
     if let Some(pending) = pending {
-        crate::lock::commit_project_lock(&pending, &authored)?;
+        let named = moving
+            .iter()
+            .filter(|entry| entry.step.pin.is_some())
+            .map(|entry| entry.member.clone());
+        crate::lock::commit_project_lock(&pending.by_name("lock --commit", named), &authored)?;
     }
     Ok(())
 }

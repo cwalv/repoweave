@@ -4,7 +4,7 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
-    AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BackupWitness,
+    AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BackupWitness,
     BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
     DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
     FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
@@ -166,6 +166,20 @@ const ATTRIBUTES_FILE: &str = ".gitattributes";
 const PROJECT_URL_REMOTE_KEY: &str = "rwv.url-remote";
 
 /// `out`, which git printed for `args`, as the commit id it must be.
+/// `message` with each annotation appended as a trailer, in a paragraph of
+/// its own so git reads them as the message's trailer block.
+fn with_trailers(message: &str, annotations: &[Annotation]) -> String {
+    if annotations.is_empty() {
+        return message.to_owned();
+    }
+    let mut text = message.trim_end().to_owned();
+    text.push_str("\n\n");
+    for annotation in annotations {
+        text.push_str(&format!("{}: {}\n", annotation.key, annotation.value));
+    }
+    text
+}
+
 fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
     CommitId::parse(out.trim()).map_err(|e| VcsError::CommandFailed {
         args: args.iter().map(|a| (*a).to_owned()).collect(),
@@ -2469,7 +2483,14 @@ impl Vcs for GitVcs {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(["commit", "-m", message], repo).map(|_| ())
     }
-    fn commit_only(&self, repo: &Path, paths: &[&str], message: &str) -> Result<bool, VcsError> {
+    fn commit_only(
+        &self,
+        repo: &Path,
+        paths: &[&str],
+        message: &str,
+        annotations: &[Annotation],
+    ) -> Result<bool, VcsError> {
+        let message = with_trailers(message, annotations);
         let index = Self::run_trimmed(
             [
                 "rev-parse",
@@ -2485,12 +2506,27 @@ impl Vcs for GitVcs {
             Absent::Revision,
         )?
         .is_some();
-        let outcome = Self::commit_through_own_index(repo, &index, born, paths, message);
+        let outcome = Self::commit_through_own_index(repo, &index, born, paths, &message);
         let _ = std::fs::remove_file(&index);
         outcome
     }
     fn has_commit_identity(&self, dir: &Path) -> Result<bool, VcsError> {
         Self::has_identity(dir)
+    }
+    fn annotation_values(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        key: &str,
+    ) -> Result<Vec<String>, VcsError> {
+        let format = format!("--format=%(trailers:key={key},valueonly,unfold)");
+        Ok(
+            Self::run(["log", "-1", &format, commit.as_str(), "--"], repo)?
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        )
     }
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
         let path = GitArg::from_path(path, "path")?;
@@ -2587,7 +2623,7 @@ impl Vcs for GitVcs {
             VcsAction::SwitchDetached => "git -C <checkout> switch --detach <r>/<b>",
             VcsAction::CherryPick => "git -C <checkout> cherry-pick <ids>",
             VcsAction::Revert => "git -C <checkout> revert <ids>",
-            VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <rev>",
+            VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <pin>",
             VcsAction::PushCommitAs => "git -C <checkout> push <r> <sha>:refs/heads/<name>",
             VcsAction::SetPushRemote => "git -C <checkout> config branch.<b>.pushRemote <r>",
             VcsAction::SetPushDefault => "git -C <checkout> config remote.pushDefault <r>",
@@ -4406,8 +4442,9 @@ impl Vcs for GitVcs {
         first: &CommitId,
         second: &CommitId,
         message: &str,
+        annotations: &[Annotation],
     ) -> Result<CommitId, VcsError> {
-        Self::commit_staged_merge(checkout, first, second, message)
+        Self::commit_staged_merge(checkout, first, second, &with_trailers(message, annotations))
     }
 
     fn merge_as_refs(
