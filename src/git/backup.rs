@@ -190,19 +190,7 @@ impl GitVcs {
     pub(super) fn snapshot_working_tree(
         repo: &Path,
     ) -> Result<Option<ResolvedRevisionId>, VcsError> {
-        let index_path = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-backup-index-{}", std::process::id()),
-            ],
-            repo,
-        )?;
-        let head = Self::ref_tip(repo, "HEAD")?;
-        let outcome = Self::snapshot_into(repo, &index_path, head.as_ref(), &[]);
-        let _ = std::fs::remove_file(&index_path);
-        outcome
+        Self::snapshot_working_tree_forcing(repo, &[])
     }
 
     /// [`Self::snapshot_working_tree`], the ignored paths `forced` names

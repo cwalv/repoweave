@@ -515,7 +515,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "remove_file",
         count: 1,
         callers: &[],
-        justification: "snapshot_working_tree: removes the temporary index \
+        justification: "snapshot_working_tree_forcing: removes the temporary index \
             file it named under the checkout's private git directory for \
             this process, after the snapshot commit is built. The checkout's \
             real index and working tree are never opened for writing.",
