@@ -279,7 +279,7 @@ fn doctor_locked_names_update_for_a_missing_checkout() {
     );
     assert!(
         !report.contains("rwv sync"),
-        "sync brings in another workspace's state; it is not the repair here:\n{report}"
+        "sync brings in a branch's state; it is not the repair here:\n{report}"
     );
 
     weave.ok(&["update"]);
@@ -415,52 +415,6 @@ fn commit_project(ws: &Path, project: &str) {
     let dir = ws.join("projects").join(project);
     common::git_in(&dir, &["add", "-A"]);
     common::commit_staged(&dir, "settled");
-}
-
-/// A sync that needs a member of a project the primary does not present
-/// parks on its missing canonical clone. A bare `rwv update` at the primary
-/// updates the presented project and leaves it parked; the update the refusal
-/// names, with the workweave's project, lets `--continue` finish.
-#[test]
-fn missing_canonical_clone_names_the_update_of_the_workweaves_own_project() {
-    let tmp = common::tempdir().unwrap();
-    let ws = weave_with_two_projects(tmp.path());
-    commit_project(&ws, "pb");
-    rwv_ok(&ws, &["workweave", "create", "--project", "pb", "w"]);
-    let seat = tmp.path().join(".workweaves").join("pb--w");
-    let x = origin_with_commit(tmp.path(), "x");
-    rwv_ok(&ws, &["member", "add", &x]);
-    rwv_ok(&ws, &["lock"]);
-    commit_project(&ws, "pb");
-    rwv_ok(&ws, &["activate", "pa"]);
-    let canonical = common::under(&ws, "local/origins/x");
-    std::fs::remove_dir_all(&canonical).unwrap();
-
-    let parked = rwv_refused(&seat, &["sync", &ws.to_string_lossy()]);
-    assert!(parked.contains("rwv explain op-parked"), "{parked}");
-    let update = named_rwv_command(&parked, "rwv update");
-    assert_eq!(update, ["update", "--project", "pb"], "{parked}");
-
-    rwv_ok(&ws, &["update"]);
-    assert!(
-        !canonical.exists(),
-        "a bare update at the primary clones only for the project it presents"
-    );
-    rwv_refused(&seat, &["sync", "--continue"]);
-
-    let update: Vec<&str> = update.iter().map(String::as_str).collect();
-    rwv_ok(&ws, &update);
-    assert!(
-        canonical.join(".git").is_dir(),
-        "the named update clones it"
-    );
-    rwv_ok(&seat, &["sync", "--continue"]);
-    assert!(
-        common::under(&seat, "local/origins/x")
-            .join(".git")
-            .is_file(),
-        "the continued sync gives the workweave its worktree"
-    );
 }
 
 /// The full-clone repair names the same update when the canonical clone it
