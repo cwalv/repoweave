@@ -9345,10 +9345,10 @@ fn refuse_moved_target(
             held.label(target_label, project)
         );
         lines.push(format!(
-            "  {}: free the checkout at {at} of {what} (switch it to another branch, or detach \
-             it), as this shows:\n\t{}\nthen rerun:\n\trwv abort",
+            "  {}: free the checkout at {at} of {what}, detaching it:\n\t{}\nthen rerun:\n\t\
+             rwv abort",
             RepoOperand::of(&held.repo, project),
-            vcs.hint(crate::vcs::VcsAction::Status)
+            vcs.hint(crate::vcs::VcsAction::Detach)
                 .replace("<checkout>", &at)
         ));
     }

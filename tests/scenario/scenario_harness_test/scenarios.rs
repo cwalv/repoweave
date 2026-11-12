@@ -11147,6 +11147,194 @@ pub fn abort_after_another_landing_built_on_the_target(
     scenario("abort after another landing built on the target", steps)
 }
 
+/// `docs`, which `main` lacks, enters it with a landing on `docs-next`,
+/// which the landing creates and aligns `main`'s checkout of `docs` onto;
+/// the landing stops in its retire and nothing else happens. Abort should
+/// put `main` back whole.
+pub fn abort_of_a_landing_a_member_entered_with() -> Scenario {
+    scenario(
+        "abort of a landing a member entered with",
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            create("w1"),
+            Step::rwv(&ww("w1"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::hand_edit(
+                &ww("w1"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Docs, "main"),
+                &declared_branch_text(Repo::Docs, "docs-next"),
+            ),
+            Step::git(
+                &ww("w1"),
+                Repo::Proj,
+                &["commit", "-qam", "docs on docs-next"],
+            ),
+            Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Defect(Defect::EnteredBranchTheTargetHoldsIsNotUndone))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+        ],
+    )
+}
+
+/// What happens to `docs-next`, the branch a landing created for `docs` as
+/// `docs` entered `main`, once the landing stopped in its retire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnteredThen {
+    /// A second landing moves it.
+    BuiltOn,
+    /// Someone commits onto it in the target's checkout of it.
+    HandCommit,
+    /// A raw worktree outside both workspaces checks it out.
+    CheckedOut,
+}
+
+/// The printed choice run once the first landing's abort refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnteredEnd {
+    LeaveTarget,
+    ContinueTheRetire,
+    /// `--abandon-foreign-tip`, or freeing the checkout and rerunning abort:
+    /// the choice that puts the whole target back.
+    Restore,
+}
+
+/// `docs`, which `main` lacks, enters it with a landing on `docs-next`, a
+/// branch no store has, so the landing creates it; the landing stops in its
+/// retire. `then` happens to `docs-next`, and the landing's abort refuses
+/// whole before anything moves; the printed `end` clears it and a landing
+/// into `main` lands, once a hand commit the target keeps is locked as the
+/// landing's refusal prints.
+pub fn abort_after_an_entered_branch_moved(then: EnteredThen, end: EnteredEnd) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        create("w1"),
+        create("w4"),
+    ];
+    if then == EnteredThen::CheckedOut {
+        steps.extend(main_checked_out_nowhere());
+    }
+    steps.extend([
+        Step::rwv(&ww("w1"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::hand_edit(
+            &ww("w1"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Docs, "main"),
+            &declared_branch_text(Repo::Docs, "docs-next"),
+        ),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["commit", "-qam", "docs on docs-next"],
+        ),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear", "--retire"],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+    ]);
+    match then {
+        EnteredThen::BuiltOn => steps.extend([
+            create("w2"),
+            Step::commit(&ww("w2"), Repo::Docs, "w2-docs"),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ]),
+        EnteredThen::HandCommit => steps.push(Step::commit(&a(), Repo::Docs, "docs-hand")),
+        EnteredThen::CheckedOut => steps.push(Step::git(
+            &a(),
+            Repo::Docs,
+            &["worktree", "add", "-q", "../docs-held", "docs-next"],
+        )),
+    }
+    steps.push(
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains("rwv abort --leave-target"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+    );
+    match end {
+        EnteredEnd::LeaveTarget => steps.push(
+            Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--leave-target")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+        ),
+        EnteredEnd::ContinueTheRetire => steps.push(
+            Step::rwv_printed(&ww("w1"), "rwv land --continue")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w1"))),
+        ),
+        EnteredEnd::Restore => {
+            let restores = match then {
+                EnteredThen::CheckedOut => {
+                    steps.push(
+                        Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
+                            .expect(Exit::Succeeds),
+                    );
+                    Step::rwv(&ww("w1"), &["abort"])
+                }
+                EnteredThen::HandCommit | EnteredThen::BuiltOn => {
+                    Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--abandon-foreign-tip")
+                }
+            };
+            let restores = match then {
+                EnteredThen::CheckedOut => restores.expect(Exit::Succeeds),
+                _ => restores.expect(Exit::Defect(Defect::EnteredBranchTheTargetHoldsIsNotUndone)),
+            };
+            steps.push(
+                restores
+                    .may_strand(&[Repo::Proj])
+                    .may_rewind(&[Repo::App, Repo::Docs, Repo::Proj])
+                    .may_restore(&[Repo::App, Repo::Docs, Repo::Proj]),
+            );
+            if then != EnteredThen::CheckedOut {
+                return scenario("abort after an entered branch moved", steps);
+            }
+            steps.push(
+                Step::git(&a(), Repo::Docs, &["branch", "--list", "docs-next"])
+                    .claim(Claim::OutputLacks("docs-next")),
+            );
+        }
+    }
+    if then == EnteredThen::HandCommit && end != EnteredEnd::Restore {
+        steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    }
+    steps.extend([
+        Step::commit(&ww("w4"), Repo::App, "w4-app"),
+        Step::rwv(&ww("w4"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w4"))),
+    ]);
+    if end != EnteredEnd::ContinueTheRetire {
+        steps.push(
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        );
+    }
+    scenario("abort after an entered branch moved", steps)
+}
+
 /// A landing stopped in its retire released its target, and a second
 /// landing into it was then killed holding it. The first's `rwv abort` must
 /// take the target back before it restores anything, so it refuses on the

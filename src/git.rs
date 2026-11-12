@@ -2988,6 +2988,7 @@ impl Vcs for GitVcs {
             VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
             VcsAction::SwitchTo => "git -C <checkout> switch <E>",
             VcsAction::SwitchDetached => "git -C <checkout> switch --detach <r>/<b>",
+            VcsAction::Detach => "git -C <checkout> switch --detach",
             VcsAction::CherryPick => "git -C <checkout> cherry-pick <ids>",
             VcsAction::CherryPickOntoCheckedOut => "git -C <b-checkout> cherry-pick <ids>",
             VcsAction::CherryPickMainline => "git -C <checkout> cherry-pick -m 1 <ids>",
