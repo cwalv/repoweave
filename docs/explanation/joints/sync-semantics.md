@@ -200,6 +200,21 @@ merges the lock as text and stops on a conflict there, never taking a side. A ba
 `git rebase --continue` runs the clone's lock merge driver instead, which
 merges pins three-way; [vcs-as-seam](./vcs-as-seam.md) covers the mechanism.
 
+**Stacks.** A branch other features land into (its dependents, by their
+records) is rebased with them: each dependent's commits beyond the branch's
+old tip are replayed onto its new tip, parents before their own dependents,
+each in the checkout the rebase ran in, and every dependent's branch moves
+only once all of them have replayed, a `rebased` backup kept of each. A
+dependent's project branch is replayed after its members, so its pins follow
+them. A conflict in one stops the operation there, no dependent moved yet:
+resolve it and `--continue`, or `rwv abort`. A dependent that cannot be
+carried refuses before anything moves, one line each: cut from an older tip
+(`target` dependent lacks the tip), checked out in another workspace
+(`target` dependent checked out elsewhere), or known here only from another
+machine's publish (`target` dependent on another machine), each with its own
+choices. A `merge` setting never rewrites the branch, so its dependents never
+block it.
+
 **Backups.** Before a rebase rewrites a branch, rwv keeps its tip as a
 `rebased` backup. One of a branch that was not published goes when the
 operation completes: the rebased commits hold its work. One of a published

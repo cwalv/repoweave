@@ -222,6 +222,19 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   dropped. `rwv abort` reads a tip that is a replay of a journaled rebase as
   the op's own.
 
+- **Stack carry**, once the feature's own branches are final (`rwv sync`
+  after its relock; `rwv land` at the end of `relock`): `stack::Carrier`
+  walks the records for the feature's dependents, refuses with one `target`
+  dependent state each where one cannot be carried, then replays each
+  dependent detached in the source's checkout of every repo the feature was
+  rewritten in (members before the project branch, whose pins it re-maps),
+  journaling each as `TakeInRecord.carries` before it starts and recording
+  the tip it composed; the checkout returns to the branch it was on. Only
+  then does each dependent's branch move, by compare-and-swap after a
+  `rebased` backup, the move journaled in `ref_moves` for `rwv abort`. A
+  stop on a carry is finished by `Carrier::finish_stopped` before anything
+  reads the checkouts on `--continue`.
+
 - **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, rebased or merged as the
   plan records, a `rebased` backup kept first for each branch a rebase

@@ -1486,9 +1486,9 @@ impl State {
                 means: "another branch's record names this branch as the one it lands into, \
                         one line for each such branch; deleting this one would leave that \
                         record with no target",
-                refused_by: "`rwv branch delete`, `rwv workweave delete`, `rwv sync` where \
-                             it would rewrite the branch, and `rwv land`, which carries no \
-                             dependent along yet",
+                refused_by: "`rwv branch delete`, `rwv workweave delete`, `rwv land \
+                             --retire`, and `--reset-to-target` or `--reset-to-upstream` on \
+                             this branch; a rebase carries dependents along instead",
                 offers: &[Form::C35, Form::C35Retire, Form::C12Feature],
                 verb_offers: &[],
             },
