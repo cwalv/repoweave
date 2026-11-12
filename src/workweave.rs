@@ -3994,7 +3994,10 @@ fn delete_workweave_inner_at(
             discard_unlanded,
             remote_deletes,
             leaving: Some(&workweave_dir),
-            verb: "workweave delete",
+            verb: match &deleter {
+                Deleter::Operator => "workweave delete",
+                Deleter::RetiringOp { .. } => "land",
+            },
         })?),
         None => None,
     };
