@@ -713,6 +713,7 @@ every_scenario!(
     history_unset_moved,
     history_unset_retire_behind,
     history_contradicted,
+    history_equal_one_run,
     history_linear_landing,
     history_ff_only,
     history_merge,
@@ -4480,6 +4481,11 @@ fn history_unset_moved_is_green() {
 }
 
 #[test]
+fn history_equal_one_run_is_green() {
+    runner::run(scenarios::history_equal_one_run()).assert_fully_decided_green();
+}
+
+#[test]
 fn history_contradicted_is_green() {
     runner::run(scenarios::history_contradicted()).assert_fully_decided_green();
 }
@@ -4706,7 +4712,7 @@ fn abort_after_a_sync_merge_stops_scenario() {
 
 #[test]
 fn dc04_a_conflicted_entry_is_settled_by_its_setters() {
-    runner::run(scenarios::dc04_conflict_setter()).assert_green();
+    runner::run(scenarios::dc04_conflict_setter()).assert_fully_decided_green();
 }
 
 #[test]

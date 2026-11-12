@@ -215,8 +215,8 @@ asymmetry is the whole shape of the thing.
 rwv's own merges and replays hold the lock merge driver at `true` the same
 way, so they neither depend on `rwv` being on `PATH` nor stop on a lock the
 driver would conflict: they settle `rwv.lock` themselves. A rebase replays
-each commit as a three-way merge, which is why the hold matters to `rwv
-sync` although it offers no `merge` strategy.
+each commit as a three-way merge, so the hold matters to a `linear` `rwv
+sync` as much as to a merge.
 
 **Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
 `rwv.lock` out of the merge inputs. The lock is regenerated from

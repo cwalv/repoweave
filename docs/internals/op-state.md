@@ -26,7 +26,7 @@ It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
-Schema v3. Every reader refuses a record whose `schema` is another number or
+Schema v5. Every reader refuses a record whose `schema` is another number or
 absent, naming the release that wrote it (`release`, or "a release before" the
 running one for a record that has none): it is finished or aborted with that
 release, and nothing of it is read. JSON, every field mandatory — a record

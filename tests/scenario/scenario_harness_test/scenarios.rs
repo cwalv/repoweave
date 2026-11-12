@@ -11073,6 +11073,27 @@ pub fn history_contradicted() -> Scenario {
     scenario("history: a one-run value against a recorded one", steps)
 }
 
+/// `history-equal-one-run`: a one-run `--history` equal to the value the
+/// target records is no contradiction: the landing runs by it.
+pub fn history_equal_one_run() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.push(
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("contradicted"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "main-app",
+            }),
+    );
+    scenario("history: a one-run value equal to the recorded one", steps)
+}
+
 /// `history-linear-landing`: a `linear` target that moved; `land --retire`
 /// rebases the source after `rebased` backups, fast-forwards `main`, lands
 /// the work by ancestry, and retire deletes the seat's branches.
@@ -11892,9 +11913,9 @@ pub fn abort_after_a_sync_merge_stops() -> Scenario {
 
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
-/// conflict, printing each field's setter with each side's value. That the
+/// conflict, printing each field's setter with each side's value. The
 /// setters then settle the entry and stage the file, so `--continue`
-/// completes with no hand edit, is left undecided: no setter yet reads an
+/// completes with no hand edit: a known defect, since no setter yet reads an
 /// `rwv.toml` a merge left conflicted.
 pub fn dc04_conflict_setter() -> Scenario {
     scenario(
@@ -11923,9 +11944,12 @@ pub fn dc04_conflict_setter() -> Scenario {
                 .claim(Claim::OutputContains(
                     "rwv branch set-history linear --repo local/remotes/lib",
                 )),
-            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w"]),
-            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB]),
-            Step::rwv(&ww("w"), &["sync", "--continue"]),
+            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w"])
+                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
+            Step::rwv(&ww("w"), &["sync", "--continue"])
+                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
         ],
     )
 }

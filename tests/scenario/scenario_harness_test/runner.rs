@@ -277,11 +277,19 @@ pub enum Defect {
     /// clone lacking it refuses a landing in that member as `pin`
     /// unreachable, with no printed choice that clears it.
     HistoryPinNoRefKeeps,
+    /// A setter run during an `rwv.toml` conflict stop reads the working
+    /// `rwv.toml`, conflict markers and all, so it cannot settle the
+    /// conflicted entry and stage the file as the conflict stop says it does.
+    SettersCannotReadAConflictedManifest,
 }
 
 impl Defect {
     fn describe(self) -> &'static str {
         match self {
+            Defect::SettersCannotReadAConflictedManifest => {
+                "a setter cannot read an rwv.toml a merge left conflicted, so it cannot settle \
+                 the entry"
+            }
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
             }
