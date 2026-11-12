@@ -658,6 +658,7 @@ every_scenario!(
     history_rebase_pin_remap,
     stack_carried,
     stack_cycle,
+    stack_remote_dependent,
     stack_carried_by_a_landing,
     stack_two_dependents,
     stack_transitive,
@@ -4516,6 +4517,11 @@ fn stack_carried_by_a_landing_is_green() {
 #[test]
 fn stack_cycle_is_green() {
     runner::run(scenarios::stack_cycle()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_remote_dependent_is_green() {
+    runner::run(scenarios::stack_remote_dependent()).assert_fully_decided_green();
 }
 
 #[test]

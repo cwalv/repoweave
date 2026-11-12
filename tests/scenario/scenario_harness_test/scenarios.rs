@@ -12732,3 +12732,83 @@ pub fn stack_cycle() -> Scenario {
         ],
     )
 }
+
+/// `stack-remote-dependent`: B publishes `w2`, landing into A's published
+/// `w1`. A's `w1` `sync` under a moved `linear` `main` reads `w2` as on
+/// another machine: nothing moves, and C35 (on its machine) and C12 are
+/// printed; A's `branch delete w1` refuses too. Once A rebinds `w2` here by
+/// the printed C12, the sync carries nothing and passes.
+pub fn stack_remote_dependent() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w1",
+                "--new-branch",
+                "w1",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("w1"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "w1")
+            .pushes(Remote::origin(Repo::Proj), "w1")
+            .expect(Exit::Succeeds),
+        Step::new_machine(Machine::B),
+        Step::rwv(
+            &b(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2",
+                "--new-branch",
+                "w2",
+                "--target",
+                "w1",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&b_ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b_ww("w2"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "w2")
+            .pushes(Remote::origin(Repo::Proj), "w2")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::TargetDependentOnAnotherMachine,
+            ))
+            .claim(Claim::JudgedOnly(
+                Repo::Proj,
+                State::TargetDependentOnAnotherMachine,
+            ))
+            .claim(Claim::OutputContains("w2 lands into w1"))
+            .claim(Claim::OutputContains("rwv land"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode w2 feature --target main",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv(&a(), &["branch", "delete", "w1"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&ww("w1"), "rwv branch set-mode w2 ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("carried")),
+    ]);
+    scenario("stack: a dependent published from another machine", steps)
+}
