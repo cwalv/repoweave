@@ -864,7 +864,9 @@ impl Aligner {
         self.mode == Mode::Detached && self.standing == ProjectStanding::Aligned
     }
 
-    fn wanted(&self, role: Role, entry: &RepoEntry) -> (RawRefName, bool) {
+    /// The branch `E` a member sits on in this workspace, and whether it is
+    /// the branch its entry declares rather than the feature's own.
+    pub(crate) fn wanted(&self, role: Role, entry: &RepoEntry) -> (RawRefName, bool) {
         match (&self.mode, role) {
             (Mode::Feature { branch }, Role::Owned | Role::Fork) => {
                 (RawRefName::new(branch.clone()), false)

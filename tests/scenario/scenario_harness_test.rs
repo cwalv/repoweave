@@ -596,6 +596,9 @@ every_scenario!(
     record_unstored_is_stored_by_sync,
     sync_refuses_a_pre_schema_target_tip,
     merge_upstream_off_lineage,
+    update_remote_merge_upstream_off_lineage,
+    update_remote_advances_the_feature_branch,
+    update_remote_refuses_a_foreign_feature_upstream,
     sync_from_another_branch_always_merges,
     sync_writes_no_record,
     waiver_own_lock,
@@ -2691,6 +2694,23 @@ fn sync_refuses_a_pre_schema_target_tip_at_that_branch() {
 #[test]
 fn merge_upstream_refuses_a_feature_member_off_lineage() {
     runner::run(scenarios::merge_upstream_off_lineage()).assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_merge_upstream_refuses_a_feature_member_off_lineage() {
+    runner::run(scenarios::update_remote_merge_upstream_off_lineage()).assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_refuses_a_feature_branch_taking_in_from_another_branch() {
+    runner::run(scenarios::update_remote_refuses_a_foreign_feature_upstream())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_in_a_feature_advances_the_feature_branch_from_its_upstream() {
+    runner::run(scenarios::update_remote_advances_the_feature_branch())
+        .assert_fully_decided_green();
 }
 
 #[test]

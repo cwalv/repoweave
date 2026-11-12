@@ -18,7 +18,8 @@ use crate::placement::PlacementOutput;
 use crate::project_merge::{conflict_stop, merge_member, MemberStop, Order};
 use crate::selector::RepoFilter;
 use crate::vcs::{
-    vcs_for, AttachedRef, HeadAttachment, RawRefName, Relation, ResolvedRevisionId, Vcs, VcsError,
+    vcs_for, AttachedRef, HeadAttachment, LocalRefName, RawRefName, Relation, ResolvedRevisionId,
+    Vcs, VcsError,
 };
 use crate::workspace::{
     member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
@@ -240,6 +241,10 @@ struct State {
 /// human-readable failure to surface in the aggregated summary.
 type RepoOutcome = Result<(String, Option<crate::share::FilePlacement>), String>;
 
+/// The tip fetched for a member's branch; `None` where the branch has no
+/// upstream to take in from.
+type Fetched = Result<Option<ResolvedRevisionId>, String>;
+
 /// Extended work item: repo path + manifest entry + old tip SHA captured
 /// before the advance loop runs.
 struct WorkItem {
@@ -252,6 +257,11 @@ struct WorkItem {
     /// The backend resolved from this entry's `vcs_type`, resolved once here
     /// and borrowed by the worker rather than re-resolved per repo.
     vcs: Box<dyn Vcs>,
+    /// The branch the member sits on in this workspace: in a feature, an
+    /// `owned` or `fork` member's feature branch, else its declared branch.
+    expected: LocalRefName,
+    /// `expected` is a feature's own branch, advanced from its own upstream.
+    feature: bool,
     /// The member's url remote, and the one still to add before the fetch;
     /// `None` where the checkout is missing or the url resolves to no remote.
     planned: Option<crate::url_remote::Planned>,
@@ -282,14 +292,12 @@ fn update_for_project(
             filter.matches(path, role)
         })?;
     }
-    lock::refuse_detached(
-        &crate::alignment::Aligner::open(
-            active_root,
-            project_name,
-            crate::alignment::Accounting::default(),
-        )?,
+    let aligner = crate::alignment::Aligner::open(
+        active_root,
         project_name,
+        crate::alignment::Accounting::default(),
     )?;
+    lock::refuse_detached(&aligner, project_name)?;
 
     // Snapshot the repo list into a Vec so the parallel loop can index by
     // position. The BTreeMap iteration is deterministic, so the resulting
@@ -308,6 +316,7 @@ fn update_for_project(
             let checkout = member_checkout_dir(rp, primary_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
             let old = vcs.head_revision(checkout.path()).ok();
+            let (expected, declared) = aligner.wanted(entry.role, entry);
             WorkItem {
                 repo_path: rp.clone(),
                 entry: entry.clone(),
@@ -315,6 +324,8 @@ fn update_for_project(
                 old,
                 vcs,
                 planned: None,
+                expected: LocalRefName::of_branch(&expected),
+                feature: !declared,
             }
         })
         .collect();
@@ -333,32 +344,31 @@ fn update_for_project(
             Reporter::serial()
         }
     };
-    let fetched: Vec<Result<ResolvedRevisionId, String>> = match &state.resumed {
+    let fetched: Vec<Fetched> = match &state.resumed {
         Some((_, record)) => work_items
             .iter()
             .map(|item| {
-                record
+                match record
                     .upstream_tips
                     .get(&RepoKey::Member(item.repo_path.clone()))
-                    .map(|tip| ResolvedRevisionId::from(tip.clone()))
-                    .ok_or_else(|| format!("{}: the op recorded no upstream tip", item.repo_path))
+                {
+                    Some(tip) => Ok(Some(ResolvedRevisionId::from(tip.clone()))),
+                    None if item.feature => Ok(None),
+                    None => Err(format!(
+                        "{}: the op recorded no upstream tip",
+                        item.repo_path
+                    )),
+                }
             })
             .collect(),
         None => run_in_parallel(&work_items, jobs, |_idx, item| {
-            fetch_and_resolve(
-                item.vcs.as_ref(),
-                &item.repo_path,
-                &item.entry,
-                item.planned.as_ref(),
-                &item.checkout,
-                &reporter_for(item),
-                use_reporter,
-            )
+            fetch_and_resolve(item, &reporter_for(item), use_reporter)
         }),
     };
     refuse_backwards(
         &work_items,
         &fetched,
+        state,
         &project,
         &crate::alignment::Aligner::open(
             active_root,
@@ -379,17 +389,17 @@ fn update_for_project(
             return Ok((head, None));
         }
         let resolved = match &fetched[idx] {
-            Ok(resolved) => resolved,
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => {
+                return item
+                    .vcs
+                    .head_revision(item.checkout.path())
+                    .map(|head| (head.display_str().to_owned(), None))
+                    .map_err(|e| format!("{}: {e:#}", item.repo_path));
+            }
             Err(message) => return Err(message.clone()),
         };
-        advance_one(
-            item.vcs.as_ref(),
-            &item.repo_path,
-            &item.entry,
-            &item.checkout,
-            resolved,
-        )
-        .and_then(|new_sha| {
+        advance_one(item, resolved).and_then(|new_sha| {
             crate::settle::settle_moved(
                 item.vcs.as_ref(),
                 item.checkout.path(),
@@ -525,6 +535,7 @@ fn update_for_project(
             } else {
                 lock::OpHeld::None
             },
+            by_name: Some(&settled.named),
         },
         commit,
     )
@@ -641,16 +652,12 @@ fn plan_url_remotes(mut items: Vec<WorkItem>) -> anyhow::Result<Vec<WorkItem>> {
 /// All user-facing text output is routed through `reporter`, which prefixes
 /// `[<repo>]` and serializes writes under `-j > 1`; under `-j 1` the
 /// reporter is a no-prefix passthrough.
-fn fetch_and_resolve(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    planned: Option<&crate::url_remote::Planned>,
-    checkout: &MemberCheckout,
-    reporter: &Reporter<'_>,
-    use_reporter: bool,
-) -> Result<ResolvedRevisionId, String> {
-    let repo_dir = checkout.path();
+fn fetch_and_resolve(item: &WorkItem, reporter: &Reporter<'_>, use_reporter: bool) -> Fetched {
+    let vcs = item.vcs.as_ref();
+    let repo_path = &item.repo_path;
+    let entry = &item.entry;
+    let planned = item.planned.as_ref();
+    let repo_dir = item.checkout.path();
 
     if !repo_dir.exists() {
         // `rwv update` re-clones missing members of the active
@@ -707,6 +714,10 @@ fn fetch_and_resolve(
         }
     }
 
+    if item.feature {
+        return feature_upstream_tip(item).map_err(|e| format!("{}: {e:#}", repo_path.as_str()));
+    }
+
     // Resolve the branch HEAD on the conventional remote. The VCS layer
     // owns the naming policy, so this is one call rather than a fallback
     // chain. No bare-branch fallback — missing-remote produces a clear
@@ -717,6 +728,7 @@ fn fetch_and_resolve(
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
     vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch)
+        .map(Some)
         .map_err(|_| {
             format!(
                 "{repo}: branch '{branch}' does not resolve on the remote \
@@ -730,13 +742,43 @@ fn fetch_and_resolve(
         })
 }
 
+/// The tip of the feature branch's own upstream as last fetched: the remote
+/// branch it takes in from, or the same-named branch it is given first.
+/// `None` where it has none, or takes in from a branch of another name, which
+/// [`refuse_backwards`] refuses.
+fn feature_upstream_tip(item: &WorkItem) -> anyhow::Result<Option<ResolvedRevisionId>> {
+    let vcs = item.vcs.as_ref();
+    let dir = item.checkout.path();
+    let branch = RawRefName::new(item.expected.as_str());
+    let remote = match crate::alignment::find_e(vcs, dir, &item.entry, &branch)? {
+        crate::alignment::Found::OnRemote { tip, .. } => return Ok(Some(tip)),
+        crate::alignment::Found::LocalGivenUpstream { upstream, .. } => upstream.remote,
+        crate::alignment::Found::Local { .. } => match vcs.upstream_of(dir, &branch)? {
+            Some(upstream) => upstream.remote,
+            None => return Ok(None),
+        },
+        crate::alignment::Found::Foreign { .. } | crate::alignment::Found::Nowhere => {
+            return Ok(None)
+        }
+    };
+    Ok(vcs
+        .remote_copies(dir, &branch)?
+        .into_iter()
+        .find(|copy| copy.remote == remote)
+        .map(|copy| copy.tip))
+}
+
 /// Refuse, before any member moves, every member whose declared branch exists
-/// nowhere, and every member whose upstream tip does not descend from the
-/// commit the lock pins for it: recording it would move the pin backward, and
-/// only a verb that names the member may do that.
+/// nowhere, every feature branch that takes in from a branch of another name,
+/// and every member whose re-pin does not descend from the commit the lock
+/// pins for it: recording it would move the pin backward, and only a verb that
+/// names the member may do that. The re-pin is the branch's own tip where the
+/// branch already holds the upstream's or merges it, else the upstream's tip;
+/// a member `--reset-to-upstream` names is re-pinned by name.
 fn refuse_backwards(
     items: &[WorkItem],
-    fetched: &[Result<ResolvedRevisionId, String>],
+    fetched: &[Fetched],
+    state: &State,
     project: &Project,
     aligner: &crate::alignment::Aligner,
     in_workweave: bool,
@@ -745,56 +787,77 @@ fn refuse_backwards(
     let mut report = crate::diagnosis::Report::default();
     for (item, tip) in items.iter().zip(fetched) {
         let dir = item.checkout.path();
+        let vcs = item.vcs.as_ref();
         if dir.exists() {
-            let branch =
-                crate::vcs::RawRefName::new(item.entry.branch.local_counterpart().as_str());
-            if matches!(
-                crate::alignment::find_e(item.vcs.as_ref(), dir, &item.entry, &branch)?,
-                crate::alignment::Found::Nowhere
-            ) {
-                report.add(
-                    crate::alignment::declared_nowhere(&item.repo_path, dir, &branch)
-                        .by_verb("update")
-                        .judge(item.vcs.as_ref()),
-                );
-                continue;
+            let branch = RawRefName::new(item.expected.as_str());
+            match crate::alignment::find_e(vcs, dir, &item.entry, &branch)? {
+                crate::alignment::Found::Nowhere if !item.feature => {
+                    report.add(
+                        crate::alignment::declared_nowhere(&item.repo_path, dir, &branch)
+                            .by_verb("update")
+                            .judge(vcs),
+                    );
+                    continue;
+                }
+                crate::alignment::Found::Foreign { upstream } if item.feature => {
+                    report.add(
+                        crate::diagnosis::State::PushBranchForeignUpstream
+                            .of(&item.repo_path)
+                            .member()
+                            .bind("<m>", item.repo_path.as_str())
+                            .bind("<repo>", item.repo_path.as_str())
+                            .subject(format!(
+                                "{branch} takes in from {}/{}",
+                                upstream.remote, upstream.branch
+                            ))
+                            .checkout(dir)
+                            .judge(vcs),
+                    );
+                    continue;
+                }
+                _ => {}
             }
         }
-        let Ok(tip) = tip else { continue };
-        let subject = match crate::alignment::pin_of(item.vcs.as_ref(), dir, lock, &item.repo_path)?
-        {
+        let Ok(Some(tip)) = tip else { continue };
+        if state.flags.resets(&crate::manifest::RepoOperand::Member(
+            item.repo_path.clone(),
+        )) {
+            continue;
+        }
+        let (label, repin) = match site_of(item) {
+            Some((_, local)) => match vcs.relation(dir, &local, tip) {
+                Ok(Relation::Ahead) => ("the branch's tip", local),
+                Ok(Relation::Diverged) if state.flags.merge_upstream => ("the branch's tip", local),
+                _ => ("the upstream's tip", tip.clone()),
+            },
+            None => ("the upstream's tip", tip.clone()),
+        };
+        let subject = match crate::alignment::pin_of(vcs, dir, lock, &item.repo_path)? {
             crate::alignment::Pin::None => continue,
             crate::alignment::Pin::Unreachable => "the pin is in no ref here".to_owned(),
-            crate::alignment::Pin::At(pin) => match item.vcs.relation(dir, tip, &pin) {
+            crate::alignment::Pin::At(pin) => match vcs.relation(dir, &repin, &pin) {
                 Ok(Relation::Even | Relation::Ahead) | Err(_) => continue,
-                Ok(relation) => lock::backwards_subject(
-                    item.vcs.as_ref(),
-                    dir,
-                    "the upstream's tip",
-                    tip,
-                    &pin,
-                    relation,
-                ),
+                Ok(relation) => lock::backwards_subject(vcs, dir, label, &repin, &pin, relation),
             },
         };
         let member = crate::alignment::Member {
             path: &item.repo_path,
             entry: &item.entry,
             dir,
-            vcs: item.vcs.as_ref(),
+            vcs,
         };
-        let candidate = lock::with_pins(&project.manifest, lock, [(&item.repo_path, tip)]);
+        let candidate = lock::with_pins(&project.manifest, lock, [(&item.repo_path, &repin)]);
         let aligns = !in_workweave || item.checkout.is_workweave_slot();
-        let rev = tip.id().short().to_owned();
-        let repin = crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
+        let rev = repin.id().short().to_owned();
+        let offered = crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
             .is_empty()
             .then_some(rev.as_str());
         report.add(lock::backwards_line(
             &item.repo_path,
             dir,
-            item.vcs.as_ref(),
+            vcs,
             subject,
-            repin,
+            offered,
         ));
     }
     report.into_result()
@@ -802,20 +865,10 @@ fn refuse_backwards(
 
 /// Advance the checkout onto `resolved`, the tip fetched for it
 /// ([`advance_checkout`]), and return the commit it is then at.
-fn advance_one(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    checkout: &MemberCheckout,
-    resolved: &ResolvedRevisionId,
-) -> Result<String, String> {
-    let repo_dir = checkout.path();
-    // Which checkout this member is advancing decides which ref is the legal
-    // object of the MOVE — the canonical's tracking counterpart, or the
-    // workweave's ephemeral ref.
-    let in_workweave = checkout.is_workweave_slot();
-
-    advance_checkout(vcs, repo_path, entry, repo_dir, in_workweave, resolved)?;
+fn advance_one(item: &WorkItem, resolved: &ResolvedRevisionId) -> Result<String, String> {
+    let vcs = item.vcs.as_ref();
+    let repo_dir = item.checkout.path();
+    advance_checkout(item, resolved)?;
 
     // Capture the new SHA after checkout for JSON reporting.
     let new_sha = vcs
@@ -827,24 +880,21 @@ fn advance_one(
     Ok(new_sha)
 }
 
-/// Advance one checkout onto `target`, the tracking branch's tip on the
-/// member's url remote.
+/// Advance one checkout onto `target`, the tip fetched for its branch.
 ///
-/// A checkout attached to the tracking declaration's local counterpart is
-/// fast-forwarded; one that is not fast-forwardable refuses, naming the
-/// reconcile. A checkout attached to anything else refuses, naming `rwv
-/// update`. Inside a workweave the ref the checkout is on advances when
-/// `target` is a fast-forward, and `rwv sync` is named otherwise. A detached
-/// HEAD moves, under the mid-operation precondition of
+/// A checkout attached to the branch it is expected on is fast-forwarded;
+/// one that is not fast-forwardable refuses, naming the reconcile. A checkout
+/// attached to anything else refuses, naming `rwv update`. Inside a workweave
+/// a member that follows its declared branch advances the ref the checkout is
+/// on when `target` is a fast-forward, and `rwv sync` is named otherwise. A
+/// detached HEAD moves, under the mid-operation precondition of
 /// [`Vcs::advance_detached_head`]. An unborn branch refuses.
-fn advance_checkout(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    repo_dir: &Path,
-    in_workweave: bool,
-    target: &ResolvedRevisionId,
-) -> Result<(), String> {
+fn advance_checkout(item: &WorkItem, target: &ResolvedRevisionId) -> Result<(), String> {
+    let vcs = item.vcs.as_ref();
+    let repo_path = &item.repo_path;
+    let entry = &item.entry;
+    let repo_dir = item.checkout.path();
+    let in_workweave = item.checkout.is_workweave_slot() && !item.feature;
     let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
 
     let attached = match vcs.head_attachment(repo_dir).map_err(describe)? {
@@ -890,9 +940,17 @@ fn advance_checkout(
         ));
     }
 
-    let counterpart = entry.branch.local_counterpart();
+    let counterpart = &item.expected;
 
-    if !attached.is_named(&counterpart) {
+    if item.feature && !attached.is_named(counterpart) {
+        return Err(format!(
+            "{}: is on branch '{attached}', not '{counterpart}', the branch it sits on \
+             in this feature — rwv update --remote moves only that branch.\n  \
+             Run `rwv update` to align the member, then re-run.",
+            repo_path.as_str(),
+        ));
+    }
+    if !attached.is_named(counterpart) {
         return Err(format!(
             "{}: is on branch '{attached}', not the local counterpart \
              ('{counterpart}') of the branch the manifest declares — \
@@ -944,47 +1002,46 @@ struct Divergence {
     relation: Relation,
 }
 
+/// Where the branch a member's advance moves lives, with its tip: attached
+/// in the checkout, or checked out nowhere.
+fn site_of(item: &WorkItem) -> Option<(Site, ResolvedRevisionId)> {
+    let dir = item.checkout.path();
+    if !dir.exists() {
+        return None;
+    }
+    let vcs = item.vcs.as_ref();
+    let any_attached = item.checkout.is_workweave_slot() && !item.feature;
+    match vcs.head_attachment(dir) {
+        Ok(HeadAttachment::Attached(attached))
+            if any_attached || attached.is_named(&item.expected) =>
+        {
+            vcs.head_revision(dir)
+                .ok()
+                .map(|head| (Site::Checkout(attached), head))
+        }
+        _ => {
+            let branch = RawRefName::new(item.expected.as_str());
+            match (
+                vcs.resolve_local_branch_tip(dir, &branch),
+                vcs.checkouts_of_branch(dir, &branch),
+            ) {
+                (Ok(Some(local)), Ok(held)) if held.is_empty() => Some((Site::Refs(branch), local)),
+                _ => None,
+            }
+        }
+    }
+}
+
 /// The members whose branch differs from its upstream tip, with the place the
-/// branch lives: attached in the checkout, or checked out nowhere.
-fn divergences(
-    items: &[WorkItem],
-    fetched: &[Result<ResolvedRevisionId, String>],
-) -> Vec<Divergence> {
+/// branch lives.
+fn divergences(items: &[WorkItem], fetched: &[Fetched]) -> Vec<Divergence> {
     let mut found = Vec::new();
     for (idx, (item, tip)) in items.iter().zip(fetched).enumerate() {
-        let Ok(tip) = tip else { continue };
-        let dir = item.checkout.path();
-        if !dir.exists() {
-            continue;
-        }
-        let vcs = item.vcs.as_ref();
-        let counterpart = item.entry.branch.local_counterpart();
-        let in_workweave = item.checkout.is_workweave_slot();
-        let placed = match vcs.head_attachment(dir) {
-            Ok(HeadAttachment::Attached(attached))
-                if in_workweave || attached.is_named(&counterpart) =>
-            {
-                vcs.head_revision(dir)
-                    .ok()
-                    .map(|head| (Site::Checkout(attached), head))
-            }
-            _ => {
-                let branch = RawRefName::new(counterpart.as_str());
-                match (
-                    vcs.resolve_local_branch_tip(dir, &branch),
-                    vcs.checkouts_of_branch(dir, &branch),
-                ) {
-                    (Ok(Some(local)), Ok(held)) if held.is_empty() => {
-                        Some((Site::Refs(branch), local))
-                    }
-                    _ => None,
-                }
-            }
-        };
-        let Some((site, local)) = placed else {
+        let Ok(Some(tip)) = tip else { continue };
+        let Some((site, local)) = site_of(item) else {
             continue;
         };
-        let Ok(relation) = vcs.relation(dir, &local, tip) else {
+        let Ok(relation) = item.vcs.relation(item.checkout.path(), &local, tip) else {
             continue;
         };
         if relation != Relation::Even {
@@ -1006,7 +1063,7 @@ fn settle_diverged(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     items: &[WorkItem],
-    fetched: &[Result<ResolvedRevisionId, String>],
+    fetched: &[Fetched],
     state: &State,
 ) -> anyhow::Result<Settled> {
     let mut settled = Settled {
@@ -1052,7 +1109,11 @@ fn settle_diverged(
         let item = &items[d.idx];
         let dir = item.checkout.path();
         let vcs = item.vcs.as_ref();
-        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
+        let tip = fetched[d.idx]
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .expect("a divergence has a tip");
         let operand = crate::manifest::RepoOperand::Member(item.repo_path.clone());
         let reset = state.flags.resets(&operand);
         let merging = state.flags.merge_upstream && d.relation == Relation::Diverged;
@@ -1132,7 +1193,7 @@ fn settle_diverged(
                              conflict needs a workspace to stop in, so run it where the branch \
                              is checked out",
                             item.repo_path,
-                            item.entry.branch.local_counterpart(),
+                            item.expected,
                             paths.join(", ")
                         ));
                     }
@@ -1167,7 +1228,7 @@ fn settle_diverged(
             record.message = state.committing.clone().flatten();
             record.no_materialize = state.wire.no_materialize;
             for (item, tip) in items.iter().zip(fetched) {
-                if let Ok(tip) = tip {
+                if let Ok(Some(tip)) = tip {
                     record
                         .upstream_tips
                         .insert(RepoKey::Member(item.repo_path.clone()), tip.id().clone());
@@ -1188,7 +1249,11 @@ fn settle_diverged(
             continue;
         }
         let item = &items[d.idx];
-        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
+        let tip = fetched[d.idx]
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .expect("a divergence has a tip");
         let (branch, on) = match &d.site {
             Site::Checkout(attached) => (RawRefName::new(attached.to_string()), Some(attached)),
             Site::Refs(branch) => (branch.clone(), None),
@@ -1217,11 +1282,12 @@ fn settle_diverged(
             continue;
         }
         let item = &items[d.idx];
-        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
-        let message = format!(
-            "Merge the upstream of {} into it",
-            item.entry.branch.local_counterpart()
-        );
+        let tip = fetched[d.idx]
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .expect("a divergence has a tip");
+        let message = format!("Merge the upstream of {} into it", item.expected);
         match merge_member(
             matches!(d.site, Site::Refs(_)),
             workspace,

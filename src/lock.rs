@@ -408,6 +408,7 @@ pub fn lock(
         unaligned: Unaligned::Refused,
         whole: WholeFile::default(),
         op: OpHeld::None,
+        by_name: None,
     };
     if commit.is_some() {
         if let Some(whole) = crate::lock_commit::plan(ctx, &relocking)? {
@@ -448,6 +449,8 @@ pub(crate) struct Relocking<'a> {
     pub(crate) unaligned: Unaligned,
     pub(crate) whole: WholeFile<'a>,
     pub(crate) op: OpHeld,
+    /// Members the verb names to re-pin, backward included.
+    pub(crate) by_name: Option<&'a BTreeSet<RepoPath>>,
 }
 
 /// Whether the run committing the relock holds an op of its own.
@@ -473,6 +476,7 @@ enum How {
     First,
     Same,
     Forward,
+    ByName,
 }
 
 struct Recorded {
@@ -640,6 +644,9 @@ fn judge_member(
             match backwards {
                 None if matches!(&plan.pin, Pin::At(pin) if *pin == head) => How::Same,
                 None => How::Forward,
+                Some(_) if relocking.by_name.is_some_and(|named| named.contains(path)) => {
+                    How::ByName
+                }
                 Some(subject) => {
                     let candidate = with_pins(manifest, old, [(path, &head)]);
                     let repin =
@@ -929,6 +936,15 @@ fn report_recorded(
         match one.how {
             How::Same => {}
             How::First => eprintln!("rwv {verb}: {path}: pinned at {to}; it had no pin"),
+            How::ByName => eprintln!(
+                "{}",
+                repinned_line(
+                    verb,
+                    path,
+                    one.was.as_ref().map_or("", |was| was.short_display()),
+                    to
+                )
+            ),
             How::Forward => {
                 let vcs = vcs_for(one.vcs_type);
                 let Some(was) = one

@@ -161,12 +161,15 @@ and then records the new tips in `rwv.lock`.
 
 The lock records the members the run advanced (every member, or those `--role`
 and `--repo` select) and leaves every other pin as it was. A member with no pin
-takes its upstream's tip as its first pin. A tip that does not descend from the
-pin the lock holds, or a pin no ref here reaches, would move the pin backward:
-the run refuses (`pin` `backwards`) once every member is fetched and before any
-moves, whatever `--repo` names, since only a verb that names the member
-(`rwv member pin`) moves a pin backward; the refusal prints it with the
-upstream's tip where it would succeed. A declared branch
+takes its upstream's tip as its first pin. The pin a member would take is its
+branch's own tip where the branch holds its upstream's tip already or
+`--merge-upstream` merges the two, else the upstream's tip. One that does not
+descend from the pin the lock holds, or a pin no ref here reaches, would move the
+pin backward: the run refuses (`pin` `backwards`) once every member is fetched
+and before any moves, whatever `--repo` names, since only a verb that names the
+member moves a pin backward: `rwv member pin`, which the refusal prints where it
+would succeed, or `--reset-to-upstream <repo>` for the member it names, reported
+as `re-pinned <old> to <new>, by name`. A declared branch
 that exists nowhere after the fetch, locally or on a remote, refuses at the
 same point as `name` `no-such-branch`, the judgment `rwv lock --commit` makes. A member not where
 the checked-out branch's record puts it keeps its pin, reported on the
@@ -182,9 +185,16 @@ where you are:
   the manifest's `branch` declares. On any other branch — an operator's personal
   branch — it names both refs and refuses, rather than relocating a bookmark it
   cannot relate to the tracking declaration.
-- **Inside a workweave**, it moves that workweave's own branch. When the tip is
-  not a fast-forward of it, `update --remote` points at `rwv sync` — the verb
-  that reconciles a workweave with its parent — rather than at a flag.
+- **On a feature branch**, an `owned` or `fork` member advances its feature
+  branch from that branch's own upstream, the same-named branch on a remote,
+  never from its declared branch: taking the target's work in is `rwv sync`'s.
+  A feature branch with no upstream has nothing to take in; one that takes in
+  from a branch of another name refuses as `push-branch` `foreign upstream`. A
+  `dependency` or `reference` member advances on its declared branch.
+- **Inside a workweave**, a member that follows its declared branch moves that
+  workweave's own branch. When the tip is not a fast-forward of it,
+  `update --remote` points at `rwv sync` — the verb that reconciles a workweave
+  with its parent — rather than at a flag.
 
 A branch that holds its upstream's tip already, or is ahead of it, has nothing to
 take in. One that has diverged refuses as `push-branch` `diverged`, with nothing
@@ -193,7 +203,10 @@ upstream (first parent the upstream; a branch no checkout has attached merges as
 refs and touches no working tree, and a conflict there is refused), and
 `--reset-to-upstream <repo>` moves it to its upstream after keeping the tip it
 leaves in a backup, refusing where the upstream is gone, a record lands into the
-branch, or the checkout has edits. Both run under an operation record: a conflict
+branch, or the checkout has edits. For a feature's `owned` or `fork` member,
+`--merge-upstream` first applies the lineage rule: an upstream that lacks the
+base the member's work is built on refuses as `pin` `off lineage` before
+anything moves. Both run under an operation record: a conflict
 stops with the conflict hint up to staging, `rwv update --remote --continue`
 resumes, and `rwv abort` puts every repo and ref the operation moved back.
 

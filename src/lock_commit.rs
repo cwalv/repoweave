@@ -95,6 +95,7 @@ fn relocking_for<'a>(relocking: &Relocking<'a>, whole: WholeFile<'a>) -> Relocki
         unaligned: relocking.unaligned,
         whole,
         op: relocking.op,
+        by_name: relocking.by_name,
     }
 }
 

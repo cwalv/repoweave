@@ -4764,6 +4764,204 @@ pub fn merge_upstream_off_lineage() -> Scenario {
     scenario("merge-upstream off lineage", steps)
 }
 
+/// The lineage rule on `update --remote --merge-upstream`: `w`'s `app` is
+/// rebased onto `main`'s newer pin, so its upstream `feat-w` lacks that base;
+/// the merge refuses before anything moves and names C3, since the
+/// upstream's own base is on `main`. C3, run as printed, moves `feat-w` to
+/// its upstream by name, keeping a backup, and re-pins `app` there.
+pub fn update_remote_merge_upstream_off_lineage() -> Scenario {
+    let mut steps = feature_rebased_past_its_push_branch();
+    steps.extend([
+        Step::rwv(&ww("w"), &["update", "--remote", "--merge-upstream"])
+            .expect(Exit::refuses(Repo::App, State::PinOffLineage))
+            .claim(Claim::OutputContains(
+                "rwv update --remote --reset-to-upstream local/remotes/app",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "update",
+                "--remote",
+                "--reset-to-upstream",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewrite(&[Repo::App])
+        .may_rewind(&[Repo::App])
+        .claim(Claim::OutputContains("to its upstream"))
+        .claim(Claim::OutputContains("in backup"))
+        .claim(Claim::OutputContains("local/remotes/app: re-pinned "))
+        .claim(Claim::OnBranch {
+            at: ww("w"),
+            repo: Repo::App,
+            branch: "feat-w",
+        })
+        .claim(Claim::PinContains {
+            site: LockSite::Checkout(ww("w"), Repo::Proj, "feat-w".to_owned()),
+            member: Repo::App,
+            mark: "w-app",
+        }),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["ls-files", "--error-unmatch", "main-app.txt"],
+        )
+        .expect(Exit::Code(1)),
+    ]);
+    scenario("update --remote --merge-upstream off lineage", steps)
+}
+
+/// A feature's member branch that takes in from a branch of another name is
+/// refused by `update --remote` before anything moves: it advances only from
+/// its own upstream.
+pub fn update_remote_refuses_a_foreign_feature_upstream() -> Scenario {
+    scenario(
+        "update --remote refuses a feature branch taking in from another branch",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat-w",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["branch", "--set-upstream-to=origin/main", "feat-w"],
+            ),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "main-remote",
+            }),
+            Step::rwv(&ww("w"), &["update", "--remote"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchForeignUpstream))
+                .claim(Claim::OutputContains("feat-w takes in from origin/main"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
+/// `update --remote` in a feature advances each `owned` member's feature
+/// branch from that branch's own upstream: `app`'s `feat-w` fast-forwards to
+/// the commit pushed onto it and takes in nothing of `main`'s newer upstream
+/// tip. Once both sides of `feat-w` have moved, `--merge-upstream` merges the
+/// upstream in, first parent the upstream, and the lock pins the merge; the
+/// merge, ahead of the upstream, is no backward re-pin for the next run.
+pub fn update_remote_advances_the_feature_branch() -> Scenario {
+    scenario(
+        "update --remote in a feature advances the feature branch from its upstream",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat-w",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("w"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-w")
+                .pushes(Remote::origin(Repo::Proj), "feat-w")
+                .expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "feat-w",
+                mark: "colleague-app",
+            }),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "main-remote",
+            }),
+            Step::rwv(&ww("w"), &["update", "--remote"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    branch: "feat-w",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "feat-w",
+                    mark: "colleague-app",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "feat-w".to_owned()),
+                    member: Repo::App,
+                    mark: "colleague-app",
+                }),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["ls-files", "--error-unmatch", "main-remote.txt"],
+            )
+            .expect(Exit::Code(1)),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "feat-w",
+                mark: "colleague-app-2",
+            }),
+            Step::rwv(&ww("w"), &["update", "--remote", "--merge-upstream"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("merged its upstream"))
+                .claim(Claim::OnBranch {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    branch: "feat-w",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "feat-w".to_owned()),
+                    member: Repo::App,
+                    mark: "w-app-2",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "feat-w".to_owned()),
+                    member: Repo::App,
+                    mark: "colleague-app-2",
+                }),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["rev-parse", "--verify", "-q", "feat-w^2"],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["ls-files", "--error-unmatch", "main-remote.txt"],
+            )
+            .expect(Exit::Code(1)),
+            Step::rwv(&ww("w"), &["update", "--remote"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "feat-w".to_owned()),
+                    member: Repo::App,
+                    mark: "w-app-2",
+                }),
+        ],
+    )
+}
+
 /// `main` moved `app`, and `stable`, a branch `w` does not land into, is cut
 /// from it.
 fn stable_ahead_of_w() -> Vec<Step> {
