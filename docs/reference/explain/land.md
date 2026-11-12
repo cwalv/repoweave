@@ -229,6 +229,15 @@ pointing back here. A verb that hits a workspace an op holds refuses, naming
 the op and its two exits: `rwv land --continue` from the owning workspace, or
 `rwv abort`.
 
+Landings into one target run one at a time. Before it reads the target's tips,
+a landing claims the target; a second landing into it waits for that claim,
+then lands on the tips the first one left. Waiting runs out after a few
+seconds and refuses as `state-claim-held`, naming the landing that holds the
+claim and the file to delete when no rwv is landing there. The claim and the
+lease on the target's workspace are given up once the target's workspace has
+taken the landing, before `--retire` removes this workspace. `rwv land
+--continue` takes the claim back, and `rwv abort` releases it.
+
 A resume recorded at `advance-target` re-enters `relock` first, and says so:
 relock is what makes the lock it lands agree with the tips it lands.
 
