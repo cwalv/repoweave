@@ -600,6 +600,10 @@ of a replay of any commit is missing, or names a commit the branch from
 callers that move pins on it refuse `replay-unrecorded`; abort reads `None`
 as "not this op's tip". When the re-map rewrites the replayed project
 commits, `Vcs::record_replayed` rewrites the record to name the copies.
+The records live as long as the op record does: the op's end and a clean
+`rwv abort` drop every one in the checkouts of the workspaces it ran in
+(`Vcs::forget_replays`), and the scenario harness reports one left in a
+place no op holds.
 
 **Config held on every rebase**, start and continue, whatever the operator's
 own config says (`-c`, so it leaves nothing behind; a key a release does not
