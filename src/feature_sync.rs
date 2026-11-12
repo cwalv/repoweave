@@ -1542,8 +1542,8 @@ fn take_member(
         if head.id() != source {
             let kept =
                 vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
-            vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             journal(source)?;
+            vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             say(
                 output,
                 &format!(
@@ -1614,8 +1614,8 @@ fn take_member(
         };
     }
     if vcs.is_ancestor(dir, &head, &src)? {
-        vcs.advance_attached_ref(&attached, &src)?;
         journal(source)?;
+        vcs.advance_attached_ref(&attached, &src)?;
         say(
             output,
             &format!("{path}: fast-forwarded to {}", source.short()),
@@ -1624,8 +1624,9 @@ fn take_member(
     }
     if follows {
         let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
-        vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
         journal(source)?;
+        vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
+        crate::test_pause::point("sync-member-followed");
         say(
             output,
             &format!(
@@ -1805,8 +1806,8 @@ fn take_project(
         if head != source {
             let kept =
                 vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &here, None)?;
-            vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, source)?;
+            vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             say(
                 output,
                 &format!(
@@ -1823,6 +1824,7 @@ fn take_project(
         return Ok(());
     }
     if vcs.is_ancestor(dir, &here, &src)? {
+        crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, source)?;
         vcs.advance_attached_ref(&attached, &src)?;
         say(
             output,

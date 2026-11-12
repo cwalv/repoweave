@@ -252,8 +252,8 @@ pub(crate) fn merge_member(
         return Ok(Joined::Nothing);
     }
     if !matches!(order, Order::HeadFirstAlwaysMerge) && vcs.is_ancestor(dir, &head, &source_rev)? {
-        vcs.advance_attached_ref(&attached, &source_rev)?;
         journal(source)?;
+        vcs.advance_attached_ref(&attached, &source_rev)?;
         return Ok(Joined::Moved(source.clone()));
     }
     let tracked = vcs.tracked_dirty_file_names(dir)?;
@@ -334,15 +334,15 @@ fn merge_member_as_refs(
         Ok(())
     };
     if !matches!(order, Order::HeadFirstAlwaysMerge) && vcs.is_ancestor(dir, &tip, &source_rev)? {
-        vcs.advance_branch_ref(dir, &branch, &at, source)?;
         moved(source)?;
+        vcs.advance_branch_ref(dir, &branch, &at, source)?;
         return Ok(Joined::Moved(source.clone()));
     }
     let (first, second) = parents(order, &at, source);
     match vcs.merge_as_refs(dir, &first, &second, message)? {
         RefMerge::Merged(commit) => {
-            vcs.advance_branch_ref(dir, &branch, &at, &commit)?;
             moved(&commit)?;
+            vcs.advance_branch_ref(dir, &branch, &at, &commit)?;
             Ok(Joined::Merged(commit))
         }
         RefMerge::Conflicted { paths } => Err(refuse(format!(

@@ -9993,6 +9993,34 @@ pub fn abort_abandons_colliding_edits_keeping_them() -> Scenario {
     scenario("abort abandons colliding edits keeping them", steps)
 }
 
+/// A landing killed right after it fast-forwarded `app` in the target's
+/// workspace: the move was journaled before it was made, so abort, run from
+/// the source, restores it rather than leaving it as someone else's.
+pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario {
+    scenario(
+        "abort restores a target fast-forward killed after the move",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(&ww("w"), &["land"], "target-fast-forwarded", "landing"),
+            Step::kill("landing"),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+                .claim(Claim::OutputLine("w-app")),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: restored",
+                )),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+                .claim(Claim::OutputLacks("w-app")),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// How a landing that changes `lib`'s declared branch to `lib-next` treats `lib-next`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceivingCase {

@@ -8575,7 +8575,9 @@ fn ff_advance_repo(
     // update would touch tracked changes — the VCS-native backstop behind
     // the tracked-dirty gate above — or an untracked file colliding with an
     // incoming path, which the `UntrackedCollision` arm below names.
-    if let Err(e) = vcs.advance_attached_ref(&on, cwd_tip) {
+    let advanced = vcs.advance_attached_ref(&on, cwd_tip);
+    crate::test_pause::point("target-fast-forwarded");
+    if let Err(e) = advanced {
         if let VcsError::UntrackedCollision { repo, paths } = &e {
             // advance-target is land only (see the module comment above
             // `run_advance_target`), so the resume command is fixed rather

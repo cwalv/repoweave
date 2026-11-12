@@ -707,6 +707,7 @@ every_scenario!(
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
     abort_refuses_a_switch_back_over_colliding_edits,
+    abort_restores_a_target_fast_forward_killed_after_the_move,
     abort_abandons_colliding_edits_keeping_them,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
@@ -2412,6 +2413,13 @@ holding_rwv! {
     #[ignore = "the foreign-tip recovery's second choice, ending the operation with the ref left as it is, is the landing-as-refs slice's"]
     fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
         runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it())
+            .assert_fully_decided_green();
+    }
+
+    /// Each move is journaled before it is made: killed right after a
+    /// target fast-forward, the landing is restored by abort.
+    fn abort_restores_a_target_fast_forward_killed_after_the_move() {
+        runner::run(scenarios::abort_restores_a_target_fast_forward_killed_after_the_move())
             .assert_fully_decided_green();
     }
 

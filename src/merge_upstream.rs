@@ -225,11 +225,10 @@ pub(crate) fn reset_to_upstream(
     let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &tip, None)?;
     match on {
         Some(on) => {
-            vcs.reset_attached_ref_keeping(on, upstream, &kept)?;
             op_state::journal_tip(workspace, key, upstream.id())?;
+            vcs.reset_attached_ref_keeping(on, upstream, &kept)?;
         }
         None => {
-            vcs.reset_branch_ref(dir, branch, tip.id(), upstream.id(), &kept)?;
             op_state::journal_ref_move(
                 workspace,
                 RefMove {
@@ -239,6 +238,7 @@ pub(crate) fn reset_to_upstream(
                     to: upstream.id().clone(),
                 },
             )?;
+            vcs.reset_branch_ref(dir, branch, tip.id(), upstream.id(), &kept)?;
         }
     }
     Ok(kept.backup().name.to_string())
@@ -258,6 +258,14 @@ pub(crate) fn restore_ref_moves(
             RepoKey::Project => continue,
         };
         let branch = RawRefName::new(moved.branch.clone());
+        if vcs
+            .resolve_local_branch_tip(&dir, &branch)
+            .ok()
+            .flatten()
+            .is_some_and(|now| *now.id() == moved.from)
+        {
+            continue;
+        }
         if let Err(e) = vcs.restore_branch_ref(&dir, &branch, &moved.to, &moved.from) {
             foreign.push((moved.repo.clone(), moved.branch.clone(), e));
         }
