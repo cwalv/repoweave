@@ -867,6 +867,7 @@ every_scenario!(
     a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Landed),
     a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Retire),
     a_refused_continue_of_a_released_landing_leaves_the_target_free,
+    a_continued_retire_releases_the_target_first,
     landing_as_refs,
     landing_as_refs_unpinned,
     lost_race_abort,
@@ -3002,6 +3003,13 @@ holding_rwv! {
                 .assert_fully_decided_green();
         }
         runner::run(scenarios::a_refused_continue_of_a_released_landing_leaves_the_target_free())
+            .assert_fully_decided_green();
+    }
+
+    /// A landing killed between recording its retire and releasing its
+    /// target releases it on `--continue`, before the retire is judged.
+    fn a_continued_retire_releases_the_target_first() {
+        runner::run(scenarios::a_continued_retire_releases_the_target_first())
             .assert_fully_decided_green();
     }
 }

@@ -11236,6 +11236,40 @@ pub fn a_refused_abort_puts_back_what_it_took(stop: LandedStop) -> Scenario {
     )
 }
 
+/// A landing killed once it recorded its retire, before it released its
+/// target: its `rwv land --continue` releases the target before it retires,
+/// so while the retire refuses a dirty workweave another landing lands.
+pub fn a_continued_retire_releases_the_target_first() -> Scenario {
+    scenario(
+        "a continued retire releases the target first",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retiring",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::hand_edit(
+                &ww("w1"),
+                Repo::App,
+                "README",
+                "app",
+                "edited after the stop",
+            ),
+            Step::rwv(&ww("w1"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::App, State::EditsDirty)),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ],
+    )
+}
+
 /// A landing with no retire killed once it released its target, after
 /// another landing built on it: its `rwv land --continue` takes the claim
 /// back, and when it is refused it leaves the target released, so a third

@@ -3087,6 +3087,7 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 op_state::set_phase(&ctx.owner_workspace_dir, p)
                     .context("failed to advance phase between iterations")?;
                 if retiring {
+                    crate::test_pause::point("retiring");
                     release_target(ctx)?;
                 }
             }
@@ -4335,6 +4336,20 @@ fn load_continuing_context<'a>(
         && matches!(cwd_ctx.checkout, Checkout::Primary { .. }))
     .then(|| cwd_ctx.primary_path().to_path_buf());
     let project_vcs = project_vcs();
+
+    if matches!(record.phase, op_state::OpPhase::Retire) {
+        if let Some(dest) = dest_workspace_dir.as_deref() {
+            op_state::clear_lease_owned_by(dest, &owner_workspace_dir);
+        }
+        for workspace in take_in.in_place_workspaces() {
+            clear_lease_of(&workspace, &op_id);
+        }
+        crate::landing_claim::LandingClaim::release_held_by(
+            project_vcs.as_ref(),
+            &cwd_project_dir,
+            &op_id,
+        )?;
+    }
 
     let landing_claim = match (&record.phase, &take_in.sync_from) {
         _ if record.verb != op_state::OpVerb::Land => None,
