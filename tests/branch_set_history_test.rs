@@ -446,15 +446,15 @@ fn doctor_reports_history_disagreement_only_where_two_projects_record_different_
         "only one project records one"
     );
 
-    git_in(&project(&w), &["switch", "-q", "-c", "feat"]);
+    git_in(project(&w), &["switch", "-q", "-c", "feat"]);
     let text = std::fs::read_to_string(project(&w).join("rwv.toml")).unwrap();
     std::fs::write(
         project(&w).join("rwv.toml"),
         text.replace("history = \"merge\"", "history = \"linear\""),
     )
     .unwrap();
-    git_in(&project(&w), &["commit", "-qam", "feat history"]);
-    git_in(&project(&w), &["switch", "-q", "main"]);
+    git_in(project(&w), &["commit", "-qam", "feat history"]);
+    git_in(project(&w), &["switch", "-q", "main"]);
     common::record_feature(&project(&w), "feat", "main");
     assert_eq!(
         history_disagreements(&w),
@@ -499,7 +499,7 @@ fn doctor_reports_history_disagreement_only_where_two_projects_record_different_
         "a top-level setting is what a member without its own records"
     );
 
-    git_in(&project(&w), &["branch", "-q", "-D", "feat"]);
+    git_in(project(&w), &["branch", "-q", "-D", "feat"]);
     commit_history_of_lib(&other, "merge");
     assert_eq!(
         history_disagreements(&w),
