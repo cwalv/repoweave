@@ -21,50 +21,12 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use common::cli::{describe, refused, run, succeed};
+use repoweave::diagnosis::State;
+use repoweave::refusal::RefusalKind;
+
 const RECORDS: &str = common::records::BRANCH;
 const DECLARED: &str = "mode = \"declared\"\n";
-
-fn run(args: &[&str], dir: &Path) -> std::process::Output {
-    common::rwv().args(args).current_dir(dir).output().unwrap()
-}
-
-fn describe(out: &std::process::Output) -> String {
-    format!(
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    )
-}
-
-fn succeed(args: &[&str], dir: &Path) -> std::process::Output {
-    let out = run(args, dir);
-    assert!(
-        out.status.success(),
-        "`rwv {}` failed; {}",
-        args.join(" "),
-        describe(&out)
-    );
-    out
-}
-
-fn refused(args: &[&str], dir: &Path) -> String {
-    let out = run(args, dir);
-    assert!(
-        !out.status.success(),
-        "`rwv {}` should have been refused; {}",
-        args.join(" "),
-        describe(&out)
-    );
-    String::from_utf8_lossy(&out.stderr).into_owned()
-}
-
-fn assert_routes_to(stderr: &str, token: &str) {
-    let routes: Vec<&str> = stderr
-        .lines()
-        .filter_map(|l| l.strip_prefix("rwv explain "))
-        .collect();
-    assert_eq!(routes, vec![token], "stderr was:\n{stderr}");
-}
 
 fn text(out: &std::process::Output) -> String {
     format!(
@@ -173,7 +135,7 @@ fn an_unrecorded_branch_refuses_the_verbs_that_align_lock_land_or_publish() {
     weave.raw_branch("raw");
     let before = weave.state();
     for args in GATED {
-        let stderr = refused(args, &weave.ws);
+        let stderr = refused(&run(args, &weave.ws), State::TargetUnrecorded);
         assert!(
             stderr.contains("target unrecorded (raw)"),
             "`rwv {}`: {stderr}",
@@ -192,7 +154,6 @@ fn an_unrecorded_branch_refuses_the_verbs_that_align_lock_land_or_publish() {
             stderr.contains("--target candidates, nearest first: main"),
             "{stderr}"
         );
-        assert_routes_to(&stderr, "target");
     }
     assert_eq!(weave.state(), before, "a refusal changed nothing");
 }
@@ -220,7 +181,7 @@ fn pull_refuses_an_unrecorded_branch_before_it_takes_the_upstream_in() {
     common::git_in(&other, &["push", "-q", "origin", "raw"]);
 
     let before = weave.state();
-    let stderr = refused(&["pull"], &weave.ws);
+    let stderr = refused(&run(&["pull"], &weave.ws), State::TargetUnrecorded);
     assert!(stderr.contains("target unrecorded (raw)"), "{stderr}");
     assert_eq!(
         weave.state(),
@@ -250,7 +211,7 @@ fn the_verbs_that_only_look_or_record_run_on_an_unrecorded_branch() {
 fn recording_the_branch_lets_the_gated_verbs_run() {
     let weave = Weave::new();
     weave.raw_branch("raw");
-    refused(&["lock"], &weave.ws);
+    refused(&run(&["lock"], &weave.ws), State::TargetUnrecorded);
     succeed(
         &["branch", "set-mode", "raw", "feature", "--target", "main"],
         &weave.ws,
@@ -268,13 +229,12 @@ fn a_branch_whose_record_is_unreadable_conflicted_or_on_a_cycle_is_refused_by_it
 
     common::git_in(&project, &["switch", "-q", "a"]);
     common::records::edit_by_hand(&project, &[("a", "later = 1\n")], &[], "by hand");
-    let stderr = refused(&["lock"], &weave.ws);
+    let stderr = refused(&run(&["lock"], &weave.ws), State::TargetUnreadable);
     assert!(stderr.contains("target unreadable (a)"), "{stderr}");
     assert!(
         stderr.contains("rwv branch set-mode a declared"),
         "{stderr}"
     );
-    assert_routes_to(&stderr, "target");
 
     common::records::edit_by_hand(
         &project,
@@ -288,7 +248,7 @@ fn a_branch_whose_record_is_unreadable_conflicted_or_on_a_cycle_is_refused_by_it
         &[],
         "by hand",
     );
-    let stderr = refused(&["lock"], &weave.ws);
+    let stderr = refused(&run(&["lock"], &weave.ws), State::TargetConflict);
     assert!(stderr.contains("target conflict (a)"), "{stderr}");
     assert!(
         stderr.contains("declared"),
@@ -311,7 +271,7 @@ fn a_branch_whose_record_is_unreadable_conflicted_or_on_a_cycle_is_refused_by_it
         &[],
         "by hand",
     );
-    let stderr = refused(&["lock"], &weave.ws);
+    let stderr = refused(&run(&["lock"], &weave.ws), State::TargetCycle);
     assert!(stderr.contains("target cycle (a)"), "{stderr}");
     assert!(stderr.contains("a -> b -> a"), "{stderr}");
 
@@ -323,7 +283,7 @@ fn a_branch_whose_record_is_unreadable_conflicted_or_on_a_cycle_is_refused_by_it
 fn the_gate_commits_the_merge_of_the_remotes_records_before_it_reads() {
     let weave = Weave::new();
     weave.raw_branch("raw");
-    refused(&["lock"], &weave.ws);
+    refused(&run(&["lock"], &weave.ws), State::TargetUnrecorded);
     let project = weave.project();
     let tip = weave.records_tip().unwrap();
     let theirs = common::records::commit(
@@ -502,15 +462,17 @@ fn a_workweave_create_from_an_unrecorded_branch_refuses_before_it_makes_anything
     weave.raw_branch("raw");
     let before = weave.state();
     let stderr = refused(
-        &["workweave", "create", "--project", "demo", "ww"],
-        &weave.ws,
+        &run(
+            &["workweave", "create", "--project", "demo", "ww"],
+            &weave.ws,
+        ),
+        State::TargetUnrecorded,
     );
     assert!(stderr.contains("target unrecorded (raw)"), "{stderr}");
     assert!(
         stderr.contains("rwv branch set-mode raw declared"),
         "{stderr}"
     );
-    assert_routes_to(&stderr, "target");
     assert!(!weave.tmp.path().join(".workweaves/demo--ww").exists());
     assert_eq!(weave.state(), before);
 }
@@ -520,8 +482,11 @@ fn a_workweave_create_from_a_detached_project_repo_refuses() {
     let weave = Weave::new();
     common::git_in(weave.project(), &["switch", "-q", "--detach"]);
     let stderr = refused(
-        &["workweave", "create", "--project", "demo", "ww"],
-        &weave.ws,
+        &run(
+            &["workweave", "create", "--project", "demo", "ww"],
+            &weave.ws,
+        ),
+        RefusalKind::HeadNotOnBranch,
     );
     assert!(stderr.contains("detached HEAD"), "{stderr}");
     assert!(!weave.tmp.path().join(".workweaves/demo--ww").exists());

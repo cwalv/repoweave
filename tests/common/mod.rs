@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod cli;
 pub mod compile_probe;
 pub mod contract;
 pub mod doctor_corpus;
@@ -7,6 +8,7 @@ pub mod job;
 pub mod json_schema;
 pub mod pause;
 pub mod records;
+pub mod refusal_census;
 pub mod src_scan;
 
 use std::path::PathBuf;

@@ -125,6 +125,9 @@ mod each_schema_url;
 #[path = "rwv-each/wire.rs"]
 mod each_wire;
 
+#[path = "../../tests/common/refusal_census.rs"]
+mod refusal_census;
+
 /// The bundled plugins' source trees, which must never name the library.
 const PLUGIN_SOURCE_DIRS: &[&str] = &["src/bin/rwv-each"];
 
@@ -4683,6 +4686,11 @@ fn main() -> anyhow::Result<()> {
         schema.push('\n');
         write_if_changed(&schemas_dir.join("refusal.json"), &schema)?;
     }
+
+    write_if_changed(
+        &root.join("docs/internals/refusal-census.tsv"),
+        &refusal_census::render(&refusal_census::derive(&root)),
+    )?;
 
     let verbs = verbs();
     let msg_registry = build_msg_registry();

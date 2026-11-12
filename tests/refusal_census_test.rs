@@ -1,205 +1,103 @@
-//! Every refusal site in `src/`, and which instrument reads the token it
-//! prints.
+//! Every refusal site in `src/` says what it is, and the census's two walks
+//! see what they claim to.
 //!
-//! **The question this asks is not "is this site classified".** A census that
-//! only classified would pass over the failure it exists to find: a site that
-//! carries a perfectly valid token, and the wrong one. Two of those shipped in
-//! this register's own construction — a dominance rule between two tokens that
-//! both had entries, and a three-way defect mapping where swapping two arms was
-//! invisible to every test binary. In each case the site was classified, the
-//! token existed, the entry existed, and no instrument read *that site*.
-//!
-//! So the manifest carries a third column: the test that drives this site and
-//! asserts the token it produced. Where that column is `-`, nothing would
-//! notice if the site started emitting a different valid token. **That is the
-//! census's finding, not its failure** — the number is large, it is recorded
-//! rather than hidden, and it moves only when someone changes it.
+//! **The question the census asks is not "is this site classified".** A site
+//! that carries a valid token, and the wrong one, is classified, its token
+//! exists and its entry exists; only a test that drives *that site* and
+//! asserts *its* token would notice. So `docs/internals/refusal-census.tsv`
+//! records, per site, the test that reads it — keyed on the full token, a
+//! judged state included, so a test that only reaches its axis reads nothing —
+//! and `-` where none does. That file is generated and drift-gated; the unread
+//! rows are the census's finding, and a change to them shows in its diff.
 //!
 //! Structural, under docs/internals/testing.md's license 2 — a prohibition over
-//! an enumerable population.
-//!
-//! **Scope.** Production lines of `src/` (comment lines and `#[cfg(test)]`
-//! items dropped), matched on: a `RefusalKind` mentioned within three lines of
-//! a `refuse!` / `refusal(` / `refusing(`; a judged state named as
-//! `State::<variant>` of the state-to-choices table — the table's own rows
-//! spell `Self::`, so a shared judging helper there is counted at its one
-//! site, as a typed error is — recorded as `<kind> <state>` and read by an
-//! instrument routing to the kind; and `bail!` / `anyhow!` macro invocations.
-//! `src/bin/generate-explain.rs` is excluded — its errors are
-//! developer-facing, not operator-facing.
-//!
-//! **Residue, stated.** A refusal minted through a mechanism outside those
-//! shapes — a new error type printed raw, an `eprintln!` — is invisible here.
-//! Typed `Display` variants reach the terminal without a macro site and are
-//! counted by their attachment in `src/refusal.rs`, not at the `?` that
-//! converts them. The instrument column recognizes one shape of read,
-//! `assert_routes_to`, so a test that drives a site and checks its token some
-//! other way reads as `-` and understates coverage.
+//! an enumerable population. What a site and a read are, and what neither
+//! sees, is stated in `tests/common/refusal_census.rs`.
 
+mod common;
+
+use common::refusal_census::{
+    bare_constructor_on, derive, judged_state_on, sites, tokens_read_in, untokened_class_on, BARE,
+};
 use repoweave::diagnosis::State;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-const MANIFEST: &str = include_str!("fixtures/refusal-census.tsv");
 
 fn member() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-/// Production lines of one file: `(line_number, text)`.
-fn production_lines(body: &str) -> Vec<(usize, &str)> {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].trim_start().starts_with("#[cfg(test)]") {
-            let (mut depth, mut seen) = (0i32, false);
-            i += 1;
-            while i < lines.len() {
-                seen |= lines[i].contains('{');
-                depth +=
-                    lines[i].matches('{').count() as i32 - lines[i].matches('}').count() as i32;
-                if seen && depth <= 0 {
-                    break;
-                }
-                i += 1;
-            }
-            i += 1;
-            continue;
-        }
-        if !lines[i].trim_start().starts_with("//") {
-            out.push((i + 1, lines[i]));
-        }
-        i += 1;
-    }
-    out
+/// Every error rwv mints says at its site which it is: a refusal with a
+/// token, a judged state, or `untokened!` naming why it has neither. A bare
+/// anyhow constructor is a judgment nobody made.
+#[test]
+fn no_error_is_minted_without_its_class() {
+    let bare: Vec<String> = sites(&member())
+        .into_iter()
+        .filter(|(_, _, token)| token == BARE)
+        .map(|(file, line, _)| format!("{file}:{line}"))
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "these sites mint an error with anyhow's own constructor. A refusal rwv makes on \
+         purpose carries a token (`refuse!`) or a judged state; anything else goes through \
+         `crate::untokened!(<Class>, …)`, naming why it has no token:\n{}",
+        bare.join("\n")
+    );
 }
 
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).expect("src/ is readable").flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
+/// The walk reaches each kind of site in the real tree, and the read scan
+/// reaches each kind of read.
+#[test]
+fn the_census_walks_see_the_tree() {
+    let census = derive(&member());
+    let row = |file: &str, token: &str| {
+        census
+            .iter()
+            .find(|((f, t, _), _)| f == file && t == token)
+            .map(|((_, _, instrument), _)| instrument.clone())
+    };
+    assert_eq!(
+        row("src/branch.rs", "target cycle").as_deref(),
+        Some("tests/branch_gate_test.rs"),
+        "a judged site and the test that refuses with its state"
+    );
+    assert_eq!(
+        row("src/add_remove.rs", "no-remote-url").as_deref(),
+        Some("tests/refusal_arrival_test.rs"),
+        "a token site and the test that routes to it"
+    );
+    assert_eq!(
+        row("src/lock.rs", "(untokened:environment-passthrough)").as_deref(),
+        Some("-"),
+        "an untokened site"
+    );
 }
 
-fn kebab(variant: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in variant.char_indices() {
-        if c.is_ascii_uppercase() {
-            if i != 0 {
-                out.push('-');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
+/// A read is keyed on the token a site prints. For a judged state that is
+/// `<axis> <state>`: asserting the axis, or another state of it, reads
+/// nothing.
+#[test]
+fn a_judged_state_is_read_only_through_its_own_state() {
+    let test = "let stderr = common::cli::refused(\n    &out,\n    State::PinNone,\n);\n\
+                assert_routes_to(&stderr, \"pin\");\n\
+                // refused(&out, State::PinAhead)\n\
+                fn refused(out: &Output, expected: impl Into<Refusal>) {}\n\
+                not_refused(&out, State::PinBehind);\n";
+    assert_eq!(tokens_read_in(test), ["pin none", "pin"]);
 }
 
-/// Tokens a test drives a site for and asserts by name.
-fn site_read_tokens() -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let mut files = Vec::new();
-    rust_files(&member().join("tests"), &mut files);
-    files.sort();
-    for file in files {
-        let Ok(body) = std::fs::read_to_string(&file) else {
-            continue;
-        };
-        let rel = file
-            .strip_prefix(member())
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let mut rest = body.as_str();
-        while let Some(at) = rest.find("assert_routes_to(&stderr, \"") {
-            let after = &rest[at + 27..];
-            if let Some(end) = after.find('"') {
-                out.entry(after[..end].to_owned()).or_insert(rel.clone());
-                rest = &after[end..];
-            } else {
-                break;
-            }
-        }
-    }
-    out
+#[test]
+fn a_refusal_quoted_in_a_string_is_not_a_read() {
+    let test = "let fixture = \"refused(&out, State::PinNone)\";\n\
+                let c = '\"'; refused(&out, State::PinAhead);\n";
+    assert_eq!(tokens_read_in(test), ["pin ahead"]);
 }
 
-/// The census as the source says it is: `(file, token-or-disposition,
-/// instrument) -> site count`.
-fn derive() -> BTreeMap<(String, String, String), usize> {
-    let reads = site_read_tokens();
-    let mut files = Vec::new();
-    rust_files(&member().join("src"), &mut files);
-    files.sort();
-
-    let mut out: BTreeMap<(String, String, String), usize> = BTreeMap::new();
-    for file in files {
-        let rel = file
-            .strip_prefix(member())
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if rel.ends_with("generate-explain.rs") {
-            continue;
-        }
-        let body = std::fs::read_to_string(&file).expect("a source file is readable");
-        let lines = production_lines(&body);
-        for (idx, (_, text)) in lines.iter().enumerate() {
-            let window: String = lines[idx.saturating_sub(2)..=idx]
-                .iter()
-                .map(|(_, t)| *t)
-                .collect::<Vec<_>>()
-                .join(" ");
-            if let Some(state) = judged_state_on(text) {
-                let kind = state.axis().token();
-                let instrument = reads.get(&kind).cloned().unwrap_or_else(|| "-".into());
-                let token = format!("{kind} {}", state.name());
-                *out.entry((rel.clone(), token, instrument)).or_default() += 1;
-                continue;
-            }
-            if let Some(variant) = refusal_kind_on(text) {
-                if window.contains("refuse!")
-                    || window.contains("refusal(")
-                    || window.contains("refusing(")
-                {
-                    let token = kebab(&variant);
-                    let instrument = reads.get(&token).cloned().unwrap_or_else(|| "-".into());
-                    *out.entry((rel.clone(), token, instrument)).or_default() += 1;
-                    continue;
-                }
-            }
-            if is_macro_site(text) {
-                *out.entry((rel.clone(), "(untokened)".into(), "-".into()))
-                    .or_default() += 1;
-            }
-        }
-    }
-    out
-}
-
-/// The judged state a production line names as `State::<variant>`, the name
-/// standing alone rather than ending a longer type name.
-fn judged_state_on(text: &str) -> Option<State> {
-    text.match_indices("State::").find_map(|(at, _)| {
-        let standalone = text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-        let rest = &text[at + "State::".len()..];
-        let end = rest
-            .find(|c: char| !c.is_ascii_alphanumeric())
-            .unwrap_or(rest.len());
-        let variant = &rest[..end];
-        standalone
-            .then(|| State::ALL.into_iter().find(|s| format!("{s:?}") == variant))
-            .flatten()
-    })
+#[test]
+fn a_token_is_read_through_refused_or_its_route() {
+    let test = "refused(&out, RefusalKind::NoRemoteUrl);\n\
+                assert_routes_to(&stderr, \"op-in-progress\");\n";
+    assert_eq!(tokens_read_in(test), ["no-remote-url", "op-in-progress"]);
 }
 
 #[test]
@@ -212,133 +110,41 @@ fn a_judged_state_is_read_by_its_own_name_only() {
     assert_eq!(judged_state_on("State::EditsDirtyish"), None);
 }
 
-fn refusal_kind_on(text: &str) -> Option<String> {
-    let at = text.find("RefusalKind::")?;
-    let rest = &text[at + 13..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_alphanumeric())
-        .unwrap_or(rest.len());
-    (end > 0).then(|| rest[..end].to_owned())
-}
-
-fn is_macro_site(text: &str) -> bool {
-    if text.contains("anyhow::bail!(") || text.contains("anyhow::anyhow!(") {
-        return true;
-    }
-    match text.find("bail!(") {
-        Some(0) => true,
-        Some(at) => {
-            let prev = text.as_bytes()[at - 1];
-            !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b':')
-        }
-        None => false,
-    }
-}
-
-/// The manifest, collapsed the same way [`derive`] collapses the source: the
-/// untokened dispositions are the manifest's judgment and are not re-derivable,
-/// so they compare as one bucket per file.
-fn manifest() -> BTreeMap<(String, String, String), usize> {
-    let mut out: BTreeMap<(String, String, String), usize> = BTreeMap::new();
-    for line in MANIFEST.lines().filter(|l| !l.starts_with('#')) {
-        let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() != 4 {
-            continue;
-        }
-        let token = if cols[1].starts_with("(untokened") {
-            "(untokened)".to_owned()
-        } else {
-            cols[1].to_owned()
-        };
-        *out.entry((cols[0].to_owned(), token, cols[2].to_owned()))
-            .or_default() += cols[3].parse::<usize>().expect("a site count");
-    }
-    out
-}
-
 #[test]
-fn the_census_matches_the_source() {
-    let derived = derive();
-    let recorded = manifest();
-
-    let sites: usize = derived.values().sum();
-    assert!(
-        sites >= 180,
-        "the census walk found {sites} sites; it has stopped reading src/"
-    );
-    assert!(
-        derived.len() >= 90,
-        "the census walk found {} distinct rows; it has stopped reading src/",
-        derived.len()
-    );
-
-    let mut drift: Vec<String> = Vec::new();
-    for (key, n) in &derived {
-        match recorded.get(key) {
-            Some(m) if m == n => {}
-            Some(m) => drift.push(format!("{key:?}: source has {n}, manifest has {m}")),
-            None => drift.push(format!(
-                "{key:?}: {n} site(s) in source, absent from manifest"
-            )),
-        }
-    }
-    for key in recorded.keys() {
-        if !derived.contains_key(key) {
-            drift.push(format!("{key:?}: in manifest, no longer in source"));
-        }
-    }
-    assert!(
-        drift.is_empty(),
-        "the refusal census has drifted. Re-classify each site below and update \
-         tests/fixtures/refusal-census.tsv — a new refusal site is not classified \
-         until someone decides what reads it:\n{}",
-        drift.join("\n")
-    );
-}
-
-/// The finding, asserted so it cannot grow quietly.
-///
-/// A site whose instrument column is `-` is one no test drives while checking
-/// the token it emits. The count is deliberately exact: adding a refusal site
-/// without an instrument moves it, and so does adding an instrument.
-#[test]
-fn the_unread_population_is_the_recorded_one() {
-    let derived = derive();
-    let unread: usize = derived
-        .iter()
-        .filter(|((_, token, instrument), _)| token != "(untokened)" && instrument == "-")
-        .map(|(_, n)| *n)
-        .sum();
-    let read: usize = derived
-        .iter()
-        .filter(|((_, token, instrument), _)| token != "(untokened)" && instrument != "-")
-        .map(|(_, n)| *n)
-        .sum();
-
-    assert!(
-        read >= 10,
-        "only {read} tokened sites have an instrument; the read-detection has stopped working"
+fn an_untokened_class_is_read_across_lines() {
+    assert_eq!(
+        untokened_class_on("return Err(crate::untokened!(   InternalInvariant, \"x\"))").as_deref(),
+        Some("internal-invariant")
     );
     assert_eq!(
-        (read, unread),
-        (172, 153),
-        "the read/unread split of tokened refusal sites has moved. Up is good and \
-         down is a regression, but either way the number is a decision: record it."
+        untokened_class_on("crate::untokened!( Owed,").as_deref(),
+        Some("owed")
     );
+    assert_eq!(untokened_class_on("refuse!(RefusalKind::X, \"y\")"), None);
 }
 
-/// Sites nobody has dispositioned yet, held at exactly the known set.
 #[test]
-fn no_new_site_arrives_unclassified() {
-    let unclassified: usize = MANIFEST
-        .lines()
-        .filter(|l| l.contains("UNCLASSIFIED"))
-        .filter_map(|l| l.split('\t').nth(3)?.trim().parse::<usize>().ok())
-        .sum();
-    assert_eq!(
-        unclassified, 4,
-        "the number of refusal sites with no recorded disposition changed. Four are \
-         known and named in tests/fixtures/refusal-census.tsv; a fifth means a site \
-         arrived without anyone deciding what class it is in."
-    );
+fn every_anyhow_constructor_spelling_is_a_bare_site() {
+    for minted in [
+        "anyhow::bail!(\"x\")",
+        "    bail!(",
+        "_ => anyhow::anyhow!(\"x\")",
+        ".ok_or_else(|| anyhow!(\"x\"))",
+        "::anyhow::ensure!(ok, \"x\");",
+        "ensure!(ok, \"x\");",
+        "anyhow::Error::msg(text)",
+        "Err(Error::msg(text))",
+    ] {
+        assert!(bare_constructor_on(minted), "{minted}");
+    }
+    for not_minted in [
+        "crate::untokened!(Tally, \"x\")",
+        "crate::refuse!(RefusalKind::X, \"x\")",
+        "my_bail!(\"x\")",
+        "other::bail!(\"x\")",
+        "io::Error::msg(\"x\")",
+        "anyhow::Error::new(e)",
+    ] {
+        assert!(!bare_constructor_on(not_minted), "{not_minted}");
+    }
 }
