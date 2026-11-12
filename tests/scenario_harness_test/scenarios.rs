@@ -726,7 +726,6 @@ pub fn shared_member_pinned_behind() -> Scenario {
 }
 
 pub fn nested_workweaves() -> Scenario {
-    let w1_root = "../proj--w1";
     scenario(
         "nested workweaves, each on a branch it names",
         vec![
@@ -765,7 +764,7 @@ pub fn nested_workweaves() -> Scenario {
                     rev: "HEAD",
                     mark: "w2-app",
                 }),
-            Step::rwv(&ww("w2"), &["sync", w1_root]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["sync"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w2"), &["sync-to", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w2"))),

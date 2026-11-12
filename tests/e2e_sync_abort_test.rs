@@ -430,7 +430,12 @@ fn sync_to_refuses_when_source_lock_is_stale() {
     drive_lock_behind_head_reversed(&source, &c1);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "ff",
+        ])
         .current_dir(&source.root)
         .assert()
         .failure()
@@ -816,7 +821,12 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
     drive_lock_behind_head_reversed(&source, &c1);
 
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "ff",
+        ])
         .current_dir(&source.root)
         .assert()
         .failure();
@@ -865,7 +875,12 @@ fn lock_freshness_target_error_names_workspace_and_recovery_path() {
     );
 
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "ff",
+        ])
         .current_dir(&source.root)
         .assert()
         .failure();

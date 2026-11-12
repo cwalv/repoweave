@@ -94,7 +94,7 @@ fn commit_in(dir: &Path, file: &str) {
 }
 
 #[test]
-fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_moves_nothing() {
+fn a_sync_of_a_feature_whose_member_branch_another_branch_declares_is_refused_and_moves_nothing() {
     let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
     let project = project_dir(&w.workspace);
     std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
@@ -118,7 +118,7 @@ fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_mov
     let before = common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]);
 
     let out = run(&["sync", "--strategy", "rebase"], &ww);
-    let text = common::cli::refused(&out, repoweave::diagnosis::State::ProtectedDeclared);
+    let text = common::cli::refused(&out, repoweave::diagnosis::State::NameDeclared);
 
     assert!(text.contains("line (projects/p)"), "{text}");
     assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
