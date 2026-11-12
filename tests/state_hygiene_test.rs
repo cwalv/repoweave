@@ -160,7 +160,7 @@ fn rwv_cmd() -> Command {
     cmd
 }
 
-/// Write a `.rwv-op` v2 owner record by hand (sync.rs writes the same shape,
+/// Write a `.rwv-op` v2 owner record by hand (the sync machine writes the same shape,
 /// but we don't want to drive a real sync to produce one).
 fn write_op_state(workspace_dir: &Path, op_id: &str) {
     write_op_state_for_verb(workspace_dir, op_id, "sync");

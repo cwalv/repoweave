@@ -12,7 +12,7 @@
 //!   into a parked state via a target-side collision and recover it via `--continue` /
 //!   `rwv abort`.
 //! - Test 1 uses `rwv sync-to` from two directions to trigger the in-progress check.
-//! - Test 2 uses `rwv sync --strategy rebase` to induce a conflict, then `--continue`.
+//! - Test 2 uses `rwv sync-to --strategy rebase` to induce a conflict, then `--continue`.
 //! - Test 4 uses `rwv sync` with mismatched `--strategy`.
 
 use assert_cmd::Command as AssertCommand;
