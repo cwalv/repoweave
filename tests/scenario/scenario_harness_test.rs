@@ -794,8 +794,22 @@ every_scenario!(
     update_remote_abort_over_a_ref_moved_since,
     update_remote_reset_killed_after_the_move(false),
     update_remote_reset_killed_after_the_move(true),
-    abort_keeps_edits_made_in_the_target_after_the_stop(scenarios::LandedStop::Landed),
-    abort_keeps_edits_made_in_the_target_after_the_stop(scenarios::LandedStop::Retire),
+    abort_keeps_edits_made_in_the_target_after_the_stop(
+        scenarios::LandedStop::Landed,
+        scenarios::AbortFrom::Source
+    ),
+    abort_keeps_edits_made_in_the_target_after_the_stop(
+        scenarios::LandedStop::Retire,
+        scenarios::AbortFrom::Source
+    ),
+    abort_keeps_edits_made_in_the_target_after_the_stop(
+        scenarios::LandedStop::Landed,
+        scenarios::AbortFrom::Target
+    ),
+    abort_keeps_edits_made_in_the_target_after_the_stop(
+        scenarios::LandedStop::Retire,
+        scenarios::AbortFrom::Target
+    ),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
@@ -2638,10 +2652,16 @@ holding_rwv! {
 
 holding_rwv! {
     /// A landing killed after it fast-forwarded the target's checkout: edits
-    /// made there before `rwv abort` resets it are kept as a backup first.
+    /// made there are kept as a backup by an abort run there, and refuse an
+    /// abort run from the source until they are set aside.
     fn abort_keeps_edits_made_in_the_target_after_the_stop() {
         for stop in scenarios::LandedStop::ALL {
-            runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop(stop)).assert_fully_decided_green();
+            for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+                runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop(
+                    stop, from,
+                ))
+                .assert_fully_decided_green();
+            }
         }
     }
 

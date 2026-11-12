@@ -9864,40 +9864,67 @@ impl LandedStop {
 }
 
 /// A landing fast-forwarded `app` in the target's workspace, then was
-/// killed; someone edits `app` there before `rwv abort`, run from the
-/// source, resets it: the edits are kept as a backup first.
-pub fn abort_keeps_edits_made_in_the_target_after_the_stop(stop: LandedStop) -> Scenario {
-    scenario(
-        "abort keeps edits made in the target after the stop",
-        vec![
-            create("w"),
-            Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
-            Step::kill("landing"),
-            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
-                .claim(Claim::OutputLine("w-app")),
-            Step::hand_edit(&a(), Repo::App, "README", "app", "edited in the target"),
-            Step::rwv(&ww("w"), &["abort"])
+/// killed; someone edits `app` there. `rwv abort` run in the target keeps
+/// the edits as a backup, then resets; run from the source, it refuses to
+/// discard edits in a workspace it was not run in, printing the choices,
+/// and once they are set aside there the rerun restores everything.
+pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
+    stop: LandedStop,
+    from: AbortFrom,
+) -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"]).claim(Claim::OutputLine("w-app")),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "edited in the target"),
+    ];
+    match from {
+        AbortFrom::Target => steps.extend([
+            Step::rwv(&a(), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App, Repo::Proj])
                 .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: its uncommitted edits are kept as backup",
+                    "local/remotes/app: its uncommitted edits are kept as backup",
                 )),
-            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
-                .claim(Claim::OutputLacks("w-app")),
             Step::git(
                 &a(),
                 Repo::App,
                 &["log", "--all", "--format=kept %s", "-Sedited in the target"],
             )
             .claim(Claim::OutputContains("kept ")),
-            Step::rwv(&ww("w"), &["land", "--retire"])
+        ]),
+        AbortFrom::Source => steps.extend([
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: holds uncommitted edits",
+                ))
+                .claim(Claim::OutputContains("run `rwv abort` in that workspace")),
+            Step::git(&a(), Repo::App, &["diff", "--name-only"]).claim(Claim::OutputLine("README")),
+            Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::WorkweaveGone(ww("w"))),
-        ],
-    )
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["stash", "list"]).claim(Claim::OutputContains("stash@")),
+        ]),
+    }
+    steps.extend([
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLacks("w-app")),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+    ]);
+    scenario("abort keeps edits made in the target after the stop", steps)
 }
 
 /// A landing fast-forwarded `app` in the target's workspace, then was
@@ -10360,8 +10387,9 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(
 
 /// The target's `lib` aligned onto `lib-next`, which the landing moved as a
 /// ref, and the landing was killed; someone edits a file `lib-next` holds
-/// and `main` lacks. Abort cannot switch the checkout back to `main` over
-/// that edit: it refuses, leaving the checkout where it is.
+/// and `main` lacks. Abort, run from the source, does not discard an edit
+/// in the target's workspace to switch the checkout back to `main`: it
+/// refuses, leaving the checkout where it is.
 fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
     vec![
         create("w"),
@@ -10408,7 +10436,7 @@ fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
             .claim(Claim::OutputContains(
-                "[target] local/remotes/lib: is off where its savepoint",
+                "[target] local/remotes/lib: holds uncommitted edits",
             ))
             .claim(Claim::OnBranch {
                 at: a(),
@@ -10457,18 +10485,27 @@ pub fn abort_refuses_a_switch_back_over_colliding_edits(stop: LandedStop) -> Sce
 }
 
 /// The edits keep abort from switching the checkout back
-/// ([`abort_refused_over_colliding_edits`]); the printed
+/// ([`abort_refused_over_colliding_edits`]); run in the target, abort
+/// refuses with its own choices there, and the printed
 /// `--abandon-foreign-tip` keeps them as a backup, then restores.
 pub fn abort_abandons_colliding_edits_keeping_them(stop: LandedStop) -> Scenario {
     let mut steps = abort_refused_over_colliding_edits(stop);
     steps.extend([
-        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&a(), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Proj, Repo::Lib])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: is off where its savepoint",
+            )),
+        Step::rwv_printed(&a(), "rwv abort --abandon-foreign-tip")
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj, Repo::Lib])
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
             .claim(Claim::OutputContains(
-                "[target] local/remotes/lib: its uncommitted edits are kept as backup",
+                "local/remotes/lib: its uncommitted edits are kept as backup",
             ))
             .claim(Claim::OnBranch {
                 at: a(),

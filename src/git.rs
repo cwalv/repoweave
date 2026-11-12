@@ -5193,9 +5193,14 @@ impl GitVcs {
         key: &SavepointKey,
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
+        edits_here: bool,
         kept: &mut Vec<KeptWork>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        self.keep_before_discarding(repo, savepoint, kept)?;
+        if !self.keep_before_discarding(repo, savepoint, edits_here, kept)? {
+            return Ok(VerifiedRestoreOutcome::EditsElsewhere {
+                savepoint: savepoint.id().clone(),
+            });
+        }
         Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
         self.drop_checkout_savepoint(repo, key)?;
         Ok(outcome)
@@ -5205,15 +5210,21 @@ impl GitVcs {
     /// edits as a backup where the move would discard any (a tracked change,
     /// or an untracked or ignored file or directory where `to` has a path),
     /// the ignored ones it would discard included, once per restore, and the
-    /// commits a detached HEAD holds that no branch reaches.
+    /// commits a detached HEAD holds that no branch reaches. `false`, with
+    /// nothing kept, where the move would discard edits and they are not
+    /// `edits_here`, in the workspace abort was run in.
     fn keep_before_discarding(
         &self,
         repo: &Path,
         to: &ResolvedRevisionId,
+        edits_here: bool,
         kept: &mut Vec<KeptWork>,
-    ) -> Result<(), VcsError> {
+    ) -> Result<bool, VcsError> {
         if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
             if let Some(ignored) = Self::hard_move_discards(repo, to)? {
+                if !edits_here {
+                    return Ok(false);
+                }
                 if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
                     let source = self.head_backup_source(repo)?;
                     kept.push(KeptWork::Edits(
@@ -5225,7 +5236,7 @@ impl GitVcs {
         if let Some(commits) = self.backup_unpreserved_head(repo)? {
             kept.push(KeptWork::Commits(commits));
         }
-        Ok(())
+        Ok(true)
     }
 
     /// End an operation whose own abort the VCS refused, under the
@@ -5235,10 +5246,13 @@ impl GitVcs {
         &self,
         repo: &Path,
         to: &ResolvedRevisionId,
+        edits_here: bool,
         kept: &mut Vec<KeptWork>,
-    ) -> Result<(), VcsError> {
-        self.keep_before_discarding(repo, to, kept)?;
-        Self::run(["reset", "--hard", to.id().as_str()], repo).map(|_| ())
+    ) -> Result<bool, VcsError> {
+        if !self.keep_before_discarding(repo, to, edits_here, kept)? {
+            return Ok(false);
+        }
+        Self::run(["reset", "--hard", to.id().as_str()], repo).map(|_| true)
     }
 
     /// Cancel the operation `stopped` in `repo` as its own abort does,
@@ -5461,7 +5475,11 @@ impl GitVcs {
                     Some(to) => to,
                     None => self.head_revision(repo)?,
                 };
-                self.keep_before_discarding(repo, &to, kept)?;
+                if !self.keep_before_discarding(repo, &to, attribution.edits_here, kept)? {
+                    return Ok(VerifiedRestoreOutcome::EditsElsewhere {
+                        savepoint: savepoint.id().clone(),
+                    });
+                }
             }
             if let Err(refused) = self.cancel_stopped(repo, stopped) {
                 let why = match refused {
@@ -5475,7 +5493,11 @@ impl GitVcs {
                     Some(to) => to,
                     None => self.head_revision(repo)?,
                 };
-                self.finish_refused_cancel(repo, &to, kept)?;
+                if !self.finish_refused_cancel(repo, &to, attribution.edits_here, kept)? {
+                    return Ok(VerifiedRestoreOutcome::EditsElsewhere {
+                        savepoint: savepoint.id().clone(),
+                    });
+                }
                 if self.mid_op(repo).is_some() {
                     return Ok(VerifiedRestoreOutcome::CancelRefused { stopped, why });
                 }
@@ -5547,6 +5569,11 @@ impl GitVcs {
                 if self.snapshot_edits(repo)?.is_none() {
                     return Err(refused);
                 }
+                if !attribution.edits_here {
+                    return Ok(VerifiedRestoreOutcome::EditsElsewhere {
+                        savepoint: savepoint.id().clone(),
+                    });
+                }
                 if foreign_tip_policy == ForeignTipPolicy::Refuse {
                     return Ok(VerifiedRestoreOutcome::EditsBlockSwitchBack {
                         savepoint: savepoint.id().clone(),
@@ -5574,6 +5601,7 @@ impl GitVcs {
                 key,
                 &savepoint,
                 VerifiedRestoreOutcome::RestoredFromIntent,
+                attribution.edits_here,
                 kept,
             );
         }
@@ -5584,6 +5612,7 @@ impl GitVcs {
                 key,
                 &savepoint,
                 VerifiedRestoreOutcome::RestoredFromConverged,
+                attribution.edits_here,
                 kept,
             );
         }
@@ -5600,6 +5629,7 @@ impl GitVcs {
                     savepoint: savepoint.id().clone(),
                     backup,
                 },
+                attribution.edits_here,
                 kept,
             );
         }

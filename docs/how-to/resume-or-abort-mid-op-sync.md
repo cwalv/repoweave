@@ -36,7 +36,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 
 A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
 
-Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Uncommitted edits made during the stop are kept: before any reset that would discard them, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Canceling the operation's own stopped rebase or merge is the one step it takes as the VCS's own abort would. A refusal moves and writes nothing.
+Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Uncommitted edits made during the stop are kept: before any reset that would discard them in the workspace you run it in, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. Canceling the operation's own stopped rebase or merge is the one step it takes as the VCS's own abort would. A refusal moves and writes nothing.
 
 ### Handling a `foreign-tip` refusal
 

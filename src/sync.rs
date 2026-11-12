@@ -8465,6 +8465,7 @@ fn restore_abort_workspace(
                 AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),
                 AbortSide::LandTarget => &[],
             },
+            edits_here: label.is_empty(),
         };
         match abort_one_repo(vcs.as_ref(), &abs, &restore_key, &attribution, consented) {
             Ok(outcome) => report_abort_outcome(
@@ -8546,6 +8547,7 @@ fn restore_in_place(
                 started_from: None,
                 integrates: Integrates::No,
                 own_steps: &[],
+                edits_here: false,
             };
             match abort_one_repo(
                 vcs.as_ref(),
@@ -9089,6 +9091,25 @@ fn report_abort_outcome(
                      or give them up, kept as a backup first:\n\
                      \trwv abort --abandon-foreign-tip {named}",
                     vcs.hint(crate::vcs::VcsAction::Status)
+                        .replace("<checkout>", &dir)
+                ),
+            ));
+        }
+        VerifiedRestoreOutcome::EditsElsewhere { savepoint } => {
+            tally.any_foreign = true;
+            let dir = repo_abs.display().to_string();
+            eprintln!(
+                "  {label}: holds uncommitted edits, which restoring it to its savepoint {} \
+                 would discard, in a workspace abort was not run in; it is left as it is",
+                savepoint.short()
+            );
+            tally.blocked.push((
+                named.clone(),
+                format!(
+                    "commit or set aside its edits there, as this shows:\n\t{}\n\
+                     then rerun:\n\trwv abort\n\
+                     or run `rwv abort` in that workspace, which keeps them as a backup first",
+                    vcs.hint(crate::vcs::VcsAction::Stash)
                         .replace("<checkout>", &dir)
                 ),
             ));

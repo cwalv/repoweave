@@ -468,8 +468,12 @@ classification of the rest:
 
 Every hard move this table makes, a reset or a cancel not the op's own,
 first keeps the uncommitted edits it would discard (a tracked change, or an
-untracked file at a path the destination tracks) as a backup
-(`Vcs::backup_edits`), and the outcome is wrapped in `Kept` naming it.
+untracked or ignored file or directory where the destination has a path, in
+either direction) as a backup, and the outcome is wrapped in `Kept` naming
+it. That holds in the workspace abort was run in (`Attribution.edits_here`);
+in the other workspace of a landing the move is refused instead as
+`EditsElsewhere`, nothing touched, with the stash command and the rerun as
+its choices.
 
 **`advanced_tips` — the advancement-intent journal.** The `advanced_tips`
 owner-record map closes the mid-replay attribution gap. It is written during

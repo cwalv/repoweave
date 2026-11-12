@@ -115,13 +115,14 @@ operation id, and `rwv abort` knows how to roll back to it. A savepoint
 lasts one operation: abort restores a repo only over tips the operation
 itself made, so what it throws away is the operation's own output.
 
-**Backups** cover a discard the operator consents to. A backup is a ref
+**Backups** cover a discard the operator consents to, and the edits
+`rwv abort` discards in the workspace it is run in. A backup is a ref
 an rwv verb makes before any step that would leave a commit or an
 uncommitted edit unpreserved — reached by no branch, no remote-tracking
 branch and no other backup. It lives under `refs/rwv/backup/<branch>/<id>`
 (`<branch>` is `HEAD` for a detached HEAD), outside every namespace a
 user ref lives in, and `rwv backup list` shows it with the commits only
-it holds. Three discards make one first:
+it holds. These discards make one first:
 
 - `rwv workweave delete --discard-unlanded` and `rwv branch delete
   --discard-unlanded` keep each branch tip they delete that has not landed,
@@ -130,7 +131,12 @@ it holds. Three discards make one first:
   checkout as a commit on its HEAD (untracked files included, ignored
   ones not), then the backup ref;
 - `rwv abort --abandon-foreign-tip <repo>` keeps the foreign tip, marked
-  `abandoned`.
+  `abandoned`;
+- `rwv abort`, before a reset or a cancel that is not the operation's own
+  stopped step, keeps the uncommitted edits it would discard in a checkout
+  of the workspace it is run in, an ignored file it would overwrite
+  included. In another workspace's checkout it refuses instead, naming the
+  command that sets them aside there.
 
 The backup is written first and the delete or the reset runs only once it
 exists: a backup that cannot be written stops the verb with nothing

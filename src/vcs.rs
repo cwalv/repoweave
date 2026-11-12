@@ -1046,6 +1046,10 @@ pub struct Attribution<'a> {
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],
+    /// Whether the checkout is in the workspace abort was run in, where its
+    /// uncommitted edits are kept as a backup before a move discards them;
+    /// elsewhere they refuse the move.
+    pub edits_here: bool,
 }
 
 impl Attribution<'_> {
@@ -1104,6 +1108,9 @@ pub enum VerifiedRestoreOutcome {
     /// VCS refused to cancel it, saying `why`. Its edits, where any were kept
     /// first, are in the backup the restore reports.
     CancelRefused { stopped: ConflictOp, why: String },
+    /// The restore would discard uncommitted edits in a checkout of another
+    /// workspace than the one abort was run in. Nothing was touched.
+    EditsElsewhere { savepoint: CommitId },
     StoppedForeign {
         stopped: ConflictOp,
         /// Where canceling the operation would leave HEAD.
