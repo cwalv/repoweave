@@ -1614,13 +1614,13 @@ fn an_edit_beside_drift_left_in_place_is_offered_no_commit() {
 #[test]
 fn a_worktree_with_no_index_is_not_refreshed() {
     let f = fixture();
+    f.move_from_elsewhere("ww/project", "new.txt", "new\n");
     let common_dir = common::git_in(
         &f.ww_lib,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     );
     std::fs::create_dir_all(Path::new(&common_dir).join("info")).unwrap();
     std::fs::write(Path::new(&common_dir).join("info/exclude"), "*.md\n*.txt\n").unwrap();
-    f.move_from_elsewhere("ww/project", "new.txt", "new\n");
     let index = common::git_in(
         &f.ww_lib,
         &["rev-parse", "--path-format=absolute", "--git-path", "index"],
