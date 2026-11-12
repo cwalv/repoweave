@@ -15140,7 +15140,6 @@ pub fn stack_carried() -> Scenario {
     steps.extend([
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::Contains {
                 at: ww("w1"),
@@ -15267,7 +15266,6 @@ pub fn stack_two_dependents() -> Scenario {
     steps.push(
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::OutputContains("carried 'w3' along"))
             .claim(w2_on_main)
@@ -15335,7 +15333,6 @@ pub fn stack_transitive() -> Scenario {
             )),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputInOrder(&[
                 "carried 'w2' along",
                 "carried 'w3' along",
@@ -15440,7 +15437,6 @@ pub fn stack_checked_out(choice: CheckedOutChoice) -> Scenario {
     steps.push(
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputLacks("carried"))
             .claim(Claim::Contains {
                 at: ww("w1"),
@@ -15487,9 +15483,7 @@ pub fn stack_not_containing() -> Scenario {
             .claim(Claim::OutputContains("rwv sync"))
             .claim(Claim::LocalStateUnchanged(ww("w1")))
             .claim(Claim::LocalStateUnchanged(ww("w2"))),
-        Step::rwv_printed_exactly(&ww("w2"), "rwv sync")
-            .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::rwv_printed_exactly(&ww("w2"), "rwv sync").expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
             .claim(Claim::JudgedOnly(
@@ -15520,7 +15514,6 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
                 "carrying 'w2' along in local/remotes/app",
             ))
@@ -15536,7 +15529,7 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
             Step::git(&ww("w1"), Repo::App, &["add", "README"]),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App, Repo::Proj])
+                .may_strand(&[Repo::App])
                 .may_rewind(&[Repo::App])
                 .claim(Claim::OutputContains("carried 'w2' along"))
                 .claim(Claim::OnBranch {
@@ -15561,7 +15554,6 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
         AfterHandContinue::Abort => steps.extend([
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App])
                 .claim(Claim::OutputLacks("foreign"))
                 .claim(Claim::OnBranch {
@@ -15617,7 +15609,6 @@ pub fn a_carry_stopped_in_the_project_continues() -> Scenario {
     steps.extend([
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carrying 'w2' along"))
             .claim(Claim::OutputContains("rwv sync --continue")),
         Step::git(
@@ -15685,7 +15676,6 @@ pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
     steps.extend([
         Step::rwv(&ww("w1"), &["land"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carrying 'w2' along"))
             .claim(Claim::OutputContains("rwv land --continue")),
         Step::git(
@@ -15850,7 +15840,6 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), &[verb])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
                 "carrying 'w2' along in local/remotes/app",
             )),
@@ -15987,8 +15976,7 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
     steps.extend([
-        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
-            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
         Step::kill("landing"),
         Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("more.txt", "more\n")]),
         Step::rwv(&ww("w1"), &["abort"])
@@ -16070,8 +16058,7 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
     steps.extend([
-        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
-            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
         Step::kill("landing"),
     ]);
     let (block, needs, clear) = match blocked {
@@ -16220,7 +16207,6 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
                 "carrying 'w2' along in local/remotes/app",
             )),
@@ -16235,7 +16221,6 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
             .claim(Claim::LocalStateUnchanged(ww("w3"))),
         Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputLacks("foreign")),
         Step::rwv(&ww("w3"), &["land"])
@@ -16274,7 +16259,6 @@ pub fn stack_at_the_tip_under_update_refs() -> Scenario {
     steps.push(
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::Contains {
                 at: ww("w1"),
@@ -16371,7 +16355,6 @@ pub fn git_below_2_38() -> Scenario {
     steps.extend([
         Step::rwv(&ww("w1"), &["land"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::Contains {
                 at: ww("w1"),
@@ -16410,8 +16393,7 @@ pub fn a_landing_killed_after_its_carry_continues() -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
     steps.extend([
-        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
-            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
         Step::kill("landing"),
         Step::rwv(&ww("w1"), &["land", "--continue"])
             .expect(Exit::Succeeds)
@@ -16441,7 +16423,6 @@ pub fn stack_carried_by_a_landing() -> Scenario {
     steps.push(
         Step::rwv(&ww("w1"), &["land"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::Contains {
                 at: ww("w1"),
@@ -16605,7 +16586,6 @@ pub fn stack_remote_dependent() -> Scenario {
         Step::rwv_printed(&ww("w1"), "rwv branch set-mode w2 ").expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputLacks("carried")),
     ]);
     scenario("stack: a dependent published from another machine", steps)
