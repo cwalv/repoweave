@@ -311,19 +311,29 @@ fn walk_ref_moves(
 ) -> Vec<RefMoveLeft> {
     let vcs = crate::vcs::probe_vcs();
     let mut left = Vec::new();
-    for moved in moves.iter().rev() {
+    let mut put_back: std::collections::BTreeMap<(PathBuf, String), CommitId> =
+        std::collections::BTreeMap::new();
+    for (at, moved) in moves.iter().enumerate().rev() {
         let dir = match (&moved.repo, project_dir) {
             (RepoKey::Member(path), _) => workspace.join(path.as_path()),
             (RepoKey::Project, Some(dir)) => dir.to_path_buf(),
             (RepoKey::Project, None) => continue,
         };
         let branch = RawRefName::new(moved.branch.clone());
-        let now = vcs
-            .resolve_local_branch_tip(&dir, &branch)
-            .ok()
-            .flatten()
-            .map(|now| now.id().clone());
-        if now.as_ref() == Some(&moved.from) {
+        let key = (dir.clone(), moved.branch.clone());
+        let now = match put_back.get(&key) {
+            Some(tip) => Some(tip.clone()),
+            None => vcs
+                .resolve_local_branch_tip(&dir, &branch)
+                .ok()
+                .flatten()
+                .map(|now| now.id().clone()),
+        };
+        let back_before = moves[..=at]
+            .iter()
+            .filter(|m| m.repo == moved.repo && m.branch == moved.branch)
+            .any(|m| now.as_ref() == Some(&m.from));
+        if back_before {
             continue;
         }
         let held_at = vcs.checkouts_of_branch(&dir, &branch).unwrap_or_default();
@@ -342,7 +352,9 @@ fn walk_ref_moves(
             let restorable = now
                 .as_ref()
                 .is_some_and(|now| *now == moved.to || abandon(&moved.repo));
-            if !restorable {
+            if restorable {
+                put_back.insert(key, moved.from.clone());
+            } else {
                 left.push(RefMoveLeft::Foreign {
                     repo: moved.repo.clone(),
                     branch: moved.branch.clone(),
@@ -449,5 +461,23 @@ mod tests {
         let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved), &|_| false);
         assert!(matches!(left[..], [RefMoveLeft::Foreign { .. }]));
         assert_eq!(git(&dir, &["rev-parse", "main"]), later.as_str());
+    }
+
+    #[test]
+    fn a_branch_the_op_moved_twice_is_judged_as_its_restore_walks_it() {
+        let (tmp, first, dir) = member_with_a_moved_branch();
+        git(&dir, &["checkout", "-q", "main"]);
+        let later = commit(&dir, "three");
+        git(&dir, &["checkout", "-q", "--detach"]);
+        let second = RefMove {
+            from: first.to.clone(),
+            to: later,
+            ..first.clone()
+        };
+        let moves = [first.clone(), second];
+        assert!(judge_ref_moves(tmp.path(), None, &moves, &|_| false).is_empty());
+        assert!(restore_ref_moves(tmp.path(), None, &moves, &|_| false).is_empty());
+        assert_eq!(git(&dir, &["rev-parse", "main"]), first.from.as_str());
+        assert!(judge_ref_moves(tmp.path(), None, &moves, &|_| false).is_empty());
     }
 }

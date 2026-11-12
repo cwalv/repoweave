@@ -8556,6 +8556,7 @@ fn abort_op(
     let plan = plan.target_project_first();
     let mut tally = AbortTally::default();
     execute_abort_plan(plan, abandon, &mut tally);
+    crate::test_pause::point("abort-executed");
 
     if tally.clean() {
         for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
@@ -9831,7 +9832,7 @@ fn judge_carried(record: &op_state::OwnerRecord, source: &CanonicalPath) -> Vec<
         .iter()
         .filter_map(|carry| {
             let to = carry.composed.as_ref()?;
-            take_in
+            let moved = take_in
                 .ref_moves
                 .iter()
                 .find(|m| m.repo == carry.repo && m.branch == carry.branch && &m.to == to)?;
@@ -9845,6 +9846,9 @@ fn judge_carried(record: &op_state::OwnerRecord, source: &CanonicalPath) -> Vec<
                 .ok()
                 .flatten()
                 .map(|tip| tip.id().clone());
+            if now.as_ref() == Some(&moved.from) {
+                return None;
+            }
             let held_at: Vec<PathBuf> = vcs
                 .checkouts_of_branch(&dir, &branch)
                 .unwrap_or_default()
@@ -10394,7 +10398,11 @@ fn execute_abort_plan(
 ) {
     let mut in_place_before = None;
     for step in plan.steps {
+        let carried = matches!(step, AbortStep::Carried { .. });
         run_step(step, abandon, tally, &mut in_place_before, true);
+        if carried {
+            crate::test_pause::point("abort-carried");
+        }
     }
 }
 

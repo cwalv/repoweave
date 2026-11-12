@@ -783,6 +783,7 @@ every_scenario!(
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOut),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::Gone),
+    abort_a_carried_stack_killed_after_putting_it_back,
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgain),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::AbortThenSync),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgainLanding),
@@ -881,6 +882,10 @@ every_scenario!(
         scenarios::ReceivingCase::CreatedWithoutWork,
         scenarios::AbortFrom::Target
     ),
+    abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::Followed),
+    abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::MovedAsRef),
+    abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::Created),
+    abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::CreatedWithoutWork),
     cherry_pick_abort_leaves_an_untouched_members_merge,
     pull_abort_refuses_a_merge_begun_on_the_operators_commit,
     pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint,
@@ -2942,6 +2947,23 @@ holding_rwv! {
                 runner::run(scenarios::abort_after_the_target_aligned(case, from))
                     .assert_fully_decided_green();
             }
+        }
+    }
+}
+
+holding_rwv! {
+    /// An abort killed once it has restored everything and before it ends
+    /// the landing: the rerun finds each repo and branch already back, so
+    /// nothing is in its way, and it ends the operation.
+    fn an_abort_killed_after_restoring_a_landing_is_rerun() {
+        for case in [
+            scenarios::ReceivingCase::Followed,
+            scenarios::ReceivingCase::MovedAsRef,
+            scenarios::ReceivingCase::Created,
+            scenarios::ReceivingCase::CreatedWithoutWork,
+        ] {
+            runner::run(scenarios::abort_after_the_target_aligned_rerun_after_a_kill(case))
+            .assert_fully_decided_green();
         }
     }
 }
@@ -5310,6 +5332,12 @@ fn an_abort_of_a_carried_stack_whose_dependent_is_gone_refuses_whole() {
         scenarios::CarriedBlocked::Gone,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_killed_after_putting_a_carried_stack_back_is_rerun() {
+    runner::run(scenarios::abort_a_carried_stack_killed_after_putting_it_back())
+        .assert_fully_decided_green();
 }
 
 #[test]

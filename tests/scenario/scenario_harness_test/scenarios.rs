@@ -11368,6 +11368,17 @@ pub enum AbortFrom {
 /// `lib-next` is put back where it was (or deleted, where the landing created
 /// it) and never reset to `main`'s pin, and no commit is left on no ref.
 pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> Scenario {
+    target_aligned_then_abort(case, from, false)
+}
+
+/// `abort_after_the_target_aligned` from the source, where a first abort is
+/// killed once it has restored everything and before it ends the landing:
+/// the rerun finds nothing in its way and ends it.
+pub fn abort_after_the_target_aligned_rerun_after_a_kill(case: ReceivingCase) -> Scenario {
+    target_aligned_then_abort(case, AbortFrom::Source, true)
+}
+
+fn target_aligned_then_abort(case: ReceivingCase, from: AbortFrom, killed: bool) -> Scenario {
     let mut steps = vec![create("w")];
     let created = matches!(
         case,
@@ -11426,6 +11437,14 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
             &[Repo::Proj, Repo::Lib]
         }
     };
+    if killed {
+        steps.extend([
+            Step::rwv_paused(&aborts_in, &["abort"], "abort-executed", "aborting")
+                .may_rewind(&[Repo::Lib])
+                .may_restore(restored),
+            Step::kill("aborting"),
+        ]);
+    }
     steps.push(
         Step::rwv(&aborts_in, &["abort"])
             .expect(Exit::Succeeds)
@@ -11439,7 +11458,8 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
             .claim(Claim::AtPin {
                 at: a(),
                 repo: Repo::Lib,
-            }),
+            })
+            .claim(Claim::OutputLacks("foreign")),
     );
     match case {
         ReceivingCase::Followed | ReceivingCase::MovedAsRef => steps.extend([
@@ -16660,6 +16680,39 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
     ]);
     scenario(
         "stack: an abort meets a carried dependent it cannot move",
+        steps,
+    )
+}
+
+/// `stack-carried-by-a-landing` killed after its carry moved `w2`, then an
+/// abort killed once it has put `w2` back: the rerun finds nothing in the
+/// way and ends the operation.
+pub fn abort_a_carried_stack_killed_after_putting_it_back() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::rwv_paused(&ww("w1"), &["abort"], "abort-carried", "aborting")
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj]),
+        Step::kill("aborting"),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("foreign"))
+            .claim(Claim::OutputLacks("--abandon-foreign-tip")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::rwv(&ww("w1"), &["status"]).expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: an abort killed after it put a carried stack back is rerun",
         steps,
     )
 }
