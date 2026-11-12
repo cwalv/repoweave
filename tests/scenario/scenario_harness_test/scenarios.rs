@@ -11807,6 +11807,45 @@ pub fn abort_after_another_landing_built_on_the_target(
     scenario("abort after another landing built on the target", steps)
 }
 
+/// A landing stopped in its retire, and an abort that begins and then finds
+/// the target's project branch moved under its first write: it stops there,
+/// no member is reset beneath the lock that pins it, and the printed
+/// `--leave-target` ends the landing.
+pub fn abort_stops_at_the_first_write_that_fails() -> Scenario {
+    scenario(
+        "abort stops at the first write that does not do what its plan named",
+        vec![
+            create("w1"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv_paused(&ww("w1"), &["abort"], "abort-begun", "aborting"),
+            Step::hand_commit(&a(), Repo::Proj, "main", &[("late.txt", "late\n")]),
+            Step::release("aborting")
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::LocalStateUnchanged(ww("w1"))),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w1-app")),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("rwv abort --leave-target"))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w1"))),
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w1-app")),
+        ],
+    )
+}
+
 /// `docs`, which `main` lacks, enters it with a landing on `docs-next`,
 /// which the landing creates and aligns `main`'s checkout of `docs` onto;
 /// the landing stops in its retire and nothing else happens. Abort puts

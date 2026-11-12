@@ -8621,6 +8621,7 @@ fn abort_op(
         op_state::mark_abort_begun(owner_workspace.as_path())
             .context("could not record that abort began")?;
     }
+    crate::test_pause::point("abort-begun");
     let plan = plan.target_project_first();
     let mut tally = AbortTally::default();
     execute_abort_plan(plan, abandon, &mut tally);
@@ -10463,16 +10464,28 @@ fn plan_landing_refs(
 }
 
 /// Do what `plan` says, in its order, each write checked against the state
-/// the plan found, and report each outcome into `tally`.
+/// the plan found, and report each outcome into `tally`. The first step
+/// that does not do what the plan named stops it: nothing after it runs,
+/// and what ran before it is a state a rerun reads as done.
 fn execute_abort_plan(
     plan: AbortPlan,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
     let mut in_place_before = None;
-    for step in plan.steps {
+    let mut steps = plan.steps.into_iter();
+    while let Some(step) = steps.next() {
         let carried = matches!(step, AbortStep::Carried { .. });
         run_step(step, abandon, tally, &mut in_place_before, true);
+        if !tally.clean() {
+            if steps.next().is_some() {
+                eprintln!(
+                    "\nabort stopped there: nothing after it was done, and what was restored \
+                     before it stays restored"
+                );
+            }
+            return;
+        }
         if carried {
             crate::test_pause::point("abort-carried");
         }

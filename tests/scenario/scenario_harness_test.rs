@@ -853,6 +853,7 @@ every_scenario!(
     rebased_backup_after_abort_offers_no_republish,
     rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
+    abort_stops_at_the_first_write_that_fails,
     abort_after_the_target_aligned(
         scenarios::ReceivingCase::Followed,
         scenarios::AbortFrom::Source
@@ -2954,6 +2955,12 @@ holding_rwv! {
             }
         }
     }
+}
+
+#[test]
+fn an_abort_stops_at_the_first_write_that_fails() {
+    runner::run(scenarios::abort_stops_at_the_first_write_that_fails())
+        .assert_fully_decided_green();
 }
 
 holding_rwv! {
