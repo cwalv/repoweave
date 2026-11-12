@@ -574,6 +574,11 @@ pub struct SyncJsonOutput {
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
     pub advisories: Vec<AdvisoryOutput>,
+    /// Each range the sync integrated by a merge commit rather than flatten,
+    /// and each branch a rebase rewrote with the backup holding the tip it
+    /// left. Empty, not absent, when it made none; a resumed op reports the
+    /// ones its earlier runs made as well.
+    pub reports: Vec<LandingReportOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -806,7 +811,7 @@ pub struct PinTakenInOutput {
 }
 
 impl LandingReportOutput {
-    fn of(report: &op_state::LandingReport) -> Self {
+    pub(crate) fn of(report: &op_state::LandingReport) -> Self {
         match report {
             op_state::LandingReport::Created { repo, branch, at } => Self::Created {
                 path: repo.to_string(),

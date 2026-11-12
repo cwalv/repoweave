@@ -1027,6 +1027,7 @@ every_scenario!(
     no_empty_merge,
     sync_refuses_off_lineage,
     sync_never_rebases_a_merge,
+    sync_json_reports_what_it_merged_and_rebased,
     sync_refuses_to_rewrite_under_dependents,
     sync_judges_a_diverged_push_branch(true),
     sync_judges_a_diverged_push_branch(false),
@@ -4261,6 +4262,12 @@ fn sync_from_merges_only_members_lacking_the_pin() {
 #[test]
 fn sync_refuses_work_built_on_another_lineage_before_anything_moves() {
     runner::run(scenarios::sync_refuses_off_lineage()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_json_reports_a_merged_range_and_a_rebased_branch() {
+    runner::run(scenarios::sync_json_reports_what_it_merged_and_rebased())
+        .assert_fully_decided_green();
 }
 
 #[test]

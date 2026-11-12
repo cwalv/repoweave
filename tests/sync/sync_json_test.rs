@@ -815,6 +815,7 @@ fn sync_json_envelope_round_trips() {
         complete: true,
         refused: Vec::new(),
         advisories: Vec::new(),
+        reports: Vec::new(),
         resolution: None,
     };
     let v = serde_json::to_value(&envelope).unwrap();

@@ -155,6 +155,42 @@ struct Reported {
     members: Vec<crate::sync::MemberOutput>,
     placements: Vec<crate::placement::PlacementOutput>,
     advisories: Vec<crate::workspace::AdvisoryOutput>,
+    reports: Vec<crate::op_state::LandingReport>,
+}
+
+/// Journal `report` in the op record and keep it for the run's report; the
+/// text line is said only the first time the record takes it.
+fn report_integration(
+    output: OutputMode,
+    workspace: &Path,
+    reported: &mut Reported,
+    report: crate::op_state::LandingReport,
+    line: Option<String>,
+) -> anyhow::Result<()> {
+    if crate::op_state::journal_report(workspace, &report)? {
+        if let Some(line) = line {
+            say(output, &line);
+        }
+        reported.reports.push(report);
+    }
+    Ok(())
+}
+
+fn replay_reports(output: OutputMode, reported: &mut Reported, take_in: &TakeInRecord) {
+    for report in &take_in.reports {
+        let line = match report {
+            crate::op_state::LandingReport::Merged { repo, merge } => {
+                crate::set_history::merged_line(repo, merge)
+            }
+            crate::op_state::LandingReport::Rebased { repo, was, backup } => format!(
+                "{repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
+                was.short()
+            ),
+            _ => continue,
+        };
+        say(output, &line);
+        reported.reports.push(report.clone());
+    }
 }
 
 pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow::Result<()> {
@@ -164,6 +200,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
         members,
         placements,
         advisories,
+        reports,
     } = reported;
     if output.is_json() {
         let envelope = crate::sync::SyncJsonOutput {
@@ -178,6 +215,10 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
                 .map(crate::diagnosis::refused_output)
                 .unwrap_or_default(),
             advisories,
+            reports: reports
+                .iter()
+                .map(crate::sync::LandingReportOutput::of)
+                .collect(),
             resolution: Some(ctx.resolution()),
         };
         outln!(
@@ -239,6 +280,7 @@ fn take(
                 history: owner.history,
                 jobs: 1,
             };
+            replay_reports(output, reported, &take_in);
             act(&sync, &op, &take_in, output, reported)
         }
     }
@@ -389,12 +431,30 @@ fn fresh(
         crate::op_state::write_owner(&op.workspace, &owner)?;
     }
     if let Some(merge) = &planned.merged {
-        say(
+        report_integration(
             output,
-            &crate::set_history::merged_line(&sync.label(), merge),
-        );
+            &op.workspace,
+            reported,
+            crate::op_state::LandingReport::Merged {
+                repo: RepoKey::Project,
+                merge: merge.clone(),
+            },
+            Some(crate::set_history::merged_line(&sync.label(), merge)),
+        )?;
     }
     for member in &planned.members {
+        if let Some(merge) = &member.merged {
+            report_integration(
+                output,
+                &op.workspace,
+                reported,
+                crate::op_state::LandingReport::Merged {
+                    repo: RepoKey::Member(member.path.clone()),
+                    merge: merge.clone(),
+                },
+                Some(crate::set_history::merged_line(&member.path, merge)),
+            )?;
+        }
         for line in member.report_lines() {
             say(output, &line);
         }
@@ -416,9 +476,6 @@ impl Member {
 
     fn report_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        if let Some(merge) = &self.merged {
-            lines.push(crate::set_history::merged_line(&self.path, merge));
-        }
         if !self.beyond_pin.is_empty() {
             lines.push(format!(
                 "{}: the branch it lands on holds {} commit(s) beyond the target's pin, which the \
@@ -1387,6 +1444,7 @@ fn act(
             reset,
             how,
             output,
+            reported,
         )?;
         let before = vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone());
         if before.as_ref() != Some(&tip) || reset {
@@ -1414,10 +1472,16 @@ fn act(
                 let (now, merged) =
                     integration_now(sync, op, None, &sync.dir, vcs, &head, &source)?;
                 if let Some(merge) = merged {
-                    say(
+                    report_integration(
                         output,
-                        &crate::set_history::merged_line(&sync.label(), &merge),
-                    );
+                        &op.workspace,
+                        reported,
+                        crate::op_state::LandingReport::Merged {
+                            repo: RepoKey::Project,
+                            merge: merge.clone(),
+                        },
+                        Some(crate::set_history::merged_line(&sync.label(), &merge)),
+                    )?;
                 }
                 now == Integration::Merge
             });
@@ -1455,7 +1519,7 @@ fn act(
         }
     } else {
         set_aside_authored(sync, &pre_manifest)?;
-        take_project(sync, &head, &source, resets_project, output)?;
+        take_project(sync, &head, &source, resets_project, output, reported)?;
         remap(sync, op, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }
@@ -1549,6 +1613,7 @@ fn take_member(
     reset: bool,
     how: Integration,
     output: OutputMode,
+    reported: &mut Reported,
 ) -> anyhow::Result<CommitId> {
     let workspace = &op.workspace;
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
@@ -1609,7 +1674,16 @@ fn take_member(
             let (now, merged) = integration_now(sync, op, Some(path), dir, vcs, head.id(), source)?;
             merges = now == Integration::Merge;
             if let Some(merge) = merged {
-                say(output, &crate::set_history::merged_line(path, &merge));
+                report_integration(
+                    output,
+                    workspace,
+                    reported,
+                    crate::op_state::LandingReport::Merged {
+                        repo: RepoKey::Member(path.clone()),
+                        merge: merge.clone(),
+                    },
+                    Some(crate::set_history::merged_line(path, &merge)),
+                )?;
             }
         }
     }
@@ -1693,13 +1767,24 @@ fn take_member(
             onto: source.clone(),
         },
     )?;
-    crate::backup::keep_rebased(
+    let backup = crate::backup::keep_rebased(
         vcs,
         dir,
         &branch,
         &head,
         workspace,
         RepoKey::Member(path.clone()),
+    )?;
+    report_integration(
+        output,
+        workspace,
+        reported,
+        crate::op_state::LandingReport::Rebased {
+            repo: RepoKey::Member(path.clone()),
+            was: head.id().clone(),
+            backup,
+        },
+        None,
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
@@ -1829,6 +1914,7 @@ fn take_project(
     source: &CommitId,
     reset: bool,
     output: OutputMode,
+    reported: &mut Reported,
 ) -> anyhow::Result<()> {
     let vcs = sync.vcs.as_ref();
     let dir = &sync.dir;
@@ -1890,13 +1976,24 @@ fn take_project(
             onto: source.clone(),
         },
     )?;
-    crate::backup::keep_rebased(
+    let backup = crate::backup::keep_rebased(
         vcs,
         dir,
         &branch,
         &here,
         sync.ctx.active_path(),
         RepoKey::Project,
+    )?;
+    report_integration(
+        output,
+        sync.ctx.active_path(),
+        reported,
+        crate::op_state::LandingReport::Rebased {
+            repo: RepoKey::Project,
+            was: head.clone(),
+            backup,
+        },
+        None,
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;

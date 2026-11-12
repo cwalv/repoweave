@@ -4765,6 +4765,38 @@ pub fn sync_never_rebases_a_merge() -> Scenario {
     )
 }
 
+/// `sync --json` reports the range it integrated by a merge and the branch it
+/// rebased, the way a landing does.
+pub fn sync_json_reports_what_it_merged_and_rebased() -> Scenario {
+    scenario(
+        "sync --json reports a merged range and a rebased branch",
+        vec![
+            create("w"),
+            Step::git(&ww("w"), Repo::App, &["switch", "-c", "side"]),
+            Step::commit(&ww("w"), Repo::App, "side-app"),
+            Step::git(&ww("w"), Repo::App, &["switch", "proj--w"]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["merge", "--no-ff", "-m", "bump", "side"],
+            ),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear", "--json"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::Lib])
+                .claim(Claim::OutputContains("\"kind\": \"merged\""))
+                .claim(Claim::OutputContains("\"path\": \"local/remotes/app\""))
+                .claim(Claim::OutputContains("\"kind\": \"rebased\""))
+                .claim(Claim::OutputContains("\"path\": \"local/remotes/lib\"")),
+        ],
+    )
+}
+
 /// A rebase that would rewrite a branch another feature lands into, cut from
 /// an older commit of it, refuses, naming it; a fast-forward does not.
 pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
