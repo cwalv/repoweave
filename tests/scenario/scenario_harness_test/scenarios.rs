@@ -14599,6 +14599,66 @@ pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
     )
 }
 
+/// `w3` onto `w2` onto `w1`, `w1` holding an `app` commit its lock does not
+/// pin, so its sync writes a relock commit; `w3`'s replay conflicts after
+/// `w2`'s project branch composed on that commit. `rwv sync --continue`
+/// keeps the relock commit and every carried project branch holds `w1`'s
+/// project tip.
+pub fn a_sync_continued_after_its_relock_keeps_it() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-unpinned"),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::git(&ww("w1"), Repo::App, &["merge", "--ff-only", "-q", "proj--w1"]),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w3", "w2"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w3-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("carrying 'w3' along")),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("carried 'w3' along")),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["log", "-1", "--format=%s", "proj--w1"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("relock after sync")),
+    ];
+    for (repo, parent, dependent) in [
+        (Repo::Proj, "proj--w1", "w2"),
+        (Repo::Proj, "w2", "w3"),
+        (Repo::App, "proj--w1", "w2"),
+        (Repo::App, "w2", "w3"),
+    ] {
+        steps.push(
+            Step::git(
+                &ww("w1"),
+                repo,
+                &["merge-base", "--is-ancestor", parent, dependent],
+            )
+            .expect(Exit::Succeeds),
+        );
+    }
+    scenario("stack: a sync continued after its relock keeps it", steps)
+}
+
 /// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
 /// third workweave meanwhile: the stopped carry holds `w2` as a landing
 /// would, so the landing refuses naming the carry's op, and once the
