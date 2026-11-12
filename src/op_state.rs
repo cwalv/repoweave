@@ -574,12 +574,41 @@ pub enum LandingReport {
     },
     /// The target's entry for `repo` removed by name.
     EntryRemoved { repo: RepoKey },
+    /// `branch`, behind its upstream, taken in from `from` to `to`: the
+    /// upstream's commits, and each pin and member entry they changed.
+    TakenIn {
+        branch: String,
+        from: CommitId,
+        to: CommitId,
+        commits: Vec<crate::vcs::CommitSummary>,
+        pins: Vec<PinTakenIn>,
+        entries: Vec<EntryTakenIn>,
+    },
 }
 
 impl LandingReport {
     pub fn is_entry_change(&self) -> bool {
         matches!(self, Self::EntryChanged { .. } | Self::EntryRemoved { .. })
     }
+}
+
+/// A member's pin as a landing's take-in of `T`'s upstream changed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinTakenIn {
+    pub repo: RepoKey,
+    pub was: Option<String>,
+    pub now: Option<String>,
+    /// `now` does not descend from `was`.
+    pub backward: bool,
+}
+
+/// A member's entry as a landing's take-in of `T`'s upstream changed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntryTakenIn {
+    pub repo: RepoKey,
+    pub change: crate::pull::EntryChange,
+    /// Each field that differs, as `<field>: <was> -> <now>`.
+    pub fields: Vec<String>,
 }
 
 /// The commits a declared-branch change leaves on the old branch.

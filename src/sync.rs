@@ -723,6 +723,33 @@ pub enum LandingReportOutput {
     /// The target's entry for `path` removed, named by
     /// `--allow-member-change`.
     EntryRemoved { path: String },
+    /// The target's project branch, behind its upstream as last fetched,
+    /// taken in from `from` to `to`, fast-forward only: the upstream's
+    /// commits, and each pin and member entry they changed.
+    TakenIn {
+        path: String,
+        branch: String,
+        from: CommitId,
+        to: CommitId,
+        /// The upstream's commits, newest first.
+        commits: Vec<LeftCommitOutput>,
+        pins: Vec<PinTakenInOutput>,
+        member_changes: Vec<crate::pull::MemberChangeOutput>,
+    },
+}
+
+/// A member's pin as the upstream a landing took in changed it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PinTakenInOutput {
+    pub path: String,
+    /// Absent where the target's lock did not pin the member.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub was: Option<String>,
+    /// Absent where the upstream's lock does not pin the member.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub now: Option<String>,
+    /// `now` does not descend from `was`: reported `re-pinned`.
+    pub backward: bool,
 }
 
 impl LandingReportOutput {
@@ -762,6 +789,43 @@ impl LandingReportOutput {
             },
             op_state::LandingReport::EntryRemoved { repo } => Self::EntryRemoved {
                 path: repo.to_string(),
+            },
+            op_state::LandingReport::TakenIn {
+                branch,
+                from,
+                to,
+                commits,
+                pins,
+                entries,
+            } => Self::TakenIn {
+                path: RepoKey::Project.to_string(),
+                branch: branch.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                commits: commits
+                    .iter()
+                    .map(|c| LeftCommitOutput {
+                        sha: c.id.clone(),
+                        subject: c.subject.clone(),
+                    })
+                    .collect(),
+                pins: pins
+                    .iter()
+                    .map(|p| PinTakenInOutput {
+                        path: p.repo.to_string(),
+                        was: p.was.clone(),
+                        now: p.now.clone(),
+                        backward: p.backward,
+                    })
+                    .collect(),
+                member_changes: entries
+                    .iter()
+                    .map(|e| crate::pull::MemberChangeOutput {
+                        path: e.repo.to_string(),
+                        change: e.change,
+                        fields: e.fields.clone(),
+                    })
+                    .collect(),
             },
         }
     }
@@ -808,6 +872,53 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
             }
             op_state::LandingReport::EntryRemoved { repo } => {
                 eprintln!("  {repo}: removed (the target's entry, named by --allow-member-change)");
+            }
+            op_state::LandingReport::TakenIn {
+                branch,
+                from,
+                to,
+                commits,
+                pins,
+                entries,
+            } => {
+                outln!(
+                    "  {}: took in {} commit(s) of '{branch}' from its upstream ({} -> {})",
+                    RepoKey::Project,
+                    commits.len(),
+                    from.short(),
+                    to.short()
+                );
+                for commit in commits {
+                    outln!("    {} {}", commit.id.short(), commit.subject);
+                }
+                let shown = |pin: &Option<String>| {
+                    pin.as_deref()
+                        .map_or("(none)", crate::vcs::short_revision)
+                        .to_owned()
+                };
+                for pin in pins {
+                    let (was, now) = (shown(&pin.was), shown(&pin.now));
+                    if pin.backward {
+                        outln!(
+                            "  {}: re-pinned {was} -> {now} (backward, taken in from '{branch}''s \
+                             upstream)",
+                            pin.repo
+                        );
+                    } else {
+                        outln!("  {}: pin taken in {was} -> {now}", pin.repo);
+                    }
+                }
+                for entry in entries {
+                    let what = match entry.change {
+                        crate::pull::EntryChange::Added => "added".to_owned(),
+                        crate::pull::EntryChange::Removed => "removed".to_owned(),
+                        crate::pull::EntryChange::Changed => entry.fields.join(", "),
+                    };
+                    outln!(
+                        "  member-changed {}: {what} (taken in from '{branch}''s upstream)",
+                        entry.repo
+                    );
+                }
             }
         }
     }
@@ -2775,19 +2886,15 @@ pub(crate) fn judge_landing_source(
     Ok(())
 }
 
-/// Where each checkout of `T`'s workspace stands to the lock that workspace
-/// has checked out, never the upstream's, whose moves the landing takes in:
-/// one beyond its pin by commits no live lock and no remote reaches refuses
-/// (`pin` unpinned in `T`); one behind or diverged is not where that lock
-/// says.
-fn judge_target_pins(
+/// Each pin of a lock `T`'s landing reads, `T`'s tip's or its workspace's,
+/// that this clone lacks: the landing would compose against it or leave it
+/// pinned, so it refuses (`pin` unreachable).
+fn judge_unreachable_target_pins(
     class: &LockClassification,
     root: &Path,
     manifest: &Manifest,
-    primary: &Path,
     report: &mut Report,
-) -> anyhow::Result<()> {
-    let live = crate::pins::live_pins(primary)?;
+) {
     for (repo_path, raw) in &class.unresolvable {
         let dir = root.join(repo_path.as_path());
         let vcs = manifest
@@ -2809,6 +2916,22 @@ fn judge_target_pins(
                 .judge(vcs.as_ref()),
         );
     }
+}
+
+/// Where each checkout of `T`'s workspace stands to the lock that workspace
+/// has checked out, never the upstream's, whose moves the landing takes in:
+/// one beyond its pin by commits no live lock and no remote reaches refuses
+/// (`pin` unpinned in `T`); one behind or diverged is not where that lock
+/// says.
+fn judge_target_pins(
+    class: &LockClassification,
+    root: &Path,
+    manifest: &Manifest,
+    primary: &Path,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let live = crate::pins::live_pins(primary)?;
+    judge_unreachable_target_pins(class, root, manifest, report);
     for r in &class.relations {
         let (Some(head), Some(pin)) = (&r.tip, &r.lock_pin) else {
             continue;
@@ -2923,6 +3046,12 @@ fn run_preconditions_after_acquire(
         Some(ResolvedRevisionId::from(landing.target_tip.clone())),
         ClassifySource::Relations,
     )?;
+    if let (Some(tip_class), Ok(tip_manifest)) = (
+        snapshot.source_class.as_ref(),
+        manifest_at_revision(project_vcs, dest_project_dir, &snapshot.source_project_tip),
+    ) {
+        judge_unreachable_target_pins(tip_class, dest_workspace_dir, &tip_manifest, &mut report);
+    }
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
     let cwd_class = {
         let (resolved, unresolvable) = match cwd_project.lock.as_ref() {
@@ -3581,7 +3710,7 @@ fn rejudge_entries(
 /// names for it, or a branch it moves, in a checkout or as a ref, no longer
 /// fast-forwards to the tip `composed` holds for it (before the landing
 /// composed, to the tip it read), or is gone where the plan does not create
-/// it.
+/// it and no remote holds it at that tip to take it from.
 fn target_moved(
     project: &ProjectName,
     target_workspace: &Path,
@@ -3633,7 +3762,12 @@ fn target_moved(
                         to.short()
                     ));
                 }
-                None if !create => {
+                None if !create
+                    && !vcs
+                        .remote_copies(&dir, &branch)?
+                        .iter()
+                        .any(|copy| copy.tip.id() == &receiving.tip) =>
+                {
                     moved.push(format!("{key}: '{}' is gone", receiving.branch));
                 }
                 _ => {}
@@ -5280,6 +5414,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     let (target_branch, cwd_project_tip) = planned(&RepoKey::Project)?;
+    let taken_in = upstream_taken_in(ctx, target_branch)?;
 
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
@@ -5323,6 +5458,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(taken_in) = taken_in {
+        report_landing(ctx, taken_in)?;
+    }
     if emit_text {
         report_target_ahead(ctx);
     }
@@ -5340,6 +5478,38 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         align_after_landing(ctx, &ctx.cwd_ctx);
     }
     Ok(())
+}
+
+/// What the landing takes in of `T`'s upstream: none where `T`'s checkout
+/// already holds the tip the landing composed onto.
+fn upstream_taken_in(
+    ctx: &OpContext<'_>,
+    branch: &str,
+) -> anyhow::Result<Option<op_state::LandingReport>> {
+    let Some(receiving) = ctx.take_in.receiving.get(&RepoKey::Project) else {
+        return Ok(None);
+    };
+    let vcs = ctx.project_vcs.as_ref();
+    let dir = &ctx.dest_project_dir;
+    let before = vcs.head_revision(dir)?.id().clone();
+    if before == receiving.tip
+        || !vcs.is_ancestor(
+            dir,
+            &ResolvedRevisionId::from(before.clone()),
+            &ResolvedRevisionId::from(receiving.tip.clone()),
+        )?
+    {
+        return Ok(None);
+    }
+    crate::land::upstream_taken_in(
+        vcs,
+        dir,
+        ctx.cwd_ctx.primary_path(),
+        branch,
+        &before,
+        &receiving.tip,
+    )
+    .map(Some)
 }
 
 /// Move a receiving branch no checkout holds to `composed`, creating it

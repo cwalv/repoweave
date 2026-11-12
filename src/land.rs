@@ -1404,8 +1404,7 @@ fn judge_member(
         }
         Moves::AsRef { create: false }
     } else {
-        judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?;
-        Moves::InCheckout
+        judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?
     };
     plan.receiving.insert(
         path.clone(),
@@ -1525,26 +1524,30 @@ fn judge_unheld_receiving(
 
 /// `U` fast-forwards where `T`'s workspace has it checked out: that member
 /// must sit on `U` there. Checked out in a third workspace, it is moved by
-/// nothing yet.
+/// nothing yet. Where `T`'s upstream declares `U` in place of the branch the
+/// member sits on there, aligned for `T`'s own entries, `U` is checked out
+/// nowhere and moves as a ref, and aligning `T`'s workspace takes it.
 fn judge_receiving_checkout(
     landing: &Landing,
     member: &Member<'_>,
     receiving: &RawRefName,
     target_aligner: &crate::alignment::Aligner,
     report: &mut Report,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Moves> {
     let Member {
         path, entry, vcs, ..
     } = *member;
     let there = landing.target_workspace.join(path.as_path());
     if !vcs.is_repo(&there) {
-        return Ok(());
+        return Ok(Moves::InCheckout);
     }
-    if let HeadAttachment::Attached(on) = vcs.head_attachment(&there)? {
-        if on.to_string() == receiving.as_str() {
-            return Ok(());
+    let sits_on = match vcs.head_attachment(&there)? {
+        HeadAttachment::Attached(on) if on.to_string() == receiving.as_str() => {
+            return Ok(Moves::InCheckout);
         }
-    }
+        HeadAttachment::Attached(on) => Some(on.to_string()),
+        _ => None,
+    };
     let own = crate::path_spelling::CanonicalPath::of(&there);
     let elsewhere: Vec<PathBuf> = vcs
         .checkouts_of_branch(&there, receiving)?
@@ -1567,7 +1570,7 @@ fn judge_receiving_checkout(
                 .by_verb("land")
                 .judge(vcs),
         );
-        return Ok(());
+        return Ok(Moves::InCheckout);
     }
     let checked = crate::alignment::Member {
         path,
@@ -1575,13 +1578,23 @@ fn judge_receiving_checkout(
         dir: &there,
         vcs,
     };
-    let lock = LockFile::path_in(&project_dir(&landing.target_workspace, &landing.project))
+    let target_project = project_dir(&landing.target_workspace, &landing.project);
+    let lock = LockFile::path_in(&target_project)
         .read_to_string()
         .ok()
         .and_then(|text| LockFile::from_json_str(&text).ok());
     let planned = target_aligner.plan(&checked, lock.as_ref())?;
     match target_aligner.refusal(&checked, &planned, path)? {
         Some(off) => report.add(off.elsewhere(&landing.target_workspace)),
+        None if sits_on.is_some()
+            && Manifest::from_path(&target_project.join(Manifest::FILE_NAME))
+                .ok()
+                .and_then(|m| m.get_entry(path).cloned())
+                .map(|declared| declared.branch.local_counterpart().as_str().to_owned())
+                == sits_on =>
+        {
+            return Ok(Moves::AsRef { create: false });
+        }
         None => report.add(
             State::AlignmentUnaligned
                 .of(path)
@@ -1596,7 +1609,7 @@ fn judge_receiving_checkout(
                 .judge(vcs),
         ),
     }
-    Ok(())
+    Ok(Moves::InCheckout)
 }
 
 /// Delete each branch an op created that still sits where it was created and
@@ -1647,4 +1660,98 @@ fn undo_one(vcs: &dyn Vcs, dir: &Path, branch: &RawRefName, at: &CommitId) -> Re
         .map_err(|e: VcsError| format!("{e:#}"))?
         .ok_or_else(|| "no other branch reaches it".to_owned())?;
     vcs.delete_branch(proof).map_err(|e| format!("{e:#}"))
+}
+
+/// What taking `branch` from `before` in to its upstream's `upstream` brings:
+/// the upstream's commits, each pin its lock changed (backward where the new
+/// one does not descend from the old, read in the clones under `primary`),
+/// and each member entry its `rwv.toml` changed.
+pub(crate) fn upstream_taken_in(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    primary: &Path,
+    branch: &str,
+    before: &CommitId,
+    upstream: &CommitId,
+) -> anyhow::Result<crate::op_state::LandingReport> {
+    use crate::op_state::{EntryTakenIn, PinTakenIn};
+    use crate::pull::EntryChange;
+    let commits =
+        vcs.commits_excluding(dir, &rev(upstream), std::slice::from_ref(before), false)?;
+    let (was_lock, now_lock) = (lock_at(vcs, dir, before), lock_at(vcs, dir, upstream));
+    let version = |lock: &Option<LockFile>, path: &RepoPath| {
+        lock.as_ref()
+            .and_then(|l| l.get_entry(path))
+            .map(|e| e.version.as_str().to_owned())
+    };
+    let (was_manifest, now_manifest) = (
+        manifest_at(vcs, dir, before),
+        manifest_at(vcs, dir, upstream),
+    );
+    let entry = |manifest: &Option<Manifest>, path: &RepoPath| {
+        manifest.as_ref().and_then(|m| m.get_entry(path)).cloned()
+    };
+    let paths: std::collections::BTreeSet<RepoPath> = [&was_lock, &now_lock]
+        .into_iter()
+        .flatten()
+        .flat_map(|l| l.iter_repo_paths().cloned().collect::<Vec<_>>())
+        .chain(
+            [&was_manifest, &now_manifest]
+                .into_iter()
+                .flatten()
+                .flat_map(|m| m.iter_repo_paths().cloned().collect::<Vec<_>>()),
+        )
+        .collect();
+    let mut pins = Vec::new();
+    let mut entries = Vec::new();
+    for path in paths {
+        let (was, now) = (version(&was_lock, &path), version(&now_lock, &path));
+        if was != now {
+            let backward = match (&was, &now, entry(&now_manifest, &path)) {
+                (Some(was), Some(now), Some(e)) => {
+                    let mvcs = vcs_for(e.vcs_type);
+                    let mdir = primary.join(path.as_path());
+                    match (
+                        mvcs.resolve_revision(&mdir, was),
+                        mvcs.resolve_revision(&mdir, now),
+                    ) {
+                        (Ok(was), Ok(now)) => !mvcs.is_ancestor(&mdir, &was, &now)?,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            pins.push(PinTakenIn {
+                repo: RepoKey::Member(path.clone()),
+                was,
+                now,
+                backward,
+            });
+        }
+        let (change, fields) = match (entry(&was_manifest, &path), entry(&now_manifest, &path)) {
+            (None, Some(_)) => (EntryChange::Added, Vec::new()),
+            (Some(_), None) => (EntryChange::Removed, Vec::new()),
+            (Some(was), Some(now)) => {
+                let fields = crate::pull::differing_fields(&was, &now);
+                if fields.is_empty() {
+                    continue;
+                }
+                (EntryChange::Changed, fields)
+            }
+            (None, None) => continue,
+        };
+        entries.push(EntryTakenIn {
+            repo: RepoKey::Member(path),
+            change,
+            fields,
+        });
+    }
+    Ok(crate::op_state::LandingReport::TakenIn {
+        branch: branch.to_owned(),
+        from: before.clone(),
+        to: upstream.clone(),
+        commits,
+        pins,
+        entries,
+    })
 }

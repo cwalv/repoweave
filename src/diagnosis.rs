@@ -884,11 +884,13 @@ impl State {
                 name: "unreachable",
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
                         is on the declared branch at the tip of the remote's branch",
-                refused_by: "`rwv push`; `rwv clone`, which does not refuse: it completes, \
-                             lists the member and exits with status 3; `rwv cherry-pick`, for a \
-                             pin the ported commit or its parent holds; `rwv status` reports it",
+                refused_by: "`rwv push`; `rwv land`, for a pin of the target's lock as last \
+                             fetched, naming `rwv fetch`; `rwv clone`, which does not refuse: it \
+                             completes, lists the member and exits with status 3; `rwv \
+                             cherry-pick`, for a pin the ported commit or its parent holds; `rwv \
+                             status` reports it",
                 offers: &[Form::C17, Form::C25, Form::C19],
-                verb_offers: &[],
+                verb_offers: &[("land", Form::C33)],
             },
             Self::NameTaken => &StateRow {
                 axis: Axis::Name,

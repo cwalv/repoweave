@@ -2561,10 +2561,302 @@ fn a_landing_into_a_target_behind_its_upstream_takes_the_upstream_in() {
                     site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
                     member: Repo::App,
                     mark: "b-app",
+                })
+                .claim(Claim::OutputContains(
+                    "(project): took in 1 commit(s) of 'main' from its upstream",
+                ))
+                .claim(Claim::OutputContains("local/remotes/app: pin taken in")),
+        ],
+    )
+    .assert_fully_decided_green();
+}
+
+holding_rwv! {
+    /// A landing into a target behind its upstream, killed before it
+    /// fast-forwards anything and continued under `--json`, reports what it
+    /// took in of the upstream: its commits and the pin they moved.
+    fn a_continued_landing_reports_what_it_took_in_of_the_upstream() {
+        bad_steps(
+            "a continued landing reports the upstream it took in",
+            vec![
+                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                    .expect(Exit::Succeeds),
+                Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+                Step::new_machine(Machine::B),
+                Step::commit(&Place::Primary(Machine::B), Repo::App, "b-app"),
+                Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"])
+                    .expect(Exit::Succeeds),
+                Step::rwv(&Place::Primary(Machine::B), &["push"])
+                    .pushes(Remote::origin(Repo::App), "main")
+                    .pushes(Remote::origin(Repo::Proj), "main")
+                    .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                    .expect(Exit::Succeeds),
+                Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+                Step::rwv_paused(&ww("w"), &["land"], ADVANCE_TARGET, "landing"),
+                Step::kill("landing"),
+                Step::rwv(&ww("w"), &["land", "--continue", "--json"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputInOrder(&[
+                        "\"reports\": [",
+                        "\"kind\": \"taken-in\"",
+                        "\"branch\": \"main\"",
+                        "\"commits\": [",
+                        "\"pins\": [",
+                        "\"path\": \"local/remotes/app\"",
+                    ]))
+                    .claim(Claim::PinContains {
+                        site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                        member: Repo::App,
+                        mark: "b-app",
+                    }),
+            ],
+        )
+        .assert_fully_decided_green();
+    }
+}
+
+/// Machine B moves `lib` on `main` and publishes it; machine A takes in the
+/// project repo's upstream alone, so its clone of `lib` lacks the pin.
+fn upstream_pins_what_this_clone_lacks(seed: Seed) -> Scenario {
+    Scenario {
+        name: "the target's upstream pins a commit this clone lacks",
+        seed,
+        steps: vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::commit(&Place::Primary(Machine::B), Repo::Lib, "b-lib"),
+            Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(
+                &Place::Primary(Machine::B),
+                Repo::Lib,
+                &["push", "origin", "main"],
+            )
+            .pushes(Remote::origin(Repo::Lib), "main"),
+            Step::rwv(&Place::Primary(Machine::B), &["push"])
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["fetch", "origin"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PinUnreachable))
+                .claim(Claim::OutputContains("rwv fetch")),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "b-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "w-app",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::OutputContains("local/remotes/lib: pin taken in")),
+        ],
+    }
+}
+
+/// A pin of the target's upstream this clone lacks would leave the
+/// landing's lock pinning a commit the clone cannot reach: the landing
+/// refuses it, and the fetch it names clears it.
+#[test]
+fn a_landing_refuses_an_upstream_pin_this_clone_lacks() {
+    runner::run(upstream_pins_what_this_clone_lacks(Seed::default())).assert_fully_decided_green();
+}
+
+/// The same for a `dependency` member, which the landing never moves and
+/// whose pin it carries from the target as it is.
+#[test]
+fn a_landing_refuses_an_upstream_dependency_pin_this_clone_lacks() {
+    runner::run(upstream_pins_what_this_clone_lacks(
+        Seed::default().role(Repo::Lib, Role::Dependency),
+    ))
+    .assert_fully_decided_green();
+}
+
+/// The upstream moved a member the seat never touched, and its branch
+/// beyond the pin the upstream's lock records: the landing keeps the
+/// upstream's pin, never the branch tip beyond it.
+#[test]
+#[ignore = "waits for the landing to plan only the members it moves: an untouched member keeps T's pin"]
+fn a_landing_keeps_the_upstream_pin_of_a_member_the_seat_never_touched() {
+    bad_steps(
+        "the upstream moved a member the seat never touched",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::new_machine(Machine::B),
+            Step::commit(&Place::Primary(Machine::B), Repo::Lib, "b-lib-pinned"),
+            Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&Place::Primary(Machine::B), &["push"])
+                .pushes(Remote::origin(Repo::Lib), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            Step::commit(&Place::Primary(Machine::B), Repo::Lib, "b-lib-unpinned"),
+            Step::git(
+                &Place::Primary(Machine::B),
+                Repo::Lib,
+                &["push", "origin", "main"],
+            )
+            .pushes(Remote::origin(Repo::Lib), "main"),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "b-lib-pinned",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::Lacks {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "b-lib-unpinned",
+                })
+                .claim(Claim::OutputContains("local/remotes/lib: pin taken in")),
+        ],
+    )
+    .assert_fully_decided_green();
+}
+
+/// The upstream changed the branch `lib` declares, and the seat holds work
+/// on `lib`: the landing takes the new declared branch in from its upstream
+/// with the rest, lands the work there, says so, and leaves `main`'s
+/// workspace on it.
+#[test]
+fn a_landing_takes_in_an_upstream_change_of_a_declared_branch() {
+    bad_steps(
+        "the upstream changed a declared branch",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::new_machine(Machine::B),
+            Step::rwv(
+                &Place::Primary(Machine::B),
+                &[
+                    "member",
+                    "set-branch",
+                    "local/remotes/lib",
+                    "line2",
+                    "--new",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&Place::Primary(Machine::B), &["push"])
+                .pushes(Remote::origin(Repo::Lib), "line2")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "member-changed local/remotes/lib: branch: main -> line2 (taken in",
+                ))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "line2",
+                    mark: "w-lib",
+                })
+                .claim(Claim::Lacks {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w-lib",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "line2",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "w-lib",
                 }),
         ],
     )
     .assert_fully_decided_green();
+}
+
+/// `main`'s workspace holds an unpushed commit of its own and its upstream
+/// moved: the landing refuses the diverged target before anything moves,
+/// and after the merge it names, run where `main` is checked out, it lands.
+/// That merge takes the upstream as its first parent, as it says, so `main`
+/// leaves its own first-parent chain there and nowhere else.
+#[test]
+fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
+    let report = bad_steps(
+        "a landing into a target diverged from its upstream",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::new_machine(Machine::B),
+            Step::commit(&Place::Primary(Machine::B), Repo::Docs, "b-docs"),
+            Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&Place::Primary(Machine::B), &["push"])
+                .pushes(Remote::origin(Repo::Docs), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Proj, "a-notes"),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+                .claim(Claim::OutputContains("rwv pull --merge-upstream")),
+            Step::rwv(&a(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "a-notes",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Docs,
+                    mark: "b-docs",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "w-app",
+                }),
+        ],
+    );
+    assert!(
+        report.unmet.is_empty() && report.pending.is_none(),
+        "{report}"
+    );
+    for (label, violation) in &report.violations {
+        assert!(
+            label == "rwv pull --merge-upstream"
+                && matches!(
+                    violation,
+                    Violation::FirstParentsBroken { repo: Repo::Proj, branch, .. } if branch == "main"
+                ),
+            "an unexpected violation after `{label}`: {violation}\n{report}"
+        );
+    }
 }
 
 /// The run is green but for the landing that follows `rwv sync --from

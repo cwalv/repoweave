@@ -506,7 +506,7 @@ fn member_changes(before: &Manifest, after: &Manifest) -> Vec<MemberChangeOutput
         .collect()
 }
 
-fn differing_fields(was: &RepoEntry, now: &RepoEntry) -> Vec<String> {
+pub(crate) fn differing_fields(was: &RepoEntry, now: &RepoEntry) -> Vec<String> {
     let mut fields = Vec::new();
     let mut note = |name: &str, was: String, now: String| {
         if was != now {

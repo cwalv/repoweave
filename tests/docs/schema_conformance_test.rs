@@ -103,8 +103,8 @@ use repoweave::status::{
 };
 use repoweave::sync::{
     ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, LandingReportOutput,
-    LeftBehindOutput, LeftCommitOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput,
-    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
+    LeftBehindOutput, LeftCommitOutput, MemberOutput, PinTakenInOutput, ReplayBaseline,
+    Step3AdvanceOutput, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
     SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::update::{
@@ -1875,6 +1875,47 @@ fn landing_reports() -> Vec<LandingReportOutput> {
         },
         LandingReportOutput::EntryRemoved {
             path: "local/remotes/docs".to_owned(),
+        },
+        LandingReportOutput::TakenIn {
+            path: "(project)".to_owned(),
+            branch: "main".to_owned(),
+            from: id('e'),
+            to: id('f'),
+            commits: vec![LeftCommitOutput {
+                sha: id('f'),
+                subject: "lib onto dev".to_owned(),
+            }],
+            pins: vec![
+                PinTakenInOutput {
+                    path: "local/remotes/lib".to_owned(),
+                    was: Some(sha('a')),
+                    now: Some(sha('b')),
+                    backward: false,
+                },
+                PinTakenInOutput {
+                    path: "local/remotes/docs".to_owned(),
+                    was: None,
+                    now: Some(sha('c')),
+                    backward: false,
+                },
+            ],
+            member_changes: vec![
+                MemberChangeOutput {
+                    path: "local/remotes/lib".to_owned(),
+                    change: EntryChange::Changed,
+                    fields: vec!["branch: main -> dev".to_owned()],
+                },
+                MemberChangeOutput {
+                    path: "local/remotes/docs".to_owned(),
+                    change: EntryChange::Added,
+                    fields: Vec::new(),
+                },
+                MemberChangeOutput {
+                    path: "local/remotes/old".to_owned(),
+                    change: EntryChange::Removed,
+                    fields: Vec::new(),
+                },
+            ],
         },
     ]
 }
