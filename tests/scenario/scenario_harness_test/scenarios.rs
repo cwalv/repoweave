@@ -11942,6 +11942,41 @@ pub fn abort_typed_in_the_target_names_the_landing(two: bool) -> Scenario {
     scenario("abort typed in the target names the landing", steps)
 }
 
+/// A landing paused once its record is written, before it takes its claim:
+/// its record already shows the operation, so a claim it takes next is never
+/// judged dead; a second landing meanwhile lands, and the first then lands
+/// on what it left.
+pub fn a_landing_records_its_op_before_it_claims() -> Scenario {
+    scenario(
+        "a landing records its op before it claims",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "recorded",
+                "w1-landing",
+            ),
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("in progress")),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::release("w1-landing")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w1"))),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w2-lib")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w1-app")),
+        ],
+    )
+}
+
 /// An rwv verb that moves, deletes, renames, re-points or publishes `main`
 /// or a branch a landing into it lands into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

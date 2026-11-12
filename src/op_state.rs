@@ -1855,6 +1855,13 @@ pub fn clear_owner(workspace_dir: &Path) {
     let _ = OwnerRecord::path_in(workspace_dir).remove();
 }
 
+/// Remove the owner record from `workspace_dir` only while it records `id`.
+pub fn clear_owner_of(workspace_dir: &Path, id: &OpId) {
+    if records_op(workspace_dir, id) == Some(true) {
+        clear_owner(workspace_dir);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Lease I/O
 // ---------------------------------------------------------------------------
@@ -3251,6 +3258,40 @@ mod tests {
         assert!(read_owner(dir).unwrap().is_some());
         clear_owner(dir);
         assert!(read_owner(dir).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_ending_op_clears_only_its_own_record_and_leases() {
+        let tmp = crate::tempdir().unwrap();
+        let (owner, other, leased) = (
+            tmp.path().join("owner"),
+            tmp.path().join("other"),
+            tmp.path().join("leased"),
+        );
+        for dir in [&owner, &other, &leased] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let (ended, next) = (OpId::new_now(), "1".parse::<OpId>().unwrap());
+        let record_of = |id: &OpId, at: &Path| {
+            OwnerRecord::new_sync(id, None, test_project(), at, Path::new("/tgt"))
+        };
+        write_owner(&owner, &record_of(&next, &owner)).unwrap();
+        write_owner(&other, &record_of(&next, &other)).unwrap();
+        acquire_lease(&leased, &other, &next).unwrap();
+        clear_owner_of(&owner, &ended);
+        clear_lease_owned_by(&leased, &owner);
+        assert!(
+            read_owner(&owner).unwrap().is_some(),
+            "another op's record stays"
+        );
+        assert!(
+            read_lease(&leased).unwrap().is_some(),
+            "another op's lease stays"
+        );
+        clear_lease_owned_by(&leased, &other);
+        assert!(read_lease(&leased).unwrap().is_none());
+        clear_owner_of(&owner, &next);
+        assert!(read_owner(&owner).unwrap().is_none());
     }
 
     #[test]

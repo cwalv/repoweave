@@ -3975,6 +3975,7 @@ fn guard_and_mark<'a>(
             owned
         }
     };
+    crate::test_pause::point("recorded");
     let claim = match crate::landing_claim::LandingClaim::take(
         project_vcs().as_ref(),
         &cwd_project_dir,
@@ -8501,9 +8502,6 @@ fn abort_op(
             tally.any_failure = true;
         }
     }
-    if let (Some(dir), true) = (&other_ws_dir, tally.clean()) {
-        op_state::clear_all_at(dir);
-    }
 
     // Emit the aggregate noise summary (skipped / untouched) as a single line.
     print_abort_noise_summary(&tally.noise);
@@ -8536,7 +8534,7 @@ fn abort_op(
         for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
             forget_replays_in(dir, &op_project_name);
         }
-        op_state::clear_all_at(&workspace_dir);
+        op_state::clear_owner_of(owner_workspace.as_path(), &op_id);
     } else if tally.any_foreign {
         eprintln!(
             "\nabort refused on at least one repo (foreign-tip violation); \
@@ -9935,7 +9933,8 @@ fn abort_leaving_target(
         {
             forget_replays_in(dir, project);
         }
-        op_state::clear_all_at(owner.as_path());
+        op_state::clear_lease_owned_by(owner.as_path(), owner.as_path());
+        op_state::clear_owner_of(owner.as_path(), &record.id);
     } else if tally.any_foreign {
         eprintln!(
             "\nabort refused on at least one repo of the source (foreign-tip violation); \

@@ -806,6 +806,62 @@ mod tests {
     }
 
     #[test]
+    fn a_holder_whose_record_keeps_changing_is_waited_on_past_the_budget() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
+        record(&owner, &op(1));
+        let path = claim_in(tmp.path());
+        let held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let budget = Duration::from_millis(300);
+        let holder = {
+            let owner = owner.clone();
+            std::thread::spawn(move || {
+                for step in 0..12 {
+                    let mut record = crate::op_state::OwnerRecord::new_land(
+                        &op(1),
+                        None,
+                        ProjectName::new("p").unwrap(),
+                        &owner,
+                        None,
+                        step % 2 == 0,
+                    );
+                    record.take_in = Some(crate::op_state::TakeInRecord {
+                        message: Some(format!("{step}")),
+                        ..Default::default()
+                    });
+                    crate::op_state::write_owner(&owner, &record).unwrap();
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                held.release().unwrap();
+            })
+        };
+        let started = Instant::now();
+        let taken = take_within(path, "t", &op(2), tmp.path(), budget);
+        holder.join().unwrap();
+        assert!(taken.is_ok(), "{:#}", taken.unwrap_err());
+        assert!(
+            started.elapsed() > budget * 3,
+            "the wait outlasted the budget"
+        );
+    }
+
+    #[test]
+    fn a_holder_that_shows_no_progress_is_refused_once_the_budget_runs_out() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
+        record(&owner, &op(1));
+        let path = claim_in(tmp.path());
+        let _held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let budget = Duration::from_millis(200);
+        let started = Instant::now();
+        let taken = take_within(path, "t", &op(2), tmp.path(), budget);
+        assert!(refused(taken.map(|_| ())));
+        assert!(started.elapsed() >= budget);
+    }
+
+    #[test]
     fn a_claim_whose_op_is_no_longer_recorded_is_taken_over() {
         let tmp = crate::tempdir().unwrap();
         let gone = tmp.path().join("gone");
