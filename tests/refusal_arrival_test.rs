@@ -652,7 +652,7 @@ fn a_dirty_repo_at_lock_time_routes_to_its_token() {
 #[test]
 fn a_dirty_workweave_at_sync_to_time_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
-    let (primary, workweave) = primary_and_workweave(tmp.path());
+    let (_primary, workweave) = primary_and_workweave(tmp.path());
 
     let manifest = workweave.join("projects/web-app/rwv.toml");
     let text = std::fs::read_to_string(&manifest).unwrap();
@@ -684,7 +684,7 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = common::tempdir().unwrap();
-    let (primary, workweave) = primary_and_workweave(tmp.path());
+    let (_primary, workweave) = primary_and_workweave(tmp.path());
 
     // Under root every permission check is a no-op, so the unreadable half of
     // the precondition cannot be built and the test would assert against a
@@ -874,7 +874,7 @@ fn a_landing_judges_the_edits_of_both_sides_in_one_refusal() {
 #[test]
 fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
     let tmp = common::tempdir().unwrap();
-    let (primary, workweave) = primary_and_workweave(tmp.path());
+    let (_primary, workweave) = primary_and_workweave(tmp.path());
     let manifest = workweave.join("projects/web-app/rwv.toml");
     let text = std::fs::read_to_string(&manifest).unwrap();
     std::fs::write(&manifest, format!("{text}# edited, uncommitted\n")).unwrap();

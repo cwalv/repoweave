@@ -144,7 +144,7 @@ const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/land.json";
 #[test]
 fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+    let (_primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Advance the workweave's server repo and re-lock so sync from primary
     // has something to converge on (otherwise we'd get no-op, which would
@@ -262,7 +262,7 @@ fn sync_to_json_parallel_emits_the_envelope() {
     let ww = parent.join("ww");
     std::fs::create_dir_all(ww.join("github/example")).unwrap();
     std::fs::create_dir_all(ww.join("projects")).unwrap();
-    for (i, rp) in repo_paths.iter().enumerate() {
+    for rp in repo_paths.iter() {
         let dest = ww.join(rp);
         let branch = "ww/project".to_owned();
         common::git_in(
@@ -362,11 +362,7 @@ fn sync_to_json_failed_outcome_has_stable_kebab_kind() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--json",
-            "--strategy=rebase",
-        ])
+        .args(["land", "--json", "--strategy=rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();

@@ -149,7 +149,7 @@ const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/land.json";
 #[test]
 fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+    let (_primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Workweave advances so land has actual work to do.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
@@ -158,11 +158,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=ff",
-            "--json",
-        ])
+        .args(["land", "--strategy=ff", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -199,7 +195,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
 #[test]
 fn sync_to_json_schema_url_differs_from_sync_schema_url() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+    let (_primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Workweave advances.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: advance");
@@ -208,11 +204,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=ff",
-            "--json",
-        ])
+        .args(["land", "--strategy=ff", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();

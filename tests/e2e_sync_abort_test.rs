@@ -207,7 +207,13 @@ fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, Str
     let ww_api = ww.root.join(API_PATH);
     common::git_in(
         &primary_api,
-        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/project"],
+        &[
+            "worktree",
+            "add",
+            &ww_api.to_string_lossy(),
+            "-b",
+            "ww/project",
+        ],
     );
 
     write_manifest(
@@ -423,22 +429,6 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv land — precondition enforcement
-// ---------------------------------------------------------------------------
-
-/// Advance `ws`'s server past C1, lock it, then reset the server back, so the
-/// lock records a commit HEAD does not have.
-fn drive_lock_behind_head_reversed(ws: &Workspace, c1: &str) {
-    make_commit(&ws.server_dir, "extra.txt", "extra\n", "advance past lock");
-    rwv()
-        .args(["lock", "--commit", "--project", "web-app"])
-        .current_dir(&ws.root)
-        .assert()
-        .success();
-    common::git_in(&ws.server_dir, &["reset", "--hard", c1]);
-}
-
-// ---------------------------------------------------------------------------
 // rwv land — project ancestry precondition
 // ---------------------------------------------------------------------------
 //
@@ -474,11 +464,7 @@ fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
     primary_advance_project_one_commit(&primary, &c1);
 
     let assertion = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -516,11 +502,7 @@ fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
     assert_ne!(primary_tip, ww_tip);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -543,11 +525,7 @@ fn sync_to_ff_allows_when_target_project_repo_is_strict_ancestor_of_cwd() {
     );
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -571,11 +549,7 @@ fn sync_to_ff_allows_when_target_project_repo_equals_cwd() {
     assert_eq!(primary_tip, ww_tip);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -591,11 +565,7 @@ fn sync_to_ff_refusal_message_suggests_rebase_strategy() {
     primary_advance_project_one_commit(&primary, &c1);
 
     let assertion = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -618,11 +588,7 @@ fn sync_to_rebase_lands_lock_only_divergence() {
     let primary_tip_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -649,31 +615,19 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
     primary_advance_project_one_commit(&primary, &c1);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -994,7 +948,7 @@ fn sync_to_proceeds_when_source_lock_tag_matches_head() {
 #[test]
 fn sync_to_proceeds_when_source_lock_sha_matches_head() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+    let (_primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // primary's project already has the lock with C1 SHA committed.
     // Syncing ww from primary is a no-op; the freshness check must pass.
@@ -1404,11 +1358,7 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww tips"]);
 
     let out = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -1464,11 +1414,7 @@ fn sync_to_ff_reports_failed_for_diverged_repo() {
     // ww's project already contains the target's project tip, so the ff
     // failure is the manifest repo's: C2 and C_ww diverge from C1.
     let out = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -1508,11 +1454,7 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let out = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()

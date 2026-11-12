@@ -534,7 +534,12 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
 }
 
 fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
-    let branch = target.root.file_name().unwrap().to_string_lossy().into_owned();
+    let branch = target
+        .root
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     rwv()
         .args(["land", "--retire", "--target", &branch])
         .current_dir(&a.root)
@@ -752,7 +757,9 @@ fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
         "should NOT surface the raw canonicalize IO error; got:\n{stderr}"
     );
     assert!(
-        stderr.contains(&format!("rwv workweave create <ww> --branch {PROJECT}--wwa")),
+        stderr.contains(&format!(
+            "rwv workweave create <ww> --branch {PROJECT}--wwa"
+        )),
         "{stderr}"
     );
 }

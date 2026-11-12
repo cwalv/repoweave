@@ -53,7 +53,6 @@ const REPO_PATH: &str = "github/acme/lib";
 const PROJECT: &str = "app";
 
 struct Primary {
-    root: PathBuf,
     project_dir: PathBuf,
     repo_dir: PathBuf,
 }
@@ -177,7 +176,6 @@ fn fixture() -> Fixture {
     Fixture {
         _tmp: tmp,
         primary: Primary {
-            root: primary_root,
             project_dir: primary_project,
             repo_dir: primary_repo,
         },
@@ -237,11 +235,7 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
     );
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -337,11 +331,7 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
     );
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -386,11 +376,7 @@ fn sync_multiple_dirty_repos_all_named_in_one_refusal() {
     std::fs::write(&yaml_path, y).unwrap();
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -438,11 +424,7 @@ fn sync_untracked_only_destination_proceeds() {
     );
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -543,11 +525,7 @@ fn sync_clean_workweave_proceeds() {
     let new_sha = advance_primary(&f);
 
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -585,11 +563,7 @@ fn sync_staged_tracked_change_in_destination_refuses() {
     );
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -624,11 +598,7 @@ fn sync_retry_after_dirt_refusal_succeeds() {
     // First attempt: dirty destination → refusal.
     std::fs::write(f.ww.repo_dir.join("README.md"), "dirty\n").unwrap();
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -646,11 +616,7 @@ fn sync_retry_after_dirt_refusal_succeeds() {
 
     // Second attempt: clean destination → must succeed without an in-flight refusal.
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&f.ww.root)
         .assert();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
@@ -679,7 +645,10 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     let f = fixture();
     let new_sha = advance_primary(&f);
     // A feature's member sits on the feature's own branch.
-    common::git_in(&f.ww.repo_dir, &["branch", "-m", "ww/project", "ww/project"]);
+    common::git_in(
+        &f.ww.repo_dir,
+        &["branch", "-m", "ww/project", "ww/project"],
+    );
 
     // Shared-ref advance: move ww's branch to the new tip from the canonical
     // store, leaving ww's index/working tree at the old state. Structurally

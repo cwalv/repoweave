@@ -254,13 +254,13 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 #[derive(Clone, Copy)]
 enum PlantedVerb {
-    SyncTo,
+    Land,
 }
 
 impl PlantedVerb {
     fn wire(self) -> &'static str {
         match self {
-            PlantedVerb::SyncTo => "land",
+            PlantedVerb::Land => "land",
         }
     }
 }
@@ -408,13 +408,13 @@ fn make_ww_ahead_sync_to(parent: &Path) -> (Workspace, Workspace, String, String
 
 #[derive(Clone, Copy)]
 enum Verb {
-    SyncTo,
+    Land,
 }
 
 impl Verb {
     fn arg(self) -> &'static str {
         match self {
-            Verb::SyncTo => "land",
+            Verb::Land => "land",
         }
     }
 }
@@ -599,7 +599,7 @@ fn cell_e_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -613,7 +613,7 @@ fn cell_e_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(replay)/land-quiescent/owner");
+    run_continue(Verb::Land, &ww.root, "E(replay)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
@@ -632,7 +632,7 @@ fn cell_e_replay_quiescent_sync_to_abort_restores_to_pre_op() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -692,7 +692,7 @@ fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -734,7 +734,7 @@ fn cell_j_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -748,7 +748,7 @@ fn cell_j_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(replay)/land-quiescent/owner");
+    run_continue(Verb::Land, &ww.root, "J(replay)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
@@ -771,7 +771,7 @@ fn cell_e_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -785,7 +785,7 @@ fn cell_e_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(relock)/land-quiescent/owner");
+    run_continue(Verb::Land, &ww.root, "E(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
@@ -817,7 +817,7 @@ fn cell_m_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -831,7 +831,7 @@ fn cell_m_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(relock)/land-quiescent/owner");
+    run_continue(Verb::Land, &ww.root, "M(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
@@ -858,7 +858,7 @@ fn cell_j_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -873,7 +873,7 @@ fn cell_j_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.server_dir, op_id);
     plant_target_side(&primary, &ww, op_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(relock)/land-quiescent/owner");
+    run_continue(Verb::Land, &ww.root, "J(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
@@ -901,7 +901,7 @@ fn cell_e_replay_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -915,7 +915,7 @@ fn cell_e_replay_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(replay)/land/owner");
+    run_continue(Verb::Land, &ww.root, "E(replay)/land/owner");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/land/owner");
 }
 
@@ -935,7 +935,7 @@ fn cell_e_replay_sync_to_lease_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -950,7 +950,7 @@ fn cell_e_replay_sync_to_lease_continue() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Invoke FROM THE LEASE.
-    run_continue(Verb::SyncTo, &primary.root, "E(replay)/land/lease");
+    run_continue(Verb::Land, &primary.root, "E(replay)/land/lease");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/land/lease");
 }
 
@@ -969,7 +969,7 @@ fn cell_e_replay_sync_to_owner_abort() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -1008,7 +1008,7 @@ fn cell_e_replay_sync_to_lease_abort() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -1061,7 +1061,7 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww_alias.display().to_string(),
             target: primary_alias.display().to_string(),
             phase: "replay",
@@ -1107,7 +1107,7 @@ fn cell_m_replay_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -1121,7 +1121,7 @@ fn cell_m_replay_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(replay)/land/owner");
+    run_continue(Verb::Land, &ww.root, "M(replay)/land/owner");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(replay)/land/owner");
 }
 
@@ -1138,7 +1138,7 @@ fn cell_e_relock_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1152,7 +1152,7 @@ fn cell_e_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(relock)/land/owner");
+    run_continue(Verb::Land, &ww.root, "E(relock)/land/owner");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(relock)/land/owner");
 }
 
@@ -1168,7 +1168,7 @@ fn cell_m_relock_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1183,7 +1183,7 @@ fn cell_m_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(relock)/land/owner");
+    run_continue(Verb::Land, &ww.root, "M(relock)/land/owner");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(relock)/land/owner");
 }
 
@@ -1199,7 +1199,7 @@ fn cell_j_relock_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1217,7 +1217,7 @@ fn cell_j_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(relock)/land/owner");
+    run_continue(Verb::Land, &ww.root, "J(relock)/land/owner");
     assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "J(relock)/land/owner");
 }
 
@@ -1238,7 +1238,7 @@ fn cell_e_advance_target_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1256,7 +1256,7 @@ fn cell_e_advance_target_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(advance-target)/land/owner");
+    run_continue(Verb::Land, &ww.root, "E(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
@@ -1277,7 +1277,7 @@ fn cell_e_advance_target_sync_to_lease_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1295,11 +1295,7 @@ fn cell_e_advance_target_sync_to_lease_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(
-        Verb::SyncTo,
-        &primary.root,
-        "E(advance-target)/land/lease",
-    );
+    run_continue(Verb::Land, &primary.root, "E(advance-target)/land/lease");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
@@ -1337,7 +1333,7 @@ fn cell_m_advance_target_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1366,7 +1362,7 @@ fn cell_m_advance_target_sync_to_owner_continue() {
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD@{1}"]);
     plant_savepoint_at(&primary.server_dir, &target_id, &pre_advance_primary_server);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(advance-target)/land/owner");
+    run_continue(Verb::Land, &ww.root, "M(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
@@ -1407,7 +1403,7 @@ fn cell_j_advance_target_sync_to_owner_continue() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1433,7 +1429,7 @@ fn cell_j_advance_target_sync_to_owner_continue() {
         &pre_advance_primary_project,
     );
 
-    run_continue(Verb::SyncTo, &ww.root, "J(advance-target)/land/owner");
+    run_continue(Verb::Land, &ww.root, "J(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
@@ -1470,7 +1466,7 @@ fn cell_m_advance_target_sync_to_owner_abort() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1531,7 +1527,7 @@ fn cell_m_advance_target_sync_to_lease_abort() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1598,7 +1594,7 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1732,7 +1728,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1748,7 +1744,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // ww and primary already share tips (no divergence injected): merged-check passes.
-    run_continue(Verb::SyncTo, &ww.root, "E(retire)/land/owner");
+    run_continue(Verb::Land, &ww.root, "E(retire)/land/owner");
 
     assert!(
         !ww.root.exists(),
@@ -1788,7 +1784,7 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1821,7 +1817,7 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
 
     // ww and primary share tips: merged-check passes, retire deletes the ww,
     // then cleanup runs against the (now-deleted) workweave paths.
-    run_continue(Verb::SyncTo, &ww.root, "retire/land/savepoint-leak");
+    run_continue(Verb::Land, &ww.root, "retire/land/savepoint-leak");
 
     assert!(
         !ww.root.exists(),
@@ -1862,7 +1858,7 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1878,7 +1874,7 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Lease-side invocation:
-    run_continue(Verb::SyncTo, &primary.root, "E(retire)/land/lease");
+    run_continue(Verb::Land, &primary.root, "E(retire)/land/lease");
 
     assert!(
         !ww.root.exists(),
@@ -1919,7 +1915,7 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1985,7 +1981,7 @@ fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -2013,13 +2009,15 @@ fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
     let ww_server_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let out = common::cli::run(&["land", "--continue"], &ww.root);
     common::cli::refused(&out, State::TargetMovedMidOperation);
-    assert!(ww.root.join(".rwv-op").exists(), "the refused resume keeps the op");
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the refused resume keeps the op"
+    );
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_before,
         "the refused resume moved nothing"
     );
-
 }
 
 // ===========================================================================
@@ -2101,7 +2099,7 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -2181,7 +2179,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -2275,7 +2273,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -2344,7 +2342,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -2429,7 +2427,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -2525,7 +2523,7 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
         &ww.root,
         &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
+            verb_str: PlantedVerb::Land.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",

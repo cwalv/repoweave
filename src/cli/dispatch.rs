@@ -607,7 +607,7 @@ fn drives_repositories(command: Option<&Commands>) -> bool {
             | Commands::Abort { .. }
             | Commands::Backup { .. }
             | Commands::Sync { .. }
-            | Commands::SyncTo { .. }
+            | Commands::Land { .. }
             | Commands::Fetch { .. }
             | Commands::Pull { .. }
             | Commands::Update { .. }

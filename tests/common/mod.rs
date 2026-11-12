@@ -1522,7 +1522,8 @@ pub fn land_plan_json(source: &std::path::Path, target: &std::path::Path, projec
         if checkout.exists() {
             plan.upstream_tips.insert(
                 repoweave::manifest::RepoKey::Member(path.clone()),
-                repoweave::vcs::CommitId::parse(&git_in(&checkout, &["rev-parse", "HEAD"])).unwrap(),
+                repoweave::vcs::CommitId::parse(&git_in(&checkout, &["rev-parse", "HEAD"]))
+                    .unwrap(),
             );
         }
     }

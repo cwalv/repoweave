@@ -870,13 +870,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Owner record at ww (the op's initiating workspace), thin lease at primary.
-    plant_owner_record(
-        &ww.root,
-        "land",
-        "advance-target",
-        &ww.root,
-        &primary.root,
-    );
+    plant_owner_record(&ww.root, "land", "advance-target", &ww.root, &primary.root);
     let lease_json = format!(
         "{{\"id\": \"planted-op-1234\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",

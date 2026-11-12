@@ -202,7 +202,7 @@ pub(crate) fn judge(
     (head, pin): (&ResolvedRevisionId, &ResolvedRevisionId),
     reset: Option<&crate::feature_sync::ResetOffer>,
 ) -> Option<Judged> {
-    judging(repo, dir, vcs, standing, head, pin).map(|judging| judging.judge(vcs))
+    judging(repo, dir, vcs, standing, head, pin, reset).map(|judging| judging.judge(vcs))
 }
 
 /// [`judge`] for a checkout of the workspace at `workspace`, which a landing
@@ -216,7 +216,7 @@ pub(crate) fn judge_elsewhere(
     pin: &ResolvedRevisionId,
     workspace: &Path,
 ) -> Option<Judged> {
-    judging(repo, dir, vcs, standing, head, pin)
+    judging(repo, dir, vcs, standing, head, pin, None)
         .map(|judging| judging.elsewhere(workspace).by_verb("land").judge(vcs))
 }
 
@@ -227,6 +227,7 @@ fn judging(
     standing: &Standing,
     head: &ResolvedRevisionId,
     pin: &ResolvedRevisionId,
+    reset: Option<&crate::feature_sync::ResetOffer>,
 ) -> Option<crate::diagnosis::Judging> {
     let judging = |state: State| {
         state

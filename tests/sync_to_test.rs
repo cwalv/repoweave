@@ -252,10 +252,7 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     // Run land from ww → primary with rebase strategy.
     // Both sides have the same lock (initial_sha), so no --force needed.
     rwv()
-        .args([
-            "land",
-            "--strategy=rebase",
-        ])
+        .args(["land", "--strategy=rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -452,10 +449,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     // ww's lock is fresh (ww_c2 matches ww's server).
     // primary's lock is fresh (primary_c2 matches primary's server).
     rwv()
-        .args([
-            "land",
-            "--strategy=rebase",
-        ])
+        .args(["land", "--strategy=rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1353,9 +1347,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
     let retired_at = stderr
         .find("retired workweave")
         .unwrap_or_else(|| panic!("retire must announce its own outcome; got stderr:\n{stderr}"));
-    let complete_at = stderr
-        .find("land complete")
-        .expect("claim counted above");
+    let complete_at = stderr.find("land complete").expect("claim counted above");
     assert!(
         retired_at < complete_at,
         "the completion claim must follow the last phase's own outcome, not \
@@ -1427,10 +1419,7 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww pre-rebase"]);
 
     rwv()
-        .args([
-            "land",
-            "--strategy=rebase",
-        ])
+        .args(["land", "--strategy=rebase"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1483,7 +1472,12 @@ fn land_takes_no_target_operand() {
     let before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     let out = common::cli::run(&["land", "../../primary"], &ww_root);
-    assert_eq!(out.status.code(), Some(2), "{}", common::cli::describe(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        common::cli::describe(&out)
+    );
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("unexpected argument"),
         "{}",

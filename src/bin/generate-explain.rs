@@ -108,8 +108,8 @@ use repoweave::pull::PullJsonOutput;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
-    auto_relock_commit_message, SyncJsonOutput, LandJsonOutput, SYNC_JSON_SCHEMA_URL,
-    LAND_JSON_SCHEMA_URL,
+    auto_relock_commit_message, LandJsonOutput, SyncJsonOutput, LAND_JSON_SCHEMA_URL,
+    SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 use repoweave::update_remote::{UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL};

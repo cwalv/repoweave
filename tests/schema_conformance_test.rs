@@ -102,9 +102,9 @@ use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    ContainmentOutput, ContainmentVerdictOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput,
-    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LandJsonOutput, SYNC_JSON_SCHEMA_URL,
-    LAND_JSON_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, MemberOutput, ReplayBaseline,
+    Step3AdvanceOutput, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
+    SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::update::{
     MemberOutcomeOutput, MemberOutcomeStatus, UpdateJsonOutput, UPDATE_SCHEMA_URL,

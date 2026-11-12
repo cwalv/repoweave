@@ -10,8 +10,8 @@
 use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
     Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
-    SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
-    LAND_JSON_SCHEMA_URL,
+    SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
+    SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, MidOperation, VcsError, VcsErrorKind, VcsErrorOutput};
 use serde_json::Value;
@@ -216,12 +216,7 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--json",
-        ])
+        .args(["land", "--strategy", "rebase", "--json"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -993,7 +988,7 @@ fn containment_of(stdout: &str, path: &str) -> Value {
 #[test]
 fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let c2 = make_commit(
         &ww.server_dir,
@@ -1054,12 +1049,7 @@ fn sync_json_discloses_the_verdict_a_failed_rebase_ran_against() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--json",
-        ])
+        .args(["land", "--strategy", "rebase", "--json"])
         .current_dir(&ww.root)
         .assert()
         .failure();

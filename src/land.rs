@@ -82,7 +82,9 @@ pub fn resolve(ctx: &WorkspaceContext, target_flag: Option<&str>) -> anyhow::Res
             );
             return Err(refusal(judged));
         }
-        (Record::Feature { .. }, Some(flag)) => (crate::branch::named(vcs, &project, &dir, flag)?, None),
+        (Record::Feature { .. }, Some(flag)) => {
+            (crate::branch::named(vcs, &project, &dir, flag)?, None)
+        }
         (Record::Feature { target, as_mode }, None) => (target.clone(), Some(*as_mode)),
     };
     let target_record = crate::branch::recorded_value(vcs, &project, &dir, &target)?;
@@ -120,45 +122,49 @@ pub fn resolve(ctx: &WorkspaceContext, target_flag: Option<&str>) -> anyhow::Res
     }
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
-    let target_tip =
-        match crate::push_branch::newer_of_branch_and_upstream(vcs, &dir, &target_ref, url_remote.as_ref())? {
-            Newer::Tip(tip) => tip.id().clone(),
-            Newer::Nowhere => {
-                judged.add(
-                    State::TargetGone
-                        .of(&label)
-                        .project_repo()
-                        .subject(&target)
-                        .bind("<W>", &feature)
-                        .bind("<T>", &target)
-                        .checkout(&dir)
-                        .by_verb("land")
-                        .judge(vcs),
-                );
-                return Err(refusal(judged));
-            }
-            Newer::Diverged {
-                local,
-                upstream_tip,
-                ..
-            } => {
-                let (ahead, behind) = vcs.ahead_behind(&dir, upstream_tip.id(), local.id());
-                judged.add(
-                    State::PushBranchDiverged
-                        .of(&label)
-                        .project_repo()
-                        .subject(format!(
-                            "'{target}', which this lands into, and its upstream have diverged \
+    let target_tip = match crate::push_branch::newer_of_branch_and_upstream(
+        vcs,
+        &dir,
+        &target_ref,
+        url_remote.as_ref(),
+    )? {
+        Newer::Tip(tip) => tip.id().clone(),
+        Newer::Nowhere => {
+            judged.add(
+                State::TargetGone
+                    .of(&label)
+                    .project_repo()
+                    .subject(&target)
+                    .bind("<W>", &feature)
+                    .bind("<T>", &target)
+                    .checkout(&dir)
+                    .by_verb("land")
+                    .judge(vcs),
+            );
+            return Err(refusal(judged));
+        }
+        Newer::Diverged {
+            local,
+            upstream_tip,
+            ..
+        } => {
+            let (ahead, behind) = vcs.ahead_behind(&dir, upstream_tip.id(), local.id());
+            judged.add(
+                State::PushBranchDiverged
+                    .of(&label)
+                    .project_repo()
+                    .subject(format!(
+                        "'{target}', which this lands into, and its upstream have diverged \
                              ({ahead} ahead, {behind} behind)"
-                        ))
-                        .bind("<repo>", &label)
-                        .checkout(&dir)
-                        .by_verb("land")
-                        .judge(vcs),
-                );
-                local.id().clone()
-            }
-        };
+                    ))
+                    .bind("<repo>", &label)
+                    .checkout(&dir)
+                    .by_verb("land")
+                    .judge(vcs),
+            );
+            local.id().clone()
+        }
+    };
     let target_workspace = match target_checkout(ctx, &project, &dir, &target, &label)? {
         Ok(workspace) => workspace,
         Err(refused) => {
@@ -222,7 +228,9 @@ fn judge_unrelated_target(
         .collect::<Vec<_>>()
         .join(", ");
     let why = if published.is_empty() {
-        format!("'{feature}''s record was published on {remotes}, where '{target}' is not published")
+        format!(
+            "'{feature}''s record was published on {remotes}, where '{target}' is not published"
+        )
     } else {
         format!(
             "'{feature}''s record was published on {remotes}; the local '{target}' does not take in \
@@ -274,9 +282,7 @@ fn target_checkout(
     let root = checkout
         .parent()
         .and_then(Path::parent)
-        .filter(|root| {
-            crate::path_spelling::CanonicalPath::of(&project_dir(root, project)) == at
-        })
+        .filter(|root| crate::path_spelling::CanonicalPath::of(&project_dir(root, project)) == at)
         .map(Path::to_path_buf);
     let recorded = crate::sync::recorded_workweaves(ctx.primary_path())?;
     let raw = || {
@@ -356,7 +362,10 @@ pub fn judge(
         );
         return Ok(Plan::default());
     };
-    let base_commit = vcs.merge_bases(&dir, &head, &landing.target_tip)?.into_iter().next();
+    let base_commit = vcs
+        .merge_bases(&dir, &head, &landing.target_tip)?
+        .into_iter()
+        .next();
     let sides = Sides {
         ours: Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
         theirs,
@@ -579,7 +588,12 @@ fn judge_member(
             _ => None,
         });
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
-    let tip = match crate::push_branch::newer_of_branch_and_upstream(vcs, dir, &receiving, home.as_ref())? {
+    let tip = match crate::push_branch::newer_of_branch_and_upstream(
+        vcs,
+        dir,
+        &receiving,
+        home.as_ref(),
+    )? {
         Newer::Tip(tip) => tip.id().clone(),
         Newer::Nowhere => return Ok(None),
         Newer::Diverged {

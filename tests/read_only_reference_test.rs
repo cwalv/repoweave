@@ -448,10 +448,7 @@ fn sync_to_leaves_the_reference_members_read_only() {
 
     assert!(weave.owned.join("NEW").exists(), "the commit landed");
     assert_read_only(&weave.reference, "the primary's reference after land");
-    assert_read_only(
-        &seat.join(REF_PATH),
-        "the workweave's reference after land",
-    );
+    assert_read_only(&seat.join(REF_PATH), "the workweave's reference after land");
 }
 
 #[test]

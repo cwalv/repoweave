@@ -5668,14 +5668,10 @@ mod branch_model_tests {
     //! `tests/branch_model_test.rs`.
 
     use super::*;
-    use crate::cli::consent::{
-        DiscardUnlandedConsent, OverwriteConsent,
-    };
+    use crate::cli::consent::{DiscardUnlandedConsent, OverwriteConsent};
     use crate::manifest::{RepoOperand, RepoPath};
     use crate::op_state::OpId;
-    use crate::vcs::{
-        DestroyProof, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind,
-    };
+    use crate::vcs::{DestroyProof, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind};
 
     /// A local branch name, obtained the only way one can be: through the
     /// named projection off a declared tracking ref.
@@ -5707,7 +5703,6 @@ mod branch_model_tests {
         );
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
-
 
     /// A repo on `main` with one commit.
     fn repo() -> tempfile::TempDir {
@@ -6633,10 +6628,7 @@ mod branch_model_tests {
         let op: OpId = op.parse().unwrap();
         [
             (SavepointKey::Op(op.clone()), op.to_string()),
-            (
-                SavepointKey::LandTarget(op.clone()),
-                format!("{op}-target"),
-            ),
+            (SavepointKey::LandTarget(op.clone()), format!("{op}-target")),
         ]
     }
 

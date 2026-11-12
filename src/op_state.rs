@@ -1859,14 +1859,14 @@ mod tests {
     }
 
     #[test]
-    fn a_sync_to_files_savepoints_on_both_sides_and_a_sync_on_one() {
+    fn a_landing_files_savepoints_on_both_sides_and_a_sync_on_one() {
         let op = OpId::new_now();
         let sync = make_sync_record(&op, Path::new("/own"), Path::new("/src"));
-        let sync_to = make_sync_to_record(&op, Path::new("/own"), Path::new("/tgt"));
+        let landing = make_land_record(&op, Path::new("/own"), Path::new("/tgt"));
 
         assert_eq!(sync.savepoint_keys(), vec![SavepointKey::Op(op.clone())]);
         assert_eq!(
-            sync_to.savepoint_keys(),
+            landing.savepoint_keys(),
             vec![SavepointKey::Op(op.clone()), SavepointKey::LandTarget(op)]
         );
     }
@@ -2331,7 +2331,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_write_read_roundtrip_sync_to() {
+    fn owner_write_read_roundtrip_land() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
@@ -2711,7 +2711,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&owner_dir).unwrap();
         let op_id = OpId::new_now();
-        write_owner(&owner_dir, &make_sync_to_record(&op_id, &owner_dir, &dir)).unwrap();
+        write_owner(&owner_dir, &make_land_record(&op_id, &owner_dir, &dir)).unwrap();
         let lease = LeaseRecord {
             id: op_id,
             owner: CanonicalPath::of(&owner_dir),
@@ -3069,7 +3069,7 @@ mod tests {
         TouchedWorkspaces::of(OpVerb::Sync, owner, owner)
     }
 
-    fn sync_to_touched(owner: &Path, target: &Path) -> TouchedWorkspaces {
+    fn land_touched(owner: &Path, target: &Path) -> TouchedWorkspaces {
         TouchedWorkspaces::of(OpVerb::Land, owner, target)
     }
 
@@ -3077,7 +3077,7 @@ mod tests {
         OwnerRecord::new_sync(op_id, SyncStrategy::Rebase, test_project(), source, owner)
     }
 
-    fn make_sync_to_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
+    fn make_land_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
         OwnerRecord::new_land(
             op_id,
             SyncStrategy::Rebase,
@@ -3107,7 +3107,7 @@ mod tests {
     }
 
     #[test]
-    fn acquire_op_writes_owner_plus_lease_for_sync_to() {
+    fn acquire_op_writes_owner_plus_lease_for_land() {
         // `land` writes an owner at CWD and a lease at the target.
         let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
@@ -3115,9 +3115,9 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&target_dir).unwrap();
         let op_id = OpId::new_now();
-        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+        let record = make_land_record(&op_id, &owner_dir, &target_dir);
 
-        let acquired = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap();
+        let acquired = acquire_op(&land_touched(&owner_dir, &target_dir), &record).unwrap();
 
         // Owner record + lease both present.
         assert!(OwnerRecord::path_in(&owner_dir).exists());
@@ -3141,9 +3141,9 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&target_dir).unwrap();
         let op_id = OpId::new_now();
-        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+        let record = make_land_record(&op_id, &owner_dir, &target_dir);
 
-        drop(acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap());
+        drop(acquire_op(&land_touched(&owner_dir, &target_dir), &record).unwrap());
 
         assert!(
             OwnerRecord::path_in(&owner_dir).exists(),
@@ -3164,7 +3164,7 @@ mod tests {
         let owner_dir = tmp.path();
         // Plant a prior op.
         let prior_id = OpId::new_now();
-        let prior = make_sync_to_record(&prior_id, owner_dir, &PathBuf::from("/prior/target"));
+        let prior = make_land_record(&prior_id, owner_dir, &PathBuf::from("/prior/target"));
         write_owner(owner_dir, &prior).unwrap();
 
         // Second acquisition attempt.
@@ -3210,8 +3210,8 @@ mod tests {
         overwrite_lease_in_test(&target_dir, &prior_lease).unwrap();
 
         let op_id = OpId::new_now();
-        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
-        let err = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record)
+        let record = make_land_record(&op_id, &owner_dir, &target_dir);
+        let err = acquire_op(&land_touched(&owner_dir, &target_dir), &record)
             .unwrap_err()
             .to_string();
 
@@ -3241,8 +3241,8 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&target_dir).unwrap();
         let op_id = OpId::new_now();
-        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
-        let acquired = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap();
+        let record = make_land_record(&op_id, &owner_dir, &target_dir);
+        let acquired = acquire_op(&land_touched(&owner_dir, &target_dir), &record).unwrap();
         assert!(OwnerRecord::path_in(&owner_dir).exists());
         assert!(LeaseRecord::path_in(&target_dir).exists());
 
@@ -3330,7 +3330,7 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&lease_dir).unwrap();
         let op_id = OpId::new_now();
-        let record = make_sync_to_record(&op_id, &owner_dir, &lease_dir);
+        let record = make_land_record(&op_id, &owner_dir, &lease_dir);
         write_owner(&owner_dir, &record).unwrap();
         overwrite_lease_in_test(
             &lease_dir,
@@ -3383,7 +3383,7 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&lease_dir).unwrap();
         let fresh_op_id = OpId::new_now();
-        let owner_record = make_sync_to_record(&fresh_op_id, &owner_dir, &lease_dir);
+        let owner_record = make_land_record(&fresh_op_id, &owner_dir, &lease_dir);
         write_owner(&owner_dir, &owner_record).unwrap();
         // Lease references an OLDER op id — stale carry-over.
         overwrite_lease_in_test(

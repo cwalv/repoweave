@@ -218,15 +218,7 @@ fn sync_to_places_both_workspaces_each_under_its_own_path() {
     commit(&seat_member, &["S1"], "seat");
     succeed(&seat, &["lock", "--commit"]);
 
-    let doc = envelope(
-        &seat,
-        &[
-            "land",
-            "--strategy",
-            "rebase",
-            "--json",
-        ],
-    );
+    let doc = envelope(&seat, &["land", "--strategy", "rebase", "--json"]);
     let context = format!("{doc:#}");
     let placements = doc["placements"].as_array().unwrap();
     assert_eq!(placements.len(), 2, "{context}");
@@ -495,14 +487,7 @@ fn file_counts_sit_only_in_placement_records_in_every_committed_schema() {
     }
     assert_eq!(
         holding,
-        [
-            "clone",
-            "land",
-            "pull",
-            "sync",
-            "update",
-            "update-remote"
-        ],
+        ["clone", "land", "pull", "sync", "update", "update-remote"],
         "every verb that places files reports placements"
     );
 }

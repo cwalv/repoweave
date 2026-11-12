@@ -12,9 +12,7 @@ use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, ResolvedLockFile,
     WorkweaveName,
 };
-use crate::op_state::{
-    self, OpId, OpVerb, OwnerHeader, OwnerRecord, SavepointKey, SyncStrategy,
-};
+use crate::op_state::{self, OpId, OpVerb, OwnerHeader, OwnerRecord, SavepointKey, SyncStrategy};
 use crate::parallel::{run_in_parallel, OutputMode};
 use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
@@ -1037,7 +1035,6 @@ fn delete_savepoint(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) {
 // anomalous relations (ahead / diverged / no-lock / unknown) refuse, naming the
 // relation. `--allow-stale-lock` still bypasses the whole gate.
 
-
 /// Number of commits to show inline per refused repo before summarizing the
 /// rest as "and N more".
 const BLOCKING_COMMITS_CAP: usize = 5;
@@ -1861,7 +1858,7 @@ pub struct OpCoordinates {
 
 /// Witness that `--retire` deleted a workweave.
 ///
-/// Produced by the delete's own return in `retire_workweave_after_sync_to`
+/// Produced by the delete's own return in `retire_workweave_after_landing`
 /// and nowhere else, so a `retired` claim cannot be assembled from the flags
 /// the operator passed.
 pub struct RetiredWorkweave {
@@ -2439,7 +2436,12 @@ struct PreconditionOutcome {
 /// The landing's judgment of where a source checkout stands to its pin: a
 /// forward relock records a checkout ahead of it; a pin the relock would move
 /// backward, or a member with none, refuses.
-fn judge_source_relations(class: &LockClassification, root: &Path, manifest: &Manifest, report: &mut Report) {
+fn judge_source_relations(
+    class: &LockClassification,
+    root: &Path,
+    manifest: &Manifest,
+    report: &mut Report,
+) {
     for (repo_path, raw) in &class.unresolvable {
         let dir = root.join(repo_path.as_path());
         let vcs = manifest
@@ -2452,7 +2454,10 @@ fn judge_source_relations(class: &LockClassification, root: &Path, manifest: &Ma
                 .member()
                 .checkout(&dir)
                 .bind("<m>", repo_path)
-                .subject(format!("the lock pins {}, which this clone lacks", raw.as_str()))
+                .subject(format!(
+                    "the lock pins {}, which this clone lacks",
+                    raw.as_str()
+                ))
                 .by_verb("land")
                 .judge(vcs.as_ref()),
         );
@@ -2506,7 +2511,10 @@ fn judge_target_pins(
                 .member()
                 .checkout(&dir)
                 .bind("<m>", repo_path)
-                .subject(format!("the target's lock pins {}, which this clone lacks", raw.as_str()))
+                .subject(format!(
+                    "the target's lock pins {}, which this clone lacks",
+                    raw.as_str()
+                ))
                 .elsewhere(root)
                 .by_verb("land")
                 .judge(vcs.as_ref()),
@@ -2522,19 +2530,33 @@ fn judge_target_pins(
         };
         let vcs = vcs_for(entry.vcs_type);
         if !matches!(r.relation, LockRelation::Ahead)
-            && (!matches!(entry.role, crate::manifest::Role::Owned | crate::manifest::Role::Fork)
-                || follows_its_pin_detached(entry.role, vcs.as_ref(), &dir))
+            && (!matches!(
+                entry.role,
+                crate::manifest::Role::Owned | crate::manifest::Role::Fork
+            ) || follows_its_pin_detached(entry.role, vcs.as_ref(), &dir))
         {
             continue;
         }
-        let held = live.get(&r.repo_path).map(Vec::as_slice).unwrap_or_default();
+        let held = live
+            .get(&r.repo_path)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let standing = crate::pins::standing(vcs.as_ref(), &dir, head, pin, held)?;
-        if matches!(standing, crate::pins::Standing::At | crate::pins::Standing::Ahead(_)) {
+        if matches!(
+            standing,
+            crate::pins::Standing::At | crate::pins::Standing::Ahead(_)
+        ) {
             continue;
         }
-        if let Some(judged) =
-            crate::pins::judge_elsewhere(&r.repo_path, &dir, vcs.as_ref(), &standing, head, pin, root)
-        {
+        if let Some(judged) = crate::pins::judge_elsewhere(
+            &r.repo_path,
+            &dir,
+            vcs.as_ref(),
+            &standing,
+            head,
+            pin,
+            root,
+        ) {
             report.add(judged);
         }
     }
@@ -2607,7 +2629,7 @@ fn run_preconditions_after_acquire(
     }
     if strategy == SyncStrategy::Ff {
         hold(
-            check_sync_to_ff_precondition(project_vcs, cwd_project_dir, &landing.target_tip),
+            check_land_ff_precondition(project_vcs, cwd_project_dir, &landing.target_tip),
             &mut report,
         );
     }
@@ -2633,7 +2655,12 @@ fn run_preconditions_after_acquire(
         resolved.as_ref(),
         unresolvable,
     );
-    judge_source_relations(&cwd_class, cwd_workspace_dir, &cwd_project.manifest, &mut report);
+    judge_source_relations(
+        &cwd_class,
+        cwd_workspace_dir,
+        &cwd_project.manifest,
+        &mut report,
+    );
     if let Some(target_class) = snapshot.source_class.as_ref() {
         if let Ok(target_manifest) =
             manifest_at_revision(project_vcs, dest_project_dir, &snapshot.source_project_tip)
@@ -2667,7 +2694,12 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let plan = crate::land::judge(landing, cwd_workspace_dir, cwd_ctx.primary_path(), &mut report)?;
+    let plan = crate::land::judge(
+        landing,
+        cwd_workspace_dir,
+        cwd_ctx.primary_path(),
+        &mut report,
+    )?;
     if strategy == SyncStrategy::Ff {
         hold(
             refuse_members_that_need_composing(&cwd_project.manifest, cwd_workspace_dir, &plan),
@@ -2732,18 +2764,16 @@ fn guard_and_mark<'a>(
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
     let dest_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
-    let source_workspace_name = WorkspaceContext::resolve_for_project(
-        &dest_workspace_dir,
-        &cwd_project_name,
-    )
-    .and_then(|target| workspace_name(&target))
-    .with_context(|| {
-        format!(
-            "failed to resolve {} as a workspace of project `{}`",
-            dest_workspace_dir.display(),
-            cwd_project_name.as_str(),
-        )
-    })?;
+    let source_workspace_name =
+        WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name)
+            .and_then(|target| workspace_name(&target))
+            .with_context(|| {
+                format!(
+                    "failed to resolve {} as a workspace of project `{}`",
+                    dest_workspace_dir.display(),
+                    cwd_project_name.as_str(),
+                )
+            })?;
 
     refuse_symlinked_members(&cwd_workspace_dir, &cwd_project_name)?;
     refuse_symlinked_members(&dest_workspace_dir, &cwd_project_name)?;
@@ -3126,8 +3156,7 @@ fn target_moved(
 ) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
     let mut moved: Vec<String> = Vec::new();
     let manifest =
-        Manifest::from_path(&project_dir(target_workspace, project).join(Manifest::FILE_NAME))
-            .ok();
+        Manifest::from_path(&project_dir(target_workspace, project).join(Manifest::FILE_NAME)).ok();
     for key in take_in.upstream_tips.keys() {
         let Some(to) = composed.get(key) else {
             continue;
@@ -3138,7 +3167,10 @@ fn target_moved(
                 let Some(entry) = manifest.as_ref().and_then(|m| m.get_entry(path)) else {
                     continue;
                 };
-                (target_workspace.join(path.as_path()), vcs_for(entry.vcs_type))
+                (
+                    target_workspace.join(path.as_path()),
+                    vcs_for(entry.vcs_type),
+                )
             }
         };
         let Ok(head) = vcs.head_revision(&dir) else {
@@ -3183,7 +3215,7 @@ fn target_moved_line(
 /// target. If equal: no-op (signaled by `Ok(())` from a caller that then
 /// short-circuits — handled inside `run_replay` via the noop-detection path).
 /// If diverged: refuse before any side effects.
-fn check_sync_to_ff_precondition(
+fn check_land_ff_precondition(
     vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     target_tip: &CommitId,
@@ -3330,9 +3362,6 @@ fn follows_its_pin_detached(role: crate::manifest::Role, vcs: &dyn Vcs, repo: &P
         _ => false,
     }
 }
-
-
-
 
 /// land source-side cleanliness preflight.
 ///
@@ -4249,14 +4278,20 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let vcs = ctx.project_vcs.as_ref();
     let dir = &ctx.cwd_project_dir;
     let source = ctx.take_in.source_tip.as_ref().ok_or_else(|| {
-        crate::untokened!(InternalInvariant, "the op record holds no source tip to relock from")
+        crate::untokened!(
+            InternalInvariant,
+            "the op record holds no source tip to relock from"
+        )
     })?;
     let target = ctx
         .take_in
         .upstream_tips
         .get(&RepoKey::Project)
         .ok_or_else(|| {
-            crate::untokened!(InternalInvariant, "the op record holds no target tip to relock onto")
+            crate::untokened!(
+                InternalInvariant,
+                "the op record holds no target tip to relock onto"
+            )
         })?;
     let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit);
     let base = vcs
@@ -4386,7 +4421,10 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
         .context("failed to reload CWD project for advance-target")?;
     let owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-        crate::untokened!(InternalInvariant, "internal: owner record missing at advance-target")
+        crate::untokened!(
+            InternalInvariant,
+            "internal: owner record missing at advance-target"
+        )
     })?;
     if let Some(composed) = owner.tips.converged() {
         if let Some(moved) = target_moved(
@@ -4625,7 +4663,7 @@ fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
 //
 // Abort from phase=retire: run_abort scans the target workspace for repos with
 // op-id savepoints and restores them to their pre-op state. Target savepoints
-// are created in guard_and_mark for verb=SyncTo (this spec's scope); sibling
+// are created in guard_and_mark for verb=Land (this spec's scope); sibling
 // .4 adds HEAD-verification on top of the savepoint restore.
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
@@ -4635,7 +4673,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         Checkout::Workweave {
             dir, name, project, ..
         } => {
-            let retired = retire_workweave_after_sync_to(
+            let retired = retire_workweave_after_landing(
                 ctx.project_vcs.as_ref(),
                 &ctx.cwd_ctx,
                 dir.as_path(),
@@ -4757,7 +4795,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// The [`RetiredWorkweave`] returned is the only evidence a retire happened:
 /// every path that does not reach the delete returns `Err`, and the primary
 /// weave never calls this at all.
-fn retire_workweave_after_sync_to(
+fn retire_workweave_after_landing(
     project_vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     workweave_dir: &Path,
@@ -5535,7 +5573,7 @@ fn in_manifest_order(mut records: Vec<SyncOutcomeOutput>) -> Vec<SyncOutcomeOutp
 // The replay phase IS what `rwv sync <target>` does (CWD absorbs target's
 // history with CWD's commits on top). advance-target ff-forwards the
 // target's repos to CWD's converged tips. With `--retire`, the workweave
-// is then deleted (merged-check + dirty-check, see [`retire_workweave_after_sync_to`]).
+// is then deleted (merged-check + dirty-check, see [`retire_workweave_after_landing`]).
 //
 // Op-state is one full owner record at CWD plus a thin lease at the target
 // workspace. Driver re-entry follows the lease pointer when `--continue`

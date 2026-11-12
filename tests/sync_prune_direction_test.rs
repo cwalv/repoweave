@@ -402,7 +402,10 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
     let s2 = seat(&weave, &weave.root, "s2");
     drop_and_commit(&s2, "drop extra");
 
-    let stdout = succeed(&s1, &["land", "--target", "app--s2", "--strategy", "rebase"]);
+    let stdout = succeed(
+        &s1,
+        &["land", "--target", "app--s2", "--strategy", "rebase"],
+    );
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "{stdout}"
@@ -855,10 +858,7 @@ fn json_under_two_workers_a_refused_prune_is_a_member_and_exits_1() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(
-        &s1,
-        &["land", "--strategy", "rebase", "--json", "-j", "2"],
-    );
+    let out = run(&s1, &["land", "--strategy", "rebase", "--json", "-j", "2"]);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -879,10 +879,7 @@ fn json_under_two_workers_carries_the_pruned_member() {
     let weave = weave();
     let s1 = seat_behind_a_drop(&weave);
 
-    let stdout = succeed(
-        &s1,
-        &["land", "--strategy", "rebase", "--json", "-j", "2"],
-    );
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase", "--json", "-j", "2"]);
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_one_member(envelope["members"].as_array().unwrap(), "pruned", &s1);
 }

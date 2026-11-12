@@ -191,12 +191,7 @@ fn sync_to_retire_json_round_trip() {
     let target_server_before = common::git_in(&primary_server, &["rev-parse", "HEAD"]);
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=rebase",
-            "--retire",
-            "--json",
-        ])
+        .args(["land", "--strategy=rebase", "--retire", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -308,16 +303,12 @@ fn sync_to_retire_json_round_trip() {
 #[test]
 fn sync_to_json_retired_false_without_retire_flag() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _primary_server, _ww_server, _primary_project, _ww_project, _advance_sha) =
+    let (_primary, ww, _primary_server, _ww_server, _primary_project, _ww_project, _advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), "test-ww");
 
     // Invoke WITHOUT --retire.
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=ff",
-            "--json",
-        ])
+        .args(["land", "--strategy=ff", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -351,18 +342,13 @@ fn sync_to_json_retired_false_without_retire_flag() {
 #[test]
 fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, primary_server, ww_server, _primary_project, _ww_project, advance_sha) =
+    let (_primary, ww, primary_server, ww_server, _primary_project, _ww_project, advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), "refused-ww");
 
     std::fs::write(ww_server.join("scratch.txt"), "not committed\n").unwrap();
 
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=rebase",
-            "--retire",
-            "--json",
-        ])
+        .args(["land", "--strategy=rebase", "--retire", "--json"])
         .current_dir(&ww)
         .assert()
         .failure();
@@ -455,11 +441,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     // land --strategy=ff from ww to primary: step 1 is a no-op, step 3
     // is also a no-op (already at the same tip).
     let assert = rwv()
-        .args([
-            "land",
-            "--strategy=ff",
-            "--json",
-        ])
+        .args(["land", "--strategy=ff", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -794,4 +776,3 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
     );
     assert_eq!(doc["retired"], false, "envelope:\n{doc:#}");
 }
-

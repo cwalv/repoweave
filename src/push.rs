@@ -1465,8 +1465,7 @@ fn judge_project(
     };
     let target = target.expect("a project branch with no push target was refused");
     if let Record::Feature {
-        target: lands_into,
-        ..
+        target: lands_into, ..
     } = &pushed.record
     {
         let published = pvcs
