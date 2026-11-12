@@ -24,6 +24,7 @@ const PROJECT: &str = "app";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
+    primary: PathBuf,
     primary_lib: PathBuf,
     primary_project: PathBuf,
     ww: PathBuf,
@@ -110,6 +111,7 @@ fn fixture() -> Fixture {
     let scratch = tmp.path().join("scratch");
     Fixture {
         _tmp: tmp,
+        primary,
         primary_lib,
         primary_project,
         ww,
@@ -265,8 +267,30 @@ fn refuses_and_keeps(f: &Fixture, shape: Shape, checkout: &Path) {
     );
 }
 
+/// `rwv land` in the primary, on `main`, which lands into nothing: the
+/// landing refuses before it claims any workspace, judging the source's
+/// edits beside that refusal, and writes nothing to the checkout.
+fn refuses_early_and_keeps(f: &Fixture, shape: Shape) {
+    shape.apply(&f.primary_lib);
+    let before = snapshot(&f.primary_lib);
+
+    let out = common::cli::run(&["land"], &f.primary);
+
+    let stderr = common::cli::refused(&out, State::TargetNoTarget);
+    assert!(
+        stderr.contains("edits dirty") || stderr.contains("edits mid-operation"),
+        "{shape:?} is judged an edit beside the refusal:\n{stderr}"
+    );
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(
+        snapshot(&f.primary_lib),
+        before,
+        "{shape:?}: a landing refused before its claim changed the checkout:\n{stderr}"
+    );
+}
+
 macro_rules! edit_shapes {
-    ($($source:ident, $target:ident: $shape:expr;)*) => {$(
+    ($($source:ident, $target:ident, $early:ident: $shape:expr;)*) => {$(
         #[test]
         fn $source() {
             let f = fixture();
@@ -278,24 +302,50 @@ macro_rules! edit_shapes {
             let f = fixture();
             refuses_and_keeps(&f, $shape, &f.primary_lib.clone());
         }
+
+        #[test]
+        fn $early() {
+            refuses_early_and_keeps(&fixture(), $shape);
+        }
     )*};
 }
 
 edit_shapes! {
     a_deleted_file_in_the_source_is_an_edit,
-    a_deleted_file_in_the_target_is_an_edit: Shape::Deleted;
+    a_deleted_file_in_the_target_is_an_edit,
+    a_deleted_file_survives_a_landing_refused_early: Shape::Deleted;
     a_file_returned_to_an_earlier_version_in_the_source_is_an_edit,
-    a_file_returned_to_an_earlier_version_in_the_target_is_an_edit: Shape::Reverted;
+    a_file_returned_to_an_earlier_version_in_the_target_is_an_edit,
+    a_file_returned_to_an_earlier_version_survives_a_landing_refused_early: Shape::Reverted;
     a_staged_revert_in_the_source_is_an_edit,
-    a_staged_revert_in_the_target_is_an_edit: Shape::StagedRevert;
+    a_staged_revert_in_the_target_is_an_edit,
+    a_staged_revert_survives_a_landing_refused_early: Shape::StagedRevert;
     a_copied_file_in_the_source_is_an_edit,
-    a_copied_file_in_the_target_is_an_edit: Shape::Copied;
+    a_copied_file_in_the_target_is_an_edit,
+    a_copied_file_survives_a_landing_refused_early: Shape::Copied;
 }
 
 #[cfg(unix)]
 edit_shapes! {
     a_mode_change_in_the_source_is_an_edit,
-    a_mode_change_in_the_target_is_an_edit: Shape::ModeChanged;
+    a_mode_change_in_the_target_is_an_edit,
+    a_mode_change_survives_a_landing_refused_early: Shape::ModeChanged;
+}
+
+/// Drift too is left alone by a landing refused before its claim: it is
+/// judged as the dirt it looks like, and refreshed only by a landing that
+/// goes ahead.
+#[test]
+fn drift_survives_a_landing_refused_early() {
+    let f = fixture();
+    f.move_from_elsewhere("main", "notes.txt", "three\n");
+    let before = snapshot(&f.primary_lib);
+
+    let out = common::cli::run(&["land"], &f.primary);
+
+    let stderr = common::cli::refused(&out, State::TargetNoTarget);
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(snapshot(&f.primary_lib), before, "{stderr}");
 }
 
 /// The control the edit shapes stand on: with no edit the fixture lands.

@@ -2923,7 +2923,8 @@ fn judge_source_relations(
 
 /// The source's own refusals, which a landing owes whatever its target: edits
 /// in its checkouts and where each stands to the source's lock. The landing
-/// refuses, so drift is refreshed only in a checkout whose edits it refused.
+/// refuses before it holds any claim, so drift is not read: nothing here may
+/// write, and what drift leaves is judged as the dirt it looks like.
 pub(crate) fn judge_landing_source(
     ctx: &WorkspaceContext,
     report: &mut Report,
@@ -2932,15 +2933,7 @@ pub(crate) fn judge_landing_source(
     let root = ctx.active_path();
     let dir = project_dir(root, &project);
     let source = Project::from_dir(&dir, project)?;
-    let mut drifted = Vec::new();
-    judge_edits_source_preflight(&source, root, &dir, report, &mut drifted);
-    let stdout_lock = Mutex::new(());
-    let text = TextHandler {
-        stdout_lock: &stdout_lock,
-    };
-    for refreshed in refresh_drifted(&drifted, true)? {
-        emit_landing_report(&text, &refreshed);
-    }
+    judge_edits_source_preflight(&source, root, &dir, report, None);
     let class = {
         let (resolved, unresolvable) = match source.lock.as_ref() {
             Some(raw) => {
@@ -3083,7 +3076,7 @@ fn run_preconditions_after_acquire(
         cwd_workspace_dir,
         cwd_project_dir,
         &mut report,
-        drifted,
+        Some(&mut *drifted),
     );
     if retire {
         if let Checkout::Workweave { dir, project, .. } = &cwd_ctx.checkout {
@@ -4037,7 +4030,7 @@ fn judge_edits_target_preflight<'m>(
                 },
                 |dirt| dirt,
                 report,
-                drifted,
+                Some(&mut *drifted),
             );
         }
     }
@@ -4051,7 +4044,7 @@ fn judge_edits_target_preflight<'m>(
         },
         |dirt| dirt,
         report,
-        drifted,
+        Some(drifted),
     );
 }
 
@@ -4077,17 +4070,19 @@ pub(crate) struct JudgedCheckout {
 /// edit nor listed under the choice that commits edits. A checkout stopped
 /// in an operation, or one whose reading fails, is judged on all its dirt.
 /// `keep` narrows the dirt judged, as the source's project repo does for its
-/// lock.
+/// lock. Without `drifted` no drift is read, and every difference is judged
+/// an edit: a judgement that can only end in a refusal reports drift as the
+/// dirt it looks like rather than set up a refresh it may not make.
 fn judge_edits_beside_drift(
     vcs: Box<dyn Vcs>,
     at: JudgedCheckout,
     keep: impl Fn(Vec<String>) -> Vec<String>,
     report: &mut Report,
-    drifted: &mut Vec<DriftedCheckout>,
+    drifted: Option<&mut Vec<DriftedCheckout>>,
 ) {
-    let reading = match vcs.mid_operation(&at.dir) {
-        Some(_) => crate::check::DriftReading::default(),
-        None => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
+    let reading = match (&drifted, vcs.mid_operation(&at.dir)) {
+        (Some(_), None) => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
+        _ => crate::check::DriftReading::default(),
     };
     let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir))
         .into_iter()
@@ -4104,7 +4099,7 @@ fn judge_edits_beside_drift(
     if let Some(judged) = judged {
         report.add(judged);
     }
-    if reading.is_refreshable() {
+    if let (Some(drifted), true) = (drifted, reading.is_refreshable()) {
         drifted.push(DriftedCheckout {
             vcs,
             at,
@@ -4216,7 +4211,7 @@ fn judge_edits_source_preflight(
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
     report: &mut Report,
-    drifted: &mut Vec<DriftedCheckout>,
+    mut drifted: Option<&mut Vec<DriftedCheckout>>,
 ) {
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
@@ -4231,7 +4226,7 @@ fn judge_edits_source_preflight(
                 },
                 |dirt| dirt,
                 report,
-                drifted,
+                drifted.as_deref_mut(),
             );
         }
     }
