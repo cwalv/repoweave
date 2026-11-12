@@ -783,6 +783,8 @@ fn project_take_ins() -> Vec<ProjectTakeInOutput> {
         TakeIn::Ahead,
         TakeIn::NoUpstream,
         TakeIn::Detached,
+        TakeIn::Merged,
+        TakeIn::Reset,
     ]
     .into_iter()
     .map(|result| {
@@ -792,7 +794,8 @@ fn project_take_ins() -> Vec<ProjectTakeInOutput> {
             branch: (result != TakeIn::Detached).then(|| "main".to_owned()),
             result,
             from: advanced.then(|| sha('a')),
-            to: advanced.then(|| sha('b')),
+            to: (advanced || result == TakeIn::Merged || result == TakeIn::Reset).then(|| sha('b')),
+            backup: (result == TakeIn::Reset).then(|| "main/1".to_owned()),
             re_pinned: if advanced {
                 vec![RePinnedOutput {
                     path: REPO.to_owned(),

@@ -6,7 +6,7 @@
 //! flags it was given, which `--continue` re-applies.
 
 use crate::diagnosis::{Report, State};
-use crate::manifest::{ProjectName, RepoKey, RepoOperand, RepoPath};
+use crate::manifest::{ProjectName, RepoKey, RepoOperand};
 use crate::op_state::{
     self, AcquiredOp, OpId, OpVerb, OwnerRecord, RefMove, SavepointKey, TakeInRecord,
     TouchedWorkspaces,
@@ -46,7 +46,7 @@ impl Flags {
         }
     }
 
-    pub(crate) fn into_record(&self) -> TakeInRecord {
+    pub(crate) fn to_record(&self) -> TakeInRecord {
         TakeInRecord {
             merge_upstream: self.merge_upstream,
             reset_to_upstream: self
@@ -63,7 +63,6 @@ impl Flags {
 pub(crate) struct Op {
     pub(crate) workspace: PathBuf,
     pub(crate) id: OpId,
-    acquired: Option<AcquiredOp>,
 }
 
 impl Op {
@@ -78,14 +77,13 @@ impl Op {
         let id = OpId::new_now();
         let record = OwnerRecord::new_take_in(&id, verb, project.clone(), workspace, take_in);
         let touched = TouchedWorkspaces::of(verb, workspace, workspace);
-        let acquired = op_state::acquire_op(&touched, &record)?;
+        let _held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
         for (dir, vcs) in repos {
             let _ = vcs.create_savepoint(dir, &SavepointKey::Op(id.clone()));
         }
         Ok(Self {
             workspace: workspace.to_path_buf(),
             id,
-            acquired: Some(acquired),
         })
     }
 
@@ -113,7 +111,6 @@ impl Op {
             Self {
                 workspace: resolved.owner_workspace.as_path().to_path_buf(),
                 id: record.id,
-                acquired: None,
             },
             record.project,
             take_in,
@@ -125,14 +122,6 @@ impl Op {
         Op {
             workspace: op.workspace.clone(),
             id: op.id.clone(),
-            acquired: None,
-        }
-    }
-
-    /// Release the op after a refusal that came before anything moved.
-    pub(crate) fn release(&self) {
-        if let Some(acquired) = &self.acquired {
-            op_state::release_acquired(acquired);
         }
     }
 
@@ -263,8 +252,4 @@ pub(crate) fn restore_ref_moves(
         }
     }
     foreign
-}
-
-pub(crate) fn member_dir(workspace: &Path, path: &RepoPath) -> PathBuf {
-    workspace.join(path.as_path())
 }

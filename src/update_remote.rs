@@ -371,7 +371,7 @@ fn update_for_project(
         }),
     };
     refuse_backwards(&work_items, &fetched, project.lock.as_ref())?;
-    let settled = settle_diverged(ctx, &project_name, &work_items, &fetched, state)?;
+    let settled = settle_diverged(ctx, project_name, &work_items, &fetched, state)?;
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |idx, item| {
         if settled.as_refs.contains(&idx) {
@@ -1090,7 +1090,7 @@ fn settle_diverged(
     let op = match &state.resumed {
         Some((op, _)) => Op::adopt(op),
         None => {
-            let mut record = state.flags.into_record();
+            let mut record = state.flags.to_record();
             record.roles = state.wire.roles.clone();
             record.repos = state.wire.repos.clone();
             record.dirty = state.dirty;

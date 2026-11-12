@@ -7,8 +7,9 @@
 > workweaves go through rwv verbs. If you need an operation no verb provides,
 > that is a UX gap: file it rather than working around it at the file level.
 
-The on-disk records `rwv sync` and `rwv sync-to` use to make a multi-workspace
-operation resumable across a crash. Written and cleared by the verbs; read on
+The on-disk records `rwv sync`, `rwv sync-to`, and `rwv pull` and `rwv update
+--remote` with `--merge-upstream` or `--reset-to-upstream` use to make a
+multi-workspace operation resumable across a crash. Written and cleared by the verbs; read on
 `--continue` and by `rwv abort`.
 
 Nothing outside `rwv` should parse these. A plugin that needs to know whether an
@@ -25,12 +26,16 @@ It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
-Schema v2 (no back-compat with v1; in-flight v1 ops must be resolved with
-`rwv abort` before upgrading). JSON, every field mandatory — a record missing
-a key fails to parse rather than defaulting.
+Schema v3. Every reader refuses a record whose `schema` is another number or
+absent, naming the release that wrote it (`release`, or "a release before" the
+running one for a record that has none): it is finished or aborted with that
+release, and nothing of it is read. JSON, every field mandatory — a record
+missing a key fails to parse rather than defaulting.
 
 ```json
 {
+  "schema": 3,
+  "release": "0.25.0",
   "id": "1779769917405921588",
   "verb": "sync",
   "strategy": "rebase",
@@ -42,14 +47,17 @@ a key fails to parse rather than defaulting.
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-10T21:14:03Z"
+  "started_at": "2026-06-10T21:14:03Z",
+  "take_in": null
 }
 ```
 
 | Field | Description |
 |---|---|
+| `schema` | The record schema, `3`. A record carrying another, or none, is refused |
+| `release` | The rwv release that wrote the record |
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
-| `verb` | Which top-level verb started this op: `sync` or `sync-to` |
+| `verb` | Which top-level verb started this op: `sync`, `sync-to`, `pull` or `update-remote` |
 | `strategy` | Strategy supplied to the op: `ff` or `rebase` |
 | `project` | The project the op operates on. Both `source` and `target` are resolved under it; neither workspace's `.rwv-active` is consulted, since an operator may retarget a pointer while the op is parked. `rwv abort` reads it to know which manifest to enumerate on each side |
 | `source` | Absolute path of the source workspace |
@@ -60,9 +68,23 @@ a key fails to parse rather than defaulting.
 | `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check. Keyed as `advanced_tips` is |
 | `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
 | `started_at` | RFC3339 UTC timestamp when the op started |
+| `take_in` | `null` for `sync` and `sync-to`. For `pull` and `update-remote`: what `--continue` re-applies (`merge_upstream`, `reset_to_upstream`, the `--role` and `--repo` selection, `dirty`, `commit` and `message`, `no_materialize`), the upstream tip each repo was merged or reset against (`upstream_tips`, so a resumed op acts on the tips the first run planned), and each branch moved as a ref with no checkout (`ref_moves`: repo, branch, from, to) |
 
 Lives at the workspace root (same directory as `.rwv-active`). Source:
 `src/op_state.rs`.
+
+### `pull` and `update --remote`
+
+These two take the owner record with `source` and `target` both the workspace
+they ran in, and no leases. Their phases are `replay` (the member merges, the
+resets, the project merge up to its commit) and `relock`. Each checkout the op
+may move gets a savepoint under the op's own id; each tip it writes is journaled
+in `advanced_tips`. A branch the op moves as a ref, because no checkout has it
+attached, has no HEAD to savepoint, so the move goes in `take_in.ref_moves`
+instead, and `rwv abort` puts it back by compare-and-swap, refusing a branch
+that has moved since as a foreign tip. Every step is idempotent: a `--continue`
+finishes a merge left staged in a checkout, skips one already made, and
+recomputes the rest.
 
 ### What the record's refs hold
 

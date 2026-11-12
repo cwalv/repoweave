@@ -102,6 +102,7 @@ impl From<VcsError> for MemberStop {
 /// branch attached, else as refs on the member's expected branch where
 /// nothing has that checked out. Idempotent: a merge already staged is
 /// finished, one already made is left.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn merge_member(
     as_refs: bool,
     workspace: &Path,
@@ -545,7 +546,7 @@ impl ProjectMerge<'_> {
                 continue;
             };
             let was = base_held.and_then(|held| held.pins.get(path));
-            let one_branch = first.declared.get(path).is_some()
+            let one_branch = first.declared.contains_key(path)
                 && first.declared.get(path) == second.declared.get(path)
                 && first.declared.get(path) == merged_declared.get(path);
             if theirs == ours || Some(theirs) == was || Some(ours) == was || !one_branch {

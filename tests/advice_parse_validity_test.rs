@@ -290,10 +290,15 @@ fn extract_candidates() -> Vec<Candidate> {
 /// added — what keeps the expansion below from silently falling behind
 /// `OpVerb`'s own domain.
 fn all_op_verbs() -> Vec<OpVerb> {
-    let all = vec![OpVerb::Sync, OpVerb::SyncTo];
+    let all = vec![
+        OpVerb::Sync,
+        OpVerb::SyncTo,
+        OpVerb::Pull,
+        OpVerb::UpdateRemote,
+    ];
     for verb in &all {
         match verb {
-            OpVerb::Sync | OpVerb::SyncTo => {}
+            OpVerb::Sync | OpVerb::SyncTo | OpVerb::Pull | OpVerb::UpdateRemote => {}
         }
     }
     all

@@ -6,11 +6,24 @@ Take in what the remotes hold: run the pruning fetch of every repo, fast-forward
 the project branch to its upstream, then run `rwv update`, so the members are
 aligned to the lock the project branch now holds.
 
-`pull` only ever moves the project branch forward. A branch that is behind its
-upstream takes it in; one that is at its upstream, ahead of it, or has no
-upstream has nothing to take in; one that has diverged — each side holding
-commits the other lacks — is refused with nothing changed, as `push-branch`
-`diverged`.
+A branch that is behind its upstream takes it in; one that is at its upstream,
+ahead of it, or has no upstream has nothing to take in; one that has diverged —
+each side holding commits the other lacks — is refused with nothing changed, as
+`push-branch` `diverged`, unless `--merge-upstream` merges it or
+`--reset-to-upstream projects/<name>` moves it to its upstream.
+
+`--merge-upstream` merges the branch with its upstream, first parent the
+upstream. The merged `rwv.toml` is read before anything moves; each member whose
+pin both sides changed under one declared branch merges the other side's pin into
+its branch; a member the merge drops is pruned once every member has merged; and
+the project commit is written last, carrying the relock: each merged member at
+where its merge ended, every other member at the pin the side that changed it
+holds. A conflict stops with the backend's hint up to staging and, for each
+conflicted `rwv.toml` entry, its setter spelled with ours and with theirs;
+`rwv pull --continue` resumes and `rwv abort` restores everything the operation
+moved. `--reset-to-upstream` keeps the tip it leaves in a backup (`rwv backup
+list`) and refuses where the upstream is gone, a record lands into the branch, or
+the checkout has edits.
 
 1. **Fetch.** The same pruning fetch as `rwv fetch`, of the project repo and
    every member. A repo the fetch could not complete refuses the pull before
@@ -32,8 +45,10 @@ commits the other lacks — is refused with nothing changed, as `push-branch`
 ## Invocation
 
 ```
-rwv pull [--project <name>] [--role <role>]...
+rwv pull [--merge-upstream] [--reset-to-upstream projects/<name>]
+         [--project <name>] [--role <role>]...
          [--repo <selector>]... [-j <N>] [--json] [--no-materialize]
+rwv pull --continue
 ```
 
 - `--role` / `--repo` — limit the update of step 3 to a subset of the manifest.
@@ -744,6 +759,13 @@ Schema:
         "result"
       ],
       "properties": {
+        "backup": {
+          "description": "The backup holding the tip a `reset` left.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "branch": {
           "description": "The branch the project repo is on. Absent when it is detached.",
           "type": [
@@ -752,7 +774,7 @@ Schema:
           ]
         },
         "from": {
-          "description": "The branch's tip before. Present for `advanced`.",
+          "description": "The branch's tip before. Present for `advanced`, `merged` and `reset`.",
           "type": [
             "string",
             "null"
@@ -780,7 +802,7 @@ Schema:
           "$ref": "#/definitions/TakeIn"
         },
         "to": {
-          "description": "The branch's tip after. Present for `advanced`.",
+          "description": "The branch's tip after. Present for `advanced`, `merged` and `reset`.",
           "type": [
             "string",
             "null"
@@ -997,6 +1019,20 @@ Schema:
           "enum": [
             "detached"
           ]
+        },
+        {
+          "description": "The branch had diverged and was merged with its upstream.",
+          "type": "string",
+          "enum": [
+            "merged"
+          ]
+        },
+        {
+          "description": "The branch was moved to its upstream, its own tip kept in a backup.",
+          "type": "string",
+          "enum": [
+            "reset"
+          ]
         }
       ]
     },
@@ -1032,7 +1068,8 @@ rwv pull --repo github/acme/server
 ## Common errors
 
 - *push-branch diverged* — the project branch and its upstream each hold
-  commits the other lacks. `pull` takes in a branch only by fast-forward.
+  commits the other lacks. `--merge-upstream` or `--reset-to-upstream
+  projects/<name>` takes it in.
 - *edits dirty* — the project repo has uncommitted changes to tracked files;
   commit or stash them, then rerun.
 - *pull could not complete the fetch* — a remote was unreachable or refused;

@@ -780,6 +780,20 @@ Schema:
           "enum": [
             "sync-to"
           ]
+        },
+        {
+          "description": "`rwv pull` with `--merge-upstream` or `--reset-to-upstream`.",
+          "type": "string",
+          "enum": [
+            "pull"
+          ]
+        },
+        {
+          "description": "`rwv update --remote` with `--merge-upstream` or `--reset-to-upstream`.",
+          "type": "string",
+          "enum": [
+            "update-remote"
+          ]
         }
       ]
     },

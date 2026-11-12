@@ -305,7 +305,11 @@ Three modules carry it, and each has one job:
   member, a fork remote and two mirrors of the origin (one keeping branches the
   origin drops, one pruning to an exact copy), give a member a role other than
   `owned`, and install an `update` hook on any remote that refuses the records
-  branch. Any remote can be made unreachable mid-scenario by moving its bare
+  branch. A seed can also make every git the sandbox runs answer as release
+  2.37 (`Seed::old_git`): a `git` earlier on `PATH` reports that release and
+  refuses `merge-tree --write-tree` as it does, then runs the real git, so the
+  fallback that merges in a checkout runs on a machine whose git has the
+  command. Any remote can be made unreachable mid-scenario by moving its bare
   directory aside behind a drop guard, so a scenario that fails during an
   outage still leaves the remote where its URL points. The key a member entry
   declares its branch under and the `.gitattributes` line for the lock are one

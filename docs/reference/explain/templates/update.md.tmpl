@@ -179,9 +179,16 @@ where you are:
   not a fast-forward of it, `update --remote` points at `rwv sync` — the verb
   that reconciles a workweave with its parent — rather than at a flag.
 
-A tip that is not a fast-forward refuses in the canonical too, naming the exit:
-reconcile the branch with its tracking tip yourself (ordinary `git rebase` /
-`git merge`) and re-run.
+A branch that holds its upstream's tip already, or is ahead of it, has nothing to
+take in. One that has diverged refuses as `push-branch` `diverged`, with nothing
+changed, naming the two ways through: `--merge-upstream` merges it with its
+upstream (first parent the upstream; a branch no checkout has attached merges as
+refs and touches no working tree, and a conflict there is refused), and
+`--reset-to-upstream <repo>` moves it to its upstream after keeping the tip it
+leaves in a backup, refusing where the upstream is gone, a record lands into the
+branch, or the checkout has edits. Both run under an operation record: a conflict
+stops with the conflict hint up to staging, `rwv update --remote --continue`
+resumes, and `rwv abort` puts every repo and ref the operation moved back.
 
 A repo whose HEAD is already detached stays detached at the new tip; no consent
 is needed, because there is no branch to abandon. It refuses while the repo is
@@ -199,12 +206,19 @@ they were.
 rwv update [--project <name>] [--role <role>]...
            [--repo <selector>]... [-j <n>] [--json] [--no-materialize]
 rwv update --remote [--dirty] [--commit [-m <MSG>]]
+           [--merge-upstream] [--reset-to-upstream <repo>]...
            [--project <name>] [--role <role>]... [--repo <selector>]...
            [-j <n>] [--json] [--no-materialize]
+rwv update --remote --continue
 ```
 
 - `--remote` — advance each repo to its branch HEAD on the remote and
   record the advanced tips in the lock, instead of aligning to the lock.
+- `--merge-upstream` — with `--remote`: merge each acted-on member branch that
+  has diverged from its upstream.
+- `--reset-to-upstream <repo>` — with `--remote`: move that member's branch to
+  its upstream, keeping the tip it leaves in a backup. Repeat per repo.
+- `--continue` — with `--remote`: resume the update a conflict stopped.
 - `--dirty` — with `--remote`: allow recording the lock with uncommitted
   changes in repos.
 - `--commit` — with `--remote`: commit the new `rwv.lock` in the project repo,

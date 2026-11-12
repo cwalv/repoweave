@@ -663,6 +663,13 @@
         "result"
       ],
       "properties": {
+        "backup": {
+          "description": "The backup holding the tip a `reset` left.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "branch": {
           "description": "The branch the project repo is on. Absent when it is detached.",
           "type": [
@@ -671,7 +678,7 @@
           ]
         },
         "from": {
-          "description": "The branch's tip before. Present for `advanced`.",
+          "description": "The branch's tip before. Present for `advanced`, `merged` and `reset`.",
           "type": [
             "string",
             "null"
@@ -699,7 +706,7 @@
           "$ref": "#/definitions/TakeIn"
         },
         "to": {
-          "description": "The branch's tip after. Present for `advanced`.",
+          "description": "The branch's tip after. Present for `advanced`, `merged` and `reset`.",
           "type": [
             "string",
             "null"
@@ -915,6 +922,20 @@
           "type": "string",
           "enum": [
             "detached"
+          ]
+        },
+        {
+          "description": "The branch had diverged and was merged with its upstream.",
+          "type": "string",
+          "enum": [
+            "merged"
+          ]
+        },
+        {
+          "description": "The branch was moved to its upstream, its own tip kept in a backup.",
+          "type": "string",
+          "enum": [
+            "reset"
           ]
         }
       ]

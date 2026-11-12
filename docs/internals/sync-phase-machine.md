@@ -448,3 +448,28 @@ engine has no branch that reads the marker's parent for a pull.
 `bare_sync_inside_a_workweave_is_refused_at_argument_parsing` pins both the
 refusal and the non-movement, so re-adding the default is a red test rather
 than a quiet resurrection.
+
+## The project merge (`pull --merge-upstream`)
+
+`pull --merge-upstream` does not run this machine; it runs `src/project_merge.rs`
+under the same op record. Its order is fixed:
+
+1. The merge is computed as a tree where the backend can (`Vcs::tree_merges`,
+   git 2.38 and later), and in the project checkout, stopped before its commit,
+   where it cannot. A conflict outside `rwv.lock` stops here, leaving the
+   conflict staged in the checkout, and prints the conflict stop.
+2. The merged `rwv.toml` is read from the tree (or the index) and its entries
+   are the member set.
+3. Each member whose pin both sides changed under one declared branch merges
+   the upstream's pin into its branch, in its checkout or, with nothing having
+   the branch attached, as refs.
+4. Checkouts the merged `rwv.toml` drops are pruned, after every member has
+   merged.
+5. The merge is staged in the project checkout (a tree-mode merge is replayed
+   there now), the lock is written from `lock_merge::merge_pins`, the members
+   the merge added are cloned, the integration files are regenerated, and the
+   project commit is written last.
+
+A member that conflicts at step 3 leaves the project checkout without a commit.
+Without `merge-tree`, step 1 leaves the merge staged in the checkout while the
+members merge; a `--continue` finds it in flight and goes on.

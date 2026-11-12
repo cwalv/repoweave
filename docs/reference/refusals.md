@@ -126,7 +126,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv branch create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
+| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv update --remote`, for a member; `rwv branch create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
 | `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
 | `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it; `rwv push` publishes it |
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
@@ -138,6 +138,10 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
+| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
@@ -287,6 +291,8 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Destructive operations](../explanation/destructive-operations.md).
 
