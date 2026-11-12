@@ -38,6 +38,11 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<new>", "renamed"),
         ("<other>", "other"),
         ("<n>", "1"),
+        ("<name>", "kept"),
+        ("<sha>", "0123abc"),
+        ("<ids>", "0123abc"),
+        ("<E>", "main"),
+        ("<r>", "origin"),
     ])
 }
 
@@ -142,6 +147,78 @@ fn every_rwv_line_a_state_prints_parses() {
         "these states print a command the CLI does not accept — a choice prints only once \
          its verb ships:\n{failures:#?}"
     );
+}
+
+/// Every placeholder a printed choice spells, phrase and lines alike.
+fn placeholders(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('<') {
+        let after = &rest[open + 1..];
+        match after.find('>') {
+            Some(close)
+                if close > 0
+                    && after[..close]
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+            {
+                found.push(format!("<{}>", &after[..close]));
+                rest = &after[close + 1..];
+            }
+            _ => rest = after,
+        }
+    }
+    found
+}
+
+#[test]
+fn a_printed_choice_fills_every_placeholder_its_judging_binds() {
+    let mut read = 0usize;
+    let mut unbound: Vec<String> = Vec::new();
+    for state in State::ALL {
+        let verbs = std::iter::once(None)
+            .chain(state.row().verb_offers.iter().map(|(verb, _)| Some(*verb)));
+        for verb in verbs {
+            let report = judged_with_every_binding(state, verb);
+            let rendered = report.render("verb");
+            let choices = rendered
+                .split_once("choices:\n")
+                .map_or("", |(_, tail)| tail);
+            for line in choices.lines().filter(|l| !l.starts_with("rwv explain ")) {
+                read += 1;
+                for placeholder in placeholders(line) {
+                    unbound.push(format!("{state:?} as {verb:?}: {placeholder} in `{line}`"));
+                }
+            }
+            for choice in report.output().into_iter().flat_map(|j| j.choices) {
+                for text in std::iter::once(choice.phrase).chain(choice.run) {
+                    for placeholder in placeholders(&text) {
+                        unbound.push(format!(
+                            "{state:?} as {verb:?} (--json): {placeholder} in `{text}`"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        read >= State::ALL.len(),
+        "only {read} printed choice lines were read; the walk has stopped reaching the table"
+    );
+    assert!(
+        unbound.is_empty(),
+        "these choices print a placeholder the judging bound:\n{unbound:#?}"
+    );
+}
+
+#[test]
+fn the_placeholder_scan_finds_what_it_must() {
+    assert_eq!(placeholders("copy these commits onto `<b>`"), ["<b>"]);
+    assert_eq!(
+        placeholders("git -C <checkout> branch <name> <sha>"),
+        ["<checkout>", "<name>", "<sha>"]
+    );
+    assert!(placeholders("a -> b, x < y").is_empty());
 }
 
 #[test]

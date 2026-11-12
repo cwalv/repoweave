@@ -2372,6 +2372,7 @@ impl Judging {
             })
             .map(|form| Offered {
                 choice: form.row().choice,
+                phrase: fill(form.row().choice.row().phrase, &self.bindings),
                 at: form.row().at.at(&self.places),
                 run: form
                     .lines(vcs, self.verb)
@@ -2423,6 +2424,7 @@ pub struct Judged {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Offered {
     choice: ChoiceId,
+    phrase: String,
     at: Option<PathBuf>,
     run: Vec<String>,
 }
@@ -2501,7 +2503,7 @@ impl Judged {
                     let row = offered.choice.row();
                     ChoiceOutput {
                         id: row.id.map(str::to_owned),
-                        phrase: row.phrase.to_owned(),
+                        phrase: offered.phrase.clone(),
                         at: offered
                             .at
                             .as_deref()
@@ -2585,11 +2587,11 @@ impl Report {
 
     /// The choices of every line, phrase and place once each, their lines in
     /// the order the judged lines offered them.
-    fn choices(&self) -> Vec<(&'static str, Option<PathBuf>, Vec<String>)> {
-        let mut out: Vec<(&'static str, Option<PathBuf>, Vec<String>)> = Vec::new();
+    fn choices(&self) -> Vec<(&str, Option<PathBuf>, Vec<String>)> {
+        let mut out: Vec<(&str, Option<PathBuf>, Vec<String>)> = Vec::new();
         for judged in self.ordered() {
             for offered in &judged.choices {
-                let phrase = offered.choice.row().phrase;
+                let phrase = offered.phrase.as_str();
                 let at = offered.at.clone();
                 let slot = match out.iter().position(|(p, a, _)| *p == phrase && *a == at) {
                     Some(i) => i,
@@ -2666,7 +2668,7 @@ pub fn choices_text(
 ) -> String {
     let mut out = String::new();
     for form in forms.iter().filter(|form| form.printable()) {
-        let phrase = form.row().choice.row().phrase;
+        let phrase = fill(form.row().choice.row().phrase, bindings);
         out.push_str(&format!("  {phrase}\n"));
         for line in form.lines(vcs, None) {
             out.push_str(&format!("    {}\n", fill(&line, bindings)));

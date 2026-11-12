@@ -489,6 +489,32 @@ fn update_reports_and_leaves_a_member_on_a_branch_holding_commits_nothing_else_d
 }
 
 #[test]
+fn lock_refuses_a_member_holding_stray_commits_naming_the_branch_they_are_copied_onto() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    common::git_in(&dest_a, &["checkout", "-b", "wip"]);
+    std::fs::write(dest_a.join("README"), "wip\n").unwrap();
+    common::git_in(&dest_a, &["commit", "-am", "wip work"]);
+
+    let out = rwv()
+        .arg("lock")
+        .current_dir(&s.workspace)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stderr);
+
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("github/acme/a: alignment on branch with stray commits (wip)"),
+        "{text}"
+    );
+    assert!(text.contains("copy these commits onto `main`"), "{text}");
+    assert!(!text.contains("<b>"), "{text}");
+}
+
+#[test]
 fn the_flags_alignment_replaced_no_longer_parse() {
     for (verb, flag) in [
         ("update", "--detach-checkouts"),

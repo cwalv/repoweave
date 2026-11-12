@@ -1068,6 +1068,7 @@ impl Aligner {
                 .subject(branch)
                 .checkout(m.dir)
                 .bind("<m>", m.path)
+                .bind("<b>", branch)
                 .judge(m.vcs)],
             _ => Vec::new(),
         }
@@ -1152,6 +1153,16 @@ impl Aligner {
         repo: &dyn std::fmt::Display,
         facts: &[Fact],
     ) -> Judging {
+        let commits = match off {
+            Off::OnBranch { stray, .. } => stray.as_slice(),
+            Off::DetachedUnpushed { commits } => commits.as_slice(),
+            Off::DetachedElsewhere => &[],
+        };
+        let ids: Vec<String> = commits
+            .iter()
+            .rev()
+            .map(|c| crate::vcs::short_revision(c.id.as_str()).to_string())
+            .collect();
         let (state, listing, subject) = match off {
             Off::OnBranch { branch, stray } => (
                 if stray.is_empty() {
@@ -1192,9 +1203,11 @@ impl Aligner {
             .member()
             .listing(listing)
             .checkout(m.dir)
-            .bind("<m>", m.path);
+            .bind("<m>", m.path)
+            .bind("<b>", self.wanted(m.entry.role, m.entry).0)
+            .bind("<ids>", ids.join(" "));
         if let Some(subject) = subject {
-            judging = judging.subject(subject.clone()).bind("<b>", subject);
+            judging = judging.subject(subject);
         }
         for fact in facts {
             judging = judging.fact(fact.clone());
