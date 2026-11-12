@@ -54,7 +54,9 @@ nothing could be landed into. Then, under an op record:
 2. **Relock.** The lock is recorded and committed: each member's pin merged
    three ways against the merge base's lock, every composed member at its
    composed tip. A `dependency` or `reference` member takes the pin the merge
-   gives it.
+   gives it. A project branch composed by a merge gets one commit, the merge
+   (first parent the target's tip), and it carries this lock, so it pins
+   each member's landing merge.
 3. **Fast-forward (advance-target).** Where the target is checked out, each
    receiving branch fast-forwards in its checkout, then the target's project
    branch: each the branch the landing planned, to exactly what was composed

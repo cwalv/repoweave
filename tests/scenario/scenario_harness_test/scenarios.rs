@@ -3,7 +3,7 @@ use super::runner::{
     Claim, Defect, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
 };
 use super::sandbox::{
-    declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
+    declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
 };
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
@@ -8968,11 +8968,10 @@ pub fn cherry_pick_port() -> Scenario {
 }
 
 /// `cherry-pick-port` under a `merge` setting: a landing into `main` made by
-/// merge commits, its project merge then ported whole with `-m 1`. The
-/// landing writes the project merge with the source's pins and relocks onto
-/// the member merges in the commit after it, so the port reads `app` as moved
-/// backward: a known defect. Once it ports, each landed member's merge is
-/// copied against its first parent and the port lands.
+/// merge commits writes one project merge carrying the relock, which pins
+/// each member's landing merge. That merge ports whole with `-m 1`: each
+/// landed member's merge is copied against its first parent, and the port
+/// lands.
 pub fn cherry_pick_port_landing_merge() -> Scenario {
     let mut steps =
         vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
@@ -8985,19 +8984,37 @@ pub fn cherry_pick_port_landing_merge() -> Scenario {
         Step::commit(&a(), Repo::App, "main-moved"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
-        Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main~1^2"]),
-        Step::git(&a(), Repo::App, &["rev-parse", "--verify", "main^2"]),
+        Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main^2"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["rev-parse", "--verify", "main^2"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.lock"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: LockSite::Branch(Store::Clone(Machine::A), Repo::Proj, "main".to_owned()),
+                member: Repo::App,
+                mark: "w-app",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Branch(Store::Clone(Machine::A), Repo::Proj, "main".to_owned()),
+                member: Repo::App,
+                mark: "main-moved",
+            }),
     ]);
     steps.extend(feature_onto_stable());
     steps.extend([
-        Step::rwv(&ww("p"), &["cherry-pick", "main~1"])
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
             .expect(Exit::refuses(Repo::Proj, State::PortMainline))
-            .claim(Claim::OutputContains("rwv cherry-pick main~1 -m <n>"))
+            .claim(Claim::OutputContains("rwv cherry-pick main -m <n>"))
             .claim(Claim::LocalStateUnchanged(ww("p"))),
-        Step::rwv(&ww("p"), &["cherry-pick", "main~1", "-m", "1"])
-            .expect(Exit::Defect(Defect::MergeLandingPortsBackward))
-            .claim(Claim::Judged(Repo::App, State::PortBackward))
-            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "-m", "1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: copied"))
+            .claim(Claim::OutputContains("local/remotes/lib: copied")),
+        Step::rwv(&ww("p"), &["land"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["show", "stable-app:w-app.txt"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["show", "stable-app:main-moved.txt"]).expect(Exit::Code(128)),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "stable-lib"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("w-lib")),
     ]);
     scenario("cherry-pick port of a landing merge", steps)
 }

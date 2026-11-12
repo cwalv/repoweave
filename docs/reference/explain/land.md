@@ -34,8 +34,8 @@ nothing could be landed into. Then, under an op record:
    `rwv sync`, where the rebase happens. A member whose branch already holds
    the receiving tip on its first-parent chain needs no setting: the
    receiving branch fast-forwards. One holding it only through a merge's
-   second parent (after `rwv sync --from`) lands by a merge commit, first
-   parent the receiving tip, under `linear` and `merge`. A range a rebase
+   second parent (after `rwv sync`, or `rwv sync --from`) lands by a merge
+   commit, first parent the receiving tip, under every setting. A range a rebase
    would replay that holds a merge commit is never rebased: it lands by a
    merge commit instead, reported `merged`. The project branch is composed
    with the target's tip, again the newer of the target and its upstream, the
@@ -54,7 +54,9 @@ nothing could be landed into. Then, under an op record:
 2. **Relock.** The lock is recorded and committed: each member's pin merged
    three ways against the merge base's lock, every composed member at its
    composed tip. A `dependency` or `reference` member takes the pin the merge
-   gives it.
+   gives it. A project branch composed by a merge gets one commit, the merge
+   (first parent the target's tip), and it carries this lock, so it pins
+   each member's landing merge.
 3. **Fast-forward (advance-target).** Where the target is checked out, each
    receiving branch fast-forwards in its checkout, then the target's project
    branch: each the branch the landing planned, to exactly what was composed

@@ -1377,45 +1377,65 @@ pub(crate) fn compose_merge(
     repo: &Path,
     onto: &ResolvedRevisionId,
 ) -> Result<bool, VcsError> {
+    match stage_merge(vcs, repo, onto)? {
+        Staged::OnFirstParents => Ok(false),
+        Staged::FastForwarded => Ok(true),
+        Staged::Merge => {
+            let head = vcs.head_revision(repo)?;
+            crate::repin::commit_merge(
+                vcs,
+                repo,
+                (onto.id(), head.id()),
+                &merge_message(onto.id()),
+                None,
+                &crate::repin::Naming::Unnamed,
+            )?;
+            Ok(true)
+        }
+    }
+}
+
+fn merge_message(onto: &CommitId) -> String {
+    format!("Merge {} into this branch", onto.short())
+}
+
+/// What [`stage_merge`] left in a checkout.
+enum Staged {
+    /// `onto` already sits on the branch's first-parent chain.
+    OnFirstParents,
+    /// The branch was behind `onto` and now sits at it.
+    FastForwarded,
+    /// The merge's content is staged, uncommitted; its commit takes `onto`
+    /// as first parent and the checkout's HEAD as second.
+    Merge,
+}
+
+/// Stage in `repo`'s checkout the merge of `onto` into the branch checked
+/// out there, or finish staging one a conflict stopped once nothing is left
+/// unmerged; a conflict stops it.
+fn stage_merge(vcs: &dyn Vcs, repo: &Path, onto: &ResolvedRevisionId) -> Result<Staged, VcsError> {
     let head = vcs.head_revision(repo)?;
     let conflicted = || VcsError::RebaseConflict {
         repo: repo.to_path_buf(),
         op: ConflictOp::Merge,
     };
-    let message = format!("Merge {} into this branch", onto.id().short());
     if vcs.merge_in_flight(repo)?.as_ref() == Some(onto.id()) {
         if !vcs.unmerged_paths(repo)?.is_empty() {
             return Err(conflicted());
         }
-        crate::repin::commit_merge(
-            vcs,
-            repo,
-            (onto.id(), head.id()),
-            &message,
-            None,
-            &crate::repin::Naming::Unnamed,
-        )?;
-        return Ok(true);
+        return Ok(Staged::Merge);
     }
     if vcs.first_parent_chain(repo, head.id())?.contains(onto.id()) {
-        return Ok(false);
+        return Ok(Staged::OnFirstParents);
     }
     if vcs.is_ancestor(repo, &head, onto)? {
         vcs.advance_if_fast_forward(repo, onto)?;
-        return Ok(true);
+        return Ok(Staged::FastForwarded);
     }
     if !vcs.start_merge(repo, onto.id())?.is_empty() {
         return Err(conflicted());
     }
-    crate::repin::commit_merge(
-        vcs,
-        repo,
-        (onto.id(), head.id()),
-        &message,
-        None,
-        &crate::repin::Naming::Unnamed,
-    )?;
-    Ok(true)
+    Ok(Staged::Merge)
 }
 
 // ---------------------------------------------------------------------------
@@ -5664,6 +5684,28 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
     }
     let named = crate::repin::Naming::by_name("land", named_members);
+    let head = vcs.head_revision(dir)?;
+    if ctx.integration(&RepoKey::Project) == Integration::Merge
+        && !vcs.first_parent_chain(dir, head.id())?.contains(target)
+    {
+        vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
+        crate::repin::commit_merge(
+            vcs,
+            dir,
+            (target, head.id()),
+            &merge_message(target),
+            Some(&lock),
+            &named,
+        )?;
+        if ctx.handler.emit_text() {
+            eprintln!(
+                "  {}: merged with {}, re-locked in the merge",
+                RepoKey::Project,
+                target_name(ctx)
+            );
+        }
+        return Ok(());
+    }
     if commit_lock_file_with_message(
         vcs,
         dir,
@@ -6604,9 +6646,10 @@ fn composed_conflict(op: ConflictOp) -> ConflictOp {
 ///
 /// A branch that already holds the target's tip moves nothing here: the
 /// target fast-forwards to it. A rebase replays the branch's commits onto the
-/// tip; a merge commits the two with the target's tip as first parent. A
-/// conflict leaves the project repo stopped in it for the operator to resolve
-/// and stage, then `rwv <verb> --continue`, or `rwv abort`.
+/// tip; a merge is staged and left uncommitted, so the one project commit
+/// Phase 3 writes carries the relock. A conflict leaves the project repo
+/// stopped in it for the operator to resolve and stage, then
+/// `rwv <verb> --continue`, or `rwv abort`.
 fn apply_project_strategy(
     vcs: &dyn Vcs,
     cwd_project_dir: &Path,
@@ -6636,7 +6679,7 @@ fn apply_project_strategy(
         )
     };
     if how == Integration::Merge {
-        return match compose_merge(vcs, cwd_project_dir, source_tip) {
+        return match stage_merge(vcs, cwd_project_dir, source_tip) {
             Ok(_) => Ok(()),
             Err(VcsError::RebaseConflict { repo, op }) => Err(conflict(&repo, op)),
             Err(e) => Err(crate::untokened!(

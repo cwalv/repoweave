@@ -276,11 +276,6 @@ pub enum Defect {
     /// clone lacking it refuses a landing in that member as `pin`
     /// unreachable, with no printed choice that clears it.
     HistoryPinNoRefKeeps,
-    /// A landing under a `merge` setting commits its project merge holding
-    /// the source's pins and relocks onto the member merges in a commit
-    /// after it, so `cherry-pick <merge> -m 1` reads each member the landing
-    /// merged as moved backward, off the merge it lands at.
-    MergeLandingPortsBackward,
 }
 
 impl Defect {
@@ -288,10 +283,6 @@ impl Defect {
         match self {
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
-            }
-            Defect::MergeLandingPortsBackward => {
-                "a landing's project merge pins the source's commits, so its port reads them as \
-                 backward"
             }
         }
     }
