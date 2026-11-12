@@ -814,7 +814,7 @@ fn a_record_another_machine_published_survives_a_fetch_during_the_publish() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        listing.lines().any(|name| name == "feat/x"),
+        listing.lines().any(|name| name == "feat%2Fx"),
         "the pushed branch's record is on the remote; it holds:\n{listing}"
     );
 }
