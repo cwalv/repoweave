@@ -7534,6 +7534,7 @@ pub fn land_target_gone_lists_only_targets_the_rebind_takes() -> Scenario {
                 ))
                 .claim(Claim::OutputLacks("--target fa"))
                 .claim(Claim::OutputLacks("--target proj--x"))
+                .claim(Claim::Judged(Repo::Proj, State::TargetDependents))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(
                 &ww("w"),
@@ -8640,7 +8641,8 @@ pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario 
 
 /// A moved member's receiving branch is checked out in a third workspace, so
 /// nothing would fast-forward it where the target is: the landing refuses,
-/// and freeing that checkout as printed lets it land.
+/// and aligning the third workspace, which frees that checkout, lets it
+/// land. The printed choices are not run here.
 pub fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenario {
     scenario(
         "land refuses a receiving branch checked out in a third workspace",
