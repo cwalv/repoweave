@@ -222,7 +222,6 @@ pub fn case_token(v: &CheckViolation) -> String {
                 ProvenanceKind::OriginUrlMismatch { .. } => "origin-url-mismatch",
                 ProvenanceKind::RelativeRemote { .. } => "relative-remote",
                 ProvenanceKind::UnresolvableUrl { .. } => "unresolvable-url",
-                ProvenanceKind::LockShaUnreachable { .. } => "lock-sha-unreachable",
                 ProvenanceKind::PlacementDisagreement { .. } => "placement-disagreement",
             };
             format!("provenance/{tail}")
@@ -636,11 +635,6 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: ProvenanceKind::UnresolvableUrl {
                 manifest_url: "/srv/repos/a".into(),
             },
-        },
-        CheckViolation::Provenance {
-            project: project(),
-            repo: repo(),
-            sub_kind: ProvenanceKind::LockShaUnreachable { sha: sha() },
         },
         CheckViolation::Provenance {
             project: project(),

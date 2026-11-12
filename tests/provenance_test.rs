@@ -1,12 +1,12 @@
 //! Tests for provenance checks in `rwv doctor`.
 //!
-//! Covers three sub-kinds of `Provenance` violations:
+//! Covers two sub-kinds of `Provenance` violations, and a lock pin the clone
+//! lacks, which is `pin` `unreachable` and not a provenance finding:
 //!
 //!   1. `origin-url-mismatch` — a clone's `origin` remote URL differs from
 //!      the URL recorded in the manifest. Warning severity; report-only.
 //!
-//!   2. `lock-sha-unreachable` — a SHA pinned in `rwv.lock` is absent from
-//!      the local object store. Error severity; report-only.
+//!   2. a SHA pinned in `rwv.lock` absent from the local object store.
 //!
 //!   3. `placement-disagreement` — the manifest key disagrees with
 //!      `placement(url)`. Warning severity; report-only. `reference` and
@@ -282,13 +282,38 @@ fn origin_url_mismatch_is_clean_under_an_instead_of_rewrite() {
 }
 
 // ===========================================================================
-// 2. lock-sha-unreachable
+// 2. a pinned SHA the clone lacks
 // ===========================================================================
 
-/// A lock file that references a SHA absent from the repo's object store
-/// must be flagged as `lock-sha-unreachable` at Error severity.
+/// Each finding `doctor --json` reports, as `(kind, sub_kind)`.
+fn findings(ws: &Path) -> Vec<(String, String)> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .map(|v| {
+            let sub_kind = match &v["sub_kind"] {
+                serde_json::Value::String(token) => token.clone(),
+                serde_json::Value::Object(o) => o.keys().cloned().collect(),
+                other => other.to_string(),
+            };
+            (v["kind"].as_str().unwrap_or_default().to_owned(), sub_kind)
+        })
+        .collect()
+}
+
+/// A lock file that pins a SHA absent from the repo's object store is one
+/// finding, `pin` `unreachable`, named by the SHA's abbreviation in text.
 #[test]
-fn lock_sha_unreachable_is_reported() {
+fn a_pinned_sha_the_clone_lacks_is_one_finding() {
     let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
@@ -303,8 +328,6 @@ fn lock_sha_unreachable_is_reported() {
         &[("github/myorg/myrepo", manifest_url, "owned")],
     );
 
-    // Write a lock with a SHA that is definitely not in the repo's object
-    // store (all-zero SHA is safe for this purpose).
     let absent_sha = "0000000000000000000000000000000000000000";
     write_lock(
         &ws,
@@ -314,23 +337,21 @@ fn lock_sha_unreachable_is_reported() {
         absent_sha,
     );
 
-    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-
-    assert!(
-        stdout.contains("lock-sha-unreachable")
-            || stdout.contains("absent from")
-            || stdout.contains("missing the pinned revision"),
-        "doctor should report lock-sha-unreachable; got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains(&absent_sha[..12]) && !stdout.contains(absent_sha),
-        "report should name the unreachable SHA by its abbreviation; got:\n{stdout}"
+    let found = findings(&ws);
+    let about_the_pin: Vec<&(String, String)> = found
+        .iter()
+        .filter(|(kind, sub_kind)| {
+            kind == "pin" || (kind == "provenance" && sub_kind != "origin-url-mismatch")
+        })
+        .collect();
+    assert_eq!(
+        about_the_pin,
+        vec![&("pin".to_owned(), "unreachable".to_owned())],
+        "{found:?}"
     );
 }
 
-/// A lock file that references the actual HEAD SHA must not trigger
-/// `lock-sha-unreachable`.
+/// A lock file that references the actual HEAD SHA reports no pin finding.
 #[test]
 fn reachable_lock_sha_is_clean() {
     let tmp = common::tempdir().unwrap();
@@ -352,8 +373,8 @@ fn reachable_lock_sha_is_clean() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !stdout.contains("lock-sha-unreachable"),
-        "reachable lock SHA should not produce lock-sha-unreachable; got:\n{stdout}"
+        !stdout.contains("unreachable"),
+        "a reachable lock SHA is no unreachable pin; got:\n{stdout}"
     );
 }
 
@@ -484,7 +505,7 @@ fn provenance_sub_kind_tokens(ws: &Path) -> Vec<String> {
 
 /// An `owned` entry whose recorded path disagrees with `placement(url)` is
 /// reported. No on-disk clone is needed — this is a pure manifest
-/// comparison, unlike `origin-url-mismatch` and `lock-sha-unreachable`.
+/// comparison, unlike `origin-url-mismatch`.
 #[test]
 fn placement_disagreement_is_reported_for_an_owned_member() {
     let tmp = common::tempdir().unwrap();

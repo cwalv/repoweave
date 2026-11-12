@@ -366,14 +366,12 @@ pub enum CheckViolation {
         sub_kind: WorkweaveTreeIntegrityKind<PathBuf>,
     },
 
-    /// A provenance violation: a clone's remote URL diverges from the manifest
-    /// URL (`origin-url-mismatch`) or a lock-file SHA is absent from the
-    /// local object store (`lock-sha-unreachable`).
+    /// A provenance violation: where a member's url, remote or path disagrees
+    /// with what the manifest says of it.
     ///
     /// The `origin-url-mismatch` case needs the operator to decide whether
     /// the manifest or the remote is the source of truth; reference-role
-    /// repos may intentionally diverge. The `lock-sha-unreachable` case needs
-    /// a fetch from the remote, not a sync.
+    /// repos may intentionally diverge.
     Provenance {
         /// The project the affected repo belongs to.
         project: ProjectName,
@@ -733,7 +731,6 @@ impl CheckViolation {
                 ProvenanceKind::OriginUrlMismatch { .. }
                 | ProvenanceKind::RelativeRemote { .. }
                 | ProvenanceKind::UnresolvableUrl { .. }
-                | ProvenanceKind::LockShaUnreachable { .. }
                 | ProvenanceKind::PlacementDisagreement { .. } => ReportOnly,
             },
             CheckViolation::CloneTopology { sub_kind, .. } => match sub_kind {
@@ -818,8 +815,7 @@ impl CheckViolation {
                 ProvenanceKind::OriginUrlMismatch { .. }
                 | ProvenanceKind::RelativeRemote { .. }
                 | ProvenanceKind::PlacementDisagreement { .. } => Warning,
-                ProvenanceKind::UnresolvableUrl { .. }
-                | ProvenanceKind::LockShaUnreachable { .. } => Error,
+                ProvenanceKind::UnresolvableUrl { .. } => Error,
             },
         }
     }
@@ -1742,14 +1738,6 @@ pub enum ProvenanceKind {
     UnresolvableUrl {
         /// The `url` as `rwv.toml` spells it.
         manifest_url: String,
-    },
-    /// The SHA pinned in `rwv.lock` is absent from the clone's object store.
-    /// The canonical store is missing the pinned revision; refresh it from
-    /// its remote (run a fetch — not a sync — to recover). Error severity;
-    /// report-only.
-    LockShaUnreachable {
-        /// The SHA pinned in `rwv.lock` that cannot be found locally.
-        sha: String,
     },
     /// The manifest key disagrees with `placement(entry.url)` — the path the
     /// entry's own URL derives to under the canonical layout. Warning
@@ -4195,26 +4183,18 @@ fn url_on_default_branch(
 ///    Reference-role repos may intentionally diverge (see note in violation
 ///    message). Only repos that exist on disk are checked.
 ///
-/// 2. **`lock-sha-unreachable`** — a SHA pinned in `rwv.lock` is absent
-///    from the local object store (`git cat-file -e <sha>^{commit}`). Error
-///    severity; report-only. Remediation is a fetch from the remote, not a
-///    sync. Only repos that exist on disk are checked. The raw lock file is
-///    used (before `resolve_versions`) so that SHAs that fail to resolve are
-///    the ones we test for reachability — if the lock SHA is a tag or branch
-///    name it is resolved first; if that fails, the SHA is tested verbatim.
-///
-/// 3. **`placement-disagreement`** — the manifest key disagrees with
+/// 2. **`placement-disagreement`** — the manifest key disagrees with
 ///    `placement(entry.url)`. Warning severity; report-only. A pure manifest
-///    comparison, so unlike the two checks above it does not require the
+///    comparison, so unlike the check above it does not require the
 ///    repo to exist on disk. `reference` and `fork` entries are exempt by
 ///    role (see [`ProvenanceKind::PlacementDisagreement`]) and never reach
 ///    the comparison; an entry whose URL derives no path at all (`placement`
 ///    returns `None`) has nothing to compare against and is skipped too.
 ///
-/// 4. **`unresolvable-url`** — the manifest's `url` resolves to no remote.
+/// 3. **`unresolvable-url`** — the manifest's `url` resolves to no remote.
 ///    Error severity; report-only. A pure manifest check.
 ///
-/// 5. **`relative-remote`** — the clone records its remote as a relative
+/// 4. **`relative-remote`** — the clone records its remote as a relative
 ///    path, which names no one remote. Warning severity; report-only. It
 ///    takes the place of the `origin-url-mismatch` comparison for that clone.
 pub fn scan_provenance(
@@ -4323,53 +4303,6 @@ pub fn scan_provenance(
                     repo: repo_path.clone(),
                     sub_kind,
                 });
-            }
-        }
-
-        // --- lock-sha-unreachable ---
-        let raw_lock = match project.lock.as_ref() {
-            Some(l) => l,
-            None => continue,
-        };
-
-        for (repo_path, lock_entry) in raw_lock.iter_entries() {
-            // The lock names paths; the manifest names backends. A lock entry
-            // with no manifest entry has no declared backend to resolve from.
-            let vcs = project
-                .manifest
-                .get_entry(repo_path)
-                .map(|e| vcs_for(e.vcs_type))
-                .unwrap_or_else(crate::vcs::probe_vcs);
-            let repo_abs = workspace_dir.join(repo_path.as_path());
-            if !repo_abs.is_dir() || crate::workweave::is_dangling_link(&repo_abs) {
-                continue;
-            }
-
-            // A version that resolves is probed as the commit it names. One
-            // that does not is either a commit id git cannot find at all — the
-            // disconnected-clone / force-push case, probed directly so it is
-            // not skipped — or a name that no longer resolves.
-            let probe = match vcs.resolve_revision(&repo_abs, lock_entry.version.as_str()) {
-                Ok(resolved) => Some(resolved.id().clone()),
-                Err(_) => lock_entry.version.as_commit_id(),
-            };
-            let present = match &probe {
-                Some(id) => vcs.commit_object_exists(&repo_abs, id),
-                None => Ok(false),
-            };
-
-            match present {
-                Ok(true) => {} // present — all good
-                Ok(false) => {
-                    let sha =
-                        probe.map_or_else(|| lock_entry.version.to_string(), |id| id.to_string());
-                    violations.push(CheckViolation::Provenance {
-                        project: project.name.clone(),
-                        repo: repo_path.clone(),
-                        sub_kind: ProvenanceKind::LockShaUnreachable { sha },
-                    });
-                }
-                Err(_) => {} // can't probe — skip silently
             }
         }
     }
@@ -6783,12 +6716,6 @@ impl CheckViolation {
                          made (report-only; write it in rwv.toml as a URL, `{file_url}` for a \
                          local remote)",
                     file_url = crate::path_spelling::file_url_suggestion(&manifest_url),
-                ),
-                ProvenanceKind::LockShaUnreachable { sha } => format!(
-                    "{project}: {repo}: lock pins SHA {} which is absent from \
-                         the local object store; the canonical store is missing the pinned \
-                         revision — refresh it from its remote (fetch, not sync)",
-                    crate::vcs::short_revision(&sha),
                 ),
                 ProvenanceKind::PlacementDisagreement {
                     expected_path,

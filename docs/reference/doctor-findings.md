@@ -106,7 +106,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`uninitialized-submodule`](#uninitialized-submodule) / `fetched` | Warning | Auto-fixable |
 | [`uninitialized-submodule`](#uninitialized-submodule) / `unfetched` | Warning | Report-only |
 | [`provenance`](#provenance) / `origin-url-mismatch`, `relative-remote`, `placement-disagreement` | Warning | Report-only |
-| [`provenance`](#provenance) / `unresolvable-url`, `lock-sha-unreachable` | Error | Report-only |
+| [`provenance`](#provenance) / `unresolvable-url` | Error | Report-only |
 | [`alignment`](#alignment) / `on-branch`, `on-branch-with-stray-commits`, `detached`, `detached-with-unpushed-commits`, `unaligned`, `project-detached` | Warning | Report-only |
 | [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
 | [`index-drift`](#index-drift) / `live-staged` | Warning | Report-only |
@@ -1241,15 +1241,6 @@ is on disk; when none is, this is the only finding for the entry, with no
 **What to do:** write the `url` in `rwv.toml` as a URL. The message names the
 `file://` spelling of an absolute path, which is how a local remote is written.
 `--fix` has no arm here because `rwv.toml` is yours to edit.
-
-#### `lock-sha-unreachable`
-
-**Error. Report-only.** The SHA `rwv.lock` pins is absent from the clone's
-object store.
-
-**What to do:** run `rwv fetch --repo <repo>` to pull the missing object from
-the remote (or `rwv member pin <repo> <rev>` to pin a reachable revision if the
-lock is the stale side). `rwv update` does not contact the network for an already-present clone.
 
 #### `placement-disagreement`
 

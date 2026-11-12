@@ -284,9 +284,8 @@ remote once the repository exists.
 ## The placement-disagreement doctor finding
 
 `rwv doctor` compares `placement(entry.url)` against the manifest's own
-recorded path for every entry (`scan_provenance` in `src/check.rs`, a third
-`provenance` sub-kind beside `origin-url-mismatch` and
-`lock-sha-unreachable`). Unlike its two siblings this is a pure manifest
+recorded path for every entry (`scan_provenance` in `src/check.rs`, a
+`provenance` sub-kind beside `origin-url-mismatch`). Unlike that sibling this is a pure manifest
 comparison — it needs no on-disk clone, so it runs whether or not the repo
 exists locally. Warning severity, report-only, no `--fix` arm: the repair is
 either moving the checkout or re-keying the manifest entry, and which one is
