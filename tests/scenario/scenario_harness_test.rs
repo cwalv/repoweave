@@ -208,6 +208,18 @@ fn a_carried_pin_against_a_diverged_receiving_branch_is_refused_before_anything_
 }
 
 #[test]
+fn an_unmoved_member_with_diverged_pins_is_refused_before_anything_moves_and_its_pin_lands_it() {
+    runner::run(scenarios::an_unmoved_member_with_diverged_pins_is_refused_before_anything_moves())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn an_unmoved_member_pinned_backward_lands_only_when_named() {
+    runner::run(scenarios::an_unmoved_member_pinned_backward_is_a_member_change())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -672,6 +684,8 @@ every_scenario!(
     member_change_race_listing_until_ported,
     raw_merge_member_change_into_main,
     a_carried_pin_against_a_diverged_receiving_branch_is_refused,
+    an_unmoved_member_with_diverged_pins_is_refused_before_anything_moves,
+    an_unmoved_member_pinned_backward_is_a_member_change,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,

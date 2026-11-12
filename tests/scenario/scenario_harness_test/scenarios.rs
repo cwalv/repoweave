@@ -6289,6 +6289,7 @@ pub fn dc11_drift_before_dirt() -> Scenario {
 }
 
 const LIB: &str = "local/remotes/lib";
+const APP: &str = "local/remotes/app";
 const DOCS: &str = "local/remotes/docs";
 
 /// `seat-follows-after-landing`: a permanent seat whose `lib` holds no work
@@ -7989,6 +7990,81 @@ pub fn a_dependency_moved_off_its_pin_is_refused_before_the_relock() -> Scenario
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
     }
+}
+
+/// An `owned` member the landing does not move, whose pin both sides changed
+/// to commits neither containing the other, is refused before anything
+/// moves; the pin printed, at the receiving branch's tip holding both, run
+/// as printed, lands it.
+pub fn an_unmoved_member_with_diverged_pins_is_refused_before_anything_moves() -> Scenario {
+    scenario(
+        "an unmoved member with diverged pins is refused before anything moves",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::App, &["push", "-q", "origin", "proj--w"])
+                .pushes(Remote::origin(Repo::App), "proj--w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "main-app",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", APP, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::forge(Forge::Merge {
+                repo: Repo::App,
+                branch: "proj--w",
+                how: MergeHow::Merge,
+            }),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinUnmerged))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed(&ww("w"), "rwv member pin local/remotes/app ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "w-app",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "main-app",
+                }),
+        ],
+    )
+}
+
+/// An `owned` member the landing does not move, re-pinned backward by name
+/// in the feature, is a change the landing names.
+pub fn an_unmoved_member_pinned_backward_is_a_member_change() -> Scenario {
+    scenario(
+        "an unmoved member pinned backward is a member change",
+        vec![
+            create("w"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "-q", "--no-edit", "main"]),
+            Step::rwv(&ww("w"), &["member", "pin", APP, "HEAD", "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App]),
+            Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("pin: "))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", APP])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("re-pinned")),
+        ],
+    )
 }
 
 /// An `owned` member the landing could not plan is refused before it is

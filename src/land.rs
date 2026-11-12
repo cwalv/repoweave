@@ -802,21 +802,24 @@ fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<FieldChange> {
     out
 }
 
-/// A `dependency` or `reference` member's pin as the lock merge lands it,
-/// where that moves `T`'s pin to a commit that does not contain it. Pins the
-/// merge cannot settle are not judged here: they refuse as unmerged.
+/// The pin of a member the landing does not compose, as the lock merge lands
+/// it, where that moves `T`'s pin to a commit that does not contain it. Pins
+/// the merge cannot settle are not judged here: they refuse as unmerged.
 fn backward_pin(
+    landing: &Landing,
     sides: &Sides,
     path: &RepoPath,
     ours: &RepoEntry,
     source_root: &Path,
 ) -> Option<FieldChange> {
-    if !matches!(ours.role, Role::Dependency | Role::Reference) {
-        return None;
-    }
     let theirs = sides.their_pin(path)?;
     let mvcs = vcs_for(ours.vcs_type);
     let dir = source_root.join(path.as_path());
+    if matches!(ours.role, Role::Owned | Role::Fork)
+        && composed(landing, sides, path, ours, mvcs.as_ref(), &dir) != Some(false)
+    {
+        return None;
+    }
     let reach = CheckoutReach {
         vcs: mvcs.as_ref(),
         dir: &dir,
@@ -836,6 +839,45 @@ fn backward_pin(
         theirs: theirs.short().to_owned(),
         ours: landed.short().to_owned(),
     })
+}
+
+/// Whether the landing composes an `owned` or `fork` member, or moves it
+/// onto a branch it declares anew: its checkout holds work its receiving
+/// branch lacks, or the receiving branch is not `T`'s. `None` where that
+/// cannot be read.
+fn composed(
+    landing: &Landing,
+    sides: &Sides,
+    path: &RepoPath,
+    ours: &RepoEntry,
+    vcs: &dyn Vcs,
+    dir: &Path,
+) -> Option<bool> {
+    let theirs = sides.theirs.get_entry(path)?;
+    if theirs.branch.local_counterpart() != ours.branch.local_counterpart() {
+        return Some(true);
+    }
+    let receiving = crate::feature_sync::receiving_branch(
+        path,
+        landing.target.as_str(),
+        Some(landing.target_mode),
+        &sides.ours,
+        Some(&sides.theirs),
+        sides.base.as_ref(),
+    )?;
+    let crate::push_branch::NewerOfBranchAndUpstream::Tip(tip) =
+        crate::push_branch::newer_of_branch_and_upstream(
+            vcs,
+            dir,
+            &receiving,
+            home_remote(ours, vcs, dir).as_ref(),
+        )
+        .ok()?
+    else {
+        return None;
+    };
+    let head = vcs.head_revision(dir).ok()?;
+    vcs.is_ancestor(dir, &head, &tip).ok().map(|lands| !lands)
 }
 
 /// The changes the landing would make to `T`'s member entries and top-level
@@ -908,7 +950,7 @@ fn entry_changes(landing: &Landing, sides: &Sides, source_root: &Path) -> Vec<Ch
                     .into_iter()
                     .filter(|f| changed_here.as_ref().is_none_or(|set| set.contains(f.name)))
                     .collect();
-                fields.extend(backward_pin(sides, path, ours, source_root));
+                fields.extend(backward_pin(landing, sides, path, ours, source_root));
                 if !fields.is_empty() {
                     changes.push(Changed {
                         repo: RepoOperand::Member(path.clone()),
@@ -1143,36 +1185,14 @@ fn judge_carried_pin(
         vcs,
         ..
     } = *member;
-    let Some(mine) = sides.our_pin(path) else {
+    let Some(Merged {
+        mine,
+        landed,
+        finding,
+    }) = judge_unmerged_pin(landing, sides, member, None, report)?
+    else {
         return Ok(());
     };
-    if sides.base_pin(path).as_ref() == Some(&mine) {
-        return Ok(());
-    }
-    let reach = CheckoutReach { vcs, dir };
-    let Some((landed, finding)) = sides.merged_pin(path, &reach) else {
-        return Ok(());
-    };
-    if let Some(PinFinding::Unmerged { second, .. }) = &finding {
-        report.add(
-            State::PinUnmerged
-                .of(path)
-                .member()
-                .checkout(dir)
-                .bind("<m>", path)
-                .bind("<pin>", second)
-                .bind("<rev>", second)
-                .subject(format!(
-                    "this feature pins {} and '{}' pins {}, neither containing the other",
-                    mine.short(),
-                    landing.target,
-                    second.short()
-                ))
-                .by_verb("land")
-                .judge(vcs),
-        );
-        return Ok(());
-    }
     let Some(receiving) = sides.merged_declared(path).map(RawRefName::new) else {
         return Ok(());
     };
@@ -1280,6 +1300,71 @@ fn judge_carried_pin(
         );
     }
     Ok(())
+}
+
+/// A pin the feature changed, as the lock merge lands it.
+struct Merged {
+    mine: CommitId,
+    landed: CommitId,
+    finding: Option<crate::lock_merge::PinFinding>,
+}
+
+/// The lock merge of a member's pin the landing does not compose, where the
+/// feature changed it: pins both sides changed under one declared branch,
+/// neither containing the other, refuse, offering a pin at `onto` where it
+/// holds both, else at `T`'s. `None` where the feature left the pin, or it
+/// refused.
+fn judge_unmerged_pin(
+    landing: &Landing,
+    sides: &Sides,
+    member: &Member<'_>,
+    onto: Option<&CommitId>,
+    report: &mut Report,
+) -> anyhow::Result<Option<Merged>> {
+    let Member { path, dir, vcs, .. } = *member;
+    let Some(mine) = sides.our_pin(path) else {
+        return Ok(None);
+    };
+    if sides.base_pin(path).as_ref() == Some(&mine) {
+        return Ok(None);
+    }
+    let reach = CheckoutReach { vcs, dir };
+    let Some((landed, finding)) = sides.merged_pin(path, &reach) else {
+        return Ok(None);
+    };
+    let Some(crate::lock_merge::PinFinding::Unmerged { second, .. }) = &finding else {
+        return Ok(Some(Merged {
+            mine,
+            landed,
+            finding,
+        }));
+    };
+    let mut offered = second.clone();
+    if let Some(onto) = onto {
+        if vcs.is_ancestor(dir, &rev(&mine), &rev(onto))?
+            && vcs.is_ancestor(dir, &rev(second), &rev(onto))?
+        {
+            offered = onto.clone();
+        }
+    }
+    report.add(
+        State::PinUnmerged
+            .of(path)
+            .member()
+            .checkout(dir)
+            .bind("<m>", path)
+            .bind("<pin>", second)
+            .bind("<rev>", &offered)
+            .subject(format!(
+                "this feature pins {} and '{}' pins {}, neither containing the other",
+                mine.short(),
+                landing.target,
+                second.short()
+            ))
+            .by_verb("land")
+            .judge(vcs),
+    );
+    Ok(None)
 }
 
 /// What every member of one landing is judged against.
@@ -1401,6 +1486,7 @@ fn judge_member(
     let follows = declared_changed && new_work.is_empty();
     let lands = lands_on(&tip)?;
     if lands && !declared_changed && !created {
+        judge_unmerged_pin(landing, sides, member, Some(&tip), report)?;
         return Ok(());
     }
     let moved = !follows && !lands;
