@@ -4389,6 +4389,15 @@ pub trait Vcs: Send + Sync {
         b: &CommitId,
     ) -> Result<Vec<CommitId>, VcsError>;
 
+    /// The best common ancestor of `commit` and a merge of every one of
+    /// `merged`; `None` when they share no history.
+    fn merge_base_against(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        merged: &[CommitId],
+    ) -> Result<Option<CommitId>, VcsError>;
+
     /// The message of the newest commit reachable from `tip` that changed
     /// `path`; `None` when none did.
     fn last_message_touching(

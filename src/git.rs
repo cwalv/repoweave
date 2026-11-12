@@ -3513,6 +3513,15 @@ impl Vcs for GitVcs {
         Self::merge_base_list(&Self::work_dir_for_store(repo), a, b)
     }
 
+    fn merge_base_against(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        merged: &[CommitId],
+    ) -> Result<Option<CommitId>, VcsError> {
+        Self::merge_base_of_merge(&Self::work_dir_for_store(repo), commit, merged)
+    }
+
     fn last_message_touching(
         &self,
         repo: &Path,

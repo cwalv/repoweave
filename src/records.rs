@@ -655,12 +655,17 @@ impl<'a> Store<'a> {
             None => Snapshot::new(),
             Some((first, rest)) => {
                 let mut merged = self.snapshot_at(first)?;
+                let mut merged_heads = vec![first.clone()];
                 for head in rest {
-                    let base = match self.vcs.merge_bases(self.repo, first, head)?.first() {
-                        Some(base) => self.snapshot_at(base)?,
+                    let base = match self
+                        .vcs
+                        .merge_base_against(self.repo, head, &merged_heads)?
+                    {
+                        Some(base) => self.snapshot_at(&base)?,
                         None => Snapshot::new(),
                     };
                     merged = merge_snapshots(&base, &merged, &self.snapshot_at(head)?);
+                    merged_heads.push(head.clone());
                 }
                 merged
             }

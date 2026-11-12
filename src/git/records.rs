@@ -325,6 +325,20 @@ impl GitVcs {
         }
     }
 
+    pub(super) fn merge_base_of_merge(
+        repo: &Path,
+        commit: &CommitId,
+        merged: &[CommitId],
+    ) -> Result<Option<CommitId>, VcsError> {
+        let mut args = vec!["merge-base", commit.as_str()];
+        args.extend(merged.iter().map(CommitId::as_str));
+        match Self::run_trimmed(args.iter().copied(), repo) {
+            Ok(out) => commit_id(&out, &args, repo).map(Some),
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub(super) fn last_message_changing(
         repo: &Path,
         tip: &CommitId,

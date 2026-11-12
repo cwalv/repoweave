@@ -828,6 +828,15 @@ impl Vcs for FakeVcs {
         unsupported("merge_bases")
     }
 
+    fn merge_base_against(
+        &self,
+        _repo: &Path,
+        _commit: &CommitId,
+        _merged: &[CommitId],
+    ) -> Result<Option<CommitId>, VcsError> {
+        unsupported("merge_base_against")
+    }
+
     fn last_message_touching(
         &self,
         _repo: &Path,
