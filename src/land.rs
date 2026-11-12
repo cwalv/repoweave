@@ -334,9 +334,10 @@ fn refusal(report: Report) -> anyhow::Error {
 
 /// A record published on a remote names a target this machine resolves only
 /// through that remote: its branch published there, and a local branch of
-/// that name taking in from it or configured to publish to it. Anything else
-/// is that target gone here, never an unrelated branch that happens to share
-/// its name.
+/// that name taking in from that branch there, or, taking in from nowhere,
+/// configured to publish there. Anything else, a local branch taking in from
+/// another branch included, is that target gone here, never an unrelated
+/// branch that happens to share its name.
 fn judge_unrelated_target(
     vcs: &dyn Vcs,
     project: &ProjectName,
@@ -359,15 +360,12 @@ fn judge_unrelated_target(
     let local = vcs.resolve_local_branch_tip(dir, &target_ref)?;
     let same_branch_there = match &local {
         None => true,
-        Some(_) => {
-            let takes_in = vcs.upstream_of(dir, &target_ref)?.is_some_and(|up| {
-                holding.contains(&up.remote) && up.branch.as_str() == target.as_str()
-            });
-            takes_in
-                || vcs
-                    .push_target_of(dir, &target_ref, None)?
-                    .is_some_and(|remote| holding.contains(&remote))
-        }
+        Some(_) => match vcs.upstream_of(dir, &target_ref)? {
+            Some(up) => holding.contains(&up.remote) && up.branch.as_str() == target.as_str(),
+            None => vcs
+                .push_target_of(dir, &target_ref, None)?
+                .is_some_and(|remote| holding.contains(&remote)),
+        },
     };
     if !published.is_empty() && same_branch_there {
         return Ok(None);

@@ -733,6 +733,7 @@ every_scenario!(
     land_refuses_a_record_retargeted_elsewhere,
     push_withholds_a_feature_whose_target_is_unpublished,
     land_never_resolves_a_published_record_to_an_unrelated_branch,
+    land_never_resolves_a_published_record_to_a_branch_with_a_foreign_upstream,
     land_refuses_work_built_on_another_lineage,
     land_never_rewrites_a_declared_mode_branch,
     land_into_a_target_that_exists_nowhere,
@@ -3854,6 +3855,14 @@ fn a_landing_refuses_a_record_retargeted_on_another_machine() {
 fn push_withholds_a_feature_whose_target_has_no_push_branch() {
     runner::run(scenarios::push_withholds_a_feature_whose_target_is_unpublished())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_published_record_never_lands_into_a_branch_with_a_foreign_upstream() {
+    runner::run(
+        scenarios::land_never_resolves_a_published_record_to_a_branch_with_a_foreign_upstream(),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]

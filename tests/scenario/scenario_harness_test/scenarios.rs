@@ -5497,6 +5497,47 @@ pub fn land_never_resolves_a_published_record_to_an_unrelated_branch() -> Scenar
     )
 }
 
+/// A local branch named as a published record's target that takes in from
+/// another branch on the remote holding the record is another branch, though
+/// it publishes there: the landing refuses it as the target gone.
+pub fn land_never_resolves_a_published_record_to_a_branch_with_a_foreign_upstream() -> Scenario {
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    steps.extend(feature_branch_in_primary());
+    steps.extend([
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds),
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::git(
+            &b(),
+            Repo::Proj,
+            &["branch", "--set-upstream-to", "origin/feat-x", "main"],
+        ),
+        Step::rwv(
+            &b(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "r",
+                "--branch",
+                "feat-x",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&b_ww("r"), &["land"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+            .claim(Claim::OutputContains("neither takes in"))
+            .claim(Claim::LocalStateUnchanged(b())),
+    ]);
+    scenario(
+        "land never resolves a published record to a branch with a foreign upstream",
+        steps,
+    )
+}
+
 /// The lineage rule at landing: work built on a pin the branch it lands on
 /// no longer holds is refused before anything moves.
 pub fn land_refuses_work_built_on_another_lineage() -> Scenario {
