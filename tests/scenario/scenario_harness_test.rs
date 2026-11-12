@@ -4047,7 +4047,7 @@ fn a_landing_reports_every_refusal_together_before_anything_moves() {
 }
 
 #[test]
-fn a_landing_refuses_a_dependent() {
+fn a_fast_forward_landing_leaves_a_dependent_alone() {
     runner::run(scenarios::land_refuses_a_dependent()).assert_fully_decided_green();
 }
 

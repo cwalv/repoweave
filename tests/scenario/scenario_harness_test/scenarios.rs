@@ -4649,8 +4649,8 @@ pub fn sync_never_rebases_a_merge() -> Scenario {
     )
 }
 
-/// A rebase that would rewrite a branch other features land into refuses,
-/// naming them; a fast-forward does not.
+/// A rebase that would rewrite a branch another feature lands into, cut from
+/// an older commit of it, refuses, naming it; a fast-forward does not.
 pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
     scenario(
         "sync refuses to rewrite a branch with dependents",
@@ -4668,8 +4668,8 @@ pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
-                .claim(Claim::OutputContains("target dependents"))
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependentLacksTip))
+                .claim(Claim::OutputContains("target dependent lacks the tip"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
     )
@@ -5329,11 +5329,12 @@ pub fn land_reports_every_refusal_together() -> Scenario {
     )
 }
 
-/// A weave branch that lands into the feature refuses its landing until
-/// dependents are carried along.
+/// A landing that only fast-forwards rewrites nothing of the feature, so a
+/// weave branch landing into it, even one cut from an older commit and
+/// checked out elsewhere, does not refuse it and is not carried.
 pub fn land_refuses_a_dependent() -> Scenario {
     scenario(
-        "land refuses a dependent",
+        "a fast-forward landing leaves a dependent alone",
         vec![
             create("w1"),
             Step::rwv(
@@ -5343,9 +5344,9 @@ pub fn land_refuses_a_dependent() -> Scenario {
             .expect(Exit::Succeeds),
             Step::commit(&ww("w1"), Repo::App, "w1-app"),
             Step::rwv(&ww("w1"), &["land", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
-                .claim(Claim::OutputContains("proj--w2 lands into proj--w1"))
-                .claim(Claim::LocalStateUnchanged(a())),
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("dependent"))
+                .claim(Claim::OutputLacks("carried")),
         ],
     )
 }
@@ -7591,7 +7592,6 @@ pub fn land_target_gone_lists_only_targets_the_rebind_takes() -> Scenario {
                 ))
                 .claim(Claim::OutputLacks("--target fa"))
                 .claim(Claim::OutputLacks("--target proj--x"))
-                .claim(Claim::Judged(Repo::Proj, State::TargetDependents))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(
                 &ww("w"),
