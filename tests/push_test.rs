@@ -1522,8 +1522,8 @@ fn a_project_overwrite_keeps_the_replaced_remote_tip_as_a_backup() {
 }
 
 /// A raw merge whose lock conflict was settled by hand, by either side, is
-/// `pin unmerged` at the push: a merge's own lock that keeps one parent's
-/// pin names nothing, so it waives nothing.
+/// `pin unmerged` at the push: a merge made outside rwv records no re-pin by
+/// name, so it waives nothing.
 fn merge_settled_by(side: &str) -> std::process::Output {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let member = ws.workspace.join("local/org/a");
