@@ -78,8 +78,9 @@ Lives at the workspace root (same directory as `.rwv-active`). Source:
 These two take the owner record with `source` and `target` both the workspace
 they ran in, and no leases. Their phases are `replay` (the member merges, the
 resets, the project merge up to its commit) and `relock`. Each checkout the op
-may move gets a savepoint under the op's own id; each tip it writes is journaled
-in `advanced_tips`. A branch the op moves as a ref, because no checkout has it
+may move gets a savepoint under the op's own id, and one that cannot be filed
+stops the op before anything moves; each tip it writes is journaled in
+`advanced_tips`, before the move wherever the tip is known ahead of it. A branch the op moves as a ref, because no checkout has it
 attached, has no HEAD to savepoint, so the move goes in `take_in.ref_moves`
 instead, and `rwv abort` puts it back by compare-and-swap, refusing a branch
 that has moved since as a foreign tip. Every step is idempotent: a `--continue`
