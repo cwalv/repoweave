@@ -467,6 +467,19 @@ pub enum CheckViolation {
         created_at: Option<String>,
     },
 
+    /// A landing claim whose owner workspace is not here to read: on another
+    /// mount, outside a sandbox, or deleted. Whether its op still stands
+    /// cannot be told, so no landing takes it over; `--fix` releases it, the
+    /// operator's word that the op is gone.
+    ClaimOwnerUnreachable {
+        /// The directory holding the claim file.
+        claim_dir: PathBuf,
+        /// Op id the claim names.
+        op_id: String,
+        /// Owner workspace the claim names.
+        recorded_owner: PathBuf,
+    },
+
     /// Two recorded sibling identities that differ only by ASCII case fold.
     ///
     /// A portability lint over the record, not an identity equivalence:
@@ -666,6 +679,7 @@ impl CheckViolation {
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::DeadOpLease { .. }
+            | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -774,6 +788,7 @@ impl CheckViolation {
             | CheckViolation::StaleWorktreeRegistration { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::DeadOpLease { .. }
+            | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::OrphanedSavepoint { .. }
             | CheckViolation::UnrecognizedSavepointRef { .. }
             | CheckViolation::ConfusableSiblings { .. }
@@ -849,6 +864,7 @@ impl CheckViolation {
             }
             CheckViolation::StaleOpState { .. } => ViolationKind::StaleOpState,
             CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
+            CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
             CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
             CheckViolation::UnrecognizedSavepointRef { .. } => {
                 ViolationKind::UnrecognizedSavepointRef
@@ -901,6 +917,7 @@ pub enum ViolationKind {
     StaleWorktreeRegistration,
     StaleOpState,
     DeadOpLease,
+    ClaimOwnerUnreachable,
     OrphanedSavepoint,
     UnrecognizedSavepointRef,
     ConfusableSiblings,
@@ -912,7 +929,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 42] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -946,6 +963,7 @@ impl ViolationKind {
         Self::StaleWorktreeRegistration,
         Self::StaleOpState,
         Self::DeadOpLease,
+        Self::ClaimOwnerUnreachable,
         Self::OrphanedSavepoint,
         Self::UnrecognizedSavepointRef,
         Self::ConfusableSiblings,
@@ -2176,6 +2194,14 @@ pub enum ViolationOutput {
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<String>,
     },
+    ClaimOwnerUnreachable {
+        /// Absolute path to the directory holding the claim file.
+        claim_dir: WirePath,
+        /// Op id the claim names.
+        op_id: String,
+        /// Owner workspace the claim names.
+        recorded_owner: WirePath,
+    },
     OrphanedSavepoint {
         path: String,
         absolute_path: WirePath,
@@ -2633,6 +2659,15 @@ impl ViolationOutput {
                 recorded_owner: WirePath::of(&recorded_owner),
                 sub_kind,
                 created_at,
+            },
+            CheckViolation::ClaimOwnerUnreachable {
+                claim_dir,
+                op_id,
+                recorded_owner,
+            } => Self::ClaimOwnerUnreachable {
+                claim_dir: WirePath::of(&claim_dir),
+                op_id,
+                recorded_owner: WirePath::of(&recorded_owner),
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -5640,6 +5675,20 @@ pub fn scan_state_hygiene(
             }
         }
 
+        if let Some(store) = vcs.store_of(&repo.abs) {
+            if reported_refs.insert((store, String::new())) {
+                violations.extend(
+                    crate::landing_claim::unreachable_claims(vcs, &repo.abs)
+                        .into_iter()
+                        .map(|claim| CheckViolation::ClaimOwnerUnreachable {
+                            claim_dir: claim.dir,
+                            op_id: claim.op.to_string(),
+                            recorded_owner: claim.owner,
+                        }),
+                );
+            }
+        }
+
         let listing = match vcs.list_savepoints(&repo.abs) {
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
@@ -6907,6 +6956,17 @@ impl CheckViolation {
                     workspace_dir.display()
                 )
             }
+            CheckViolation::ClaimOwnerUnreachable {
+                claim_dir,
+                op_id,
+                recorded_owner,
+            } => format!(
+                "{}: claim-owner-unreachable op_id={op_id} — the claim's owner workspace {} is \
+                     not here to read, so whether its operation stands cannot be told; if it \
+                     is gone, `rwv doctor --fix` releases the claim.",
+                claim_dir.display(),
+                recorded_owner.display()
+            ),
             CheckViolation::OrphanedSavepoint {
                 workweave,
                 repo,
@@ -8046,6 +8106,37 @@ fn apply_finding_repairs(
                 },
                 None => false,
             },
+
+            CheckViolation::ClaimOwnerUnreachable {
+                claim_dir,
+                op_id,
+                recorded_owner,
+            } => {
+                let claim = op_id
+                    .parse()
+                    .map(|op| crate::landing_claim::UnreachableClaim {
+                        dir: claim_dir.clone(),
+                        op,
+                        owner: recorded_owner.clone(),
+                    });
+                match claim.map_err(anyhow::Error::from).and_then(|claim| {
+                    crate::landing_claim::release_unreachable(&claim, ctx.active_path())
+                }) {
+                    Ok(true) => {
+                        outln!(
+                            "[fixed] core: claim-owner-unreachable at {}: released the claim of \
+                             op {op_id}",
+                            claim_dir.display()
+                        );
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(e) => {
+                        fix_errors.push(format!("claim release failed: {e:#}"));
+                        true
+                    }
+                }
+            }
 
             // Operates on the lease's own workspace dir, so no repo lookup.
             CheckViolation::DeadOpLease {

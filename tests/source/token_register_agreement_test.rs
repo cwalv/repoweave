@@ -120,6 +120,11 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "an op-state lease outlived the process that took it",
     ),
     (
+        "claim-owner-unreachable",
+        &["doctor", "refusal"],
+        "a landing claim's owner workspace is not here to read",
+    ),
+    (
         "head-unreadable",
         &["doctor", "sync"],
         "a repo's HEAD could not be read",

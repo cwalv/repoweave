@@ -2141,6 +2141,43 @@
         {
           "type": "object",
           "required": [
+            "claim_dir",
+            "kind",
+            "op_id",
+            "recorded_owner"
+          ],
+          "properties": {
+            "claim_dir": {
+              "description": "Absolute path to the directory holding the claim file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-owner-unreachable"
+              ]
+            },
+            "op_id": {
+              "description": "Op id the claim names.",
+              "type": "string"
+            },
+            "recorded_owner": {
+              "description": "Owner workspace the claim names.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "absolute_path",
             "kind",
             "op_id",

@@ -74,6 +74,9 @@ pub enum RefusalKind {
     UntrackedCollision,
     /// An op-state lease outlived the process that took it.
     DeadOpLease,
+    /// A claim's owner workspace is not here to read, so whether its op
+    /// stands cannot be told.
+    ClaimOwnerUnreachable,
     /// A workweave lacks the worktree a member needs; a symlink in the slot
     /// counts.
     WorkweaveDrift,

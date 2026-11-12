@@ -2393,6 +2393,62 @@ fn dangling_reference_names_rwv_update_repair_verb() {
     );
 }
 
+/// A landing claim whose owner workspace is not here is reported, never
+/// taken over, and released by `rwv doctor --fix`.
+#[test]
+fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let claim_dir = project_dir.join(".git").join("rwv-landings").join("0");
+    std::fs::create_dir_all(&claim_dir).unwrap();
+    let elsewhere = tmp.path().join("not-mounted-here");
+    std::fs::write(
+        claim_dir.join(".rwv-landing.lock"),
+        format!(
+            "{{\"op\":\"4242\",\"owner\":\"{}\"}}",
+            common::json_escaped(&elsewhere)
+        ),
+    )
+    .unwrap();
+
+    let report = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+    let json = String::from_utf8_lossy(&report.stdout);
+    assert!(
+        json.contains("claim-owner-unreachable") && json.contains("4242"),
+        "doctor reports the claim: {json}"
+    );
+    assert!(claim_dir.join(".rwv-landing.lock").exists());
+
+    let fixed = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor --fix");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&fixed.stdout),
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    assert!(
+        combined.contains("claim-owner-unreachable"),
+        "the fix names what it released: {combined}"
+    );
+    assert!(
+        !claim_dir.join(".rwv-landing.lock").exists(),
+        "--fix released the claim: {combined}"
+    );
+}
+
 /// Dead-op-lease doctor report names the repair verb AND shows age when
 /// the lease file carries a `created_at` field.
 #[test]

@@ -9,9 +9,11 @@
 //!
 //! The claim names its op and the workspace holding that op's record, which
 //! is written before the claim is taken and removed only after it is
-//! released. A claim whose workspace records no such op is dead, on any host
-//! that can read the path and with no process id consulted, and the next
-//! landing takes it over; a claim whose op is recorded is never taken from it.
+//! released. A claim whose workspace is here and records no such op is dead,
+//! with no process id consulted, and the next landing takes it over; a claim
+//! whose op is recorded is never taken from it. A claim whose workspace is
+//! not here to read is never judged dead: a landing waits on it and refuses,
+//! and `rwv doctor --fix` releases it.
 
 use crate::durable_file::CreateNewError;
 use crate::manifest::ProjectName;
@@ -93,7 +95,11 @@ fn digest(bytes: &[u8]) -> String {
 /// Whether the claim `seen` holds belongs to a standing op.
 enum Standing {
     Live(Holder),
+    /// Its owner workspace is here and records no such op.
     Dead(Holder),
+    /// Its owner workspace is not here to read: on another mount, outside a
+    /// sandbox, or deleted. Never judged dead.
+    Unreachable(Holder),
     /// The file names no op this rwv reads.
     Unread(String),
 }
@@ -102,7 +108,10 @@ fn standing(seen: &[u8]) -> Standing {
     match Holder::parse(seen) {
         None => Standing::Unread(String::from_utf8_lossy(seen).trim().to_owned()),
         Some(holder) => match crate::op_state::records_op(holder.owner.as_path(), &holder.op) {
-            Some(false) => Standing::Dead(holder),
+            Some(false) if crate::workspace::is_workspace_root(holder.owner.as_path()) => {
+                Standing::Dead(holder)
+            }
+            Some(false) => Standing::Unreachable(holder),
             Some(true) | None => Standing::Live(holder),
         },
     }
@@ -171,6 +180,65 @@ impl LandingClaim {
     }
 }
 
+/// A claim whose owner workspace is not here to read, as `rwv doctor` reports
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreachableClaim {
+    /// The directory holding the claim file.
+    pub dir: std::path::PathBuf,
+    pub op: OpId,
+    pub owner: std::path::PathBuf,
+}
+
+/// Every claim in the store of `repo_dir` whose owner workspace is not here to
+/// read.
+pub fn unreachable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreachableClaim> {
+    let Ok(dir) = claims_dir(vcs, repo_dir) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let seen = StateFile::LandingClaim.in_dir(&entry.path()).read().ok()?;
+            match standing(&seen) {
+                Standing::Unreachable(holder) => Some(UnreachableClaim {
+                    dir: entry.path(),
+                    op: holder.op,
+                    owner: holder.owner.into_path_buf(),
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Release `claim`, which `rwv doctor --fix` was asked to clear, if it still
+/// names the same op and its owner is still not here to read. `fixer` is the
+/// workspace the fix runs in, named as the holder of the guard it removes the
+/// claim under. Returns whether the claim is gone.
+pub fn release_unreachable(claim: &UnreachableClaim, fixer: &Path) -> anyhow::Result<bool> {
+    let path = StateFile::LandingClaim.in_dir(&claim.dir);
+    let seen = match path.read() {
+        Ok(seen) => seen,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("failed to read the claim {path}")))
+        }
+    };
+    match standing(&seen) {
+        Standing::Unreachable(holder) if holder.op == claim.op => {}
+        _ => return Ok(false),
+    }
+    let mine = Holder {
+        op: OpId::new_now(),
+        owner: CanonicalPath::of(fixer),
+    };
+    Ok(remove_dead(Removable::Claim(&path), &seen, &claim.op, &mine)?.is_none())
+}
+
 fn take_within(
     path: StatePath,
     target: &str,
@@ -230,15 +298,13 @@ fn take_within(
             }
             other => other,
         };
-        let holder = match blocking {
-            Standing::Live(holder) | Standing::Dead(holder) => Ok(holder),
-            Standing::Unread(text) => Err(text),
-        };
-        let progress = match &holder {
-            Ok(holder) => crate::op_state::OwnerRecord::path_in(holder.owner.as_path())
-                .read()
-                .ok(),
-            Err(_) => None,
+        let progress = match &blocking {
+            Standing::Live(holder) | Standing::Dead(holder) => {
+                crate::op_state::OwnerRecord::path_in(holder.owner.as_path())
+                    .read()
+                    .ok()
+            }
+            Standing::Unreachable(_) | Standing::Unread(_) => None,
         };
         let now = (seen, progress);
         if last_seen.as_ref() != Some(&now) {
@@ -246,8 +312,17 @@ fn take_within(
             deadline = Instant::now() + wait;
         }
         if Instant::now() >= deadline {
-            match holder {
-                Ok(holder) => crate::refuse!(
+            match blocking {
+                Standing::Unreachable(holder) => crate::refuse!(
+                    RefusalKind::ClaimOwnerUnreachable,
+                    "another operation moving '{target}' holds it: op {op}, recorded in {owner}, \
+                     which is not here to read, so whether that operation still stands cannot be \
+                     told from here. If it runs where {owner} is, end it there. If it is gone, \
+                     `rwv doctor --fix` run here releases its claim, and then this landing runs.",
+                    op = holder.op,
+                    owner = holder.owner.as_path().display(),
+                ),
+                Standing::Live(holder) | Standing::Dead(holder) => crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another operation moving '{target}' holds it: op {op}, recorded in {owner}. \
                      If it is running, rerun once it ends. If it stopped, either of these, run \
@@ -261,7 +336,7 @@ fn take_within(
                             .map_or(crate::op_state::OpVerb::Land, |record| record.verb)
                     ),
                 ),
-                Err(text) => crate::refuse!(
+                Standing::Unread(text) => crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another landing into '{target}' holds it, and {path} names it in a form \
                      this rwv does not read ({text}): an rwv of another release took it. End \
@@ -471,7 +546,7 @@ mod tests {
     fn a_claim_whose_op_is_recorded_is_never_taken_from_it() {
         let tmp = crate::tempdir().unwrap();
         let owner = tmp.path().join("one");
-        std::fs::create_dir_all(&owner).unwrap();
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
         let first = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
@@ -490,14 +565,14 @@ mod tests {
     fn a_claim_whose_op_is_no_longer_recorded_is_taken_over() {
         let tmp = crate::tempdir().unwrap();
         let gone = tmp.path().join("gone");
-        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::create_dir_all(gone.join("projects")).unwrap();
         let path = claim_in(tmp.path());
         let _orphan = take_within(path.clone(), "t", &op(1), &gone, Duration::ZERO).unwrap();
         take_within(path.clone(), "t", &op(2), tmp.path(), Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
 
         let moved_on = tmp.path().join("moved-on");
-        std::fs::create_dir_all(&moved_on).unwrap();
+        std::fs::create_dir_all(moved_on.join("projects")).unwrap();
         record(&moved_on, &op(4));
         let path = claim_in(&tmp.path().join("other"));
         let _stale = take_within(path.clone(), "t", &op(3), &moved_on, Duration::ZERO).unwrap();
@@ -509,7 +584,7 @@ mod tests {
     fn a_release_removes_only_its_own_claim() {
         let tmp = crate::tempdir().unwrap();
         let owner = tmp.path().join("one");
-        std::fs::create_dir_all(&owner).unwrap();
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(2));
         let path = claim_in(tmp.path());
         let stale = LandingClaim {
@@ -533,7 +608,7 @@ mod tests {
 
     fn dead_claim(tmp: &Path) -> (StatePath, Vec<u8>, Holder) {
         let gone = tmp.join("gone");
-        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::create_dir_all(gone.join("projects")).unwrap();
         let path = claim_in(tmp);
         let _dead = take_within(path.clone(), "t", &op(1), &gone, Duration::ZERO).unwrap();
         (path.clone(), path.read().unwrap(), holder(op(1), &gone))
@@ -544,7 +619,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (path, seen, dead) = dead_claim(tmp.path());
         let live = tmp.path().join("live");
-        std::fs::create_dir_all(&live).unwrap();
+        std::fs::create_dir_all(live.join("projects")).unwrap();
         record(&live, &op(2));
         assert!(remove_dead(
             Removable::Claim(&path),
@@ -556,7 +631,7 @@ mod tests {
         .is_none());
         let _held = take_within(path.clone(), "t", &op(2), &live, Duration::ZERO).unwrap();
         let late = tmp.path().join("late");
-        std::fs::create_dir_all(&late).unwrap();
+        std::fs::create_dir_all(late.join("projects")).unwrap();
         record(&late, &op(3));
         assert!(remove_dead(
             Removable::Claim(&path),
@@ -574,14 +649,14 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (path, _, dead) = dead_claim(tmp.path());
         let first = tmp.path().join("first");
-        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(first.join("projects")).unwrap();
         record(&first, &op(2));
         let lock = path
             .dir()
             .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
         crate::durable_file::create_new(&lock, &holder(op(2), &first).bytes().unwrap()).unwrap();
         let second = tmp.path().join("second");
-        std::fs::create_dir_all(&second).unwrap();
+        std::fs::create_dir_all(second.join("projects")).unwrap();
         record(&second, &op(3));
         let refused = take_within(path.clone(), "t", &op(3), &second, Duration::ZERO);
         assert!(refused.is_err());
@@ -593,13 +668,13 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (path, _, dead) = dead_claim(tmp.path());
         let died = tmp.path().join("died");
-        std::fs::create_dir_all(&died).unwrap();
+        std::fs::create_dir_all(died.join("projects")).unwrap();
         let lock = path
             .dir()
             .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
         crate::durable_file::create_new(&lock, &holder(op(2), &died).bytes().unwrap()).unwrap();
         let next = tmp.path().join("next");
-        std::fs::create_dir_all(&next).unwrap();
+        std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
         take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(3));
@@ -611,13 +686,13 @@ mod tests {
         let path = claim_in(tmp.path());
         std::fs::create_dir_all(path.dir()).unwrap();
         let died = tmp.path().join("died");
-        std::fs::create_dir_all(&died).unwrap();
+        std::fs::create_dir_all(died.join("projects")).unwrap();
         let guard = Removable::Claim(&path).guard(&op(1));
         crate::durable_file::create_new(&guard, &holder(op(2), &died).bytes().unwrap()).unwrap();
         let nested = Removable::Guard(&guard).guard(&op(4));
         crate::durable_file::create_new(&nested, &holder(op(4), &died).bytes().unwrap()).unwrap();
         let next = tmp.path().join("next");
-        std::fs::create_dir_all(&next).unwrap();
+        std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
         take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert!(!guard.exists(), "the dead taker's guard is gone");
@@ -633,12 +708,12 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (path, _, dead) = dead_claim(tmp.path());
         let stopped = tmp.path().join("stopped");
-        std::fs::create_dir_all(&stopped).unwrap();
+        std::fs::create_dir_all(stopped.join("projects")).unwrap();
         record(&stopped, &op(2));
         let guard = Removable::Claim(&path).guard(&dead.op);
         crate::durable_file::create_new(&guard, &holder(op(2), &stopped).bytes().unwrap()).unwrap();
         let next = tmp.path().join("next");
-        std::fs::create_dir_all(&next).unwrap();
+        std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
         let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::StateClaimHeld));
@@ -659,6 +734,58 @@ mod tests {
         assert!(!is_takeover_guard(".rwv-landing.lock.takeover.12.tmp.99.0"));
         assert!(!is_takeover_guard(".rwv-landing.lock"));
         assert!(!is_takeover_guard(".rwv-landing.lock.tmp.99.0"));
+    }
+
+    #[test]
+    fn a_claim_whose_owner_is_not_here_is_never_taken_over_and_doctor_releases_it() {
+        let tmp = crate::tempdir().unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("projects")).unwrap();
+        let path = claim_in(tmp.path());
+        let _held = take_within(path.clone(), "t", &op(1), &elsewhere, Duration::ZERO).unwrap();
+        std::fs::remove_dir_all(&elsewhere).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(2));
+        let refused = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimOwnerUnreachable));
+        assert!(format!("{refused:#}").contains("rwv doctor --fix"));
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
+
+        let unreachable = UnreachableClaim {
+            dir: path.dir().to_path_buf(),
+            op: op(1),
+            owner: elsewhere.clone(),
+        };
+        assert!(!release_unreachable(
+            &UnreachableClaim {
+                op: op(9),
+                ..unreachable.clone()
+            },
+            &next
+        )
+        .unwrap());
+        assert!(path.exists(), "a fix for another op releases nothing");
+        assert!(release_unreachable(&unreachable, &next).unwrap());
+        assert!(!path.exists());
+        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn a_claim_whose_owner_is_back_is_not_released_by_a_doctor_fix() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("owner");
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
+        record(&owner, &op(1));
+        let path = claim_in(tmp.path());
+        let _held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let stale_finding = UnreachableClaim {
+            dir: path.dir().to_path_buf(),
+            op: op(1),
+            owner: owner.clone(),
+        };
+        assert!(!release_unreachable(&stale_finding, tmp.path()).unwrap());
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
     }
 
     #[test]

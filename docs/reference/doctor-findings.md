@@ -116,6 +116,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Report-only |
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
+| [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
 
@@ -1547,6 +1548,21 @@ operation the lease names.
 
 **What to do:** `rwv doctor --fix`, run in the workspace holding the lease,
 removes it.
+
+### `claim-owner-unreachable`
+
+**Warning. Auto-fixable.** A target's landing claim names an operation whose
+owner workspace is not here to read: the directory does not exist from where
+`rwv doctor` runs. That is what a deleted workweave looks like, and also what
+a workweave on another mount, or outside a sandbox the verb runs in, looks
+like. Only a workspace that is here and records no such operation proves the
+operation gone, so no landing takes this claim over: a landing into the target
+waits on it and then refuses with this kind, naming the operation and its
+workspace.
+
+**What to do:** if the operation still runs where its workspace is, end it
+there with its `--continue` or `rwv abort`. If it is gone, `rwv doctor --fix`
+releases the claim, and the next landing into the target runs.
 
 ---
 

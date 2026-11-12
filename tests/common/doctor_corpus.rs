@@ -263,6 +263,7 @@ pub fn case_token(v: &CheckViolation) -> String {
                 "dead-op-lease/owner-op-id-mismatch".into()
             }
         },
+        CheckViolation::ClaimOwnerUnreachable { .. } => "claim-owner-unreachable".into(),
         CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
             OrphanedSavepointKind::Redundant => "orphaned-savepoint/redundant".into(),
             OrphanedSavepointKind::Live => "orphaned-savepoint/live".into(),
@@ -767,6 +768,11 @@ pub fn corpus() -> Vec<CheckViolation> {
                 owner_op_id: "op-2".into(),
             },
             created_at: Some("2026-01-01T00:00:00Z".into()),
+        },
+        CheckViolation::ClaimOwnerUnreachable {
+            claim_dir: path("/store/rwv-landings/0"),
+            op_id: "op-1".into(),
+            recorded_owner: path("/elsewhere/ws"),
         },
         CheckViolation::OrphanedSavepoint {
             workweave: Some(workweave()),
