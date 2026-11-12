@@ -540,7 +540,7 @@ Write the record of `<W>`, the project repo's checked-out branch when none is na
 | `feature` | `--target <T>`, required: the branch the feature lands into, which must have a record that reads as one value. Its mode is stored as `as`. A `--target` whose chain of targets returns to `<W>`, `<W>` itself included, is refused (`target` `cycle`) |
 | `declared` | no `--target` |
 
-A `--target` with no record is refused as `target` `unrecorded`, naming `rwv branch set-mode <T>`. Recording a feature prints where it lands (`target-recorded`): into `<T>`'s member branches when `<T>` is a feature, else into each branch `<T>` declares, listing the members whose entry in `<W>` differs from `<T>`'s. A change to `<W>`'s mode lists each feature that targets `<W>` and recorded its mode differently, which refuses to land until rebound. A branch whose entry two writers set differently (`target` `conflict`) or whose entry does not read (`target` `unreadable`) is settled by this verb, which writes the one value. The records branch's own name and every name below it is refused as `name` `reserved`.
+A `--target` with no record is refused as `target` `unrecorded`, naming `rwv branch set-mode <T>`. Recording a feature prints where it lands (`target-recorded`): into `<T>`'s member branches when `<T>` is a feature, else into each branch `<T>` declares, listing the members whose entry in `<W>` differs from `<T>`'s. A change to `<W>`'s mode lists each feature that targets `<W>` and recorded its mode differently, which refuses to land until rebound. A branch whose entry two writers set differently (`target` `conflict`) or whose entry does not read (`target` `unreadable`) is settled by this verb, which writes the one value. The records branch's own name and every name below it is refused as `name` `reserved`. Recording a feature is refused where an `owned` or `fork` member's branch of its name is one a live weave branch declares (`name` `declared`) or one another project's feature of that name uses for a member both list (`name` `feature`).
 
 ### `rwv branch list [--json] [--project <name>]`
 
@@ -579,7 +579,7 @@ Refused before anything changes: a `<W>` checked out in any workspace (`checkout
 ### `rwv switch <W> [--project <name>]`
 ### `rwv switch --detach <rev> [--project <name>]`
 
-Put the project repo on `<W>` and align the members to it, or detach the workspace at `<rev>`. A recorded branch reopens bare. An unrecorded branch is refused (`target` `unrecorded`, naming `rwv fetch` and `rwv branch set-mode`): record it, then open it. `<W>` may exist only on a remote as last fetched. `rwv switch` with no branch is refused: aligning members for the checked-out branch is `rwv update`.
+Put the project repo on `<W>` and align the members to it, or detach the workspace at `<rev>`. A recorded branch reopens bare. An unrecorded branch is refused (`target` `unrecorded`, naming `rwv fetch` and `rwv branch set-mode`): record it, then open it. `<W>` may exist only on a remote as last fetched. Opening a feature is refused where an `owned` or `fork` member's branch of its name is one a live weave branch declares (`name` `declared`) or another project's feature of that name uses (`name` `feature`); a collision that arrives after the feature was opened refuses the verbs that align or publish it the same way, naming `rwv branch rename` and `rwv branch set-mode <W> declared`. `rwv switch` with no branch is refused: aligning members for the checked-out branch is `rwv update`.
 
 | Flag | Effect |
 |---|---|

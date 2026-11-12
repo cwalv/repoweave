@@ -81,6 +81,10 @@ branch is named) and nothing else: no branch moves, no checkout changes.
 - `feature` needs `--target <T>`, which must itself have a record that reads as
   one value; its mode is stored as `as`. A `--target` whose chain of targets
   returns to `<W>`, `<W>` itself included, is refused as `target` `cycle`.
+  A feature whose `owned` or `fork` member has a branch of its name that a
+  live weave branch declares is refused as `name` `declared`, and one another
+  project's feature of that name uses for a member both list as `name`
+  `feature`.
 - `declared` takes no `--target`.
 - Recording a feature prints where it lands (`target-recorded`): into `<T>`'s
   member branches when `<T>` is a feature, else into each branch `<T>` declares,
