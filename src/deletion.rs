@@ -696,7 +696,23 @@ impl<'a> Rule<'a> {
                 }
             },
         };
-        Ok(!self.destroy(repo, proof, Site::Local, outcome)?)
+        let deleted = self.destroy(repo, proof, Site::Local, outcome)?;
+        if deleted {
+            let pins = crate::pins::live_pins(self.request.primary)?;
+            let held = repo
+                .member
+                .as_ref()
+                .and_then(|m| pins.get(m))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            crate::backup::drop_rebased_of_branch(
+                repo.vcs.as_ref(),
+                &repo.dir,
+                &self.branch_name,
+                held,
+            );
+        }
+        Ok(!deleted)
     }
 
     fn survives(&self, repo: &Repo, reason: Reason, detail: Vec<String>, outcome: &mut Outcome) {

@@ -209,6 +209,9 @@ struct PushPlanItem {
     /// Where the branch publishes: its push target.
     target: RemoteHandle,
     replace: Replace,
+    /// The live pins on the member, judged where a leased overwrite replaces
+    /// the push branch.
+    held_pins: Vec<crate::pins::LivePin>,
 }
 
 /// Outcome of pushing a single manifest repo.
@@ -1100,6 +1103,7 @@ fn judge_member(
         publish_ref: PublishRef::judged(&LocalRefName::of_branch(&branch), head),
         target,
         replace,
+        held_pins: Vec::new(),
     });
     Ok(())
 }
@@ -1280,6 +1284,7 @@ fn plan_declared_branches(
                 publish_ref: PublishRef::judged(&LocalRefName::of_branch(&branch), tip),
                 target,
                 replace: Replace::FastForwardOnly,
+                held_pins: Vec::new(),
             });
         }
     }
@@ -1334,7 +1339,7 @@ fn judge_overwrites(
             name: pushed.raw.clone(),
         });
     let mut kept = Vec::with_capacity(plan.items.len());
-    for item in std::mem::take(&mut plan.items) {
+    for mut item in std::mem::take(&mut plan.items) {
         let Replace::Leased(lease) = &item.replace else {
             kept.push(item);
             continue;
@@ -1377,6 +1382,7 @@ fn judge_overwrites(
             .unwrap_or_default();
         let stranded = crate::pins::stranded_by(vcs, &member.dir, held, &change, exempt)?;
         if stranded.is_empty() {
+            item.held_pins = held.to_vec();
             kept.push(item);
             continue;
         }
@@ -1880,6 +1886,7 @@ fn publish(
             &project_plan.target,
             &judged,
             &project_plan.replace,
+            &[],
         )
         .map_err(|e| format!("{e:#}"))
         .and_then(|()| {
@@ -2070,6 +2077,7 @@ fn push_one(
         &item.target,
         &item.publish_ref,
         &item.replace,
+        &item.held_pins,
     ) {
         Ok(()) => {
             let branch = RawRefName::new(item.branch.clone());
@@ -2131,6 +2139,7 @@ fn publish_ref(
     target: &RemoteHandle,
     r: &PublishRef,
     replace: &Replace,
+    held: &[crate::pins::LivePin],
 ) -> Result<(), PublishFailure> {
     let republish = match replace {
         Replace::Leased(lease) => {
@@ -2150,8 +2159,12 @@ fn publish_ref(
     }
     vcs.push_ref(repo, target, r, replace)
         .map_err(PublishFailure::Push)?;
-    if let Some(replaced) = republish {
-        crate::backup::drop_republished(vcs, repo, r.name(), &replaced);
+    match republish {
+        Some(replaced) => crate::backup::drop_republished(vcs, repo, r.name(), &replaced),
+        None if matches!(replace, Replace::Leased(_)) => {
+            crate::backup::drop_rebased_of_branch(vcs, repo, r.name(), held);
+        }
+        None => {}
     }
     Ok(())
 }

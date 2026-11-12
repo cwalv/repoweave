@@ -13227,6 +13227,115 @@ pub fn history_republish_after_a_colleague_pushed() -> Scenario {
     )
 }
 
+fn published_feature_p_with_moved_main() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "p",
+                "--new-branch",
+                "feat-p",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("p"), Repo::App, "p-app"),
+        Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("p"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-p")
+            .pushes(Remote::origin(Repo::Proj), "feat-p")
+            .expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A published feature landed under `linear` and retired: its branch is
+/// deleted, so the `rebased` backup of the rebase no republish can use goes
+/// with it.
+pub fn history_retired_published_seat_drops_its_rebased_backups() -> Scenario {
+    let mut steps = published_feature_p_with_moved_main();
+    steps.push(
+        Step::rwv(&ww("p"), &["land", "--retire"])
+            .expect(Exit::Code(3))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewrite(&[Repo::App, Repo::Proj])
+            .claim(Claim::NoBackup {
+                repo: Repo::App,
+                mark: "p-app",
+            }),
+    );
+    scenario(
+        "history: a retired published seat keeps no rebased backup",
+        steps,
+    )
+}
+
+/// A republish leased to a newer tip than the `rebased` backup holds (a
+/// colleague pushed in between) drops that backup once it lands.
+pub fn history_overwrite_to_a_newer_tip_drops_the_old_rebased_backup() -> Scenario {
+    let b_seat = Place::ww(Machine::B, "pb");
+    let mut steps = published_feature_p_with_moved_main();
+    steps.splice(
+        6..6,
+        [
+            Step::new_machine(Machine::B),
+            Step::rwv(
+                &b(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "pb",
+                    "--branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&b_seat, Repo::App, "b-app"),
+            Step::rwv(&b_seat, &["lock", "--commit"]).expect(Exit::Succeeds),
+        ],
+    );
+    steps.extend([
+        Step::rwv(&ww("p"), &["sync"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b_seat, &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-p")
+            .pushes(Remote::origin(Repo::Proj), "feat-p")
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("p"),
+            &[
+                "push",
+                "--overwrite",
+                "local/remotes/app",
+                "--overwrite",
+                "projects/proj",
+            ],
+        )
+        .overwrites(Remote::origin(Repo::App), "feat-p")
+        .overwrites(Remote::origin(Repo::Proj), "feat-p")
+        .expect(Exit::Succeeds)
+        .may_strand(&[Repo::App, Repo::Proj])
+        .may_rewind(&[Repo::App]),
+        Step::rwv(&a(), &["backup", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("rebased")),
+    ]);
+    scenario(
+        "history: an overwrite to a newer tip drops the old rebased backup",
+        steps,
+    )
+}
+
 /// A target recording `history` that moved in `app` and `lib`, and a seat whose `app`
 /// edit conflicts with `main`'s: `sync` stops on `app`'s merge before `lib`,
 /// planned a fast-forward, is reached. The operator resolves `app` and

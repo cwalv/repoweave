@@ -586,6 +586,50 @@ pub(crate) fn drop_republished(
     }
 }
 
+/// Drop every `rebased` backup of `branch` in `dir`, for a branch that is
+/// gone or whose push branch an overwrite replaced: no republish recovery can
+/// use them. One whose drop would leave a live pin in `held` reached by
+/// nothing stays, reported.
+pub(crate) fn drop_rebased_of_branch(
+    vcs: &dyn Vcs,
+    dir: &std::path::Path,
+    branch: &crate::vcs::RawRefName,
+    held: &[crate::pins::LivePin],
+) {
+    let Ok(listed) = vcs.list_backups(dir, RemoteTracking::Counted) else {
+        return;
+    };
+    for entry in listed {
+        let backup = entry.backup;
+        let rebased_of_branch = backup.mark == Some(BackupMark::Rebased)
+            && backup.source == crate::vcs::BackupSource::Branch(branch.clone());
+        if !rebased_of_branch {
+            continue;
+        }
+        match crate::pins::stranded_by_dropping(vcs, dir, held, &[&backup]) {
+            Ok(stranded) if stranded.is_empty() => match vcs.drop_backup(dir, &backup.name) {
+                Ok(()) => eprintln!(
+                    "dropped the rebased backup {} (held {}): no republish can use it",
+                    backup.name,
+                    backup.tip.id().short()
+                ),
+                Err(e) => eprintln!(
+                    "rwv: could not drop the rebased backup {}: {e:#}",
+                    backup.name
+                ),
+            },
+            Ok(_) => eprintln!(
+                "rwv: kept the rebased backup {}: a live lock pins a commit only it reaches",
+                backup.name
+            ),
+            Err(e) => eprintln!(
+                "rwv: kept the rebased backup {}: could not judge the pin rule: {e:#}",
+                backup.name
+            ),
+        }
+    }
+}
+
 /// Whether a `rebased` backup of `branch` in `dir` holds `push_tip`, the push
 /// branch's tip: where one does, rwv's own rebase rewrote what was published,
 /// and the republish recovery applies.

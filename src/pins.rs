@@ -22,6 +22,7 @@ use crate::workspace::{discover_projects, project_dir};
 const LISTED_COMMITS_CAP: usize = 20;
 
 /// A pin some project's live lock holds, and the lock that holds it.
+#[derive(Clone)]
 pub(crate) struct LivePin {
     pub(crate) commit: CommitId,
     pub(crate) project: ProjectName,

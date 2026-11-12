@@ -756,6 +756,8 @@ every_scenario!(
     history_member_override_lands,
     rebased_backup_lifetime,
     history_published_rebase,
+    history_retired_published_seat_drops_its_rebased_backups,
+    history_overwrite_to_a_newer_tip_drops_the_old_rebased_backup,
     history_republish_after_a_colleague_pushed,
     rebased_backup_after_abort_offers_no_republish,
     rebased_backup_of_another_branch_offers_no_republish,
@@ -5123,6 +5125,18 @@ fn rebased_backup_of_another_branch_offers_no_republish_scenario() {
 #[test]
 fn history_republish_after_a_colleague_pushed_is_green() {
     runner::run(scenarios::history_republish_after_a_colleague_pushed())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn history_retired_published_seat_drops_its_rebased_backups_is_green() {
+    runner::run(scenarios::history_retired_published_seat_drops_its_rebased_backups())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn history_overwrite_to_a_newer_tip_drops_the_old_rebased_backup_is_green() {
+    runner::run(scenarios::history_overwrite_to_a_newer_tip_drops_the_old_rebased_backup())
         .assert_fully_decided_green();
 }
 
