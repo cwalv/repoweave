@@ -6464,6 +6464,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let mut any_ff_failure = false;
     let mut moved = Report::default();
     for (key, receiving) in &ctx.take_in.receiving {
+        if !moved.is_empty() {
+            break;
+        }
         let RepoKey::Member(repo_path) = key else {
             continue;
         };
@@ -6500,6 +6503,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     let in_checkouts = ctx.dest_workspace_dir.as_deref().zip(target_ctx.as_ref());
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
+        if !moved.is_empty() {
+            break;
+        }
         let Some((dest_workspace_dir, target_ctx)) = in_checkouts else {
             break;
         };
@@ -6601,6 +6607,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
     for (key, receiving) in &ctx.take_in.receiving {
+        if !moved.is_empty() {
+            break;
+        }
         let (RepoKey::Member(repo_path), op_state::Moves::InPlace { workspace }) =
             (key, &receiving.moves)
         else {
@@ -6746,12 +6755,23 @@ fn switch_primary_to_target(ctx: &OpContext<'_>, target_branch: &str) -> anyhow:
             dir.display()
         )
     })?;
-    let departure = crate::alignment::Departure::of_move(vcs, dir, &tip)?;
-    vcs.reattach_head(
-        attachment,
-        &crate::vcs::LocalRefName::of_branch(&raw),
-        &departure,
-    )?;
+    let switched = crate::alignment::Departure::of_move(vcs, dir, &tip).and_then(|departure| {
+        Ok(vcs.reattach_head(
+            attachment,
+            &crate::vcs::LocalRefName::of_branch(&raw),
+            &departure,
+        )?)
+    });
+    if let Err(e) = switched {
+        return Err(crate::untokened!(
+            EnvironmentPassthrough,
+            "'{target_branch}' has landed, but {} could not switch to it: {e:#}. Once what \
+             kept it from switching is cleared, `{}` here switches it and finishes the landing, \
+             or `rwv abort` puts back everything the landing moved",
+            dir.display(),
+            op_state::resume_command(op_state::OpVerb::Land),
+        ));
+    }
     if ctx.handler.emit_text() {
         outln!("  {}: switched to {target_branch}", RepoKey::Project);
     }
@@ -6977,16 +6997,28 @@ fn advance_receiving_ref(
             &ResolvedRevisionId::from(composed.clone()),
         )
         .unwrap_or(false);
-    if !fast_forwards
-        || vcs
-            .advance_branch_ref(dir, &branch, &from, composed)
-            .is_err()
-    {
+    let advanced = if fast_forwards {
+        vcs.advance_branch_ref(dir, &branch, &from, composed)
+    } else {
+        Ok(())
+    };
+    if !fast_forwards || advanced.is_err() {
         let now = vcs
             .resolve_local_branch_tip(dir, &branch)?
             .unwrap_or_else(|| ResolvedRevisionId::from(from.clone()));
         if now.id() != composed {
             unjournal_ref(ctx, key, &receiving.branch)?;
+        }
+        if let (Err(e), true) = (advanced, now.id() == &from) {
+            return Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "{label}: '{}' is still at {}, where the landing read it, and could not be \
+                 moved to {}: {e:#}. Once what kept it from moving is cleared, `{}` moves it",
+                receiving.branch,
+                from.short(),
+                composed.short(),
+                op_state::resume_command(op_state::OpVerb::Land),
+            ));
         }
         return Err(target_moved_line_for(
             label,

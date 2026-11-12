@@ -10900,6 +10900,84 @@ pub fn lost_race_abort() -> Scenario {
     scenario("lost race abort", steps)
 }
 
+/// A landing as refs loses the compare-and-swap of `app`'s `main`, the first
+/// receiving branch it moves, to a commit made there meanwhile. It stops at
+/// that loss: `lib`'s `main`, which it would have moved next, is left
+/// unmoved. `rwv abort` ends it; the commit raced onto `app`'s `main` is
+/// one no lock records, so the landing run again refuses `pin` unpinned for
+/// it and lands once the printed choices record it.
+pub fn lost_race_on_the_first_ref() -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--history", "linear"],
+            "advance-target",
+            "landing",
+        ),
+        Step::hand_commit(&a(), Repo::App, "main", &[("raced.txt", "raced\n")]),
+        Step::release("landing")
+            .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("w-lib")),
+        Step::rwv_printed(&ww("w"), "rwv abort").expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "-1", "main"])
+            .claim(Claim::OutputLine("hand commit")),
+        Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::refuses(Repo::App, State::PinUnpinned)),
+        Step::rwv_printed(&ww("w"), "rwv workweave create").expect(Exit::Succeeds),
+        Step::rwv(&ww("main"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+        Step::git(&ww("main"), Repo::Lib, &["log", "--format=%s", "HEAD"])
+            .claim(Claim::OutputContains("w-lib")),
+    ]);
+    scenario("lost race on the first ref", steps)
+}
+
+/// A landing from the primary into a target checked out nowhere switched the
+/// primary's project repo to the target, then was killed. `rwv abort` puts the
+/// primary back on the feature it landed from and every ref the landing
+/// moved back at its savepoint; the landing run again lands.
+pub fn abort_after_the_primary_switched_to_the_target() -> Scenario {
+    scenario(
+        "abort after the primary switched to the target",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "feat"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "feat-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv_paused(&a(), &["land"], "landed", "landing"),
+            Step::git(&a(), Repo::Proj, &["branch", "--show-current"])
+                .claim(Claim::OutputLine("main")),
+            Step::kill("landing"),
+            Step::rwv(&a(), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "feat",
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("feat-app")),
+            lands_on_main(Step::rwv(&a(), &["land"]), Repo::App, "feat-app")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "main",
+                }),
+        ],
+    )
+}
+
 /// Where `dc05` stops: a landing as refs killed once it composed, before or
 /// after its first move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

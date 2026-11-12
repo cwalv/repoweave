@@ -795,6 +795,8 @@ every_scenario!(
     landing_as_refs,
     landing_as_refs_unpinned,
     lost_race_abort,
+    lost_race_on_the_first_ref,
+    abort_after_the_primary_switched_to_the_target,
     dc05_compose_in_source(scenarios::Dc05::BeforeTheMoveAborted),
     dc05_compose_in_source(scenarios::Dc05::AtTheMoveAborted),
     dc05_compose_in_source(scenarios::Dc05::AtTheMoveContinued),
@@ -2720,6 +2722,19 @@ holding_rwv! {
     /// another ref stops; abort puts back what it moved; it lands again.
     fn a_landing_as_refs_that_loses_its_race_is_aborted_and_lands_again() {
         runner::run(scenarios::lost_race_abort()).assert_fully_decided_green();
+    }
+
+    /// A landing that loses on the first ref it moves stops there, leaving
+    /// the refs after it unmoved.
+    fn a_landing_that_loses_on_its_first_ref_moves_no_other() {
+        runner::run(scenarios::lost_race_on_the_first_ref()).assert_fully_decided_green();
+    }
+
+    /// Abort of a landing whose primary source switched to the target puts
+    /// the primary back on its feature and the target's refs back.
+    fn abort_after_the_primary_switched_to_the_target_restores_both() {
+        runner::run(scenarios::abort_after_the_primary_switched_to_the_target())
+            .assert_fully_decided_green();
     }
 }
 
