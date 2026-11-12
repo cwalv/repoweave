@@ -2687,7 +2687,6 @@ fn a_landing_refuses_an_upstream_dependency_pin_this_clone_lacks() {
 /// beyond the pin the upstream's lock records: the landing keeps the
 /// upstream's pin, never the branch tip beyond it.
 #[test]
-#[ignore = "waits for the landing to plan only the members it moves: an untouched member keeps T's pin"]
 fn a_landing_keeps_the_upstream_pin_of_a_member_the_seat_never_touched() {
     bad_steps(
         "the upstream moved a member the seat never touched",
