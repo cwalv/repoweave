@@ -7456,6 +7456,7 @@ pub fn land_target_gone_lists_only_targets_the_rebind_takes() -> Scenario {
                 ],
             )
             .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["workweave", "create", "--project", "proj", "x"])
                 .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["branch", "-D", "stable"]),
