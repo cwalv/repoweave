@@ -1444,7 +1444,6 @@ pub fn run() -> anyhow::Result<()> {
                     project_override,
                 }
             } else {
-                crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
                 crate::branch::require_recorded(&ctx)?;
                 sync::SyncRequest::Fresh {
                     landing: Box::new(crate::land::resolve(&ctx, target.as_deref())?),

@@ -393,27 +393,15 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"--hard\"",
         count: 2,
-        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 2)],
+        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 1)],
         justification: "(1) hard_reset(): the operation's intent is to \
-            discard divergent commits. It has NO caller outside the trait \
-            any more — the only two are Vcs::reset_attached_ref and \
-            Vcs::reset_attached_ref_keeping (the second takes a \
-            BackupWitness of the tip being left instead of a warrant, and \
-            refuses a witness that backs up another repo or tip), so the \
-            rewind is now type-gated rather than gated by a check the author \
-            remembered to write: reset_attached_ref takes an AttachedRef \
-            witness (which a detached or unborn HEAD cannot produce), \
-            re-verifies that witness against the repo, requires a \
-            DiscardWarrant (which cannot be constructed without a \
-            SavepointRef, so a rewind with no recovery path is \
-            unrepresentable), and refuses a savepoint taken in a different \
-            repo. Its sole production entry point is sync's \
-            rewind_project_repo under --discard-local-commits, which \
-            resolves the refs/rwv/pre-op savepoint first and refuses if \
-            there is none — so discarded commits stay recoverable via \
-            `rwv abort`. (The previous text named a \"--force Phase 1'\" \
-            caller and a clean-project precondition; the flag is spelled \
-            --discard-local-commits and the guard is the warrant.) \
+            discard divergent commits. It has NO caller outside the trait: \
+            its one caller is Vcs::reset_attached_ref_keeping, which takes \
+            an AttachedRef witness (which a detached or unborn HEAD cannot \
+            produce), re-verifies it against the repo, and takes a \
+            BackupWitness of the tip being left, refusing a witness that \
+            backs up another repo or tip, so the rewind is type-gated and \
+            the commits it leaves stay reachable from the backup. \
             (2) reset_and_drop_savepoint(): \
             shared helper factored from verified_restore_savepoint(); called \
             from the mid-op, intent, and converged branches — each gated on \
@@ -1096,8 +1084,8 @@ fn enumerated_wrapper_callers_match_audited_counts() {
 /// That declaration sits in the file's first twenty lines, so reading it as
 /// a test-module boundary would cut the scan there and put the whole typed
 /// VCS seam outside every count in this file — the trait the destructive
-/// wrappers are declared on, and `reset_attached_ref`, the sole caller the
-/// `--hard` justification names.
+/// wrappers are declared on, and `reset_attached_ref_keeping`, the sole caller
+/// the `--hard` justification names.
 #[test]
 fn the_scan_reads_past_a_test_module_declaration() {
     let text = std::fs::read_to_string(src_dir().join("vcs.rs")).expect("read src/vcs.rs");

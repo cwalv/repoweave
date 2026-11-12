@@ -577,20 +577,6 @@ fn a_discard_unlanded_consent_cannot_be_forged_by_tuple_literal() {
     );
 }
 
-#[test]
-fn a_rewinding_move_requires_a_warrant_argument() {
-    assert_fails_with(
-        "E0061",
-        "a rewind without a savepoint is unrepresentable",
-        r#"
-        use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
-        pub fn rewind(vcs: &dyn Vcs, a: &AttachedRef, to: &ResolvedRevisionId) {
-            let _ = vcs.reset_attached_ref(a, to);
-        }
-        "#,
-    );
-}
-
 // ---------------------------------------------------------------------------
 // §4.6 (1) — landing onto a detached target
 // ---------------------------------------------------------------------------

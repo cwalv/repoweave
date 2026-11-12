@@ -1516,8 +1516,8 @@ impl State {
                         fast-forwards onto it: the repo, the tip it now holds and the tip \
                         composed for it, listed. The landing stopped with its op record kept \
                         and the refs it already moved left as moved",
-                refused_by: "`rwv land`, at the fast-forward; `rwv land --continue`, since the \
-                             plan no longer describes the landing",
+                refused_by: "`rwv land`, at the fast-forward, and its `--continue`, since \
+                             the plan no longer describes the landing",
                 offers: &[Form::LostRace],
                 verb_offers: &[],
             },

@@ -365,7 +365,7 @@ fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
         .assert()
         .failure()
         .stderr(predicates::str::contains(
-            "github/org/reference (detached HEAD",
+            "github/org/reference: alignment detached with unpushed commits",
         ));
 
     assert_eq!(

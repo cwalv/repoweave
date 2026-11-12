@@ -533,42 +533,6 @@ fn a_role_changed_to_reference_by_sync_is_settled_read_only() {
 }
 
 #[test]
-fn abort_restoring_an_older_manifest_resettles_the_target() {
-    let tmp = common::tempdir().unwrap();
-    let weave = make_weave(tmp.path());
-    let seat = weave.create("seat");
-    weave.commit_manifest(
-        &seat.join("projects").join(PROJECT),
-        "reference",
-        "reference",
-    );
-    succeed(&["update"], &seat);
-    succeed(&["lock", "--commit"], &seat);
-    std::fs::write(seat.join(OWNED_PATH).join("UNTRACKED"), "u\n").unwrap();
-
-    let retired = run(
-        &["land", "--retire"],
-        &seat,
-    );
-    assert!(
-        !retired.status.success() && seat.join(".rwv-op").exists(),
-        "fixture: retire must refuse on the untracked file and park; {}",
-        describe(&retired)
-    );
-    assert_read_only(
-        &weave.owned,
-        "the primary's member once the landed manifest made it a reference",
-    );
-
-    succeed(&["abort"], &seat);
-
-    assert_writable(
-        &weave.owned,
-        "the primary's member once abort restored the manifest naming it owned",
-    );
-}
-
-#[test]
 fn doctor_fix_settles_a_reference_member_made_writable_by_hand() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());

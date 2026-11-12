@@ -8713,7 +8713,7 @@ mod tests {
             "[`alignment`](#x) (`detached`), `missing-lock-merge-driver` (`attribute-absent`,\n",
             "`attribute-legacy`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",
-            "`rwv -w myproj--hotfix land primary`, `rwv workweave\n",
+            "`rwv -w myproj--hotfix land`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
             "`rwv --help`, `rwv explain stale-lock`, `rwv explain land`,\n",

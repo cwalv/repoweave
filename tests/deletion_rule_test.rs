@@ -761,7 +761,7 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     );
     commit_in(&ww.join(LIB), "more.txt");
 
-    let out = run(&["land", "--retire", "--json"], &ww);
+    let out = run(&["land", "--retire", "--json", "--target", "main"], &ww);
 
     assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
     let doc = json(&out);
