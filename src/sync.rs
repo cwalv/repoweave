@@ -7754,16 +7754,85 @@ pub fn run_abort(
             .as_ref()
             .map(|take_in| take_in.ref_moves.as_slice())
             .unwrap_or_default();
-        for (repo, branch, error) in crate::merge_upstream::restore_ref_moves(
+        for left in crate::merge_upstream::restore_ref_moves(
             &workspace_dir,
             Some(&cwd_project_dir),
             ref_moves,
+            &|repo| abandon.covers(repo, &op_project_name),
         ) {
-            eprintln!(
-                "  {}: '{branch}' moved since the op wrote it, so it is left where it is: {error:#}",
-                RepoOperand::of(&repo, &op_project_name)
-            );
-            tally.any_foreign = true;
+            match left {
+                crate::merge_upstream::RefMoveLeft::Abandoned {
+                    repo,
+                    branch,
+                    tip,
+                    backup,
+                } => outln!(
+                    "  {}: '{branch}' restored (abandoned foreign tip {}, kept as backup {backup})",
+                    RepoOperand::of(&repo, &op_project_name),
+                    tip.short()
+                ),
+                crate::merge_upstream::RefMoveLeft::Foreign {
+                    repo,
+                    branch,
+                    dir,
+                    now,
+                    held_at,
+                    error,
+                } => {
+                    let named = RepoOperand::of(&repo, &op_project_name);
+                    let vcs = crate::vcs::probe_vcs();
+                    let checkout = dir.display().to_string();
+                    tally.any_foreign = true;
+                    if !held_at.is_empty() {
+                        let held = held_at
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        eprintln!(
+                            "  {named}: '{branch}' is checked out at {held}, so it is left where \
+                             it is"
+                        );
+                        tally.blocked.push((
+                            named,
+                            format!(
+                                "free the checkout at {held} of '{branch}' (switch it to \
+                                 another branch, or detach it), as this shows:\n\t{}\n\
+                                 then rerun:\n\trwv abort",
+                                vcs.hint(crate::vcs::VcsAction::Status)
+                                    .replace("<checkout>", &held)
+                            ),
+                        ));
+                    } else if now.is_none() {
+                        let from = ref_moves
+                            .iter()
+                            .rev()
+                            .find(|m| m.repo == repo && m.branch == branch)
+                            .map(|m| m.from.as_str().to_owned())
+                            .unwrap_or_default();
+                        eprintln!("  {named}: '{branch}' is gone, so it is left as it is");
+                        tally.blocked.push((
+                            named,
+                            format!(
+                                "put '{branch}' back where the op found it:\n\t{}\n\
+                                 then rerun:\n\trwv abort",
+                                vcs.hint(crate::vcs::VcsAction::BranchAt)
+                                    .replace("<checkout>", &checkout)
+                                    .replace("<name>", &branch)
+                                    .replace("<sha>", &from)
+                            ),
+                        ));
+                    } else {
+                        eprintln!(
+                            "  {named}: '{branch}' moved since the op wrote it, so it is left \
+                             where it is: {error:#}"
+                        );
+                        if !tally.abandonable.contains(&named) {
+                            tally.abandonable.push(named);
+                        }
+                    }
+                }
+            }
         }
         if record.verb == OpVerb::Land {
             members.take_record(record);
@@ -8360,12 +8429,34 @@ fn restore_landing_refs(
                     );
                 }
                 Ok(crate::vcs::RefRestoreOutcome::Foreign { observed, why }) => {
-                    let at = observed.map_or(String::new(), |o| format!(" at {}", o.short()));
+                    let at = observed
+                        .as_ref()
+                        .map_or(String::new(), |o| format!(" at {}", o.short()));
                     eprintln!(
                         "  {named}: '{branch}'{at} is left where it is, not restored to {}: {why}",
                         saved.at.short()
                     );
                     tally.any_foreign = true;
+                    let held = vcs.checkouts_of_branch(&dir, branch).unwrap_or_default();
+                    if !held.is_empty() {
+                        let held = held
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        tally.blocked.push((
+                            named.clone(),
+                            format!(
+                                "free the checkout at {held} of '{branch}' (switch it to \
+                                 another branch, or detach it), as this shows:\n\t{}\n\
+                                 then rerun:\n\trwv abort",
+                                vcs.hint(crate::vcs::VcsAction::Status)
+                                    .replace("<checkout>", &held)
+                            ),
+                        ));
+                    } else if observed.is_some() && !tally.abandonable.contains(&named) {
+                        tally.abandonable.push(named.clone());
+                    }
                 }
                 Err(e) => {
                     eprintln!("  {named}: '{branch}' could not be restored: {e:#}");

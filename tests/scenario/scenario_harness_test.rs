@@ -757,11 +757,15 @@ every_scenario!(
     update_remote_abort_refuses_a_merge_in_a_member_it_never_merges,
     pull_abort_leaves_a_merge_in_a_member_it_never_merges,
     update_remote_abort_leaves_a_merge_in_a_member_it_never_merges,
+    update_remote_abort_over_a_ref_moved_since,
+    update_remote_reset_killed_after_the_move(false),
+    update_remote_reset_killed_after_the_move(true),
     abort_keeps_edits_made_in_the_target_after_the_stop,
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
     abort_refuses_a_switch_back_over_colliding_edits,
     abort_restores_a_target_fast_forward_killed_after_the_move,
+    a_continued_landing_racing_a_commit_on_a_repo_it_moved,
     abort_abandons_colliding_edits_keeping_them,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
@@ -776,6 +780,10 @@ every_scenario!(
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
+    a_target_moved_before_the_landing_moves_it(scenarios::TargetHeld::AsRef),
+    a_target_moved_before_the_landing_moves_it(scenarios::TargetHeld::InCheckout),
+    abort_over_a_ref_the_landing_moved(scenarios::MovedRefThen::Committed),
+    abort_over_a_ref_the_landing_moved(scenarios::MovedRefThen::CheckedOut),
     carried_pin_judged_against_the_receiving_branch,
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
@@ -1890,6 +1898,51 @@ fn declared_branch_check_holds_a_named_move_to_a_tip_no_upstream_has() {
     );
 }
 
+/// `main` moved off `local` to `side`, a tip its old one does not contain,
+/// by a step naming `app` in `may_restore`: spared only where a backup of
+/// rwv's held `side` before the step.
+fn main_restored_to_side(kept: bool) -> Report {
+    let mut steps = vec![
+        Step::git(&a(), Repo::App, &["switch", "-c", "side"]),
+        Step::commit(&a(), Repo::App, "side"),
+        Step::git(&a(), Repo::App, &["switch", "main"]),
+    ];
+    if kept {
+        steps.push(Step::git(
+            &a(),
+            Repo::App,
+            &["update-ref", "refs/rwv/backup/main/kept", "side"],
+        ));
+    }
+    steps.extend([
+        Step::commit(&a(), Repo::App, "local"),
+        Step::git(&a(), Repo::App, &["reset", "--hard", "side"])
+            .may_strand(&[Repo::App])
+            .may_restore(&[Repo::App]),
+    ]);
+    bad_steps("main restored to a side tip", steps)
+}
+
+#[test]
+fn declared_branch_check_spares_a_named_restore_to_a_tip_rwv_kept() {
+    main_restored_to_side(true).assert_green();
+}
+
+#[test]
+fn declared_branch_check_holds_a_named_restore_to_a_tip_rwv_never_kept() {
+    let report = main_restored_to_side(false);
+    assert_eq!(
+        only(&report),
+        &Violation::DeclaredMovedBack {
+            repo: Repo::App,
+            store: Store::Clone(Machine::A),
+            branch: "main".to_owned(),
+            from: report.marks["local"].clone(),
+            to: report.marks["side"].clone(),
+        }
+    );
+}
+
 const FEATURE_ONTO_MAIN: &str = "mode = \"feature\"\ntarget = \"main\"\nas = \"declared\"\n";
 
 /// `main` fast-forwarded to a merge of itself into a feature: its old tip is
@@ -2706,6 +2759,14 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
         .assert_fully_decided_green();
 }
 
+/// A branch `update --remote` merged as a ref, moved again before abort,
+/// is refused with the `--abandon-foreign-tip` choice that, run, restores it.
+#[test]
+fn update_remote_abort_over_a_ref_moved_since_prints_the_choice_that_clears_it() {
+    runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
+        .assert_fully_decided_green();
+}
+
 #[test]
 fn cherry_pick_abort_keeps_edits_made_after_the_stop() {
     runner::run(scenarios::cherry_pick_abort_keeps_edits_made_after_the_stop())
@@ -2724,6 +2785,53 @@ holding_rwv! {
             scenarios::RefRace::CheckedOut,
         ] {
             runner::run(scenarios::a_receiving_branch_moved_as_a_ref_loses_its_race(race))
+                .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// A commit onto a target repo the landing already moved, made while a
+    /// continued landing is about to fast-forward it again, keeps the repo on
+    /// the journal: abort refuses rather than leaving the landing's commits.
+    fn a_continued_landing_racing_a_commit_keeps_the_repo_journaled() {
+        runner::run(scenarios::a_continued_landing_racing_a_commit_on_a_repo_it_moved())
+            .assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A reset to the upstream killed after the move, in a checkout or as a
+    /// ref, is put back by abort, the move having been journaled first.
+    fn abort_restores_a_reset_to_the_upstream_killed_after_the_move() {
+        for detached in [false, true] {
+            runner::run(scenarios::update_remote_reset_killed_after_the_move(detached))
+                .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// A commit on the target's `main` after the landing composed, as a ref
+    /// or in its checkout, stops the landing at its read of the savepoint.
+    fn a_target_moved_before_the_landing_moves_it_stops_at_the_tip_it_read() {
+        for held in [
+            scenarios::TargetHeld::AsRef,
+            scenarios::TargetHeld::InCheckout,
+        ] {
+            runner::run(scenarios::a_target_moved_before_the_landing_moves_it(held))
+                .assert_fully_decided_green();
+        }
+    }
+
+    /// A ref the landing moved, then moved again or checked out before
+    /// abort, is refused with a choice that, run, lets abort restore it.
+    fn abort_over_a_ref_the_landing_moved_refuses_with_a_choice_that_clears_it() {
+        for then in [
+            scenarios::MovedRefThen::Committed,
+            scenarios::MovedRefThen::CheckedOut,
+        ] {
+            runner::run(scenarios::abort_over_a_ref_the_landing_moved(then))
                 .assert_fully_decided_green();
         }
     }

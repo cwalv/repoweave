@@ -24,8 +24,9 @@
 //!   in `may_rewrite` and the branch lands on the tip the same branch has in
 //!   another of the repo's stores, which is a move to or with its own
 //!   upstream, or names it in `may_restore` and the branch moves back to a
-//!   commit its old tip contains, as `rwv abort` puts back what its
-//!   operation moved. Declared: a member branch some live weave branch's committed
+//!   commit its old tip contains, or to one a savepoint or backup of rwv's
+//!   held in that store before the step, as `rwv abort` puts back what its
+//!   operation moved, a reset to the upstream included. Declared: a member branch some live weave branch's committed
 //!   `rwv.toml` declares, and for a project its origin's default branch and
 //!   every branch a record holds as `declared`.
 //! - **first parents broken**: a target branch moving forward to a commit
@@ -332,6 +333,8 @@ pub struct Snapshot {
     pub declares: BTreeMap<LockSite, BTreeMap<Repo, Declaration>>,
     /// Every local branch's tip in every store.
     pub branches: BTreeMap<(Repo, Store), BTreeMap<String, String>>,
+    /// The tips rwv keeps in every store: its savepoints and its backups.
+    pub kept_by_rwv: BTreeMap<(Repo, Store), BTreeSet<String>>,
     /// Every ref's tip on every remote.
     pub remote_refs: BTreeMap<Remote, BTreeMap<String, String>>,
     pub records: BTreeMap<(Repo, Store), Records>,
@@ -450,6 +453,14 @@ pub fn snapshot(sandbox: &Sandbox) -> Snapshot {
                     snap.records.insert((repo, store), records);
                 }
             }
+            snap.kept_by_rwv.insert(
+                (repo, store),
+                tips(sandbox, &dir, "refs/rwv/pre-op/")
+                    .into_iter()
+                    .chain(tips(sandbox, &dir, "refs/rwv/backup/"))
+                    .map(|(_, oid)| oid)
+                    .collect(),
+            );
             snap.branches.insert((repo, store), heads);
             if let Store::Remote(kind) = store {
                 snap.remote_refs
@@ -912,8 +923,12 @@ pub fn declared_moved_back(
         if may_rewrite.contains(&repo) && with_its_upstream {
             continue;
         }
+        let kept_before = before
+            .kept_by_rwv
+            .get(&(repo, store))
+            .is_some_and(|kept| kept.contains(to));
         if may_restore.contains(&repo)
-            && is_ancestor(sandbox, &sandbox.store_dir(repo, store), to, from)
+            && (kept_before || is_ancestor(sandbox, &sandbox.store_dir(repo, store), to, from))
         {
             continue;
         }

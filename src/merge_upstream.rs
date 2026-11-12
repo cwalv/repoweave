@@ -241,18 +241,44 @@ pub(crate) fn reset_to_upstream(
             vcs.reset_branch_ref(dir, branch, tip.id(), upstream.id(), &kept)?;
         }
     }
+    crate::test_pause::point("reset-to-upstream");
     Ok(kept.backup().name.to_string())
 }
 
-/// Put back the branches an op moved as refs, each only where it still sits at
-/// the tip the op wrote. Returns the repos whose branch had moved since.
+/// A branch an op moved as a ref that abort did not simply put back.
+#[derive(Debug)]
+pub(crate) enum RefMoveLeft {
+    /// Left where it is: something other than the op moved it, or a checkout
+    /// holds it, or it is gone.
+    Foreign {
+        repo: RepoKey,
+        branch: String,
+        dir: PathBuf,
+        now: Option<CommitId>,
+        held_at: Vec<PathBuf>,
+        error: VcsError,
+    },
+    /// Put back over a tip the operator abandoned, kept first as a backup.
+    Abandoned {
+        repo: RepoKey,
+        branch: String,
+        tip: CommitId,
+        backup: String,
+    },
+}
+
+/// Put back the branches an op moved as refs, each where it still sits at the
+/// tip the op wrote, or, for a repo `abandon` names, over whatever tip it sits
+/// at now once that tip is kept as a backup. A branch a checkout holds is
+/// left, as one that is gone is.
 pub(crate) fn restore_ref_moves(
     workspace: &Path,
     project_dir: Option<&Path>,
     moves: &[RefMove],
-) -> Vec<(RepoKey, String, VcsError)> {
+    abandon: &dyn Fn(&RepoKey) -> bool,
+) -> Vec<RefMoveLeft> {
     let vcs = crate::vcs::probe_vcs();
-    let mut foreign = Vec::new();
+    let mut left = Vec::new();
     for moved in moves.iter().rev() {
         let dir = match (&moved.repo, project_dir) {
             (RepoKey::Member(path), _) => workspace.join(path.as_path()),
@@ -260,19 +286,52 @@ pub(crate) fn restore_ref_moves(
             (RepoKey::Project, None) => continue,
         };
         let branch = RawRefName::new(moved.branch.clone());
-        if vcs
+        let now = vcs
             .resolve_local_branch_tip(&dir, &branch)
             .ok()
             .flatten()
-            .is_some_and(|now| *now.id() == moved.from)
-        {
+            .map(|now| now.id().clone());
+        if now.as_ref() == Some(&moved.from) {
             continue;
         }
-        if let Err(e) = vcs.restore_branch_ref(&dir, &branch, &moved.to, &moved.from) {
-            foreign.push((moved.repo.clone(), moved.branch.clone(), e));
+        let held_at = vcs.checkouts_of_branch(&dir, &branch).unwrap_or_default();
+        let restored = match &now {
+            Some(_) if !held_at.is_empty() => Err(VcsError::CommandFailed {
+                args: vec!["update-ref".to_owned(), moved.branch.clone()],
+                repo: dir.clone(),
+                stderr: "a checkout holds it".to_owned(),
+            }),
+            Some(now) if *now != moved.to && abandon(&moved.repo) => vcs
+                .create_backup(
+                    &dir,
+                    &BackupSource::Branch(branch.clone()),
+                    &ResolvedRevisionId::from(now.clone()),
+                    Some(crate::vcs::BackupMark::Abandoned),
+                )
+                .and_then(|kept| {
+                    vcs.restore_branch_ref(&dir, &branch, now, &moved.from)?;
+                    left.push(RefMoveLeft::Abandoned {
+                        repo: moved.repo.clone(),
+                        branch: moved.branch.clone(),
+                        tip: now.clone(),
+                        backup: kept.backup().name.to_string(),
+                    });
+                    Ok(())
+                }),
+            _ => vcs.restore_branch_ref(&dir, &branch, &moved.to, &moved.from),
+        };
+        if let Err(error) = restored {
+            left.push(RefMoveLeft::Foreign {
+                repo: moved.repo.clone(),
+                branch: moved.branch.clone(),
+                dir,
+                now,
+                held_at,
+                error,
+            });
         }
     }
-    foreign
+    left
 }
 
 #[cfg(test)]
@@ -322,8 +381,8 @@ mod tests {
     #[test]
     fn a_branch_the_op_moved_as_a_ref_is_put_back_where_it_still_sits_at_the_tip_the_op_wrote() {
         let (tmp, moved, dir) = member_with_a_moved_branch();
-        let foreign = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
-        assert!(foreign.is_empty());
+        let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved), &|_| false);
+        assert!(left.is_empty());
         assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
     }
 
@@ -333,8 +392,8 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let later = commit(&dir, "three");
         git(&dir, &["checkout", "-q", "--detach"]);
-        let foreign = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
-        assert_eq!(foreign.len(), 1);
+        let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved), &|_| false);
+        assert!(matches!(left[..], [RefMoveLeft::Foreign { .. }]));
         assert_eq!(git(&dir, &["rev-parse", "main"]), later.as_str());
     }
 }
