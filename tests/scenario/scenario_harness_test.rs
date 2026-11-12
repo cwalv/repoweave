@@ -783,6 +783,7 @@ every_scenario!(
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOut),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::Gone),
+    abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOutInTheTarget),
     abort_a_carried_stack_killed_after_putting_it_back,
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgain),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::AbortThenSync),
@@ -5322,6 +5323,14 @@ fn an_abort_of_a_carried_stack_built_on_continues_as_printed() {
 fn an_abort_of_a_carried_stack_checked_out_elsewhere_refuses_whole() {
     runner::run(scenarios::abort_a_carried_stack_blocked(
         scenarios::CarriedBlocked::CheckedOut,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_of_a_carried_stack_checked_out_in_the_target_refuses_whole() {
+    runner::run(scenarios::abort_a_carried_stack_blocked(
+        scenarios::CarriedBlocked::CheckedOutInTheTarget,
     ))
     .assert_fully_decided_green();
 }

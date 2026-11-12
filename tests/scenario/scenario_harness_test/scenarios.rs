@@ -16624,6 +16624,9 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
 pub enum CarriedBlocked {
     /// `w2` checked out in a worktree outside the op's workspaces.
     CheckedOut,
+    /// `w2` checked out in the target's checkout of `app`, which the
+    /// landing never moved, so abort leaves it on `w2`.
+    CheckedOutInTheTarget,
     /// `w2` deleted.
     Gone,
 }
@@ -16645,6 +16648,12 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
                 Repo::App,
                 &["worktree", "add", "-q", "../../../../w2-held", "w2"],
             ),
+            "is checked out at",
+            Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
+                .expect(Exit::Succeeds),
+        ),
+        CarriedBlocked::CheckedOutInTheTarget => (
+            Step::git(&a(), Repo::App, &["switch", "-q", "w2"]),
             "is checked out at",
             Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
                 .expect(Exit::Succeeds),

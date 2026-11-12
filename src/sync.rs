@@ -8454,13 +8454,15 @@ fn abort_op(
                 &op_project_name,
                 abandon,
             );
-            plan.steps.push(plan_carried(
+            let carried = plan_carried(
                 record,
                 &owner_workspace,
                 &workspace_dir,
                 &cwd_project_dir,
                 abandon,
-            ));
+                &plan,
+            );
+            plan.steps.push(carried);
             if record.verb == OpVerb::Land {
                 members.take_record(record);
                 plan_landing_refs(record, &members, &stores, abandon, &mut plan);
@@ -9754,8 +9756,9 @@ fn plan_carried(
     workspace: &Path,
     project_dir: &Path,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    plan: &AbortPlan,
 ) -> AbortStep {
-    let standing = judge_carried(record, source);
+    let standing = judge_carried(record, source, plan);
     let blocked = standing.iter().any(MovedCarry::blocks)
         || !standing
             .iter()
@@ -9817,16 +9820,18 @@ impl AbortPlan {
 }
 
 /// Each dependent's branch the op moved by a carry that has moved since, is
-/// gone, or is checked out outside the op's workspaces, where abort could
-/// not put it back: read in the source's store, where the carry moved it.
-fn judge_carried(record: &op_state::OwnerRecord, source: &CanonicalPath) -> Vec<MovedCarry> {
+/// gone, or is checked out where `plan` does not switch that checkout off
+/// it first, where abort could not put it back: read in the source's store,
+/// where the carry moved it.
+fn judge_carried(
+    record: &op_state::OwnerRecord,
+    source: &CanonicalPath,
+    plan: &AbortPlan,
+) -> Vec<MovedCarry> {
     let Some(take_in) = &record.take_in else {
         return Vec::new();
     };
     let vcs = crate::vcs::probe_vcs();
-    let ours: Vec<&CanonicalPath> = std::iter::once(source)
-        .chain(record.target.as_ref())
-        .collect();
     take_in
         .carries
         .iter()
@@ -9849,14 +9854,16 @@ fn judge_carried(record: &op_state::OwnerRecord, source: &CanonicalPath) -> Vec<
             if now.as_ref() == Some(&moved.from) {
                 return None;
             }
+            let freed: Vec<CanonicalPath> = plan
+                .frees(&branch)
+                .iter()
+                .map(|p| CanonicalPath::of(p))
+                .collect();
             let held_at: Vec<PathBuf> = vcs
                 .checkouts_of_branch(&dir, &branch)
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|held| {
-                    let held = CanonicalPath::of(held);
-                    !ours.iter().any(|ws| ws.contains(&held))
-                })
+                .filter(|held| !freed.contains(&CanonicalPath::of(held)))
                 .collect();
             if now.as_ref() == Some(to) && held_at.is_empty() {
                 return None;
