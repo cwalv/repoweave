@@ -913,6 +913,7 @@ fn candidate_plan(
         },
         pin: Pin::At(at),
         unfound: None,
+        unaligned: false,
     })
 }
 

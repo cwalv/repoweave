@@ -972,3 +972,19 @@ fn a_spelling_that_differs_from_the_record_is_not_reported_as_a_records_conflict
     assert!(!out.contains("target conflict"), "{out}");
     assert!(out.contains("recorded: declared"), "{out}");
 }
+
+#[test]
+fn a_feature_member_with_no_pin_and_no_branch_of_its_name_is_reported_unaligned() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "f"], ws);
+    git_ok(&ws.join(LIB), &["switch", "-q", "main"]);
+    git_ok(&ws.join(LIB), &["branch", "-D", "f"]);
+    common::fixture_lock(&project, &[]);
+    git_ok(&project, &["commit", "-qam", "lib unpinned"]);
+
+    let status = succeed(&["status"], ws);
+
+    assert!(status.contains("alignment unaligned"), "{status}");
+}

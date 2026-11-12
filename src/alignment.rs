@@ -502,6 +502,9 @@ pub struct Plan {
     pub pin: Pin,
     /// The declared branch that exists nowhere, which no alignment creates.
     pub unfound: Option<String>,
+    /// A feature's member branch found nowhere for a member with no pin,
+    /// which no alignment creates.
+    pub unaligned: bool,
 }
 
 /// One member as the engine sees it: where it sits in this workspace.
@@ -743,6 +746,10 @@ impl Aligner {
         let found = find_e(m.vcs, m.dir, m.entry, &branch)?;
         let unfound =
             (declared && matches!(found, Found::Nowhere)).then(|| branch.as_str().to_owned());
+        let unaligned = !declared
+            && matches!(found, Found::Nowhere)
+            && matches!(pin, Pin::None)
+            && self.mode != Mode::Detached;
         let target = match (&pin, self.mode == Mode::Detached) {
             (Pin::At(at), true) => Target::Detached {
                 at: at.clone(),
@@ -765,6 +772,7 @@ impl Aligner {
             target,
             pin,
             unfound,
+            unaligned,
         })
     }
 
@@ -1140,6 +1148,14 @@ impl Aligner {
         if let Some(branch) = &plan.unfound {
             return vec![declared_nowhere(repo, m.dir, branch).judge(m.vcs)];
         }
+        if plan.unaligned {
+            return vec![State::AlignmentUnaligned
+                .of(repo)
+                .member()
+                .checkout(m.dir)
+                .bind("<m>", m.path)
+                .judge(m.vcs)];
+        }
         match &plan.target {
             Target::Detached {
                 why: DetachedBecause::NotOnDeclaredBranch { branch },
@@ -1348,17 +1364,6 @@ impl Aligner {
         } else if !matches!(plan.target, Target::AsFound) {
             let off = self.standing_of(m, &plan)?;
             lines.push(self.judge_off(m, &off, repo, &facts));
-        } else if matches!(plan.pin, Pin::None)
-            && !matches!(m.vcs.head_attachment(m.dir)?, HeadAttachment::Detached(_))
-        {
-            lines.push(
-                State::AlignmentUnaligned
-                    .of(repo)
-                    .member()
-                    .checkout(m.dir)
-                    .bind("<m>", m.path)
-                    .judge(m.vcs),
-            );
         }
         lines.extend(self.notes(m, &plan, repo));
         Ok(lines)
