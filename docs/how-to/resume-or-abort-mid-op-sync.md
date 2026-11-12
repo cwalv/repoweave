@@ -22,14 +22,18 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 
 ## Roll back with `rwv abort`
 
-`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` for a repository in the target of a `land`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
+`rwv abort` restores every ref the operation moved to its pre-op savepoint (under `refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` in the target of a `land`): each checkout, onto the branch it was on, and each branch a landing moved without a checkout. It cancels a rebase, merge or cherry-pick the operation left in progress in the source, and clears the op-state record:
 
 | Current repository tip | `rwv abort` outcome |
 |---|---|
 | Equal to the savepoint | `untouched` — the operation never moved this repository |
 | Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
-| Mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
+| On another branch than when the operation began, at a tip the operation accounts for | `switched back` onto that branch, the branch it was on left where it stands, then judged by this table |
+| In the source, mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
+| In a `land`'s target, a repository the landing never moved, whatever its state | `left` where it stands, a rebase or merge in progress there included |
 | Anything else | `foreign-tip violation` — restore refused, the tip left in place and nothing written; op-state retained |
+
+A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
 
 A clean restore writes no ref: every tip `rwv abort` resets is a commit the operation made, so what it discards is the operation's own output. A refusal moves and writes nothing either.
 

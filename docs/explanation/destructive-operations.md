@@ -106,9 +106,10 @@ recoverable where possible, and the operation's documentation must
 say where. Two mechanisms do it, one per kind of discard.
 
 **Named savepoints** cover what an operation itself moves. Ref surgery
-operations write a `refs/rwv/pre-op/<op-id>` ref pointing at the
-pre-operation state before any destructive write —
-`refs/rwv/pre-op/<op-id>-target` in a `land` target's repos, which
+operations write a ref under `refs/rwv/pre-op/<op-id>` for each ref they
+may move, pointing at its pre-operation state before any destructive write
+(a checkout's names the branch it is on) —
+under `refs/rwv/pre-op/<op-id>-target` in a `land` target's repos, which
 share a ref store with the source's. The ref is tied to a specific
 operation id, and `rwv abort` knows how to roll back to it. A savepoint
 lasts one operation: abort restores a repo only over tips the operation

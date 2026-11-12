@@ -470,11 +470,13 @@ Three modules carry it, and each has one job:
 A step's `Allowance` is the scenario's statement of what it expects the step
 to do, read only by the invariants:
 
-- `may_rewind`, `may_strand`, `may_rewrite` and `may_leave_unresolved` name
-  the repos in which the step may move a pin backwards, leave a commit no ref
-  reaches, move a declared branch to or with its upstream, or leave a pin at a
-  commit no ref of its backing repository reaches (a lock published ahead of
-  its member, or a clone of one). Each is the seam for an operation the step
+- `may_rewind`, `may_strand`, `may_rewrite`, `may_restore` and
+  `may_leave_unresolved` name the repos in which the step may move a pin
+  backwards, leave a commit no ref reaches, move a declared branch to or with
+  its upstream, put a declared branch back to a commit its tip contains (as
+  `rwv abort` restores what its operation moved), or leave a pin at a commit
+  no ref of its backing repository reaches (a lock published ahead of its
+  member, or a clone of one). Each is the seam for an operation the step
   names, never a blanket pass: a check that is spared still runs for every
   repo the step does not name.
 - Its outcome is an `Exit`. `Exit::Succeeds`; `Exit::Refuses`, rwv's

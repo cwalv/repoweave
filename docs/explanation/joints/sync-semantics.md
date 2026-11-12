@@ -123,10 +123,13 @@ operation out. See
 target of a `land` — to its pre-op state from the savepoint refs. A
 `sync` involves only CWD.
 
-**Savepoints.** Before replay moves anything, each repo the op may move gets
-a savepoint ref, `refs/rwv/pre-op/<op-id>`, and a `land` target's repos get
+**Savepoints.** Before replay moves anything, each ref the op may move gets
+a savepoint under `refs/rwv/pre-op/<op-id>`, and a `land` target's under
 `refs/rwv/pre-op/<op-id>-target`, because worktrees of one repo share a ref
-store.
+store: each checkout's, naming the branch it was on, and each branch a
+landing moves without a checkout, at the tip the landing read. Abort puts a
+checkout back on its branch before it resets anything, and puts each such
+branch back once no checkout is left on it.
 
 **Verified restore.** Abort resets a repo to its savepoint only
 when the repo's tip is one the operation accounts for: the savepoint itself

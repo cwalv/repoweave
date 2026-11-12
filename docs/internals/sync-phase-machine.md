@@ -181,9 +181,12 @@ below).
 
 ## savepoint
 
-Write a durable pre-op snapshot reference in every repo the op may
-mutate, under `refs/rwv/pre-op/<op-id>`. The op-id is nanosecond
-wall-clock so concurrent or interleaved invocations cannot collide.
+Write a durable pre-op snapshot reference for every ref the op may
+move, under `refs/rwv/pre-op/<op-id>`: each checkout's HEAD with the branch
+it is on, and, for `rwv land`, each receiving branch it will move as a ref
+(no checkout holds it), at the tip the landing read. The op-id is
+nanosecond wall-clock so concurrent or interleaved invocations cannot
+collide.
 
 For `rwv land`, target-workspace repos are savepointed under
 `refs/rwv/pre-op/<op-id>-target` — a separate namespace from the
@@ -386,8 +389,10 @@ classification of the rest:
 | Equal to the savepoint | `Untouched` — op never moved this repo; HEAD not touched |
 | Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
 | Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
-| Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op canceled; reset to savepoint |
-| Anything else, on the target side of a `land`, in a repo `take_in.fast_forwarded` does not name | `ForeignTip` read as not the op's: printed `left at <tip>, where something other than this landing moved it`; no violation, nothing written, and `--abandon-foreign-tip` does not apply. An unreadable record (header only) has no journal, so this row never applies there |
+| On the target side of a `land`, a repo `take_in.moved_in_target` does not name | Not the op's, whatever its tip: left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>, where something other than this landing moved it` unless it is at its savepoint; `--abandon-foreign-tip` naming it says it applies to nothing. An unreadable record (header only) has no journal, so this row never applies there |
+| On the target side of a `land`, a repo in a VCS-native mid-op state | Never the op's: a landing composes in the source and only fast-forwards the target. Left in that state; a repo the journal names is a foreign tip, the op kept |
+| Checkout on another branch than its savepoint names (or detached where it was attached), at an attributable tip | `SwitchedBack` — put back on the saved branch (non-forced; a dirty checkout errors), the branch it was on left where it stands, then classified again by this table |
+| Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick), source side | `RestoredFromMidOp` — mid-op canceled; reset to savepoint |
 | Anything else | `ForeignTip` — restore **refused**; tip left in place; violation reported; op-state retained; nothing written |
 | Anything else, with `--abandon-foreign-tip` naming the repo | `AbandonedForeignTip` — the tip is first kept as a backup marked `abandoned` (`Vcs::create_backup`, which hands back the `BackupWitness` the outcome carries), then reset to savepoint |
 
@@ -444,6 +449,29 @@ where it was, and abort carries on with the others.
 A refused foreign tip writes nothing: the tip is still on its branch, and the
 refusal names none.
 
+### Branches a landing moved as refs
+
+Once every checkout of both workspaces is restored, abort walks every member
+either side listed before or after the op, and the record's plan, through
+any checkout of the member's store, and for each branch savepoint under the
+target key: a branch at its savepoint is left; one the journal names at the
+tip the op wrote, and checked out nowhere, is put back by compare-and-swap;
+one gone, checked out, or at any other tip is a foreign tip, unless
+`--abandon-foreign-tip` names the repo (the tip is kept as an `abandoned`
+backup, then the branch put back). A branch the journal does not name is
+left. A branch the op created is then deleted where it sits at its creation
+point, or at the tip the op wrote (put back to the creation point first),
+while another branch reaches it.
+
+### Losing a race
+
+The move of a receiving branch as a ref, and `--continue`, compare the
+branch with its savepoint: one not where the landing read it (moved forward
+or back), gone, or taken by a checkout since is `target` moved
+mid-operation, and so is a checkout no longer at the tip its savepoint read
+unless it is already at the tip the landing lands. `--continue` then
+refuses; `rwv abort` and a fresh `rwv land` are the route.
+
 ## VCS mapping (git)
 
 This document is written VCS-neutrally. The git realization of each
@@ -451,8 +479,8 @@ mechanism is:
 
 | Neutral mechanism | Git realization |
 |---|---|
-| Durable pre-op snapshot reference | `refs/rwv/pre-op/<op-id>` |
-| Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target` |
+| Durable pre-op snapshot reference | `refs/rwv/pre-op/<op-id>/checkout/<branch>` (`.../detached`) |
+| Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target/checkout/<branch>`, and `refs/rwv/pre-op/<op-id>-target/ref/<branch>` for a branch moved as a ref |
 | Backup of an abandoned foreign tip | `refs/rwv/backup/<branch>/abandoned-<short id>` |
 | VCS-native mid-op state / continue / abort | rebase/cherry-pick state dirs; `--continue` / `--abort` |
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
