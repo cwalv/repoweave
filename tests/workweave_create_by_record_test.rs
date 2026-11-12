@@ -17,6 +17,7 @@
 //! - `--set-branch` and `--set-new-branch` judge every flag before anything
 //!   is written, on both create verbs.
 
+use repoweave::diagnosis::State;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -58,15 +59,9 @@ fn succeed(args: &[&str], dir: &Path) -> String {
     describe(&out)
 }
 
-fn refuse(args: &[&str], dir: &Path) -> String {
+fn refuse(args: &[&str], dir: &Path, state: State) -> String {
     let out = run(args, dir);
-    assert!(
-        !out.status.success(),
-        "`rwv {}` should refuse; {}",
-        args.join(" "),
-        describe(&out)
-    );
-    describe(&out)
+    common::cli::refused(&out, state)
 }
 
 fn workweave_of(ws: &Path, name: &str) -> PathBuf {
@@ -219,12 +214,12 @@ fn an_identical_rerun_on_a_clean_workweave_returns_it_and_any_difference_refuses
     ] {
         let mut spelled = args.to_vec();
         spelled.extend(different.iter());
-        let refused = refuse(&spelled, ws);
+        let refused = refuse(&spelled, ws, State::NameTaken);
         assert!(refused.contains("name taken"), "{refused}");
     }
     std::fs::write(project_dir(&seat).join("scratch.txt"), "x").unwrap();
     common::git_in(project_dir(&seat), &["add", "scratch.txt"]);
-    let dirty = refuse(&args, ws);
+    let dirty = refuse(&args, ws, State::NameTaken);
     assert!(dirty.contains("name taken"), "{dirty}");
     assert!(dirty.contains("uncommitted changes"), "{dirty}");
 
@@ -282,6 +277,7 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
             "--declared",
         ],
         ws,
+        State::TargetConflict,
     );
     assert!(differs.contains("rwv branch set-mode"), "{differs}");
     assert_eq!(record_of(ws, "feat-x"), recorded);
@@ -298,6 +294,7 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
             "raw-branch",
         ],
         ws,
+        State::TargetUnrecorded,
     );
     assert!(unrecorded.contains("unrecorded"), "{unrecorded}");
     assert!(record_of(ws, "raw-branch").is_none());
@@ -314,6 +311,7 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
             "no-such",
         ],
         ws,
+        State::NameNoSuchBranch,
     );
     assert!(
         missing.contains("no-such-branch") || missing.contains("no such branch"),
@@ -341,6 +339,7 @@ fn a_branch_checked_out_in_another_workspace_is_not_taken_and_detach_looks_at_it
             "main",
         ],
         ws,
+        State::CheckoutInRawWorktree,
     );
     assert!(primary_has_main.contains("checkout"), "{primary_has_main}");
     assert!(!workweave_of(ws, "ww").exists());
@@ -368,6 +367,7 @@ fn a_branch_checked_out_in_another_workspace_is_not_taken_and_detach_looks_at_it
             "feat-x",
         ],
         ws,
+        State::CheckoutInAnotherWorkspace,
     );
     assert!(ww1_has_it.contains("checkout"), "{ww1_has_it}");
     assert!(ww1_has_it.contains("--detach feat-x"), "{ww1_has_it}");
@@ -478,6 +478,7 @@ fn set_flags_on_a_workweave_create_are_judged_before_anything_is_written() {
             &taken,
         ],
         ws,
+        State::NameExists,
     );
 
     assert!(out.contains("name exists"), "{out}");
@@ -562,6 +563,7 @@ fn set_flags_on_a_branch_create_are_judged_before_anything_is_written() {
             &taken,
         ],
         ws,
+        State::NameExists,
     );
 
     assert!(out.contains("name exists"), "{out}");

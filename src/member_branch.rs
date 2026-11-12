@@ -672,11 +672,13 @@ pub(crate) fn judge_entries(
     };
     let mut seen: Vec<&RepoPath> = Vec::new();
     for entry in entries {
-        anyhow::ensure!(
-            !seen.contains(&&entry.member),
-            "rwv {verb}: {} is named by more than one --set-branch or --set-new-branch",
-            entry.member
-        );
+        if seen.contains(&&entry.member) {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "rwv {verb}: {} is named by more than one --set-branch or --set-new-branch",
+                entry.member
+            );
+        }
         seen.push(&entry.member);
     }
     let mut steps = Vec::new();
