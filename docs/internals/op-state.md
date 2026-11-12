@@ -83,7 +83,10 @@ stops the op before anything moves; each tip it writes is journaled in
 `advanced_tips`, before the move wherever the tip is known ahead of it. A branch the op moves as a ref, because no checkout has it
 attached, has no HEAD to savepoint, so the move goes in `take_in.ref_moves`
 instead, and `rwv abort` puts it back by compare-and-swap, refusing a branch
-that has moved since as a foreign tip. Every step is idempotent: a `--continue`
+that has moved since as a foreign tip, one a checkout holds, and one that is
+gone, each with the choice that clears it: `--abandon-foreign-tip <repo>`,
+which keeps the new tip as an `abandoned` backup and puts the branch back;
+freeing the checkout; or putting the branch back where the op found it. Every step is idempotent: a `--continue`
 finishes a merge left staged in a checkout, skips one already made, and
 recomputes the rest.
 

@@ -52,6 +52,8 @@ Once `rwv abort` has begun, the operation can only be aborted: `--continue` refu
 
 A repository refused because it is stopped in an operation abort did not start prints its own choices: finish or abandon that operation there, then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip <repo>`, which keeps its edits and commits as backups before canceling it.
 
+A branch the operation moved with no checkout holding it is put back only where it still sits at the tip the operation wrote. One that moved since is refused with `rwv abort --abandon-foreign-tip <repo>`, which keeps its new tip as an `abandoned` backup and puts it back; one a checkout now holds names that checkout to free, then rerun `rwv abort`.
+
 ### When no operation is in progress
 
 If no op-state record is present in the workspace, `rwv abort` exits with status `1` and prints `Error: no operation in progress`.
