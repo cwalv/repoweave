@@ -9174,8 +9174,9 @@ fn refuse_moved_target(
     }
     if record.phase == op_state::OpPhase::Retire {
         lines.push(format!(
-            "  keep the landing and finish its retire, in {}:\n\trwv land --continue",
-            record.source.as_path().display()
+            "  keep the landing and finish its retire, in {}:\n\t{}",
+            record.source.as_path().display(),
+            op_state::resume_command(record.verb)
         ));
     }
     lines.push(

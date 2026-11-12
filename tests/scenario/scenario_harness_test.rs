@@ -842,6 +842,7 @@ every_scenario!(
         scenarios::TargetAt::Primary,
         scenarios::EndedBy::LeaveTarget
     ),
+    leaving_the_target_keeps_what_only_its_savepoint_held,
     abort_at_retire_waits_for_the_target_back,
     abort_at_retire_after_the_in_place_workspace_went,
     a_landing_meets_a_landing_stopped_as_refs,
@@ -2870,6 +2871,13 @@ holding_rwv! {
                 .assert_fully_decided_green();
             }
         }
+    }
+
+    /// `--leave-target` drops the target's savepoints, keeping first a
+    /// commit only one of them reached.
+    fn leaving_the_target_keeps_what_only_its_savepoint_held() {
+        runner::run(scenarios::leaving_the_target_keeps_what_only_its_savepoint_held())
+            .assert_fully_decided_green();
     }
 
     /// The other choice the same refusal prints: finish the first

@@ -11035,6 +11035,45 @@ pub fn abort_after_another_landing_built_on_the_target(
     scenario("abort after another landing built on the target", steps)
 }
 
+/// A commit only the primary's `docs` holds, pinned by `main`'s lock, which
+/// someone then resets `docs`' `main` off after a second landing built on a
+/// first that stopped in its retire. The first's `--leave-target` drops its
+/// savepoint of `docs`, the one ref left reaching that commit, so it keeps
+/// the commit as a backup first.
+pub fn leaving_the_target_keeps_what_only_its_savepoint_held() -> Scenario {
+    scenario(
+        "leaving the target keeps what only its savepoint held",
+        vec![
+            Step::commit(&a(), Repo::Docs, "docs-own"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::git(&a(), Repo::Docs, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_restore(&[Repo::Docs]),
+            Step::rwv(&ww("w1"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
+            Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--leave-target")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::Docs, &["log", "--all", "--format=%s"])
+                .claim(Claim::OutputContains("docs-own")),
+        ],
+    )
+}
+
 /// A landing stopped in its retire released its target, and a second
 /// landing into it was then killed holding it. The first's `rwv abort` must
 /// take the target back before it restores anything, so it refuses on the
