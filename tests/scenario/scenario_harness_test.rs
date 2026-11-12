@@ -87,6 +87,12 @@ fn roles_in_a_feature_carry_pins_and_a_role_or_backward_pin_change_is_named() {
 }
 
 #[test]
+fn update_remote_in_a_feature_repins_a_named_dependency_and_reference_on_their_declared_branch() {
+    runner::run(scenarios::update_remote_repins_dependency_and_reference_in_a_feature())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -528,6 +534,7 @@ every_scenario!(
     dc06_member_set_from_merge,
     raw_merge_member_change,
     roles_in_feature,
+    update_remote_repins_dependency_and_reference_in_a_feature,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,

@@ -6416,6 +6416,71 @@ pub fn raw_merge_member_change() -> Scenario {
 /// the feature and the landing carries that pin; patching it needs
 /// `member set-role <m> fork`, and landing that role change needs
 /// `--allow-member-change <m>`. A pin moved backward is a change too.
+/// In a feature, `update --remote --repo` naming a `dependency` and a
+/// `reference` member advances each on its declared branch, which the primary
+/// has checked out, so detached at the upstream's tip; the feature's lock
+/// records both and `--commit` commits it. Neither gets the feature branch.
+pub fn update_remote_repins_dependency_and_reference_in_a_feature() -> Scenario {
+    Scenario {
+        name: "update --remote --repo re-pins a dependency and a reference in a feature",
+        seed: Seed::default()
+            .role(Repo::Lib, Role::Dependency)
+            .role(Repo::Docs, Role::Reference),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up",
+            }),
+            Step::forge(Forge::Commit {
+                repo: Repo::Docs,
+                branch: "main",
+                mark: "docs-up",
+            }),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "update", "--remote", "--repo", LIB, "--repo", DOCS, "--commit",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "lib-up",
+            })
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Docs,
+                rev: "HEAD",
+                mark: "docs-up",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),
+                member: Repo::Lib,
+                mark: "lib-up",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),
+                member: Repo::Docs,
+                mark: "docs-up",
+            }),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["diff", "--quiet", "HEAD", "--", "rwv.lock"],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Lib, &["branch", "--list", "proj--w"])
+                .claim(Claim::OutputLacks("proj--w")),
+            Step::git(&ww("w"), Repo::Docs, &["branch", "--list", "proj--w"])
+                .claim(Claim::OutputLacks("proj--w")),
+        ],
+    }
+}
+
 pub fn roles_in_feature() -> Scenario {
     Scenario {
         name: "roles in feature",
@@ -6433,8 +6498,7 @@ pub fn roles_in_feature() -> Scenario {
                 branch: "main",
                 mark: "lib-up",
             }),
-            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/main", "--commit"])
+            Step::rwv(&ww("w"), &["update", "--remote", "--repo", LIB, "--commit"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::PinContains {
                     site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),

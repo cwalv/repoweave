@@ -435,8 +435,10 @@ pub(crate) enum FirstPins {
 pub(crate) enum Unaligned {
     /// The relock is refused.
     Refused,
-    /// The member keeps its pin and the relock reports where it sits.
-    Left,
+    /// The run has just placed the member at the commit it records, so it is
+    /// judged where that pin puts it; one still off keeps its pin and the
+    /// relock reports where it sits.
+    Placed,
 }
 
 /// One relock: the verb running it, the members it records and the rules it
@@ -595,10 +597,18 @@ fn judge_member(
         }
     }
 
-    if let Some(off) = aligner.refusal(&member, &plan, path)? {
+    let placed = match (relocking.unaligned, vcs.head_revision(dir)) {
+        (Unaligned::Placed, Ok(head)) => Some(
+            aligner
+                .plan(&member, Some(&with_pins(manifest, old, [(path, &head)])))
+                .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{path}: {e:#}"))?,
+        ),
+        _ => None,
+    };
+    if let Some(off) = aligner.refusal(&member, placed.as_ref().unwrap_or(&plan), path)? {
         match relocking.unaligned {
             Unaligned::Refused => refusals.add(off),
-            Unaligned::Left => {
+            Unaligned::Placed => {
                 lines.push(off);
                 return Ok(Judgment::kept(lines));
             }

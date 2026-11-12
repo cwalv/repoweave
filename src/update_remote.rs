@@ -528,7 +528,7 @@ fn update_for_project(
             acting: filter,
             dirty,
             first_pins: lock::FirstPins::Taken,
-            unaligned: lock::Unaligned::Left,
+            unaligned: lock::Unaligned::Placed,
             whole: lock::WholeFile::default(),
             op: if settled.op.is_some() {
                 lock::OpHeld::ByThisRun

@@ -190,7 +190,9 @@ where you are:
   never from its declared branch: taking the target's work in is `rwv sync`'s.
   A feature branch with no upstream has nothing to take in; one that takes in
   from a branch of another name refuses as `push-branch` `foreign upstream`. A
-  `dependency` or `reference` member advances on its declared branch.
+  `dependency` or `reference` member advances on its declared branch; where that
+  branch is checked out in another workspace it advances detached to the
+  upstream's tip, moving no branch, and the lock records that tip.
 - **Inside a workweave**, a member that follows its declared branch moves that
   workweave's own branch. When the tip is not a fast-forward of it,
   `update --remote` points at `rwv sync` — the verb that reconciles a workweave
