@@ -3079,7 +3079,7 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
 /// other fields (`primary`, `project`) are preserved. Branch names are NOT
 /// touched — they are creation-time namespaces, not lineage.
 pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<bool> {
-    let mut marker = crate::workspace::WorkweaveMarker::read(marker_dir)
+    let marker = crate::workspace::WorkweaveMarker::read(marker_dir)
         .with_context(|| {
             format!(
                 "failed to read {}/.rwv-workweave for --fix",
@@ -3102,19 +3102,12 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
         return Ok(false);
     }
 
-    marker.repoint_parent(primary);
-    marker.write(marker_dir).with_context(|| {
+    crate::workspace::reparent(primary, marker_dir, marker, primary).with_context(|| {
         format!(
-            "failed to write {}/.rwv-workweave during --fix",
+            "failed to re-point {}/.rwv-workweave during --fix",
             marker_dir.display()
         )
     })?;
-    crate::workweave_index::set_parent_of(
-        primary,
-        marker.project(),
-        marker_dir,
-        CanonicalPath::of(primary),
-    )?;
     Ok(true)
 }
 

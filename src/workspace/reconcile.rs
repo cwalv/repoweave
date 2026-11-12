@@ -276,6 +276,29 @@ pub fn require_agreement(
     }
 }
 
+/// Point the recorded parent of the workweave at `dir`, whose marker is
+/// `marker`, at `parent`.
+///
+/// The index is written before the marker: reconcile restores the marker from
+/// the index, so a stop between the two writes is carried forward to `parent`
+/// by the next verb run there, never back.
+pub fn reparent(
+    primary: &Path,
+    dir: &Path,
+    mut marker: WorkweaveMarker,
+    parent: &Path,
+) -> anyhow::Result<()> {
+    crate::workweave_index::set_parent_of(
+        primary,
+        marker.project(),
+        dir,
+        CanonicalPath::of(parent),
+    )?;
+    crate::test_pause::point("reparent");
+    marker.repoint_parent(parent);
+    marker.write(dir)
+}
+
 /// Restore the marker of the workweave `name` the index records at `entry`,
 /// when its project checkout is still a worktree of `primary`'s clone.
 /// Whether it was restored is returned: `false` leaves the entry for the

@@ -388,6 +388,51 @@ fn delete_middle_adopts_to_grandparent_workweave() {
     );
 }
 
+/// A delete killed while it re-points a child, after one of the child's two
+/// records of its parent has changed and before the other has, leaves the
+/// child adopted by the next verb run there, never restored to the parent the
+/// delete was removing.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_delete_killed_mid_adoption_leaves_the_child_adopted() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+    let wwc = create_workweave(&main, "wwc", Some(&wwb.root));
+    rebind(
+        &main,
+        &format!("{PROJECT}--wwc"),
+        &format!("{PROJECT}--wwa"),
+    );
+
+    let mut delete = common::rwv_std();
+    delete
+        .args(["workweave", "delete", "--project", PROJECT, &wwb.name])
+        .current_dir(&main.root);
+    let held = common::pause::Paused::spawn(delete, "reparent", &tmp.path().join("pause"))
+        .expect("the delete is held between the two writes of the adoption");
+    drop(held);
+
+    let out = rwv()
+        .args(["status"])
+        .current_dir(&wwc.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "status in the child failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        recorded_parent(&wwc.root),
+        canon(&wwa.root),
+        "the child's marker must carry the adoption forward, not restore the retiree; status said:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Deleting a parent with N children adopts every one of them and prints a
 /// line per child.
 #[test]

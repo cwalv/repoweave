@@ -3326,7 +3326,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
         if child_canonical == retiree_canonical {
             continue;
         }
-        let mut marker = match WorkweaveMarker::read(&child_dir) {
+        let marker = match WorkweaveMarker::read(&child_dir) {
             Ok(Some(m)) => m,
             _ => continue,
         };
@@ -3342,16 +3342,9 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             );
             continue;
         }
-        marker.repoint_parent(&new_parent);
-        let rewritten = marker.write(&child_dir).and_then(|()| {
-            workweave_index::set_parent_of(
-                primary_root,
-                marker.project(),
-                &child_dir,
-                CanonicalPath::of(&new_parent),
-            )
-        });
-        if let Err(e) = rewritten {
+        if let Err(e) =
+            crate::workspace::reparent(primary_root, &child_dir, marker, &new_parent)
+        {
             eprintln!(
                 "warning: failed to adopt child workweave {child}: could not rewrite \
                  marker ({e:#}); run `rwv doctor --fix` to re-point its parent"

@@ -2498,7 +2498,7 @@ pub use root_identity::{PrimaryIdentity, WeaveRootIdentity, WorkweaveIdentity};
 
 mod reconcile;
 pub use reconcile::{
-    disagreement_at, reconcile_invocation, require_agreement, restore_marker_of_entry,
+    disagreement_at, reconcile_invocation, reparent, require_agreement, restore_marker_of_entry,
     Disagreement, Policy,
 };
 
