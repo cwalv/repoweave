@@ -9995,7 +9995,9 @@ pub fn abort_abandons_colliding_edits_keeping_them() -> Scenario {
 
 /// A landing killed right after it fast-forwarded `app` in the target's
 /// workspace: the move was journaled before it was made, so abort, run from
-/// the source, restores it rather than leaving it as someone else's.
+/// the source, restores it rather than leaving it as someone else's. Naming
+/// `lib`, which the landing never reached, abandons nothing of it, and the
+/// abort leaves no savepoint behind in the target.
 pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario {
     scenario(
         "abort restores a target fast-forward killed after the move",
@@ -10006,16 +10008,24 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
             Step::kill("landing"),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLine("w-app")),
-            Step::rwv(&ww("w"), &["abort"])
+            Step::rwv(&ww("w"), &["abort", "--abandon-foreign-tip", LIB])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App, Repo::Proj])
                 .claim(Claim::OutputContains(
                     "[target] local/remotes/app: restored",
+                ))
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/lib: --abandon-foreign-tip names it, but this \
+                     landing never moved it",
                 )),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLacks("w-app")),
+            Step::git(&a(), Repo::Lib, &["for-each-ref", "refs/rwv/pre-op/"])
+                .claim(Claim::OutputLacks("pre-op")),
+            Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/pre-op/"])
+                .claim(Claim::OutputLacks("pre-op")),
             Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
         ],
     )
@@ -10095,11 +10105,15 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
         AbortFrom::Source => ww("w"),
         AbortFrom::Target => a(),
     };
+    let restored: &[Repo] = match case {
+        ReceivingCase::Followed => &[Repo::Proj],
+        ReceivingCase::MovedAsRef | ReceivingCase::Created => &[Repo::Proj, Repo::Lib],
+    };
     steps.push(
         Step::rwv(&aborts_in, &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
-            .may_restore(&[Repo::Proj, Repo::Lib])
+            .may_restore(restored)
             .claim(Claim::OnBranch {
                 at: a(),
                 repo: Repo::Lib,
