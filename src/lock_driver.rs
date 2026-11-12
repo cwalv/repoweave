@@ -108,13 +108,15 @@ pub(crate) fn migrate(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Migrated> {
             }
             (Some(text), None) => {
                 vcs.stage_content(dir, Path::new(file), text.as_bytes())?;
-                migrated.committed = vcs
-                    .commit_only(
-                        dir,
-                        &[file],
-                        "chore: set up the rwv.lock merge driver (rwv doctor --fix)",
-                    )
-                    .with_context(|| format!("failed to commit in {}", dir.display()))?;
+                migrated.committed = crate::repin::commit(
+                    vcs,
+                    dir,
+                    &[file],
+                    "chore: set up the rwv.lock merge driver (rwv doctor --fix)",
+                    None,
+                    &crate::repin::Naming::Unnamed,
+                )
+                .with_context(|| format!("failed to commit in {}", dir.display()))?;
             }
             (None, _) => {}
         }

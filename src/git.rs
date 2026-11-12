@@ -408,8 +408,8 @@ fn nul_terminated_fields(stream: &str) -> Vec<String> {
 /// The value of `key` in `repo`'s config at `scope` (`None` reads every scope
 /// git reads), `None` when unset.
 ///
-/// Checked ahead of the read rather than folded into its exit code: a repo
-/// lacking the key and a directory that isn't a repo at all both exit 1.
+/// Checked ahead of the read: a repo lacking the key and a directory that
+/// isn't a repo at all both exit 1.
 fn config_value(repo: &Path, scope: Option<&str>, key: &str) -> Result<Option<String>, VcsError> {
     if !GitVcs.is_repo(repo) {
         return Err(VcsError::NotARepo(repo.to_path_buf()));
@@ -417,29 +417,8 @@ fn config_value(repo: &Path, scope: Option<&str>, key: &str) -> Result<Option<St
     let mut args = vec!["config"];
     args.extend(scope);
     args.extend(["--get", key]);
-    let output = git_command()
-        .args(&args)
-        .current_dir(repo)
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!("failed to spawn git {args:?} in {}", repo.display()),
-            source: e,
-        })?;
-    if output.status.success() {
-        return Ok(Some(
-            String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_owned(),
-        ));
-    }
-    if output.status.code() == Some(1) {
-        return Ok(None);
-    }
-    Err(VcsError::CommandFailed {
-        args: args.iter().map(|a| (*a).to_owned()).collect(),
-        repo: repo.to_path_buf(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
+    Ok(GitVcs::run_or_absent(args, repo, Absent::ConfigKey)?
+        .map(|value| value.trim_end().to_owned()))
 }
 
 fn lock_driver_config_part(repo: &Path) -> Result<LockDriverPart, VcsError> {
@@ -479,9 +458,14 @@ fn merging_heads(repo: &Path) -> Option<(CommitId, CommitId)> {
     if heads.next().is_some() {
         return None;
     }
-    let ours = GitVcs::run_trimmed(["rev-parse", "--verify", "-q", "HEAD^{commit}"], repo)
-        .ok()
-        .and_then(|id| CommitId::parse(&id).ok())?;
+    let ours = GitVcs::run_or_absent(
+        ["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+        repo,
+        Absent::Revision,
+    )
+    .ok()
+    .flatten()
+    .and_then(|id| CommitId::parse(id.trim()).ok())?;
     Some((ours, theirs))
 }
 
@@ -2760,8 +2744,15 @@ impl Vcs for GitVcs {
     }
 
     fn lock_driver_setup(&self, repo: &Path) -> Result<LockDriverSetup, VcsError> {
-        let born =
-            Self::run_trimmed(["rev-parse", "--verify", "-q", "HEAD^{commit}"], repo).is_ok();
+        if !self.is_repo(repo) {
+            return Err(VcsError::NotARepo(repo.to_path_buf()));
+        }
+        let born = Self::run_or_absent(
+            ["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+            repo,
+            Absent::Revision,
+        )?
+        .is_some();
         let declaring = if born {
             let listed = Self::run_trimmed(
                 ["ls-tree", "--name-only", "HEAD", "--", ATTRIBUTES_FILE],
