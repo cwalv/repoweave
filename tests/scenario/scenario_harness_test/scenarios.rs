@@ -11927,3 +11927,149 @@ pub fn history_rebase_pin_remap() -> Scenario {
         ],
     )
 }
+
+/// Where `vcs-continue-mid-rebase`'s landing stops.
+#[derive(Debug, Clone, Copy)]
+pub enum MidRebase {
+    /// On `app`'s rebase, at the first of its three commits.
+    Member,
+    /// On the project repo's rebase.
+    Project,
+}
+
+/// What the operator runs once the VCS's own continue has finished the
+/// rebase the landing stopped in.
+#[derive(Debug, Clone, Copy)]
+pub enum AfterHandContinue {
+    Continue,
+    Abort,
+}
+
+/// `vcs-continue-mid-rebase`: a `linear` landing stops on a conflict; the
+/// operator resolves it and runs the VCS's own continue to the end. Then
+/// `rwv land --continue` converges with every replayed project commit
+/// pinning the rebased `app`, or `rwv abort` puts the seat back, reading the
+/// tip the hand continue wrote as the operation's own, losing nothing.
+pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scenario {
+    let (conflicted, file) = match stop {
+        MidRebase::Member => (Repo::App, "README"),
+        MidRebase::Project => (Repo::Proj, "shared.txt"),
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Proj, "shared"),
+        create("w"),
+    ];
+    match stop {
+        MidRebase::Member => steps.extend([
+            Step::hand_edit(&ww("w"), Repo::App, "README", "app", "beta"),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "w-app-1"]),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-3"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        ]),
+        MidRebase::Project => steps.extend([
+            Step::commit(&ww("w"), Repo::App, "w-app-1"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&ww("w"), Repo::Proj, "shared.txt", "shared", "beta"),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "w-proj"]),
+            Step::hand_edit(&a(), Repo::Proj, "shared.txt", "shared", "alpha"),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+            Step::commit(&a(), Repo::App, "main-app"),
+        ]),
+    }
+    steps.extend([
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("rwv land --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&ww("w"), conflicted, &["checkout", "--theirs", file]),
+        Step::git(&ww("w"), conflicted, &["add", file]),
+        Step::git(
+            &ww("w"),
+            conflicted,
+            &["-c", "core.editor=true", "rebase", "--continue"],
+        )
+        .may_strand(&[conflicted])
+        .may_rewind(&[Repo::App]),
+    ]);
+    match (stop, then) {
+        (MidRebase::Member, AfterHandContinue::Continue) => steps.push(
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main",
+                    member: Repo::App,
+                    subject: "w-app-3",
+                })
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main~1",
+                    member: Repo::App,
+                    subject: "w-app-2",
+                })
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main~2",
+                    member: Repo::App,
+                    subject: "w-app-1",
+                }),
+        ),
+        (MidRebase::Project, AfterHandContinue::Continue) => steps.push(
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main",
+                    member: Repo::App,
+                    subject: "w-app-1",
+                })
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main~1",
+                    member: Repo::App,
+                    subject: "w-app-1",
+                }),
+        ),
+        (_, AfterHandContinue::Abort) => steps.extend([
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputLacks("foreign")),
+            Step::git(&ww("w"), conflicted, &["diff", "--quiet", "HEAD"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                conflicted,
+                &["log", "--format=%s", "-1", "proj--w"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(match stop {
+                MidRebase::Member => "w-app-3",
+                MidRebase::Project => "w-proj",
+            }))
+            .claim(Claim::OnBranch {
+                at: ww("w"),
+                repo: conflicted,
+                branch: "proj--w",
+            }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "-1", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main-app")),
+        ]),
+    }
+    scenario(
+        "a landing stopped mid-rebase, finished by the VCS's own continue",
+        steps,
+    )
+}

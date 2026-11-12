@@ -7410,6 +7410,14 @@ pub fn run_abort(
             .and_then(|take_in| take_in.source_tip.as_ref()),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
+    let rebases: Vec<op_state::Rebasing> = match &reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .as_ref()
+            .map(|take_in| take_in.rebases.clone())
+            .unwrap_or_default(),
+        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
+    };
 
     let mut members = OpMembers::default();
     members.take_project(
@@ -7428,6 +7436,7 @@ pub fn run_abort(
         moved_in_target,
         operates_in.as_ref(),
         source_tip,
+        &rebases,
         abandon,
         &mut tally,
     );
@@ -7460,6 +7469,7 @@ pub fn run_abort(
                             moved_in_target,
                             operates_in.as_ref(),
                             source_tip,
+                            &rebases,
                             abandon,
                             &mut tally,
                         );
@@ -7596,6 +7606,7 @@ fn restore_abort_workspace(
     moved_in_target: Option<&[RepoKey]>,
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     source_tip: Option<&CommitId>,
+    rebases: &[op_state::Rebasing],
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -7696,6 +7707,12 @@ fn restore_abort_workspace(
             let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
             continue;
         }
+        let finished_by_hand = match side {
+            AbortSide::Replay => head
+                .as_ref()
+                .and_then(|head| replay_of(vcs.as_ref(), &abs, rebases, &repo_key, head.id())),
+            AbortSide::LandTarget => None,
+        };
         let integrates = match (side, operates_in) {
             (AbortSide::LandTarget, _) => Integrates::No,
             (AbortSide::Replay, None) => Integrates::Unknown,
@@ -7704,7 +7721,7 @@ fn restore_abort_workspace(
         };
         let attribution = Attribution {
             intent: advanced_tips.get(&repo_key),
-            converged: converged_tips.get(&repo_key),
+            converged: converged_tips.get(&repo_key).or(finished_by_hand.as_ref()),
             started_from: match (side, &repo_key) {
                 (AbortSide::Replay, RepoKey::Project) => source_tip,
                 _ => None,
@@ -8014,6 +8031,38 @@ fn restore_landing_refs(
         );
         tally.any_foreign = true;
     }
+}
+
+/// `head` where it is the tip of a rebase the op journaled in `repo`, as the
+/// op ran it or as the operator finished it by hand: every commit from the
+/// rebase's base to `head` is the replay of one the rebase started from.
+fn replay_of(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    rebases: &[op_state::Rebasing],
+    repo: &RepoKey,
+    head: &CommitId,
+) -> Option<CommitId> {
+    rebases
+        .iter()
+        .filter(|rebase| &rebase.repo == repo)
+        .find(|rebase| {
+            vcs.is_ancestor(
+                dir,
+                &ResolvedRevisionId::from(rebase.onto.clone()),
+                &ResolvedRevisionId::from(head.clone()),
+            )
+            .unwrap_or(false)
+                && vcs
+                    .replayed(dir, &rebase.onto, &rebase.from, &rebase.onto, head)
+                    .is_ok_and(|replayed| {
+                        replayed
+                            .written
+                            .iter()
+                            .all(|written| replayed.original(written).is_some())
+                    })
+        })
+        .map(|_| head.clone())
 }
 
 /// Restore a single repo as part of `rwv abort`, through the verified

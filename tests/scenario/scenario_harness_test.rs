@@ -652,6 +652,22 @@ macro_rules! every_scenario {
 every_scenario!(
     solo_workweave,
     history_rebase_pin_remap,
+    vcs_continue_mid_rebase(
+        scenarios::MidRebase::Member,
+        scenarios::AfterHandContinue::Continue
+    ),
+    vcs_continue_mid_rebase(
+        scenarios::MidRebase::Project,
+        scenarios::AfterHandContinue::Continue
+    ),
+    vcs_continue_mid_rebase(
+        scenarios::MidRebase::Member,
+        scenarios::AfterHandContinue::Abort
+    ),
+    vcs_continue_mid_rebase(
+        scenarios::MidRebase::Project,
+        scenarios::AfterHandContinue::Abort
+    ),
     dc04_conflict_setter,
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
@@ -4376,6 +4392,42 @@ fn history_contradicted_is_green() {
 #[test]
 fn history_rebase_pin_remap_is_green() {
     runner::run(scenarios::history_rebase_pin_remap()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_a_member_rebase_stopped_converges_after_the_vcs_s_own_continue() {
+    runner::run(scenarios::vcs_continue_mid_rebase(
+        scenarios::MidRebase::Member,
+        scenarios::AfterHandContinue::Continue,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_the_project_rebase_stopped_converges_after_the_vcs_s_own_continue() {
+    runner::run(scenarios::vcs_continue_mid_rebase(
+        scenarios::MidRebase::Project,
+        scenarios::AfterHandContinue::Continue,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_after_the_vcs_s_own_continue_of_a_member_rebase_restores_the_seat() {
+    runner::run(scenarios::vcs_continue_mid_rebase(
+        scenarios::MidRebase::Member,
+        scenarios::AfterHandContinue::Abort,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_after_the_vcs_s_own_continue_of_the_project_rebase_restores_the_seat() {
+    runner::run(scenarios::vcs_continue_mid_rebase(
+        scenarios::MidRebase::Project,
+        scenarios::AfterHandContinue::Abort,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]
