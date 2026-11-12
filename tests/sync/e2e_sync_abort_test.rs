@@ -856,12 +856,13 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     );
 
     let onto = common::git_in(project_dir, &["rev-parse", "HEAD"]);
+    let before_conflict = common::git_in(project_dir, &["rev-parse", &format!("{sha2}~1")]);
     let id = |sha: &str| repoweave::vcs::CommitId::parse(sha).unwrap();
     owner.take_in.get_or_insert_with(Default::default).rebases =
         vec![repoweave::op_state::Rebasing {
             repo: repoweave::manifest::RepoKey::Project,
             branch: "main".to_owned(),
-            base: id(&sha),
+            base: id(&before_conflict),
             from: id(&sha2),
             onto: id(&onto),
         }];
@@ -871,7 +872,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     common::git_in(project_dir, &["checkout", "main"]);
     // git rebase may fail; we just need it to leave the rebase-merge dir.
     let _ = std::process::Command::new("git")
-        .args(["rebase", "diverge"])
+        .args(["rebase", "--onto", "diverge", &before_conflict])
         .current_dir(project_dir)
         .env("GIT_AUTHOR_NAME", "Test")
         .env("GIT_AUTHOR_EMAIL", "test@test.com")

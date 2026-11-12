@@ -5267,13 +5267,17 @@ impl GitVcs {
                         from,
                         onto: o,
                     } if *o == onto => {
-                        self.replayed(repo, base, from, o, &head)
-                            .is_ok_and(|replayed| {
-                                replayed
-                                    .written
-                                    .iter()
-                                    .all(|written| replayed.original(written).is_some())
-                            })
+                        head == onto
+                            || self
+                                .replayed(repo, base, from, o, &head)
+                                .is_ok_and(|replayed| {
+                                    replayed.is_some_and(|replayed| {
+                                        replayed
+                                            .written
+                                            .iter()
+                                            .all(|written| replayed.original(written).is_some())
+                                    })
+                                })
                     }
                     _ => false,
                 })
