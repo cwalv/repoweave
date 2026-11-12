@@ -213,7 +213,7 @@ pub(crate) fn judge(
         judging = match &uncarried.why {
             Why::LacksTip(lacking) => judging.listing(lacking.iter().map(|repo| {
                 format!(
-                    "{repo}: '{dependent}' lacks the tip of '{}'",
+                    "'{dependent}' lacks the tip of '{}' in {repo}",
                     uncarried.parent
                 )
             })),

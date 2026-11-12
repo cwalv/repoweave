@@ -12085,8 +12085,12 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
 /// onto `w1` holding `w2-app` and checked out nowhere: made and filled in
 /// `w1`'s seat, which then switches back.
 fn stack_on_a_seat() -> Vec<Step> {
+    stack_on_a_seat_under("linear")
+}
+
+fn stack_on_a_seat_under(history: &'static str) -> Vec<Step> {
     vec![
-        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
         create("w1"),
         Step::commit(&ww("w1"), Repo::App, "w1-app"),
         Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -12174,4 +12178,309 @@ pub fn stack_carried() -> Scenario {
             }),
     ]);
     scenario("stack: a dependent checked out nowhere is carried", steps)
+}
+
+/// `stack-two-dependents`: `w2` and `w3` both land into `w1`. While each is
+/// open in a workweave, `w1`'s `sync` refuses with one state for each, its
+/// own choices beside it; with neither checked out, the sync carries each
+/// by its own replay, with its pins re-mapped.
+pub fn stack_two_dependents() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend([
+        dependent_of(&ww("w1"), "w3", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w3-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(main_moves_app("main-app"));
+    let carried = |branch: &'static str, subject: &'static str| {
+        [
+            Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: branch,
+                mark: "main-app",
+            },
+            Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: branch,
+                member: Repo::App,
+                subject,
+                reached_from: branch,
+            },
+        ]
+    };
+    let [w2_on_main, w2_pins] = carried("w2", "w2-app");
+    let [w3_on_main, w3_pins] = carried("w3", "w3-app");
+    for (ww_name, branch) in [("w2s", "w2"), ("w3s", "w3")] {
+        steps.push(
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    ww_name,
+                    "--branch",
+                    branch,
+                ],
+            )
+            .expect(Exit::Succeeds),
+        );
+    }
+    steps.push(
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::OutputContains("(w2 lands into proj--w1)"))
+            .claim(Claim::OutputContains("(w3 lands into proj--w1)"))
+            .claim(Claim::OutputContains(
+                "rwv workweave delete w2s --project proj",
+            ))
+            .claim(Claim::OutputContains(
+                "rwv workweave delete w3s --project proj",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+    );
+    for ww_name in ["w2s", "w3s"] {
+        steps.push(
+            Step::rwv(&a(), &["workweave", "delete", ww_name, "--project", "proj"])
+                .expect(Exit::Code(3))
+                .claim(Claim::WorkweaveGone(ww(ww_name))),
+        );
+    }
+    steps.push(
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::OutputContains("carried 'w3' along"))
+            .claim(w2_on_main)
+            .claim(w2_pins)
+            .claim(w3_on_main)
+            .claim(w3_pins)
+            .claim(Claim::Lacks {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w3",
+                mark: "w2-app",
+            }),
+    );
+    scenario("stack: two dependents of one branch, each carried", steps)
+}
+
+/// `stack-transitive`: `w3` onto `w2` onto `w1`. With `w3` checked out in a
+/// workweave of its own, `w1`'s `sync` refuses for `w3` and moves nothing,
+/// `w2` included, though `w2` alone could be carried; with that workweave
+/// gone, the sync carries both, `w2` before `w3`.
+pub fn stack_transitive() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend([
+        Step::rwv(&ww("w1"), &["switch", "w2"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w3", "w2"),
+        Step::commit(&ww("w1"), Repo::App, "w3-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w3s",
+                "--branch",
+                "w3",
+            ],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::JudgedOnly(
+                Repo::Proj,
+                State::TargetDependentCheckedOut,
+            ))
+            .claim(Claim::OutputContains("w3 lands into w2"))
+            .claim(Claim::LocalStateUnchanged(ww("w1")))
+            .claim(Claim::LocalStateUnchanged(ww("w3s")))
+            .claim(Claim::Lacks {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            }),
+        Step::rwv(&a(), &["workweave", "delete", "w3s", "--project", "proj"])
+            .expect(Exit::Code(3))
+            .claim(Claim::WorkweaveGone(ww("w3s")))
+            .claim(Claim::OutputContains(
+                "left: local/remotes/app w3: unlanded",
+            )),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputInOrder(&[
+                "carried 'w2' along",
+                "carried 'w3' along",
+            ]))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w3",
+                mark: "main-app",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w3",
+                member: Repo::App,
+                subject: "w3-app",
+                reached_from: "w3",
+            }),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge-base", "--is-ancestor", "w2", "w3"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario("stack: carried whole or not at all, parents first", steps)
+}
+
+/// `stack-merge-setting`: the same stack under a `merge` target; `w1`'s
+/// `sync` rewrites nothing, so `w2` never blocks and is not moved.
+pub fn stack_merge_setting() -> Scenario {
+    let mut steps = stack_on_a_seat_under("merge");
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([Step::rwv(&ww("w1"), &["sync"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLacks("dependent"))
+        .claim(Claim::OutputLacks("carried"))
+        .claim(Claim::Lacks {
+            at: ww("w1"),
+            repo: Repo::App,
+            rev: "w2",
+            mark: "main-app",
+        })]);
+    scenario("stack: a merge setting never blocks on dependents", steps)
+}
+
+/// How `stack-checked-out`'s refusal is cleared.
+#[derive(Debug, Clone, Copy)]
+pub enum CheckedOutChoice {
+    /// C12: `w2` rebound onto `main`.
+    Rebind,
+    /// C35, then its landed form: `w2` landed into `w1`, then retired.
+    LandThenRetire,
+}
+
+/// `stack-checked-out`: `w2` in a workweave of its own; `w1`'s `sync`
+/// moves nothing and prints `w2`'s state with its choices, no sequence;
+/// each choice, run as printed, then lets the rerun complete.
+pub fn stack_checked_out(choice: CheckedOutChoice) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w1"),
+            &["workweave", "create", "w2", "--new-branch", "w2"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.push(
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::JudgedOnly(
+                Repo::Proj,
+                State::TargetDependentCheckedOut,
+            ))
+            .claim(Claim::OutputContains("w2 lands into proj--w1"))
+            .claim(Claim::OutputContains("rwv land"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode w2 feature --target main",
+            ))
+            .claim(Claim::OutputContains("rwv workweave delete w2"))
+            .claim(Claim::OutputLacks("then run"))
+            .claim(Claim::LocalStateUnchanged(ww("w1")))
+            .claim(Claim::LocalStateUnchanged(ww("w2"))),
+    );
+    match choice {
+        CheckedOutChoice::Rebind => steps
+            .push(Step::rwv_printed(&ww("w1"), "rwv branch set-mode w2 ").expect(Exit::Succeeds)),
+        CheckedOutChoice::LandThenRetire => steps.extend([
+            Step::rwv_printed_exactly(&ww("w2"), "rwv land").expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut)),
+            Step::rwv_printed_exactly(&ww("w2"), "rwv land --retire")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ]),
+    }
+    steps.push(
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("carried"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "HEAD",
+                mark: "main-app",
+            }),
+    );
+    scenario("stack: a dependent checked out elsewhere", steps)
+}
+
+/// `stack-not-containing`: `w2`, in a workweave of its own, was cut from an
+/// older commit of `w1`; `w1`'s `sync` prints `w2` as lacking `w1`'s tip,
+/// with C35, C12 and C36; C36, run in `w2`'s workspace, takes `w1` in, and
+/// the rerun shows the state that remains, checked out elsewhere.
+pub fn stack_not_containing() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app-1"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w1"),
+            &["workweave", "create", "w2", "--new-branch", "w2"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-app-2"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentLacksTip))
+            .claim(Claim::JudgedOnly(
+                Repo::Proj,
+                State::TargetDependentLacksTip,
+            ))
+            .claim(Claim::OutputContains("rwv land"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode w2 feature --target main",
+            ))
+            .claim(Claim::OutputContains("rwv sync"))
+            .claim(Claim::LocalStateUnchanged(ww("w1")))
+            .claim(Claim::LocalStateUnchanged(ww("w2"))),
+        Step::rwv_printed_exactly(&ww("w2"), "rwv sync")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::JudgedOnly(
+                Repo::Proj,
+                State::TargetDependentCheckedOut,
+            )),
+    ]);
+    scenario("stack: a dependent cut from an older commit", steps)
 }

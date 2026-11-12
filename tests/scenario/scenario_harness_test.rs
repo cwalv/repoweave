@@ -653,6 +653,12 @@ every_scenario!(
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
+    stack_two_dependents,
+    stack_transitive,
+    stack_merge_setting,
+    stack_checked_out(scenarios::CheckedOutChoice::Rebind),
+    stack_checked_out(scenarios::CheckedOutChoice::LandThenRetire),
+    stack_not_containing,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
         scenarios::AfterHandContinue::Continue
@@ -4434,6 +4440,42 @@ fn abort_after_the_vcs_s_own_continue_of_the_project_rebase_restores_the_seat() 
 #[test]
 fn stack_carried_is_green() {
     runner::run(scenarios::stack_carried()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_two_dependents_is_green() {
+    runner::run(scenarios::stack_two_dependents()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_transitive_is_green() {
+    runner::run(scenarios::stack_transitive()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_merge_setting_is_green() {
+    runner::run(scenarios::stack_merge_setting()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_checked_out_rebind_is_green() {
+    runner::run(scenarios::stack_checked_out(
+        scenarios::CheckedOutChoice::Rebind,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn stack_checked_out_land_then_retire_is_green() {
+    runner::run(scenarios::stack_checked_out(
+        scenarios::CheckedOutChoice::LandThenRetire,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn stack_not_containing_is_green() {
+    runner::run(scenarios::stack_not_containing()).assert_fully_decided_green();
 }
 
 #[test]

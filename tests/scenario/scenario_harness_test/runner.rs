@@ -146,6 +146,7 @@ pub enum Action {
     /// by rwv, or by git for a VCS action.
     RwvPrinted {
         at: Place,
+        exact: bool,
         prefix: &'static str,
         holding: &'static str,
     },
@@ -787,8 +788,24 @@ impl Step {
             format!("the printed `{prefix}...{holding}...`"),
             Action::RwvPrinted {
                 at: at.clone(),
+                exact: false,
                 prefix,
                 holding,
+            },
+            Expect::undecided(),
+        )
+    }
+
+    /// [`Step::rwv_printed`] of the line that is exactly `line`, for a
+    /// choice whose words begin another printed line.
+    pub fn rwv_printed_exactly(at: &Place, line: &'static str) -> Step {
+        Step::new(
+            format!("the printed `{line}`"),
+            Action::RwvPrinted {
+                at: at.clone(),
+                exact: true,
+                prefix: line,
+                holding: "",
             },
             Expect::undecided(),
         )
@@ -1283,15 +1300,17 @@ impl Run<'_> {
             }
             Action::RwvPrinted {
                 at,
+                exact,
                 prefix,
                 holding,
             } => {
-                let Some(line) = self
-                    .last_rwv_output
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| line.starts_with(prefix) && line.contains(holding))
-                else {
+                let Some(line) = self.last_rwv_output.lines().map(str::trim).find(|line| {
+                    if *exact {
+                        line == prefix
+                    } else {
+                        line.starts_with(prefix) && line.contains(holding)
+                    }
+                }) else {
                     return (
                         false,
                         format!(
