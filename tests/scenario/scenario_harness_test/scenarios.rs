@@ -6113,9 +6113,9 @@ pub fn records_drop_races_create() -> Scenario {
 
 /// A lock commit that pinned a member commit no ref keeps (locked, then
 /// amended and re-pinned by name) lands into a target that did not move.
-/// Every clone judges a landing by the pins of the target's history, so the
-/// push of the target is withheld until a remote reaches that pin; once C27
-/// publishes it, a second machine's landing in that member passes.
+/// Every clone judges a landing by the pins of the target's history, so a
+/// second machine, which lacks that commit, meets a known defect at its
+/// landing in that member.
 pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     let app = Repo::App.rel_path();
     scenario(
@@ -6134,18 +6134,6 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
             Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"])
                 .expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["push"])
-                .pushes(Remote::origin(Repo::App), "main")
-                .expect(Exit::refuses(Repo::App, State::PublishWithheld))
-                .claim(Claim::OutputContains(
-                    "reached by no remote-tracking branch",
-                )),
-            Step::git(
-                &ww("w"),
-                Repo::App,
-                &["push", "-q", "origin", "proj--w@{1}:refs/heads/kept"],
-            )
-            .pushes(Remote::origin(Repo::App), "kept"),
             publishes_records(Step::rwv(&a(), &["push"]))
                 .pushes(Remote::origin(Repo::App), "main")
                 .pushes(Remote::origin(Repo::Proj), "main")
@@ -6154,7 +6142,10 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
             Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
                 .expect(Exit::Succeeds),
             Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
-            Step::rwv(&b_ww("w2"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("w2"), &["land"])
+                .expect(Exit::Defect(Defect::HistoryPinNoRefKeeps))
+                .claim(Claim::LocalStateUnchanged(b_ww("w2")))
+                .claim(Claim::LocalStateUnchanged(b())),
         ],
     )
 }

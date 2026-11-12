@@ -237,7 +237,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `withheld` | the project repo was not pushed: a pin the project branch's lock holds is not reached by the remote-tracking branches that must reach it, a lock in the history the push publishes pins a commit no remote-tracking branch reaches, or the remote rejected a member's push; the branches that do reach each pin, and what the remote answered, are listed | `rwv push` |
+| `withheld` | the project repo was not pushed: a pin the project branch's lock holds is not reached by the remote-tracking branches that must reach it, or the remote rejected a member's push; the branches that do reach each pin, and what the remote answered, are listed | `rwv push` |
 | `records rejected` | a fact: the remote the project branch publishes to refused the branch that holds the weave branches' records, and the project branch was published without its record there. What the remote answered is listed. Another machine opening the branch finds it unrecorded and is asked once how to treat it (`target` `unrecorded`) | nothing: `rwv push` reports it and publishes the branch |
 | `no pin` | the project branch's lock has no entry for a member the push does not act on, so the project repo was not pushed with a lock that pins nothing there | `rwv push` |
 | `target unpublished` | the feature's record names a target with no push branch on the remote the feature publishes to, so another machine reading the record would resolve the target to a branch of that name it holds, or to none; the project branch and its record were not pushed | `rwv push`, for a feature |

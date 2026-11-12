@@ -233,7 +233,7 @@ src/push.rs	name no-such-branch	-	1
 src/push.rs	pin ahead	-	1
 src/push.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/push.rs	pin unmerged	tests/sync/push_test.rs	2
-src/push.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	3
+src/push.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	2
 src/push.rs	pin waived	-	1
 src/push.rs	pin would be unreachable	tests/sync/push_test.rs	1
 src/push.rs	protected declared	tests/weave/branch_rename_test.rs	1
@@ -241,7 +241,7 @@ src/push.rs	protected declared mode	-	1
 src/push.rs	publish no pin	-	1
 src/push.rs	publish records rejected	-	1
 src/push.rs	publish target unpublished	-	1
-src/push.rs	publish withheld	-	4
+src/push.rs	publish withheld	-	3
 src/push.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/push.rs	push-branch unconfirmed	-	1
 src/push.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1

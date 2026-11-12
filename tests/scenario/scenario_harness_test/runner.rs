@@ -273,6 +273,11 @@ pub enum Defect {
     /// commit the target does not reach and the retire leaves it (`left`),
     /// where a landing by merge commit would complete the deletion.
     MergeHistoryNotRead,
+    /// A lock in the target's history pins a member commit no ref of the
+    /// clone keeps (locked, then amended and re-pinned by name), so every
+    /// clone lacking it refuses a landing in that member as `pin`
+    /// unreachable, with no printed choice that clears it.
+    HistoryPinNoRefKeeps,
 }
 
 impl Defect {
@@ -280,6 +285,9 @@ impl Defect {
         match self {
             Defect::LandingRefusedOnAnotherLandingsLease => {
                 "a landing into a target another landing holds is refused rather than waiting"
+            }
+            Defect::HistoryPinNoRefKeeps => {
+                "a pin of the target's history no ref keeps refuses every clone lacking it"
             }
             Defect::MergeHistoryNotRead => {
                 "a landing into a merge-history branch composes by rebase and leaves the published branch"

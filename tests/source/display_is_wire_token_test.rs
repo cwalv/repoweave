@@ -81,7 +81,14 @@ fn mid_operation_displays_as_the_token_it_serializes_to() {
     assert_eq!(
         tokens,
         BTreeSet::from(
-            ["mid-rebase", "mid-merge", "mid-cherry-pick", "mid-bisect"].map(str::to_owned)
+            [
+                "mid-rebase",
+                "mid-merge",
+                "mid-cherry-pick",
+                "mid-revert",
+                "mid-bisect"
+            ]
+            .map(str::to_owned)
         ),
         "the tokens `rwv status --json` reports in `mid_op`"
     );

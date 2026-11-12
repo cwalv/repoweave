@@ -1026,10 +1026,8 @@ impl State {
                 name: "withheld",
                 means: "the project repo was not pushed: a pin the project branch's lock \
                         holds is not reached by the remote-tracking branches that must reach \
-                        it, a lock in the history the push publishes pins a commit no \
-                        remote-tracking branch reaches, or the remote rejected a member's \
-                        push; the branches that do reach each pin, and what the remote \
-                        answered, are listed",
+                        it, or the remote rejected a member's push; the branches that do reach \
+                        each pin, and what the remote answered, are listed",
                 refused_by: "`rwv push`",
                 offers: &[Form::C7Push, Form::C7PushRepo, Form::C27, Form::C17],
                 verb_offers: &[],

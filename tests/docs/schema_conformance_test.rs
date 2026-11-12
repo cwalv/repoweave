@@ -1093,7 +1093,7 @@ fn status_repos() -> Vec<RepoStatus> {
                 lock_sha: (!sparse).then(|| sha('b')),
                 lock_pinned_by_name: sparse,
                 relation,
-                mid_op: MidOperation::all().nth(i / 2).filter(|_| sparse),
+                mid_op: MidOperation::all().nth(i),
                 role: repoweave::manifest::Role::ALL[i % repoweave::manifest::Role::ALL.len()],
                 url: "https://github.com/acme/repo.git".to_owned(),
                 project: repoweave::manifest::ProjectName::new("proj").unwrap(),

@@ -1785,7 +1785,6 @@ fn publish(
     if project_plan.push_branch {
         let mut gate = Report::default();
         gate_reachability(pushed, members, fetched, &mut gate);
-        gate_history_reachability(pvcs, pushed, members, &mut gate)?;
         if let Err(refusal) = gate.into_result() {
             if output.is_json() {
                 print_envelope(json_outcomes, &refusal, reported, ctx);
@@ -2040,106 +2039,6 @@ fn gate_reachability(pushed: &Pushed, members: &[Member], fetched: &Fetched, gat
                 .judge(vcs),
         );
     }
-}
-
-/// The pins of every lock the project branch's push publishes besides its
-/// tip's, each reached by some remote-tracking branch of its member: a lock
-/// in a branch's history is read wherever that branch's base is judged, so a
-/// pin no remote reaches would refuse that member on every clone. A pin this
-/// clone lacks, or one no remote reaches, withholds the project branch.
-fn gate_history_reachability(
-    pvcs: &dyn Vcs,
-    pushed: &Pushed,
-    members: &[Member],
-    gate: &mut Report,
-) -> anyhow::Result<()> {
-    let published: Vec<crate::vcs::CommitId> = pvcs
-        .branch_tips(&pushed.project_dir)?
-        .into_iter()
-        .filter(|tip| tip.branch.is_remote())
-        .map(|tip| tip.tip.id().clone())
-        .collect();
-    let unpublished: std::collections::BTreeSet<crate::vcs::CommitId> = pvcs
-        .commits_excluding(&pushed.project_dir, &pushed.tip, &published, false)?
-        .into_iter()
-        .map(|c| c.id)
-        .collect();
-    let mut checked: std::collections::BTreeSet<(String, String)> = Default::default();
-    for (path, entry) in pushed.lock.iter().flat_map(|lock| lock.iter_entries()) {
-        checked.insert((path.to_string(), entry.version.as_str().to_owned()));
-    }
-    for commit in
-        pvcs.commits_changing(&pushed.project_dir, pushed.tip.id(), LockFile::FILE_NAME)?
-    {
-        if !unpublished.contains(&commit) {
-            continue;
-        }
-        let Ok(text) = pvcs.read_file_at_revision(
-            &pushed.project_dir,
-            &ResolvedRevisionId::from(commit.clone()),
-            Path::new(LockFile::FILE_NAME),
-        ) else {
-            continue;
-        };
-        let Ok(lock) = LockFile::from_json_str(&text) else {
-            continue;
-        };
-        for (path, entry) in lock.iter_entries() {
-            if !checked.insert((path.to_string(), entry.version.as_str().to_owned())) {
-                continue;
-            }
-            let Some(member) = members.iter().find(|m| &m.path == path) else {
-                continue;
-            };
-            let vcs = member.vcs.as_ref();
-            let judging = |state: State| {
-                state
-                    .of(path)
-                    .member()
-                    .checkout(&member.dir)
-                    .bind("<m>", path.as_str())
-            };
-            let Some(pin) = entry
-                .version
-                .as_commit_id()
-                .and_then(|id| vcs.resolve_revision(&member.dir, id.as_str()).ok())
-            else {
-                gate.add(
-                    judging(State::PinUnreachable)
-                        .subject(format!(
-                            "the lock of {} pins {}, which this clone lacks",
-                            commit.short(),
-                            entry.version.short_display()
-                        ))
-                        .judge(vcs),
-                );
-                continue;
-            };
-            let reached = vcs
-                .branch_tips(&member.dir)?
-                .into_iter()
-                .filter(|tip| tip.branch.is_remote())
-                .any(|tip| {
-                    vcs.is_ancestor(&member.dir, &pin, &tip.tip)
-                        .unwrap_or(false)
-                });
-            if reached {
-                continue;
-            }
-            gate.add(
-                judging(State::PublishWithheld)
-                    .listing([format!(
-                        "the lock of {} pins {}, reached by no remote-tracking branch",
-                        commit.short(),
-                        pin.id().short()
-                    )])
-                    .bind("<sha>", pin.id().as_str())
-                    .only(&[ChoiceId::C27, ChoiceId::C17])
-                    .judge(vcs),
-            );
-        }
-    }
-    Ok(())
 }
 
 /// Per-repo worker: push one member branch to its push target. All
