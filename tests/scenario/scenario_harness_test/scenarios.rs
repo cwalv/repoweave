@@ -7807,6 +7807,43 @@ pub fn every_printed_setter_restores_the_target_value() -> Scenario {
     scenario("every printed setter restores the target value", steps)
 }
 
+/// A member holding no new work whose new declared branch exists nowhere
+/// follows it, and the landing creates it, at the target's pin.
+pub fn a_followed_receiving_branch_that_exists_nowhere_is_created() -> Scenario {
+    scenario(
+        "a followed receiving branch that exists nowhere is created",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "lib-next"),
+            ),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-qam", "lib onto lib-next"],
+            ),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("created 'lib-next'"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "lib-next",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                }),
+            Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "lib-next"]),
+        ],
+    )
+}
+
 /// A landing leaves the target ahead of its push branch and says so, naming
 /// the push that publishes it; running it publishes the landing.
 pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {

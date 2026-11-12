@@ -707,8 +707,9 @@ pub enum Moves {
     /// A member `T` lacks enters at `tip`, its pin in the feature: the branch
     /// is created there, and nothing is composed.
     Enters,
-    /// The member takes `tip`, merging nothing; the branch does not move.
-    Follows,
+    /// The member takes `tip`, merging nothing; the branch does not move,
+    /// and is created at `tip` first when `create`.
+    Follows { create: bool },
 }
 
 /// A branch the op created, checked out nowhere.

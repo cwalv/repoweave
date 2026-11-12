@@ -1453,7 +1453,7 @@ fn judge_member(
         )?;
     }
     let moves = if follows {
-        Moves::Follows
+        Moves::Follows { create: created }
     } else if created {
         Moves::AsRef { create: true }
     } else if declared_changed {

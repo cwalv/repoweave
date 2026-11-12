@@ -3833,7 +3833,7 @@ fn target_moved(
         Manifest::from_path(&project_dir(target_workspace, project).join(Manifest::FILE_NAME)).ok();
     for (key, receiving) in &take_in.receiving {
         let to = match (receiving.moves, composed) {
-            (op_state::Moves::Follows, _) => continue,
+            (op_state::Moves::Follows { .. }, _) => continue,
             (op_state::Moves::Enters, _) | (_, None) => &receiving.tip,
             (_, Some(composed)) => match composed.get(key) {
                 Some(to) => to,
@@ -3855,7 +3855,7 @@ fn target_moved(
         let create = match receiving.moves {
             op_state::Moves::AsRef { create } => Some(create),
             op_state::Moves::Enters => Some(true),
-            op_state::Moves::InCheckout | op_state::Moves::Follows => None,
+            op_state::Moves::InCheckout | op_state::Moves::Follows { .. } => None,
         };
         if let Some(create) = create {
             if !vcs.is_repo(&dir) {
@@ -4634,7 +4634,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        if receiving.moves == op_state::Moves::Follows {
+        if matches!(receiving.moves, op_state::Moves::Follows { .. }) {
             let vcs = replayed
                 .manifest
                 .get_entry(repo_path)
@@ -5436,8 +5436,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         };
         let create = match receiving.moves {
             op_state::Moves::AsRef { create } => create,
-            op_state::Moves::Enters => true,
-            op_state::Moves::InCheckout | op_state::Moves::Follows => continue,
+            op_state::Moves::Enters | op_state::Moves::Follows { create: true } => true,
+            op_state::Moves::InCheckout | op_state::Moves::Follows { create: false } => continue,
         };
         let Some(entry) = cwd_project_final.manifest.get_entry(repo_path) else {
             continue;
@@ -5445,7 +5445,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let composed = match receiving.moves {
-            op_state::Moves::Enters => receiving.tip.clone(),
+            op_state::Moves::Enters | op_state::Moves::Follows { .. } => receiving.tip.clone(),
             _ => planned(key)?.1.id().clone(),
         };
         if let Err(e) = moved.absorb(advance_receiving_ref(
