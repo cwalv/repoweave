@@ -383,16 +383,31 @@ fn push_refuses_an_untracked_manifest_or_lock() {
     }
 }
 
+/// An edit to a tracked project file other than `rwv.toml` and `rwv.lock` is
+/// no part of what push publishes: the committed tip goes, and the file is
+/// named as left out.
 #[test]
-fn push_refuses_any_tracked_dirt_in_the_project_repo() {
+fn push_publishes_the_committed_tip_past_an_edited_project_file_and_names_it() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("notes.md"), "draft\n").unwrap();
-    common::git_in(&project_dir, &["add", "notes.md"]);
-    common::git_in(&project_dir, &["commit", "-m", "notes"]);
-    std::fs::write(project_dir.join("notes.md"), "draft, edited\n").unwrap();
+    std::fs::write(project_dir.join("README.md"), "draft\n").unwrap();
+    common::git_in(&project_dir, &["add", "README.md"]);
+    common::git_in(&project_dir, &["commit", "-m", "readme"]);
+    let committed = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
+    std::fs::write(project_dir.join("README.md"), "draft, edited\n").unwrap();
 
-    assert_push_refuses_uncommitted(&ws, "notes.md", false);
+    let out = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(bare_main_sha(&ws.project_bare), Some(committed));
+    assert!(
+        stderr.contains("projects/alpha: uncommitted files left out of the push: README.md"),
+        "{stderr}"
+    );
 }
 
 /// Untracked scratch is not part of anything push reads or publishes.

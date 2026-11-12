@@ -22,13 +22,12 @@ by `W`'s record, lock and branches as the refs hold them. `push` never writes
 naming `rwv lock --commit`), and so does a member whose lock has no entry (`pin`
 `none`).
 
-It refuses if the project repo has uncommitted changes to any tracked file, or
-holds a `rwv.toml` or `rwv.lock` it has never committed: push publishes the
-project repo's last commit, so the lock it checks has to be the lock it
-publishes. The refusal judges the project repo on the `edits` kind: `rwv.toml
-or rwv.lock uncommitted` when those are all that is, offering `rwv lock
---commit`, else `dirty`, offering the VCS's commit or stash. Untracked files
-other than those two do not refuse.
+It refuses while the project repo's `rwv.toml` or `rwv.lock` has uncommitted
+changes or was never committed (`edits` `rwv.toml or rwv.lock uncommitted`,
+offering `rwv lock --commit`): push publishes the project repo's last commit
+and plans from the two files it holds, so the lock it checks is the lock it
+publishes. Other uncommitted files are not part of what is pushed: they are
+named on one line, and the push goes on.
 
 **Which repos.** Bare `rwv push` acts on the `owned` and `fork` members, the
 branch's record and the project branch. A `dependency` or `reference` member
@@ -158,7 +157,7 @@ records carry a `message` field with the free-form error from the git push.
 
 `refused` lists each repo push judged when it refused, with that state's
 choices as `rwv explain <axis>` lists them: the project repo's `edits` when it
-has uncommitted changes, before anything is pushed; and each member whose
+has an uncommitted `rwv.toml` or `rwv.lock`, before anything is pushed; and each member whose
 push the remote rejected, as `publish` `withheld`, when the project repo was
 not pushed because of it, and the project repo the same way when its own push
 was rejected. It is empty, not absent, otherwise. `reported`
@@ -766,10 +765,9 @@ rwv push -j 4
 
 ## Common errors
 
-- *`projects/<name>: edits …`* — the files listed would not reach the remote,
-  since push publishes the project repo's last commit. Run the choice printed
-  beneath it (`rwv lock --commit` when only `rwv.toml` or `rwv.lock` is
-  uncommitted, the VCS's commit or stash otherwise) and re-run.
+- *`projects/<name>: edits rwv.toml or rwv.lock uncommitted`* — the files
+  listed would not reach the remote, since push publishes the project repo's
+  last commit. Run `rwv lock --commit` and re-run.
 - *`push-branch no push target`* — the branch has no remote to publish to: none
   is configured for it and the repo has no url remote. Run a choice printed
   beneath it (configure its push remote, or add the remote).

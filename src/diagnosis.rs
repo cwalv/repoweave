@@ -531,7 +531,7 @@ impl State {
                              fast-forward (tracked changes only); `rwv lock` without `--dirty`, \
                              for a member (tracked changes only); `rwv lock --commit` and `rwv \
                              update --commit`, for project-repo changes outside `rwv.lock` and \
-                             `rwv.toml`; `rwv push`, for the project repo; `rwv member \
+                             `rwv.toml`; `rwv member \
                              set-role <repo> reference`; `rwv member remove --delete` and \
                              replay's prune of a dropped member; `rwv workweave delete` and \
                              `rwv sync-to --retire`, for every checkout in the workweave; \

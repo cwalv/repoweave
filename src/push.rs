@@ -12,7 +12,7 @@ use crate::branch_ref::BranchRef;
 use crate::cli::consent::OverwriteConsent;
 use crate::diagnosis::{ChoiceId, Fact, FactKind, Report, State};
 use crate::manifest::{
-    LockFile, Manifest, Project, ProjectName, RepoEntry, RepoOperand, RepoPath, Role, VcsType,
+    LockFile, Manifest, ProjectName, RepoEntry, RepoOperand, RepoPath, Role, VcsType,
 };
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::push_branch::{NewerOfBranchAndUpstream, Standing};
@@ -276,11 +276,6 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     };
     let nothing_reported = Report::default();
 
-    if pushed.checked_out {
-        refuse_uncommitted_project_state(pvcs.as_ref(), &pushed.project_dir, &pushed.project)
-            .map_err(|e| json_refusal(&nothing_reported, e))?;
-    }
-
     if pushed.checked_out && request.mode == PushMode::Publish {
         let project_aligner =
             Aligner::open(ctx.active_path(), &pushed.project, Accounting::default())?;
@@ -414,11 +409,11 @@ fn resolve(
     }
     let record = crate::branch::recorded_value(pvcs, &project, &dir, &branch)?;
     let tip = tip.expect("an attached branch with commits has a tip");
-    let (manifest, lock) = if checked_out {
-        let loaded = Project::from_dir(&dir, project.clone())
-            .with_context(|| format!("failed to load project '{project}'"))?;
-        (loaded.manifest, loaded.lock)
-    } else {
+    if checked_out {
+        refuse_uncommitted_project_state(pvcs, &dir, &project, request.output)
+            .map_err(|e| refuse_json(request, ctx, Vec::new(), &Report::default(), e))?;
+    }
+    let (manifest, lock) = {
         let manifest = Manifest::from_toml_str(
             &pvcs
                 .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
@@ -2069,34 +2064,37 @@ fn give_upstream(
     )
 }
 
-/// Push publishes the project repo's last commit but plans from `rwv.toml`
-/// and `rwv.lock` as they stand on disk. The two agree only while nothing
-/// tracked is dirty and neither of those files is untracked.
+/// Push publishes the project repo's last commit and plans from the
+/// `rwv.toml` and `rwv.lock` it holds, so an uncommitted or untracked one of
+/// those refuses; other uncommitted files are named as left out of the push.
 fn refuse_uncommitted_project_state(
     vcs: &dyn Vcs,
     project_dir: &Path,
     project_name: &ProjectName,
+    output: OutputMode,
 ) -> anyhow::Result<()> {
     let uncommitted = crate::switch::uncommitted_names(vcs, project_dir)
         .with_context(|| format!("failed to read project repo status for {project_name}"))?;
-    if uncommitted.is_empty() {
-        return Ok(());
+    let (lock_files, others): (Vec<String>, Vec<String>) = uncommitted
+        .into_iter()
+        .partition(|name| name == Manifest::FILE_NAME || name == LockFile::FILE_NAME);
+    if !lock_files.is_empty() {
+        let mut report = Report::default();
+        report.add(
+            State::EditsLockFilesUncommitted
+                .of(project_rel_path(project_name))
+                .listing(lock_files)
+                .checkout(project_dir)
+                .judge(vcs),
+        );
+        return report.into_result();
     }
-    let only_lock_files = uncommitted
-        .iter()
-        .all(|name| name == Manifest::FILE_NAME || name == LockFile::FILE_NAME);
-    let state = if only_lock_files {
-        State::EditsLockFilesUncommitted
-    } else {
-        State::EditsDirty
-    };
-    let mut report = Report::default();
-    report.add(
-        state
-            .of(project_rel_path(project_name))
-            .listing(uncommitted)
-            .checkout(project_dir)
-            .judge(vcs),
-    );
-    report.into_result()
+    if !others.is_empty() && output == OutputMode::Text {
+        eprintln!(
+            "{}: uncommitted files left out of the push: {}",
+            project_rel_path(project_name),
+            others.join(", ")
+        );
+    }
+    Ok(())
 }

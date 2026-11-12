@@ -167,7 +167,6 @@ src/pull.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
 src/pull.rs	push-branch diverged	-	1
 src/push.rs	(untokened:environment-passthrough)	-	2
 src/push.rs	(untokened:tally)	-	1
-src/push.rs	edits dirty	tests/scenario_harness_test/scenarios.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	-	1
 src/push.rs	head-not-on-branch	tests/branch_gate_test.rs	2
 src/push.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
