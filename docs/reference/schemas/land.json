@@ -884,6 +884,59 @@
               "type": "string"
             }
           }
+        },
+        {
+          "description": "The commits `path`'s new pin in `target` holds beyond the pin `target` held, pinned into `target` with the feature's work.",
+          "type": "object",
+          "required": [
+            "commits",
+            "kind",
+            "path",
+            "target"
+          ],
+          "properties": {
+            "commits": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LeftCommitOutput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "beyond-pin"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "`branch` holds the landing and its push branch does not: the landing is not published until `branch` is pushed.",
+          "type": "object",
+          "required": [
+            "branch",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "push-branch-ahead"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
         }
       ]
     },

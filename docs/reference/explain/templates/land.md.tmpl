@@ -21,7 +21,10 @@ nothing could be landed into. Then, under an op record:
    member holding nothing that branch lacks is not moved and keeps the
    target's pin, unless the feature changed that pin, which the relock then
    takes. Commits a moved member's receiving branch holds beyond the target's
-   pin are listed before composing: the landing pins them into the target.
+   pin, and commits the new pin of a member it does not move holds beyond
+   it, are listed before composing: the landing pins them into the target.
+   Under `--json` each is in `reports` as `beyond-pin`, and a member not
+   moved has the outcome `no-op`.
    A member whose work that branch
    lacks lands as the target's `history` setting says, read from the target's
    own `rwv.toml` (the member's entry, else the top level): under `linear` its
@@ -58,7 +61,8 @@ nothing could be landed into. Then, under an op record:
    and recorded, never a commit made in this workspace since. Nothing there
    is ever rebased or merged. The target is then reported `push-branch`
    `ahead` where its push branch lacks the landing, naming
-   `rwv push --branch <T>`.
+   `rwv push --branch <T>`; under `--json` it is in `reports` as
+   `push-branch-ahead`. A resumed landing repeats every report.
 4. **Align.** The workspace with the target checked out aligns its members as
    `rwv update` does, storing the entries without reporting them; then this
    workspace's members follow the target's new pins. A member alignment leaves
@@ -84,11 +88,16 @@ redirected. `--target <T>` takes the target's mode now.
 
 **A record published on a remote** names a target this machine reads only
 through that remote: the target published there, and a local branch of that
-name taking in from it or configured to publish to it. Anything else refuses
-as `target` `gone`, never landing into an unrelated branch that shares the
-name. A target that exists nowhere refuses the same way. The recovery rebinds
-the feature onto another target, listing the candidates, nearest first, and
-naming the nearest in `rwv branch set-mode <W> feature --target <T>`.
+name taking in from that branch there, or, taking in from nowhere,
+configured to publish there. Anything else, a local branch taking in from
+another branch included, refuses as `target` `gone`, never landing into an
+unrelated branch that shares the name. A target that exists nowhere refuses
+the same way. The recovery rebinds the feature onto a target the operator
+chooses, `rwv branch set-mode <W> feature --target <T>`, listing the
+candidates nearest first: every recorded branch but the gone target and the
+branches that land into the feature, which the rebind would refuse as a
+cycle. A sole candidate is named in the line; where none qualifies, the
+choice is `rwv branch set-mode <W> declared`.
 
 **The lineage rule.** A member holding work its receiving branch lacks moves
 only when that branch contains its base: the newest commit of its first-parent
@@ -111,7 +120,11 @@ remote holds, are pinned by the landing. A receiving branch that does not reach
 the target's pin refuses as `pin` `not on declared branch`. These, the
 receiving branch's own `push-branch` `diverged` and its checkout where the
 target is checked out are judged for moved members only; a member the landing
-does not move is left as it is.
+does not move is left as it is. Where the target is checked out, the edits
+there are judged in each repo the landing moves: the project repo, each
+receiving branch's checkout, and each member whose pin the landing changes,
+whose checkout aligning moves; `--continue` judges them again before it
+relocks.
 
 A target checked out in no workspace refuses as `target` `checked out
 nowhere`, naming `rwv workweave create <ww> --branch <T>`. A receiving branch
@@ -157,7 +170,8 @@ backup. `rwv abort` deletes a branch the landing created where it still sits
 where it was created and another branch reaches it.
 
 Another weave branch that lands into this one refuses as
-`target` `dependents`, one line per dependent, before anything moves.
+`target` `dependents`, one line per dependent, before anything moves. A
+declared branch, which lands nowhere, lists none.
 
 **A target that moved.** The fast-forward compares each branch against what
 was composed for it. A target or receiving branch that another verb moved
