@@ -1,6 +1,6 @@
 use crate::invariants::{LockSite, Mode, Record};
 use crate::runner::{
-    Claim, Defect, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
+    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
 };
 use crate::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
