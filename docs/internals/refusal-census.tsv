@@ -123,10 +123,10 @@ src/feature_sync.rs	pin not on declared branch	-	1
 src/feature_sync.rs	pin off lineage	-	2
 src/feature_sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
-src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	1
+src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	2
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
-src/feature_sync.rs	target dependents	-	2
+src/feature_sync.rs	target dependents	-	3
 src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
@@ -281,6 +281,7 @@ src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
 src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	2
+src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
 src/sync.rs	op-parked	-	6

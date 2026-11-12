@@ -1715,7 +1715,7 @@ fn integration_now(
         None => m.history,
     });
     let history =
-        crate::set_history::governing(recorded, sync.history, repo.is_some(), &scoped, vcs)
+        crate::set_history::governing(recorded, sync.history, repo.is_some(), scoped, vcs)
             .map_err(|judged| judged.refused())?;
     let in_range = crate::set_history::merge_in_range(vcs, dir, head, source)?;
     let (how, merged) = crate::set_history::integration(history, in_range);

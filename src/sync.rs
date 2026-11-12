@@ -2781,7 +2781,7 @@ impl OpContext<'_> {
             recorded,
             one_run,
             matches!(repo, RepoKey::Member(_)),
-            &scoped,
+            scoped,
             vcs,
         )
         .map_err(|judged| judged.refused())?;
