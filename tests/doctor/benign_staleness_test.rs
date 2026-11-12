@@ -1126,37 +1126,39 @@ fn run_printed(line: &str, dir: &Path) {
     );
 }
 
-/// Commits on another branch that no other branch holds are copied onto the
-/// expected branch by the printed choice, run line by line in the checkout:
-/// it switches there first, leaving the other branch holding them, and the
-/// landing then carries them.
+/// Commits on another branch that no other branch holds, with the expected
+/// branch checked out nowhere: no copy is printed, since it would run only
+/// after switching there; keeping the work on a branch, as printed, and
+/// aligning lands the expected branch, the work kept on both branches.
 #[test]
-fn stray_commits_copied_onto_the_expected_branch_as_printed_land() {
+fn stray_commits_with_the_expected_branch_checked_out_nowhere_are_kept_and_the_branch_lands() {
     let f = fixture();
     let branch = ephemeral_branch(&f);
     common::git_in(&f.ww.manifest_repo, &["switch", "-q", "-c", "wip"]);
     let work = commit_file(&f.ww.manifest_repo, "w.txt", "w\n", "ww: wip work");
     let out = land_refused(&f);
     let stderr = common::cli::refused(&out, State::AlignmentOnBranchWithStrayCommits);
-    let (at, run) = printed_choice(&stderr, "copy these commits onto");
-    assert_eq!(at, None, "{stderr}");
-    assert_eq!(run.len(), 3, "{stderr}");
-    assert!(run[0].contains(&format!("switch {branch}")), "{stderr}");
-    for line in &run {
-        run_printed(line, &f.ww.root);
-    }
-    assert_eq!(ephemeral_branch(&f), branch);
-    common::git_in(
-        &f.ww.manifest_repo,
-        &["merge-base", "--is-ancestor", &work, "wip"],
-    );
+    assert!(!stderr.contains("cherry-pick"), "{stderr}");
+    assert!(!stderr.contains(&format!("switch {branch}")), "{stderr}");
+    let (_, run) = printed_choice(&stderr, "keep this work on a branch");
+    let keep = run[0].replace("<name>", "kept").replace("<sha>", &work);
+    run_printed(&keep, &f.ww.root);
+    run_printed(&run[1], &f.ww.root);
     lands(&f, &[]);
-    let landed = common::git_in(&f.main.manifest_repo, &["log", "--format=%s", "-1"]);
-    assert_eq!(landed, "ww: wip work");
+    assert_eq!(ephemeral_branch(&f), branch);
+    for kept in ["kept", "wip"] {
+        assert_eq!(
+            common::git_in(&f.ww.manifest_repo, &["rev-parse", kept]),
+            work
+        );
+    }
 }
 
 /// Where the expected branch is checked out in another checkout, the copy
 /// runs there, and running it as printed puts the commits on that branch.
+/// The copies are new commits, so the checkout still holds commits no other
+/// branch reaches and the landing refuses as before: a known limit of the
+/// copy as the state's choice.
 #[test]
 fn stray_commits_are_copied_where_the_expected_branch_is_checked_out() {
     let f = fixture();
@@ -1178,6 +1180,8 @@ fn stray_commits_are_copied_where_the_expected_branch_is_checked_out() {
         common::git_in(&other, &["log", "--format=%s", "-1"]),
         "ww: wip work"
     );
+    let again = land_refused(&f);
+    common::cli::refused(&again, State::AlignmentOnBranchWithStrayCommits);
 }
 
 /// A source member detached at work diverged from its branch: no copy is

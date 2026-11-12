@@ -1252,7 +1252,7 @@ impl State {
                 refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
                              reports it; `rwv activate`, `rwv update` and `rwv pull` refuse it \
                              as `on branch` is refused",
-                offers: &[Form::C15OntoCheckedOut, Form::C15SwitchFirst, Form::C14Keep],
+                offers: &[Form::C15OntoCheckedOut, Form::C14Keep],
                 verb_offers: &[],
             },
             Self::AlignmentDetachedElsewhere => &StateRow {
@@ -2106,7 +2106,6 @@ pub enum Form {
     C15,
     C15AtCherryPick,
     C15OntoCheckedOut,
-    C15SwitchFirst,
     C16Switch,
     C16WorkweaveDelete,
     C16Raw,
@@ -2163,7 +2162,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 86] = [
+    pub const ALL: [Form; 85] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2204,7 +2203,6 @@ impl Form {
         Self::C15,
         Self::C15AtCherryPick,
         Self::C15OntoCheckedOut,
-        Self::C15SwitchFirst,
         Self::C16Switch,
         Self::C16WorkweaveDelete,
         Self::C16Raw,
@@ -2496,12 +2494,6 @@ impl Form {
                 choice: C::C15,
                 steps: &[Vcs(A::CherryPickOntoCheckedOut), Then(Self::C5Lock)],
                 at: W::WhereBranchCheckedOut,
-                shipped: true,
-            },
-            Self::C15SwitchFirst => &FormRow {
-                choice: C::C15,
-                steps: &[Vcs(A::SwitchTo), Vcs(A::CherryPick), Then(Self::C5Lock)],
-                at: W::Checkout,
                 shipped: true,
             },
             Self::C16Switch => &FormRow {
