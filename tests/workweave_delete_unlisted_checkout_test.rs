@@ -139,7 +139,7 @@ fn seat_with_a_stranded_dirty_checkout(weave: &Weave) -> PathBuf {
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
-    let pulled = run(&s1, &["sync", "primary"]);
+    let pulled = run(&s1, &["sync-to", "--strategy", "rebase"]);
     assert_eq!(
         pulled.status.code(),
         Some(1),
