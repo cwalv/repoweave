@@ -6607,7 +6607,7 @@ pub fn run_abort(
 
     let mut tally = AbortTally::default();
     let operates_in = match &reading {
-        op_state::OwnerReading::Whole(record) => Some(record.operates_in()),
+        op_state::OwnerReading::Whole(record) => record.operates_in(),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
 
@@ -6828,7 +6828,7 @@ fn restore_abort_workspace(
         }
         let someone_elses = match side {
             AbortSide::LandTarget => true,
-            AbortSide::Replay => operates_in.is_none_or(|ours| !ours.contains(&repo_key)),
+            AbortSide::Replay => operates_in.is_some_and(|ours| !ours.contains(&repo_key)),
         };
         if let (true, Some(stopped)) = (someone_elses, vcs.mid_op(&abs)) {
             let left_alone =

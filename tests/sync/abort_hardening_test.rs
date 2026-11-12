@@ -145,7 +145,7 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
 
 /// Plant a v2 owner record at the workspace root with the given op-id,
 /// phase, and per-repo converged_tips map (key → SHA). Mirrors the JSON
-/// `rwv abort` reads.
+/// `rwv abort` reads: a sync that takes in the project and the one member.
 fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips: &[(&str, &str)]) {
     let tips_json = converged_tips
         .iter()
@@ -156,10 +156,28 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         root = common::json_escaped(workspace),
+        take_in = sync_plan(),
     );
     std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
+}
+
+fn sync_plan() -> String {
+    let planned = repoweave::vcs::CommitId::parse(&"0".repeat(40)).unwrap();
+    let mut plan = repoweave::op_state::TakeInRecord {
+        sync_from: Some(repoweave::op_state::SyncFrom::Target("main".to_owned())),
+        ..Default::default()
+    };
+    for key in [
+        repoweave::manifest::RepoKey::Project,
+        repoweave::manifest::RepoKey::Member(
+            repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+        ),
+    ] {
+        plan.upstream_tips.insert(key, planned.clone());
+    }
+    serde_json::to_string(&plan).unwrap()
 }
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.

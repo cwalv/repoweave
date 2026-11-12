@@ -974,8 +974,13 @@ impl OwnerRecord {
     /// The repos of the workspace the op runs in where its own step can
     /// stop in a VCS operation (a rebase, merge or cherry-pick): the project
     /// repo, and each member it plans to integrate. A repo stopped in one
-    /// anywhere else is someone else's.
-    pub fn operates_in(&self) -> std::collections::BTreeSet<RepoKey> {
+    /// anywhere else is someone else's. `None` for a `pull` or `update
+    /// --remote`, whose record does not plan its members before it merges
+    /// them.
+    pub fn operates_in(&self) -> Option<std::collections::BTreeSet<RepoKey>> {
+        if matches!(self.verb, OpVerb::Pull | OpVerb::UpdateRemote) {
+            return None;
+        }
         let mut repos = std::collections::BTreeSet::from([RepoKey::Project]);
         if let Some(take_in) = &self.take_in {
             repos.extend(take_in.upstream_tips.keys().cloned());
@@ -990,7 +995,7 @@ impl OwnerRecord {
                 repos.extend(pick.members.iter().map(|m| m.repo.clone()));
             }
         }
-        repos
+        Some(repos)
     }
 
     /// The owner op-state file within `workspace_dir`.
