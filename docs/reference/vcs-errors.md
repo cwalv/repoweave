@@ -126,9 +126,9 @@ nothing on this path, so there is nothing to undo.
 ### `mid-operation`
 
 **Condition.** rwv was about to reposition a detached HEAD and found the
-repository stopped in the middle of a VCS operation: a rebase, merge or
-cherry-pick waiting on its conflict, or a bisect. `operation` names which, as
-`mid-rebase`, `mid-merge`, `mid-cherry-pick` or `mid-bisect`.
+repository stopped in the middle of a VCS operation: a rebase, merge,
+cherry-pick or revert waiting on its conflict or its commit, or a bisect. `operation` names which, as
+`mid-rebase`, `mid-merge`, `mid-cherry-pick`, `mid-revert` or `mid-bisect`.
 
 **What it means.** The repository holds operator state — a partly applied
 result, or a bisect's marks — that moving HEAD would lose. rwv stopped before

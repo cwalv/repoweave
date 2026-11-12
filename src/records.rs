@@ -526,7 +526,7 @@ pub enum WriteError {
     Judging(anyhow::Error),
 }
 
-/// The drop rule's judgement: of the names given, those whose branches are
+/// The drop rule's judgment: of the names given, those whose branches are
 /// gone. It is called at most once per attempt, with every candidate.
 pub type Droppable<'a> = &'a dyn Fn(&[String]) -> anyhow::Result<BTreeSet<String>>;
 
@@ -1216,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn the_drop_rule_is_judged_once_per_attempt_and_a_judgement_that_fails_fails_the_write() {
+    fn the_drop_rule_is_judged_once_per_attempt_and_a_judgment_that_fails_fails_the_write() {
         let (_tmp, dir) = store_repo();
         let vcs = crate::git::git_vcs();
         let store = Store::open(vcs.as_ref(), &dir).unwrap();

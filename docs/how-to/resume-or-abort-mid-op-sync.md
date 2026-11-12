@@ -10,7 +10,7 @@ rwv abort                 # roll back all involved workspaces to pre-op savepoin
 
 ## Inspect what is in flight
 
-`rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, or mid-cherry-pick (in `--json` output, `"mid_op": "<op>"`).
+`rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, mid-cherry-pick, mid-revert or mid-bisect (in `--json` output, `"mid_op": "<op>"`).
 
 For `rwv land`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace. `rwv abort` can be run from either workspace and rolls back both with the same verdict per repository; its lines for the other workspace's repositories carry a `[target]` prefix (run from the initiating workweave) or a `[source]` prefix (run from the target).
 
@@ -28,7 +28,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 |---|---|
 | Equal to the savepoint | `untouched` — the operation never moved this repository |
 | Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
-| Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation canceled and reset to the savepoint |
+| Mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
 | Anything else | `foreign-tip violation` — restore refused, the tip left in place and nothing written; op-state retained |
 
 A clean restore writes no ref: every tip `rwv abort` resets is a commit the operation made, so what it discards is the operation's own output. A refusal moves and writes nothing either.
