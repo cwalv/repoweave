@@ -21,10 +21,11 @@ together. Then, under an op record:
    - A member with no new work **follows** its merge source: by fast-forward,
      or, where the merge source lacks the member's tip, by moving to it after a
      backup.
-   - A member holding new work fast-forwards under `--strategy ff`, the
-     default, and is otherwise refused (`not-fast-forwardable`, naming
-     `--strategy rebase`). Under `--strategy rebase` its work is rebased onto
-     the merge source after a `rebased` backup. A range holding a merge commit
+   - A member holding new work — commits its merge source lacks — cannot
+     fast-forward: `--strategy ff`, the default, refuses it
+     (`not-fast-forwardable`, naming `--strategy rebase`), and
+     `--strategy rebase` rebases its work onto the merge source after a
+     `rebased` backup. A range holding a merge commit
      is never rebased, since the rebase would flatten it; the refusal names
      `rwv sync --from <target>`.
 2. **The project branch** takes in the target's tip the same way.
@@ -44,9 +45,10 @@ on that branch carry the same changes. A pin this clone lacks, where the rule
 must read it, is `pin` `unreachable`.
 
 **`--from <branch>`** merges the branch's history in for one run, whatever the
-strategy: each member that lacks the branch's pin merges it, then the project
-branch merges the branch, always as a merge commit with this branch's tip as
-first parent; a `--from` of the record's own target may fast-forward. On a
+strategy: each member that lacks the branch's pin merges it as a merge commit
+with this branch's tip as first parent (a `--from` of the record's own target
+may fast-forward instead), then the project branch takes the branch in, with the
+relock. On a
 declared branch, a member the named branch declares on another branch refuses
 (`pin` `not on declared branch`) until that branch is declared here.
 
