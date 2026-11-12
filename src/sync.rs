@@ -1622,7 +1622,8 @@ fn manifest_repo_failure_message(
                  To resolve each conflicted repo:\n\
                    cd <repo>\n\
                  {hint}\n\
-                   {resume}   # resume; already-converged repos are no-ops\n\
+                 then resume (repos already composed are left as they are):\n\
+                   {resume}\n\
                  \n\
                  If you'd rather roll everything back: `rwv abort`."
             )
@@ -1630,8 +1631,9 @@ fn manifest_repo_failure_message(
         None => format!(
             "sync hit failures in one or more member repos (see per-repo lines above).\n\
              \n\
-             Fix the underlying issue in each failed repo, then:\n\
-               {resume}   # resume; already-converged repos are no-ops\n\
+             Fix the underlying issue in each failed repo, then resume (repos already \
+             composed are left as they are):\n\
+               {resume}\n\
              \n\
              If you'd rather roll everything back: `rwv abort`."
         ),
@@ -1668,7 +1670,8 @@ fn phase1_or_phase3_failure_message(
                  Resolve the conflict in {repo_display}:\n\
                    cd {repo_display}\n\
                  {hint}\n\
-                   {resume}   # resume; already-converged repos are no-ops\n\
+                 then resume (repos already composed are left as they are):\n\
+                   {resume}\n\
                  \n\
                  If you'd rather roll everything back: `rwv abort`."
             )
@@ -1714,7 +1717,8 @@ fn per_conflict_bail_message(
          To resolve:\n\
            cd {repo_display}\n\
          {hint}\n\
-           {resume}   # resume; already-converged repos are no-ops\n\
+         then resume (repos already composed are left as they are):\n\
+           {resume}\n\
          \n\
          If you'd rather roll everything back: `rwv abort`."
     )

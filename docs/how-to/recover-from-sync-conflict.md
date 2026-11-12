@@ -31,7 +31,8 @@ To resolve each conflicted repo:
 cd <repo>
   # edit conflicted files
   git add <files>
-rwv sync --continue   # resume; already-converged repos are no-ops
+then resume (repos already composed are left as they are):
+rwv sync --continue
 
 If you'd rather roll everything back: `rwv abort`.
 

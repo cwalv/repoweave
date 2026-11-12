@@ -11826,7 +11826,7 @@ pub fn landing_merge_continued_writes_one_project_merge() -> Scenario {
     steps.extend([
         Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
         Step::git(&ww("w"), Repo::App, &["add", "README"]),
-        Step::rwv(&ww("w"), &["land", "--continue"]).expect(Exit::Succeeds),
+        Step::rwv_printed(&ww("w"), "rwv land --continue").expect(Exit::Succeeds),
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main^1"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLine("readme-main")),
