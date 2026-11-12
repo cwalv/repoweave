@@ -200,9 +200,27 @@ pub fn cross_repo_pr_fork() -> Scenario {
             .pushes(Remote::origin(Repo::Proj), "feat-x")
             .may_leave_unresolved(&[Repo::App, Repo::Lib])
             .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                remote: Remote::fork(Repo::App),
+                branch: "feat-x",
+                mark: "pr-app",
+            })
+            .claim(Claim::RemoteContains {
+                remote: Remote::fork(Repo::Lib),
+                branch: "feat-x",
+                mark: "pr-lib",
+            })
             .claim(Claim::RemoteLacks {
                 repo: Repo::App,
                 branch: "feat-x",
+            })
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Lib,
+                branch: "feat-x",
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-x",
+                record: feat_x_record(),
             }),
     );
     Scenario {
