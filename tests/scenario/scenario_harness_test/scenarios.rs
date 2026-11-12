@@ -11070,6 +11070,29 @@ pub fn history_unset_fast_forward() -> Scenario {
     )
 }
 
+/// `history-unset-behind`: a seat that landed, then fell behind as another
+/// seat landed, retires into a target recording no setting: its branches are
+/// only behind the target, so nothing needs a setting.
+pub fn history_unset_retire_behind() -> Scenario {
+    scenario(
+        "history: unset, a landed seat retires behind the target",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            create("v"),
+            Step::commit(&ww("v"), Repo::App, "v-app"),
+            Step::rwv(&ww("v"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("v"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history unset"))
+                .claim(Claim::WorkweaveGone(ww("w"))),
+        ],
+    )
+}
+
 /// `history-unset-moved`: a target recording no setting that moved refuses
 /// the landing, naming `set-history` in a workspace on the target and
 /// `--history`; `--history` lands once and records nothing.

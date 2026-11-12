@@ -1947,7 +1947,8 @@ struct Composing<'a> {
 }
 
 /// How a repo lands: by a fast-forward of its receiving branch, which reads no
-/// setting where the receiving tip sits on the source's first-parent chain,
+/// setting where the source is behind the receiving tip (nothing lands) or
+/// the receiving tip sits on the source's first-parent chain,
 /// or composed first, with the merge its range holds where that makes a
 /// rebasing setting merge. A source that holds the receiving tip only through
 /// a merge's second parent lands by a merge commit under every setting, so
@@ -1975,6 +1976,9 @@ impl Composing<'_> {
             head,
             onto,
         } = *self;
+        if vcs.is_ancestor(dir, &rev(head), &rev(onto))? {
+            return Ok(Composed::FastForward);
+        }
         let contained = vcs.is_ancestor(dir, &rev(onto), &rev(head))?;
         if contained && vcs.first_parent_chain(dir, head)?.contains(onto) {
             return Ok(Composed::FastForward);

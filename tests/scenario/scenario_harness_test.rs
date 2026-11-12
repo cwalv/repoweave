@@ -711,6 +711,7 @@ every_scenario!(
     landing_names_every_field,
     history_unset_fast_forward,
     history_unset_moved,
+    history_unset_retire_behind,
     history_contradicted,
     history_linear_landing,
     history_ff_only,
@@ -4414,6 +4415,11 @@ fn land_names_a_member_composing_cannot_materialize_scenario() {
 #[test]
 fn history_unset_fast_forward_is_green() {
     runner::run(scenarios::history_unset_fast_forward()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_unset_retire_behind_is_green() {
+    runner::run(scenarios::history_unset_retire_behind()).assert_fully_decided_green();
 }
 
 #[test]
