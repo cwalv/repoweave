@@ -4829,10 +4829,10 @@ pub fn sync_writes_no_record() -> Scenario {
     scenario("sync writes no record", steps)
 }
 
-/// waiver-own-lock: a raw merge into `feat-w` keeps its own lock and leaves
-/// `w2`'s `app` commit unjoined, which `push` refuses; `sync
-/// --reset-to-target` then re-pins `app` backward by name in sync's own lock
-/// commit, to `main`'s pin, which lacks that commit, and the push passes
+/// waiver-own-lock: a raw merge into `feat-w`, its lock resolved by hand to
+/// its own side, leaves `w2`'s `app` commit unjoined, which `push` refuses;
+/// `sync --reset-to-target` then re-pins `app` backward by name in sync's own
+/// lock commit, to `main`'s pin, which lacks that commit, and the push passes
 /// listing the merge it waived and the verb that waived it.
 pub fn waiver_own_lock() -> Scenario {
     let app = Repo::App.rel_path();
@@ -4857,7 +4857,11 @@ pub fn waiver_own_lock() -> Scenario {
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::commit(&ww("w2"), Repo::App, "w2-app"),
             Step::rwv(&ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "proj--w2"]),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "proj--w2"])
+                .expect(Exit::Code(1)),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.lock"]),
+            Step::git(&ww("w"), Repo::Proj, &["add", "rwv.lock"]),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "--no-edit"]),
             publishes_records(Step::rwv(&ww("w"), &["push"]))
                 .pushes(Remote::origin(Repo::App), "feat-w")
                 .expect(Exit::refuses(Repo::App, State::PinUnmerged))
