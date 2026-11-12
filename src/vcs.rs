@@ -325,6 +325,23 @@ pub struct CommitSummary {
     pub subject: String,
 }
 
+/// What a branch's unlanded commits are equivalent to on the branch they
+/// land on: each commit with an equivalent there, paired with it, the
+/// commits with none, and the commit that carries their whole change as one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PatchEquivalents {
+    pub matched: Vec<(CommitId, CommitId)>,
+    pub unmatched: Vec<CommitId>,
+    pub combined: Option<CommitId>,
+}
+
+impl PatchEquivalents {
+    /// Whether the backend found anything to name.
+    pub fn names_any(&self) -> bool {
+        !self.matched.is_empty() || self.combined.is_some()
+    }
+}
+
 /// A key and value a commit records beside its message, read back by key
 /// with [`Vcs::annotation_values`]. The value holds no line break.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3704,6 +3721,51 @@ pub trait Vcs: Send + Sync {
         tip: &ResolvedRevisionId,
         base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError>;
+
+    /// The commits `tip` reaches that none of `excluding` reaches, newest
+    /// first; with `superseded`, none that a superseded tip reaches either.
+    ///
+    /// For git: `git log <tip> --not <excluding>... [--glob=refs/rwv/superseded/*]`.
+    fn commits_excluding(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        excluding: &[CommitId],
+        superseded: bool,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
+
+    /// `tip` and its first parents back to the root, newest first.
+    ///
+    /// For git: `git rev-list --first-parent <tip>`.
+    fn first_parent_chain(&self, repo: &Path, tip: &CommitId) -> Result<Vec<CommitId>, VcsError>;
+
+    /// Every commit `tip` reaches, through any parent, whose content of
+    /// `path` differs from one of its parents', or that adds it, newest
+    /// first: the commits that hold each version of the file `tip`'s history
+    /// has held.
+    ///
+    /// For git: `git rev-list --full-history <tip> -- <path>`.
+    fn commits_changing(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        path: &str,
+    ) -> Result<Vec<CommitId>, VcsError>;
+
+    /// Which of `unlanded`'s commits carry a change equivalent to a commit
+    /// `onto` holds beyond their merge-base, commit by commit, and which
+    /// commit holds their combined change; `None` where the backend cannot
+    /// tell.
+    ///
+    /// For git: patch ids, `git cherry <onto> <unlanded>` and the patch id of
+    /// the combined diff from the merge-base against each commit of
+    /// `<merge-base>..<onto>`.
+    fn patch_equivalents(
+        &self,
+        repo: &Path,
+        unlanded: &CommitId,
+        onto: &CommitId,
+    ) -> Option<PatchEquivalents>;
 
     /// Produce the unified diff of what `repo`'s HEAD adds beyond `base`,
     /// anchored at the COMMON ANCESTOR of HEAD and `base`.

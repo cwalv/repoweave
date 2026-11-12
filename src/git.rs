@@ -8,7 +8,7 @@ use crate::vcs::{
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond,
     DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
-    LocalRefName, MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef,
+    LocalRefName, MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PinOutcome, PruningFetch, PublishRef,
     RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl,
     RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune,
     RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
@@ -3812,6 +3812,116 @@ impl Vcs for GitVcs {
         base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
         Self::log_range(repo, base.id(), tip.id(), None)
+    }
+
+    fn commits_excluding(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        excluding: &[CommitId],
+        superseded: bool,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        let glob = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let mut args = vec![
+            "log",
+            "--pretty=format:%H%x00%s",
+            tip.id().as_str(),
+            "--not",
+        ];
+        args.extend(excluding.iter().map(CommitId::as_str));
+        if superseded {
+            args.push(glob.as_str());
+        }
+        args.push("--");
+        Self::run_trimmed(&args[..], repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (id, subject) = line.split_once('\0').unwrap_or((line, ""));
+                Ok(CommitSummary {
+                    id: commit_id_printed(id, &args[..], repo)?,
+                    subject: subject.to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    fn first_parent_chain(&self, repo: &Path, tip: &CommitId) -> Result<Vec<CommitId>, VcsError> {
+        let args = ["rev-list", "--first-parent", tip.as_str()];
+        Self::run_trimmed(args, repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|id| commit_id_printed(id, &args, repo))
+            .collect()
+    }
+
+    fn commits_changing(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        path: &str,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        let args = ["rev-list", "--full-history", tip.as_str(), "--", path];
+        Self::run_trimmed(args, repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|id| commit_id_printed(id, &args, repo))
+            .collect()
+    }
+
+    fn patch_equivalents(
+        &self,
+        repo: &Path,
+        unlanded: &CommitId,
+        onto: &CommitId,
+    ) -> Option<PatchEquivalents> {
+        let base = Self::merge_base(repo, unlanded, onto).ok()?;
+        let mut found = PatchEquivalents::default();
+        let cherry = Self::run_trimmed(["cherry", onto.as_str(), unlanded.as_str()], repo).ok()?;
+        let upstream_ids = |range: &str| -> Option<Vec<(String, CommitId)>> {
+            let log = Self::run(["log", "-p", "--no-color", "--first-parent", range], repo).ok()?;
+            let ids = Self::run_with_stdin(["patch-id", "--stable"], repo, log.as_bytes()).ok()?;
+            ids.lines()
+                .filter_map(|line| line.split_once(' '))
+                .map(|(patch, commit)| Some((patch.to_owned(), CommitId::parse(commit).ok()?)))
+                .collect()
+        };
+        let on_onto = upstream_ids(&format!("{base}..{onto}"))?;
+        let mine = upstream_ids(&format!("{base}..{unlanded}"))?;
+        for line in cherry.lines() {
+            let Some((mark, id)) = line.split_once(' ') else {
+                continue;
+            };
+            let id = CommitId::parse(id).ok()?;
+            match mark {
+                "-" => {
+                    let patch = mine.iter().find(|(_, c)| *c == id).map(|(p, _)| p);
+                    let twin = patch
+                        .and_then(|patch| on_onto.iter().find(|(p, _)| p == patch))
+                        .map(|(_, c)| c.clone());
+                    if let Some(twin) = twin {
+                        found.matched.push((id, twin));
+                    }
+                }
+                _ => found.unmatched.push(id),
+            }
+        }
+        let combined = Self::run(
+            ["diff", "--no-color", base.as_str(), unlanded.as_str()],
+            repo,
+        )
+        .ok()?;
+        if !combined.trim().is_empty() {
+            let id =
+                Self::run_with_stdin(["patch-id", "--stable"], repo, combined.as_bytes()).ok()?;
+            if let Some(patch) = id.split_whitespace().next() {
+                found.combined = on_onto
+                    .iter()
+                    .find(|(p, _)| p == patch)
+                    .map(|(_, c)| c.clone());
+            }
+        }
+        Some(found)
     }
 
     fn diff_beyond(&self, repo: &Path, base: &ResolvedRevisionId) -> Result<DiffBeyond, VcsError> {

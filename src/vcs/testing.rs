@@ -1129,6 +1129,38 @@ impl Vcs for FakeVcs {
         unsupported("commits_beyond")
     }
 
+    fn commits_excluding(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _excluding: &[CommitId],
+        _superseded: bool,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        unsupported("commits_excluding")
+    }
+
+    fn first_parent_chain(&self, _repo: &Path, _tip: &CommitId) -> Result<Vec<CommitId>, VcsError> {
+        unsupported("first_parent_chain")
+    }
+
+    fn commits_changing(
+        &self,
+        _repo: &Path,
+        _tip: &CommitId,
+        _path: &str,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        unsupported("commits_changing")
+    }
+
+    fn patch_equivalents(
+        &self,
+        _repo: &Path,
+        _unlanded: &CommitId,
+        _onto: &CommitId,
+    ) -> Option<crate::vcs::PatchEquivalents> {
+        None
+    }
+
     fn diff_beyond(
         &self,
         _repo: &Path,
