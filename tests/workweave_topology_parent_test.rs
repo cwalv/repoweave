@@ -604,7 +604,7 @@ fn continuing_a_parked_retire_refuses_records_that_disagree() {
         "{{\"id\": \"planted-retire-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
     );

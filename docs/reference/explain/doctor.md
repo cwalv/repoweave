@@ -1065,28 +1065,6 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "The SHA pinned in `rwv.lock` is absent from the clone's object store. The canonical store is missing the pinned revision; refresh it from its remote (run a fetch — not a sync — to recover). Error severity; report-only.",
-          "type": "object",
-          "required": [
-            "lock-sha-unreachable"
-          ],
-          "properties": {
-            "lock-sha-unreachable": {
-              "type": "object",
-              "required": [
-                "sha"
-              ],
-              "properties": {
-                "sha": {
-                  "description": "The SHA pinned in `rwv.lock` that cannot be found locally.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
           "description": "The manifest key disagrees with `placement(entry.url)` — the path the entry's own URL derives to under the canonical layout. Warning severity; report-only.\n\nExempt by role rather than by survey: `reference` entries may point at a mirror on purpose (the same exemption `OriginUrlMismatch` already carries), and `fork` entries may key on the upstream's coordinates while the URL names the fork (`docs/reference/roles.md` §`fork`, \"The path may name either\"). Neither role reaches this variant at all — the scan skips them before deriving `expected_path`.",
           "type": "object",
           "required": [
