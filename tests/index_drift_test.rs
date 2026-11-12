@@ -7,7 +7,7 @@
 //!   3. Live staged changes not fixed
 //!   4. Sync post-condition refresh
 //!   5. Reachable-tree guard (non-reachable tree not touched)
-//!   6. Tag-form lock pin (sync precondition tag-deref regression guard)
+//!   6. Tag-form lock pin (sync-to precondition tag-deref regression guard)
 //!
 //! # How stale-index drift is simulated
 //!
@@ -320,10 +320,10 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
 // Test 4: Sync post-condition refresh
 // ---------------------------------------------------------------------------
 
-/// After `rwv sync`, if the workweave's server repo had a stale index before
-/// the sync (from a shared-ref advance), the index should be clean afterward.
+/// After `rwv sync-to`, if the workweave's server repo had a stale index before
+/// the landing (from a shared-ref advance), the index should be clean afterward.
 #[test]
-fn sync_post_refresh_clears_stale_index() {
+fn sync_to_post_refresh_clears_stale_index() {
     let tmp = common::tempdir().unwrap();
 
     // --- Primary workspace ---
@@ -366,11 +366,11 @@ fn sync_post_refresh_clears_stale_index() {
             "worktree",
             "add",
             "-b",
-            "ww/project",
+            "ww/main",
             &project_ww.to_string_lossy(),
         ],
     );
-    common::record_feature(&project_primary, "ww/project", "main");
+    common::record_feature(&project_primary, "ww/main", "main");
     // The ww project worktree inherits the already-committed rwv.lock@c1 from
     // project_primary. No additional commit needed — the lock already matches HEAD.
 
@@ -394,10 +394,7 @@ fn sync_post_refresh_clears_stale_index() {
 
     // Mirror the lock advance into the workweave's own project worktree so
     // that the workweave's lock matches the workweave's tip after we advance
-    // the server ref below. Without this, sync's CWD-lock-freshness
-    // precondition (which reads the workweave's own committed lock)
-    // would fail before reaching the
-    // post-refresh path this test is exercising.
+    // the server ref below; the landing's freshness precondition reads it.
     common::fixture_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&project_ww, &["add", "rwv.lock"]);
     common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
@@ -405,7 +402,7 @@ fn sync_post_refresh_clears_stale_index() {
     // Advance the workweave's server branch ref to C2 (stale-index setup).
     advance_ww_branch(&server_primary, "ww/main", &c2);
 
-    // Verify stale before sync.
+    // Verify stale before the landing.
     let diff_before = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&server_ww)
@@ -413,17 +410,16 @@ fn sync_post_refresh_clears_stale_index() {
         .unwrap();
     assert!(
         !diff_before.stdout.is_empty(),
-        "workweave index should be stale before sync"
+        "workweave index should be stale before the landing"
     );
 
-    // Sync from primary to workweave. Both sides committed independent lock
-    // advances above (so each side's lock-freshness check passes), which
-    // diverges the project repos; --discard-local-commits is required to
-    // bypass the Phase 1 ancestor precondition. The test's focus is the
-    // Phase 2 post-refresh.
+    // Both sides committed independent lock advances above (so each side's
+    // lock-freshness check passes), which diverges the project repos;
+    // --discard-local-commits is required to bypass the ancestor
+    // precondition. The test's focus is the post-refresh.
     rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary_root.to_string_lossy(),
             "--discard-local-commits",
         ])
@@ -441,7 +437,7 @@ fn sync_post_refresh_clears_stale_index() {
         .unwrap();
     assert!(
         diff_after.success(),
-        "workweave index should match HEAD after sync"
+        "workweave index should match HEAD after sync-to"
     );
 }
 
@@ -484,14 +480,14 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: Tag-form lock pin (sync precondition tag-deref regression guard)
+// Test 6: Tag-form lock pin (sync-to precondition tag-deref regression guard)
 // ---------------------------------------------------------------------------
 
 /// Source lock is pinned by a tag name (e.g., `v1.0.0`) whose commit matches
-/// HEAD. `rwv sync` must NOT falsely report "source lock is stale".
-/// This is the regression guard for the sync tag-drift companion fix.
+/// HEAD. `rwv sync-to` into it must NOT falsely report "lock is stale".
+/// This is the regression guard for the tag-drift companion fix.
 #[test]
-fn sync_precondition_accepts_tag_form_lock_entry() {
+fn sync_to_precondition_accepts_tag_form_lock_entry() {
     let tmp = common::tempdir().unwrap();
 
     // Source workspace: server at tag v1.0.0, lock records the tag name.
@@ -547,9 +543,9 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     common::git_in(&project_cwd, &["add", "rwv.lock"]);
     common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
-    // rwv sync from source (tag-pinned lock) must not emit "source lock is stale".
+    // rwv sync-to the source (tag-pinned lock) must not emit "lock is stale".
     let out = rwv()
-        .args(["sync", &source_root.to_string_lossy()])
+        .args(["sync-to", &source_root.to_string_lossy()])
         .current_dir(&cwd_root)
         .assert();
 
@@ -557,7 +553,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("lock is stale"),
-        "rwv sync must not falsely report 'lock is stale' for a tag-pinned source lock; \
+        "rwv sync-to must not falsely report 'lock is stale' for a tag-pinned target lock; \
          stderr: {stderr}"
     );
 }
