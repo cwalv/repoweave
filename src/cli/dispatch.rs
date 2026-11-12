@@ -757,9 +757,7 @@ pub fn run() -> anyhow::Result<()> {
                 let activation = activate::ActivateOptions { no_materialize };
                 let settings = add_remove::NewMemberSettings {
                     role,
-                    recurse_submodules: crate::manifest::SubmoduleRecursion::from(
-                        !no_recurse_submodules,
-                    ),
+                    no_recurse_submodules,
                 };
                 if new {
                     let mut request =

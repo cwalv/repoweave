@@ -648,9 +648,9 @@ pub enum MemberAction {
         /// existing clone; with --new, a creation address: a bare registry
         /// name, or `registry/owner/repo`
         url: String,
-        /// Role for the repo
-        #[arg(long, default_value_t = manifest::Role::Owned, value_enum)]
-        role: manifest::Role,
+        /// Role for the repo (`owned` when not given)
+        #[arg(long, value_enum)]
+        role: Option<manifest::Role>,
         /// Create a new repo instead of cloning: the argument is a creation
         /// address, not a URL or path
         #[arg(long, conflicts_with = "adopt")]

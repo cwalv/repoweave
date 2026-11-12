@@ -9,6 +9,49 @@ use crate::refusal::RefusalKind;
 use crate::vcs::vcs_for;
 use crate::workspace::WorkspaceContext;
 use anyhow::Context;
+use std::collections::BTreeSet;
+
+/// Commit `apply` to `repo_path`'s entry as HEAD has it, with what the
+/// verb's regeneration rewrote and nothing else the project repo holds
+/// uncommitted.
+fn commit_entry(
+    ctx: &WorkspaceContext,
+    project: &crate::manifest::ProjectName,
+    project_dir: &std::path::Path,
+    repo_path: &RepoPath,
+    apply: impl Fn(&mut crate::manifest::RepoEntry),
+    message: String,
+) -> anyhow::Result<()> {
+    let on_disk = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let authored: BTreeSet<String> =
+        crate::activate::owned_paths(ctx.active_path(), project, &on_disk);
+    let member = repo_path.clone();
+    let edit = move |manifest: &mut Manifest| {
+        if let Some(mut entry) = manifest.get_entry(&member).cloned() {
+            apply(&mut entry);
+            manifest.insert_repo(member.clone(), entry);
+        }
+    };
+    crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
+        project,
+        project_dir,
+        edit_manifest: &edit,
+        edit_lock: None,
+        authored: &authored,
+        message: &message,
+    })?;
+    Ok(())
+}
+
+fn judge_commit(
+    ctx: &WorkspaceContext,
+    project: &crate::manifest::ProjectName,
+    project_dir: &std::path::Path,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    let authored = crate::activate::owned_paths(ctx.active_path(), project, manifest);
+    crate::manifest_commit::judge(project, project_dir, &authored)
+}
 
 /// Execute `rwv member set-role <repo> <role>`.
 ///
@@ -44,6 +87,7 @@ pub fn run_set_role(
         );
     };
     let was = entry.role;
+    judge_commit(ctx, &project, &project_dir, &manifest)?;
     let vcs = vcs_for(entry.vcs_type);
     let member = ctx.active_path().join(repo_path.as_path());
     let checked_out = !member.is_symlink() && vcs.is_repo(&member);
@@ -72,6 +116,14 @@ pub fn run_set_role(
         } else {
             0
         };
+        commit_entry(
+            ctx,
+            &project,
+            &project_dir,
+            &repo_path,
+            |entry| entry.role = role,
+            format!("member set-role {repo_path} {role}\n\n  - {repo_path}: role {role}"),
+        )?;
         if changed == 0 {
             eprintln!("'{repo_path}' is already {role}; nothing to change");
         } else {
@@ -98,8 +150,21 @@ pub fn run_set_role(
             }),
         _ => Ok(()),
     };
+    let committed = if landed.is_ok() || on_disk == Some(role) {
+        commit_entry(
+            ctx,
+            &project,
+            &project_dir,
+            &repo_path,
+            |entry| entry.role = role,
+            format!("member set-role {repo_path} {role}\n\n  - {repo_path}: role {was} -> {role}"),
+        )
+    } else {
+        Ok(())
+    };
     landed?;
     settled?;
+    committed?;
     eprintln!("Changed the role of '{repo_path}' from {was} to {role}");
     Ok(())
 }
@@ -135,15 +200,45 @@ pub fn run_set_recurse_submodules(
     };
     let was = entry.recurse_submodules;
     let recurse = bool::from(recursion);
+    judge_commit(ctx, &project, &project_dir, &manifest)?;
     if was == recursion {
         settle_manifest(ctx, &project, None, &[], opts)?;
+        commit_entry(
+            ctx,
+            &project,
+            &project_dir,
+            &repo_path,
+            |entry| entry.recurse_submodules = recursion,
+            format!(
+                "member set-recurse-submodules {repo_path} {recurse}\n\n  - {repo_path}: \
+                 recurse-submodules {recurse}"
+            ),
+        )?;
         eprintln!("'{repo_path}' already has recurse-submodules = {recurse}; nothing to change");
         return Ok(());
     }
 
     entry.recurse_submodules = recursion;
     manifest.insert_repo(repo_path.clone(), entry);
-    settle_manifest(ctx, &project, Some(&manifest), &[], opts)?;
+    let landed = settle_manifest(ctx, &project, Some(&manifest), &[], opts);
+    let on_disk = Manifest::from_path(&manifest_path)
+        .ok()
+        .and_then(|m| m.get_entry(&repo_path).map(|e| e.recurse_submodules));
+    if landed.is_ok() || on_disk == Some(recursion) {
+        commit_entry(
+            ctx,
+            &project,
+            &project_dir,
+            &repo_path,
+            |entry| entry.recurse_submodules = recursion,
+            format!(
+                "member set-recurse-submodules {repo_path} {recurse}\n\n  - {repo_path}: \
+                 recurse-submodules {} -> {recurse}",
+                bool::from(was)
+            ),
+        )?;
+    }
+    landed?;
     eprintln!(
         "Changed recurse-submodules of '{repo_path}' from {} to {recurse}",
         bool::from(was)

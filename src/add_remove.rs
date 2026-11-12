@@ -249,8 +249,41 @@ pub(crate) fn settle_manifest(
 /// from.
 #[derive(Debug, Clone, Copy)]
 pub struct NewMemberSettings {
-    pub role: Role,
-    pub recurse_submodules: SubmoduleRecursion,
+    pub role: Option<Role>,
+    pub no_recurse_submodules: bool,
+}
+
+impl NewMemberSettings {
+    fn role(self) -> Role {
+        self.role.unwrap_or(Role::Owned)
+    }
+
+    fn recurse(self) -> SubmoduleRecursion {
+        SubmoduleRecursion::from(!self.no_recurse_submodules)
+    }
+
+    /// Refuse a flag that disagrees with the entry the manifest already holds:
+    /// an add of a registered member changes nothing in its entry, so a flag
+    /// that asks for a change would be ignored.
+    fn refuse_if_disagrees(self, existing: &RepoEntry, repo_path: &RepoPath) -> anyhow::Result<()> {
+        if let Some(role) = self.role.filter(|role| *role != existing.role) {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "rwv member add: '{repo_path}' is already a member with the role {}; --role {role} \
+                 would change nothing here. `rwv member set-role {repo_path} {role}` changes it",
+                existing.role
+            );
+        }
+        if self.no_recurse_submodules && existing.recurse_submodules != SubmoduleRecursion::Skip {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "rwv member add: '{repo_path}' is already a member that recurses into its \
+                 submodules; --no-recurse-submodules would change nothing here. `rwv member \
+                 set-recurse-submodules {repo_path} false` changes it"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Execute `rwv member add URL [--role=ROLE]`.
@@ -263,10 +296,7 @@ pub fn run_add(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let NewMemberSettings {
-        role,
-        recurse_submodules,
-    } = settings;
+    let (role, recurse_submodules) = (settings.role(), settings.recurse());
     let parsed_url: RepoUrl = url.parse()?;
     let repo_path = match crate::registry::placement_result(&parsed_url) {
         Ok(repo_path) => repo_path,
@@ -319,6 +349,7 @@ pub fn run_add(
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
+        settings.refuse_if_disagrees(existing, &repo_path)?;
         let declared = resolve_to_clone_info(&existing.url)?.url;
         if !declared.names_same_remote(&clone_url) {
             let remove = format!("`rwv member remove {repo_path} --delete`");
@@ -750,10 +781,7 @@ pub fn run_add_adopt(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let NewMemberSettings {
-        role,
-        recurse_submodules,
-    } = settings;
+    let (role, recurse_submodules) = (settings.role(), settings.recurse());
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
@@ -1136,10 +1164,7 @@ fn run_add_from_local_path(
     settings: NewMemberSettings,
     manifest_path: &Path,
 ) -> anyhow::Result<Option<(Manifest, CloneUrl)>> {
-    let NewMemberSettings {
-        role,
-        recurse_submodules,
-    } = settings;
+    let (role, recurse_submodules) = (settings.role(), settings.recurse());
     let remotes = recorded_remotes(vcs, clone_dir).with_context(|| {
         format!(
             "could not determine the remotes of '{}'",
@@ -1186,7 +1211,8 @@ fn run_add_from_local_path(
     let mut manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.contains_repo(repo_path) {
+    if let Some(existing) = manifest.get_entry(repo_path) {
+        settings.refuse_if_disagrees(existing, repo_path)?;
         announce_already_registered(repo_path);
         return Ok(None);
     }
@@ -1327,13 +1353,20 @@ pub fn run_remove(
         Some(plan) if plan.removes_anything() => std::slice::from_ref(&repo_path),
         _ => &[],
     };
-    settle_manifest(
+    let authored = crate::activate::owned_paths(ctx.active_path(), &project, &manifest);
+    crate::manifest_commit::judge(&project, &project_dir, &authored)?;
+    let settled = settle_manifest(
         ctx,
         &project,
         removed.is_some().then_some(&manifest),
         departing,
         opts,
-    )?;
+    );
+    let on_disk = Manifest::from_path(&manifest_path).ok();
+    if on_disk.is_some_and(|m| !m.contains_repo(&repo_path)) {
+        commit_removal(ctx, &project, &project_dir, &repo_path)?;
+    }
+    settled?;
 
     if removed.is_some() {
         eprintln!("Removed '{}' from manifest", repo_path.as_str());
@@ -1353,6 +1386,41 @@ pub fn run_remove(
         }
     }
 
+    Ok(())
+}
+
+/// Commit the removal of `repo_path`: its entry, its pin, and what the
+/// regeneration without it rewrote.
+fn commit_removal(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    repo_path: &RepoPath,
+) -> anyhow::Result<()> {
+    let on_disk = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let authored = crate::activate::owned_paths(ctx.active_path(), project, &on_disk);
+    let lock_path = LockFile::path_in(project_dir);
+    if let Some(mut lock) = crate::lock::read_old_lock(&lock_path, "member remove") {
+        if lock.repositories.remove(repo_path).is_some() {
+            crate::lock::write_lock_in(&lock, project_dir)?;
+        }
+    }
+    let member = repo_path.clone();
+    let edit_manifest = move |manifest: &mut Manifest| {
+        manifest.remove_repo(&member);
+    };
+    let member = repo_path.clone();
+    let edit_lock = move |lock: &mut LockFile| {
+        lock.repositories.remove(&member);
+    };
+    crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
+        project,
+        project_dir,
+        edit_manifest: &edit_manifest,
+        edit_lock: Some(&edit_lock),
+        authored: &authored,
+        message: &format!("member remove {repo_path}\n\n  - {repo_path}: removed"),
+    })?;
     Ok(())
 }
 
@@ -1647,10 +1715,7 @@ pub fn run_add_new(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let NewMemberSettings {
-        role,
-        recurse_submodules,
-    } = settings;
+    let (role, recurse_submodules) = (settings.role(), settings.recurse());
     // `rwv member add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
