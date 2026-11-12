@@ -38,13 +38,15 @@ If you'd rather roll everything back: `rwv abort`.
 rwv explain op-parked
 ```
 
-`--continue` reads all original parameters — source or target, `--strategy`, `--retire`, and any consent flags — from the saved op-state record. Do not pass the original flags again alongside `--continue`; any other flag is rejected as a usage error (exit 2), except `--project`, which must name the project the op started for, and `--json` on `rwv sync-to`.
+`rwv sync` stops on a conflict with one message naming the repo, the checkout and the branch it was taking in, the backend's hint up to staging, and `rwv sync --continue` or `rwv abort`; the output above is `rwv sync-to`'s.
+
+`--continue` reads all original parameters — the branch taken in or the target, `--strategy`, `--reset-to-target`, `--retire`, and any consent flags — from the saved op-state record. Do not pass the original flags again alongside `--continue`; any other flag is rejected as a usage error (exit 2), except `--project`, which must name the project the op started for, and `--json` on `rwv sync-to`.
 
 If you step through a multi-commit rebase manually with `git rebase --continue`, the repository's `merge.rwv-ours.driver` configuration keeps `rwv.lock` conflict-free across picks. Once the manual rebase finishes, run `rwv sync --continue` (or `rwv sync-to --continue`) so `rwv` regenerates `rwv.lock` and clears the op-state record.
 
 ## Common conflict cases
 
-- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is excluded during replay and regenerated at the end.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`.
+- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is recorded again once every repo has taken in.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`.
 - **Member repo conflict:** A member repo's branch has a textual conflict against the incoming target revision. Resolve the conflicted files in that member checkout, run `git add`, and resume with `--continue`.
 - **`rwv sync-to --retire` conflict:** When `--retire` hits a conflict, the workweave is preserved so you can resolve it. After staging fixes, run bare `rwv sync-to --continue` — `--retire` is remembered in op-state and runs automatically once the sync finishes.
 

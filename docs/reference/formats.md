@@ -171,7 +171,7 @@ Written by `rwv lock`, `rwv member add`, `rwv member pin` and `rwv update --remo
 
 An older or hand-edited lock may still carry an entry pinned by a tag or branch name. Verbs that read the lock resolve it to wherever the name points now. `rwv clone`, `rwv update` and `rwv sync` warn, naming the entry; `rwv status` marks it and `rwv doctor` reports it as [`lock-pinned-by-name`](./doctor-findings.md#lock-pinned-by-name), in `--json` too. The next `rwv lock`, or a sync's relock, records the commit id.
 
-`rwv.lock` is derived state. Do not hand-edit; it is recorded by `rwv lock` and the verbs that name a commit, and by `rwv sync` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
+`rwv.lock` is derived state. Do not hand-edit; it is recorded by `rwv lock` and the verbs that name a commit, by `rwv sync`, and by `rwv sync-to` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
 
 `sha256sum rwv.lock` is the project fingerprint — two locks with the same checksum pin the same commit of every repo. They are pins, not a description of the checkouts: a working tree whose HEAD has moved past its lock reads the same checksum, and `rwv status` or `rwv doctor --locked` is what compares the two.
 

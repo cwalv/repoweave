@@ -59,7 +59,8 @@ flowchart TD
 - **Landing direction** (workweave → parent). `rwv sync-to` pushes the
   child's committed work *up* toward the root. Each `rwv sync-to`
   advances exactly one edge (one hop, see below). `rwv sync` goes the
-  other direction: CWD absorbs the named source.
+  other direction: a feature takes in the new work of the branch its
+  record lands into.
 
 The two directions are not symmetric — see
 [sync-semantics](./sync-semantics.md) for the full direction-pair
@@ -92,8 +93,9 @@ an explicit target:
 
 1. **Bare `rwv sync-to` has a target.** Running `rwv sync-to` with no
    argument pushes to the recorded parent. From a child workweave that
-   means the parent workweave, not the primary. `rwv sync` (CWD absorbs
-   a source) always requires an explicit argument — it has no auto-target.
+   means the parent workweave, not the primary. `rwv sync` names no
+   workspace: what it takes in is the branch the checked-out branch's
+   record names.
 2. **`rwv sync-to --retire` knows what to retire to.** The retire flag
    pushes to the recorded parent, verifies convergence, and deletes the
    workweave on success.

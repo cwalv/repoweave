@@ -49,7 +49,7 @@ Every `--json`-capable verb prints one JSON object, `{ "$schema": "<url>", "<key
 | `rwv update --json` | `outcomes` (+ `placements`) | `min(nproc, 8)` |
 | `rwv update --remote --json` | `repos` (+ `placements`) | `min(nproc, 8)` |
 | `rwv push --json` | `outcomes` | `1` |
-| `rwv sync --json` | `outcomes` (+ `placements`) | `1` |
+| `rwv sync --json` | `refused` (+ `placements`, `members`, `advisories`) | `1` |
 | `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` |
 
 Per-repo records are sorted by repo path whatever order the workers finished in. To follow repos as they finish, run the command through `rwv each` with `--joblog` or `--results`.

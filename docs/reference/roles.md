@@ -127,7 +127,7 @@ Roles surface in `rwv status --json` output so agent harnesses and shell scripts
 
 ## Migrating from `role: primary`
 
-The role is spelled `owned`, not `primary`: "primary" names the *workspace* (the non-workweave weave root, as in `rwv sync primary`), and one word for two concepts is what the spelling avoids.
+The role is spelled `owned`, not `primary`: "primary" names the *workspace* (the non-workweave weave root, as in `rwv sync-to primary`), and one word for two concepts is what the spelling avoids.
 
 **The parser does not accept `primary` as a role, and nothing rewrites it for you.** A manifest carrying `role = "primary"` fails to load, and the error names the spelling to use at the line holding it:
 

@@ -176,21 +176,23 @@ and not `publish`.
 
 ### `rwv sync` / `rwv sync-to`
 
-A direction-explicit pair. `rwv sync <source>` aligns CWD with another
-workspace's committed state; `rwv sync-to <target>` pushes CWD's
-committed state into another workspace. Both run Phase 1' (project
-repo, lock-excluded), Phase 2 (member repos), Phase 3 (re-lock) on
-the destination workspace.
+A direction-explicit pair. `rwv sync` takes the target's new work into a
+feature (or merges another weave branch in with `--from`): members first,
+each from the branch it lands on, then the project branch, then the relock.
+`rwv sync-to <target>` pushes CWD's committed state into another workspace:
+Phase 1' (project repo, lock-excluded), Phase 2 (member repos), Phase 3
+(re-lock), then the target's fast-forward.
 See [sync-semantics](./sync-semantics.md).
 
 - *Per-repo policy from role?* Yes — member repos and project repo
   follow different strategies for the same `--strategy` choice (the
   project repo excludes the lock from the merge; member repos
   don't).
-- *Cross-repo ordering?* Yes — Phase 1' must complete before replay
-  can read the member set its manifest names, and Phase 2 before Phase 3
-  can capture the resulting manifest tips into the new lock.
-- *rwv-owned state?* The lock is the principal output of Phase 3.
+- *Cross-repo ordering?* Yes — every member must have taken in before
+  the lock can record its new tip, and in `sync-to` Phase 1' must complete
+  before replay can read the member set its manifest names, and Phase 2
+  before Phase 3 can capture the resulting manifest tips into the new lock.
+- *rwv-owned state?* The lock is the principal output of the relock.
 
 Strong pass. See [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why
 these are `sync`/`sync-to` and not `pull`/`push`.

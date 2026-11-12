@@ -381,25 +381,57 @@ Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-man
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-### `rwv sync <source> [...]`
+### `rwv sync [...]`
 
-Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspace name (`primary`, a workweave name) or a path, relative paths resolving against the directory `rwv` runs in (or the `-C`/`-w` directory). Bare `rwv sync` (no `<source>`) is an error with a hint pointing at `rwv sync-to`.
+Take new work into the checked-out weave branch. In a feature, `rwv sync` takes in the branch its record lands into (the target); on any weave branch, `--from <branch>` merges that branch's history in. A declared branch takes nothing in without `--from`: it refuses as `target` `no target`. There is no positional argument; `rwv sync-to` is the verb that lands this workspace's work in another workspace.
+
+**From the target.** Each `owned` or `fork` member the target's lock pins takes in its merge source: the tip of the branch the member lands on (its branch named after the target when the target is itself a feature, else the branch the entries declare), the newer of that branch and its upstream, or the target's pin where that branch exists nowhere. Commits that branch holds beyond the target's pin are listed, since the landing will pin them. A member with no new work follows its merge source: by fast-forward, or, where the merge source lacks the member's tip, by moving to it after a backup. A member holding new work fast-forwards under the default `--strategy ff` and is otherwise refused (`not-fast-forwardable`, naming `--strategy rebase`); under `--strategy rebase` its work is rebased onto the merge source after a `rebased` backup. A range holding a merge commit is never rebased: the refusal names `rwv sync --from <target>`, which takes the target in by a merge. Then the project branch takes in the target's tip the same way, and the lock is recorded and committed: each member's pin merged three ways against the merge base's lock, every member the sync moved at its new tip. `dependency` and `reference` members are not moved by the take-in; they are aligned afterwards to the lock the sync committed.
+
+**The lineage rule.** A member holding new work, and one that would follow while another weave branch lands into this one, moves only when the branch it lands on contains its base: the newest commit of its first-parent chain that a lock in the target's history pins. Otherwise the sync refuses as `pin` `off lineage`, naming the base and the branch, with the fact `patch-equivalent` where commits on that branch carry the same changes. A base this clone lacks is `pin` `unreachable`.
+
+**`--from <branch>`.** Merges the branch's history in, whatever the strategy: each member that lacks the branch's pin merges it, then the project branch merges the branch, always as a merge commit with this branch's tip as first parent (a `--from` of the record's own target may fast-forward). On a declared branch, a member the named branch declares on another branch is refused (`pin` `not on declared branch`) until that branch is declared here.
+
+**`--reset-to-target <repo>`.** Moves the named repo's branch to its merge source instead, skipping the lineage rule and the push-branch judgment for it: a member to the tip of the branch it lands on, `projects/<name>` to the target's tip with the target's lock. The tip it leaves is kept as a backup, and the new work it drops is listed with the commands that copy it back or merge it in.
+
+After the take-in, members a new entry set drops are pruned, missing ones are cloned, and every member is aligned as [`rwv update`](#rwv-update-) aligns it. Where the take-in changed an input of the project the weave root presents — `rwv.toml`, `rwv.lock`, or a member's manifest an enabled integration reads — `rwv sync` says so and names `rwv materialize`; sync runs no install hooks.
+
+Every refusal is judged before anything moves, and all of them are reported together:
+
+| Axis | State | When |
+|---|---|---|
+| `target` | `no target` | The branch is declared and `--from` names nothing to merge |
+| `target` | `gone` | The target exists neither here nor on a remote |
+| `target` | `record changed` | The branch's record changed since this workspace last saw it; `rwv update` accepts the new one |
+| `target` | `dependents` | Another weave branch lands into this one, and the sync would rewrite a branch it is built on |
+| `name` | `no-such-branch` | `--from` names a branch that exists nowhere |
+| `pin` | `off lineage` | A member's base is not on the branch it lands on (above) |
+| `pin` | `unreachable` | The target pins a commit this clone lacks, or a pin in its history the lineage rule must read |
+| `pin` | `not on declared branch` | `--from` on a declared branch, for a member the named branch declares elsewhere |
+| `push-branch` | `behind` | A branch the sync would move is behind its push branch: take that in first |
+| `push-branch` | `diverged` | A branch the sync would move, or the target, has diverged from its upstream. Where everything it holds beyond its push branch is already on the branch it lands on, the divergence is reported as the fact `landed` and the sync goes on; where only a superseded tip of the upstream reaches it (the fact `rewritten`), or it holds commits never pushed, it refuses |
+| `protected` | `declared` | A rebase, follow or reset would rewrite a member branch some weave branch declares |
+| `edits` | `dirty` | A repo the sync would move holds uncommitted changes to tracked files |
+| `checkout` | `in another workspace` | A member branch the sync would move is checked out in another workspace |
+| `alignment` | (any) | A member is not where the branch expects it; `rwv update` puts it there |
+
+`not-fast-forwardable` refuses a take-in that `--strategy ff` cannot do, and `inapplicable-flag` refuses `--target` with `--from`, and a `--reset-to-target` naming a repo the sync takes nothing into. A fetch that could not complete refuses before anything is judged (`partial-run-aborted`).
+
+A conflict stops the sync with its op record kept (`op-parked`), naming the checkout: resolve it, then `rwv sync --continue`, or `rwv abort` to put every repo back at its savepoint.
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase` | Default `ff`. Applies uniformly to project and member repos; `rwv.lock` is excluded from the per-commit merge inputs git uses during rebase replay and regenerated in Phase 3. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
-| `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
-| `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
-| `--continue` | Resume a sync interrupted mid-op. All parameters, the project included, are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`, which asserts rather than rebinds — naming a project other than the recorded one is refused) |
-| `--json` | Structured output: one JSON envelope, whatever `-j` is |
-| `-j N` | Parallel per-repo syncs (default: 1) |
+| `--from <branch>` | Merge this weave branch's history in for one run, as a merge commit, whatever the strategy |
+| `--target <T>` | Take in `T` instead of the record's target, for one run; the record is unchanged |
+| `--reset-to-target <repo>` | Move this repo's branch to its merge source after a backup, listing the new work it drops; repeat per repo. `projects/<name>` names the project branch |
+| `--strategy ff\|rebase` | How a branch holding new work takes in: `ff` (fast-forward only, the default) or `rebase` |
+| `--continue` | Resume a sync a conflict stopped, after resolving it; every parameter comes from the op record |
+| `--json` | Structured output: one JSON envelope |
+| `-j N` | Parallel per-repo fetches (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
+`--json` prints `{"$schema": "...", "outcomes": [], "placements": [...], "members": [...], "complete": ..., "refused": [...], "advisories": [...]}`: `placements` says how the files of each checkout the sync moved were placed, `members` lists the checkouts a dropped entry pruned or failed to prune, `refused` carries each judged line with its choices, and `advisories` carries `derived-state-stale` when the take-in changed a materialized input. See `rwv explain sync`.
 
-**Destination cleanliness preflight.** Before any repo is touched, `rwv sync` scans the destination workspace for uncommitted tracked changes; a dirty path refuses the operation with the offending files listed. `rwv sync-to` runs the same scan on its source (CWD). Drift attributable to rwv (regenerated ecosystem files, activation-owned symlinks) is excluded. Commit or stash the listed paths and retry.
-
-**A checkout replay could not prune.** Replay removes the checkout of a member the replayed manifest no longer names, and refuses to remove one holding uncommitted changes, commits nothing else reaches, or the weave's only copy of its store. The refusal does not stop the op: replay and relock finish and op-state is cleared. The verb then exits 1, naming each checkout still on disk:
+**A checkout the sync could not prune.** A member the new entries drop is pruned once every repo has taken in, and the prune is refused for a checkout holding uncommitted changes, commits nothing else reaches, or the weave's only copy of its store. The refusal does not stop the sync: it finishes and clears its op record, then exits 1, naming each checkout still on disk:
 
 ```
 Error: sync completed: replay and relock finished and op-state is cleared, so `rwv abort` does not apply. Pruning was refused for 1 member checkout the manifest no longer names, and it is still on disk:
@@ -407,9 +439,7 @@ Error: sync completed: replay and relock finished and op-state is cleared, so `r
 Re-running sync will not prune it. Once nothing in it is needed, remove it by hand.
 ```
 
-`rwv sync-to` behaves the same way, except under `--retire`, which refuses first (below).
-
-**Exit codes:** `0` when the op completes; `1` when it parks on a refusal or conflict (op-state held; `--continue` or `rwv abort`), and when it completes with a checkout it could not prune (op-state cleared). Under `--json` the envelope's `complete` field tells the two `1`s apart: `true` when the op ran its last phase and cleared op-state, `false` when a phase parked it.
+**Exit codes:** `0` when the sync completes or has nothing to take in; `1` when it refuses, stops on a conflict (op record kept; `--continue` or `rwv abort`), or completes with a checkout it could not prune (op record cleared). Under `--json` the envelope's `complete` field tells a stopped sync from a completed one.
 
 ### `rwv sync-to [<target>] [...]`
 
@@ -419,7 +449,7 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
+| `--strategy ff\|rebase` | Default `rebase`. Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses at the start, restoring nothing, when the workweave's marker, the project clone's index and its project checkout's link to that clone disagree; the refusal names the doctor repair. Refuses, after the landing has completed and with the op parked at the retire phase, while any checkout under the workweave holds uncommitted changes (`edits`) or a detached HEAD with commits no branch reaches (`alignment`); resolve it and `--continue`, or `rwv abort`. Applies the deletion rule to the workweave's branches (see `rwv workweave delete`): one that has not landed survives, listed with its reason, and the exit status is `3` |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
@@ -428,20 +458,27 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 | `-j N` | Parallel per-repo step-1 syncs (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract. Exit codes are as for `rwv sync` above, with `3` for a retire that left a branch of the workweave.
+See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract.
+
+**Destination cleanliness preflight.** Before any repo is touched, `rwv sync-to` scans its source (CWD) for uncommitted tracked changes; a dirty path refuses the operation with the offending files listed. Drift attributable to rwv (regenerated ecosystem files, activation-owned symlinks) is excluded. Commit or stash the listed paths and retry.
+
+**A checkout replay could not prune.** Replay removes the checkout of a member the replayed manifest no longer names, and refuses to remove one holding uncommitted changes, commits nothing else reaches, or the weave's only copy of its store. The refusal does not stop the op: replay and relock finish and op-state is cleared, and the verb exits 1 naming each checkout still on disk. Under `--retire` it refuses first.
+
+**Exit codes:** `0` when the op completes; `1` when it parks on a refusal or conflict (op-state held; `--continue` or `rwv abort`), and when it completes with a checkout it could not prune (op-state cleared); `3` for a retire that left a branch of the workweave. Under `--json` the envelope's `complete` field tells the two `1`s apart.
 
 ### Direction conventions: `sync` vs. `sync-to`
 
-`rwv sync` and `rwv sync-to` are a direction-explicit pair. The verb names where CWD's state goes — *to* CWD, or *from* CWD *to* a named target.
+`rwv sync` and `rwv sync-to` move work in opposite directions. `rwv sync` takes work into the checked-out weave branch, from its target or from the branch `--from` names. `rwv sync-to` lands CWD's work in another workspace.
 
-| Invocation | CWD context | State source | What changes |
+| Invocation | CWD context | Work comes from | What changes |
 |---|---|---|---|
-| `rwv sync <source>` | any workspace | `<source>` | CWD absorbs source's state; CWD's commits land on top |
+| `rwv sync` | a feature | the record's target | CWD takes in the target's new work |
+| `rwv sync --from <branch>` | any weave branch | `<branch>` | CWD merges `<branch>` in |
 | `rwv sync-to <target>` | any workspace | CWD | both: CWD aligns with target's state first (CWD's commits on top); target then FF-advances to CWD's new tip |
 | `rwv sync-to` (bare) | workweave | CWD | same as above; target = parent recorded in `.rwv-workweave` |
 | `rwv sync-to --retire` | workweave | CWD | same as above, plus delete the workweave on success |
 
-The `<source>` argument in `rwv sync` is always required — there is no auto-target. The `<target>` argument in `rwv sync-to` is optional inside a workweave (auto-targets parent); required in a primary weave.
+The `<target>` argument in `rwv sync-to` is optional inside a workweave (auto-targets parent); required in a primary weave.
 
 ### `rwv push [...]`
 
@@ -670,7 +707,7 @@ A repo whose alignment or pin `rwv doctor` cannot read is an error of the run: i
 
 | Flag | Effect |
 |---|---|
-| `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync`) |
+| `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync-to`) |
 | `--fix` | Repair every finding marked **Auto-fixable** in [Doctor findings](./doctor-findings.md), which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...], "issues": [...], "advisories": [...], "plugins": [...]}`: rwv's own findings on `violations`, integration findings on `issues` |
 | `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project pins, etc.). By default only the active project is checked |

@@ -115,7 +115,7 @@ rwv doctor --fix
 
 It renames `version` to `branch` and `submodules = "skip"` to `recurse-submodules = false`, and drops `submodules = "local"`, which is what an absent `recurse-submodules` means. Comments and key order stay. It makes one commit holding only that rename, and leaves every other uncommitted edit, to `rwv.toml` and to other files, where it was. It declines, changing nothing, while another file is staged or a rebase, merge or cherry-pick is in progress in the project repo; deal with that, then run it again.
 
-A commit other than the checked-out one that still names the old keys declares nothing to the commands that read it, such as `rwv sync` reading the other workspace's `rwv.toml`. Its `rwv.lock`, whose format did not change, is still read, so its pins still count.
+A commit other than the checked-out one that still names the old keys declares nothing to the commands that read it, such as `rwv sync` reading the target's `rwv.toml`. Its `rwv.lock`, whose format did not change, is still read, so its pins still count.
 
 ## Step 4 — a stale-format lock
 

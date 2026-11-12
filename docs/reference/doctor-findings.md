@@ -415,12 +415,11 @@ keeps the repo from looking clean.
 **What to do:** the `error` field carries what git said. A directory that is
 not a git repo, a corrupt `.git`, and a permissions problem all land here.
 
-**Also a sync failure kind.** One condition, one name, so `rwv sync --json` and
-`rwv sync-to --json` report a repo whose HEAD they could not read under this
-same kind, as a per-repo `failure.kind` rather than a `rwv doctor` violation.
-The text lands in `message` there instead of `error`, and sync raises it for
+**Also a sync failure kind.** One condition, one name, so `rwv sync-to --json`
+reports a repo whose HEAD it could not read under this same kind, as a per-repo `failure.kind` rather than a `rwv doctor` violation.
+The text lands in `message` there instead of `error`, and sync-to raises it for
 one case a scan cannot see: the source lock pinning a version the source
-workspace itself could not resolve, which leaves sync with no HEAD to compare
+workspace itself could not resolve, which leaves sync-to with no HEAD to compare
 against for a reason that is nothing to do with the repo in front of it.
 
 ### `projects-dir-unreadable`
@@ -1445,8 +1444,8 @@ branch tip, so the commits are still anchored by a live branch.
 
 **Warning. Auto-fixable.** The savepoint tip is *not* reachable. The ref is the
 last pointer to commits that would otherwise become unreachable — the same
-reason the reflog is never cut. A savepoint an earlier release's `rwv sync
---discard-local-commits` kept after its operation ended (a tombstone) is one.
+reason the reflog is never cut. A savepoint `rwv sync-to
+--discard-local-commits` keeps after its operation ended (a tombstone) is one.
 
 **What to do:** `rwv doctor --fix` keeps the commits as a backup, then drops the
 savepoint: `rwv backup list` shows what it holds and `rwv backup drop` drops it

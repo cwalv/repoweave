@@ -44,9 +44,13 @@ Examples in the current tree:
   changes or commits no other clone reaches, a backup holding such commits
   included, and refuses to delete the canonical store while another
   project's manifest still references the repo.
-- `rwv sync --discard-local-commits` Phase 1' discards commits only after the
+- `rwv sync-to --discard-local-commits` Phase 1' discards commits only after the
   clean-project precondition has passed; the discarded commits remain
   recoverable via the `refs/rwv/pre-op/<op-id>` savepoint.
+- `rwv sync --reset-to-target <repo>` moves only the repo it names, refuses
+  one with uncommitted changes, a declared branch, or a branch another weave
+  branch lands into, and keeps the tip it leaves as a backup, listing the
+  work it drops with the commands that copy it back.
 
 ### 2. Named overrides are narrow and informed
 
@@ -98,7 +102,7 @@ refusal names the flag for the one loss it would cause.
 
 ### 3. Discards stay recoverable
 
-Discard-by-design operations — `rwv abort`, `rwv sync --discard-local-commits`,
+Discard-by-design operations — `rwv abort`, `rwv sync-to --discard-local-commits`, `rwv sync --reset-to-target`,
 `rwv workweave delete --discard-uncommitted` and `--discard-unlanded`,
 ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must

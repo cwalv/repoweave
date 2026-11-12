@@ -2,38 +2,76 @@
 
 Two verbs, two directions:
 
-- **`rwv sync <source>`** — CWD absorbs the source workspace's committed
-  state; CWD's unique commits land on top of source's tip. CWD changes;
-  source is read-only.
+- **`rwv sync`** — the checked-out weave branch takes in new work: a
+  feature takes in the branch its record lands into (its target), and any
+  weave branch can merge another's history in with `--from <branch>`. Only
+  this workspace changes.
 - **`rwv sync-to <target>`** — CWD's committed state lands in the target
   workspace. CWD absorbs target's state first (CWD's commits on top),
   then the target fast-forwards to CWD's new tip. Both CWD and target
   change; the named target ends up with CWD's commits linearly above
   its prior state.
 
-In `rwv sync <source>` the argument names the workspace CWD absorbs (like
-`git merge <source>`); in `rwv sync-to <target>` it names the workspace that
-receives CWD's state (like `git push <target>`).
+`rwv sync` names no workspace: what it takes in is a branch, read from the
+branch's record. `rwv sync-to <target>` names the workspace that receives
+CWD's state (like `git push <target>`).
 
-## The phase machine
+## Taking in: `rwv sync`
 
-Both verbs run one machine. Plain `sync` leaves out advance-target and
-retire; `sync-to` adds retire only under `--retire`:
+A feature is work meant to land in its target, so the question `rwv sync`
+answers is how the target's new work enters the feature without moving
+anything the landing will later need. Each `owned` or `fork` member takes in
+its **merge source**: the tip of the branch the member will land on, read as
+the newer of that branch and its upstream, or the target's pin where that
+branch exists nowhere. Taking in the branch rather than the pin is what keeps
+a member current with commits the target's lock has not recorded yet; the
+sync lists those commits, since the landing will pin them.
+
+A member with no new work follows its merge source, never backward. One with
+new work is integrated by `--strategy`: `ff` fast-forwards or refuses, and
+`rebase` replays the work onto the merge source after a backup. A range
+holding a merge commit is never rebased, since the rebase would flatten the
+second parent through which another lineage's work entered; `--from` merges
+instead. Then the project branch takes in the target's tip the same way, and
+the lock is recorded once: each member's pin merged three ways against the
+merge base's lock, with every member the sync moved at its new tip.
+
+**The lineage rule.** A member's work has a base: the newest commit of its
+first-parent chain that some lock in the target's history pins. Taking the
+target in is safe only when the branch the member lands on contains that base;
+otherwise the work was built on a line the target has left (a declared-branch
+change, a rewritten branch), and integrating it would carry that line along.
+The sync refuses such a member as `pin` `off lineage` before anything moves.
+The rule reads commits only, so every machine computes the same answer.
+
+**`--from <branch>`** merges another weave branch's history in, whatever the
+strategy, and always as a merge commit: work moving between published branches
+moves by merge, never by rebase.
+
+Every refusal is judged before anything moves and reported together. Then the
+sync runs under an op record with a savepoint in every repo it may move: a
+conflict stops it, `rwv sync --continue` resumes, and `rwv abort` restores
+every repo to its savepoint. Once every repo has taken in, members the new
+entries drop are pruned and the rest are aligned as `rwv update` aligns them.
+
+## The `sync-to` phase machine
+
+`sync-to` runs one machine; retire runs only under `--retire`:
 
 ```
 guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
-                                              (sync-to only)   (--retire only)
+                                                               (--retire only)
 ```
 
-| Phase | What it does | `sync` | `sync-to` | `sync-to --retire` |
-|---|---|:---:|:---:|:---:|
-| guard | Checks every precondition before anything moves | yes | yes | yes |
-| mark, savepoint | Records the operation and writes a savepoint ref in every repo it may move | yes | yes | yes |
-| replay | **Phase 1'** replays CWD's unique project commits onto the named workspace's project tip, with `rwv.lock` excluded from each commit; **Phase 2** advances CWD's member repos to the named workspace's lock targets | yes | yes | yes |
-| relock | Regenerates `rwv.lock` from CWD's new tips (**Phase 3**) and commits it if it changed | yes | yes | yes |
-| advance-target | Fast-forwards the target's member repos, then its project repo, to CWD's tips | — | yes | yes |
-| retire | Checks that member tips match, that no checkout is dirty and that replay left no checkout it could not prune, then deletes the workweave | — | — | yes |
-| cleanup | Drops the savepoints and the op-state | yes | yes | yes |
+| Phase | What it does | `sync-to` | `sync-to --retire` |
+|---|---|:---:|:---:|
+| guard | Checks every precondition before anything moves | yes | yes |
+| mark, savepoint | Records the operation and writes a savepoint ref in every repo it may move | yes | yes |
+| replay | **Phase 1'** replays CWD's unique project commits onto the target's project tip, with `rwv.lock` excluded from each commit; **Phase 2** advances CWD's member repos to the target's lock targets | yes | yes |
+| relock | Regenerates `rwv.lock` from CWD's new tips (**Phase 3**) and commits it if it changed | yes | yes |
+| advance-target | Fast-forwards the target's member repos, then its project repo, to CWD's tips | yes | yes |
+| retire | Checks that member tips match, that no checkout is dirty and that replay left no checkout it could not prune, then deletes the workweave | — | yes |
+| cleanup | Drops the savepoints and the op-state | yes | yes |
 
 **Stopping and resuming.** A refusal at guard leaves no trace. Once the
 savepoints exist, a conflict, failure or crash keeps the op-state in every
@@ -63,14 +101,10 @@ refuses first if that checkout holds uncommitted changes, so the workweave is
 not deleted over them; what it committed stays on its branch, which the
 deletion rule keeps unless it landed.
 
-**Whose lock is the target.** Phase 2 advances to the named workspace's
-lock, with one exception: a plain `sync` from a workweave whose lock is
-behind its committed HEAD takes that workweave's committed tips instead and
-prints a note naming the lag. `sync-to` refuses a target whose lock is behind
-its HEAD, naming the repo, its commit count and the `rwv lock --commit` that
-fixes it. A `sync` destination whose own lock lags is announced, not refused:
-relock regenerates that lock at the end of the op. A repo already ahead of
-its target is reported `already-ahead` and left where it is.
+**Whose lock is the target.** Phase 2 advances to the target's lock.
+`sync-to` refuses a target whose lock is behind its HEAD, naming the repo, its
+commit count and the `rwv lock --commit` that fixes it. A repo already ahead
+of its target is reported `already-ahead` and left where it is.
 
 **Members land before the project repo.** Advance-target moves the target's
 project repo only after every member repo landed, so the target never holds
@@ -80,13 +114,14 @@ back.
 
 The op-state is an owner record at the initiating workspace and a lease
 pointer at every other workspace the op mutates, which keeps a second
-operation out; a source that `rwv sync` only reads is not marked. See
+operation out. See
 [formats](../../reference/formats.md#rwv-op--owner-op-state-record).
 
 ## Abort: verified-restore contract
 
 `rwv abort` restores every workspace the operation involved — CWD, and the
-target of a `sync-to` — to its pre-op state from the savepoint refs.
+target of a `sync-to` — to its pre-op state from the savepoint refs. A
+`sync` involves only CWD.
 
 **Savepoints.** Before replay moves anything, each repo the op may move gets
 a savepoint ref, `refs/rwv/pre-op/<op-id>`, and a `sync-to` target's repos get
@@ -109,21 +144,23 @@ kept. `rwv backup list` shows the backup and `rwv backup drop` drops it.
 
 ## Snapshot reads
 
-The source is pinned once, at the start of the operation (T₀): its project
-`HEAD`, with the manifest and lock read at that revision, and — for the
-workweave-source exception above — its member tips. A change to the source after T₀
-cannot reach anything the op has read. On `--continue` a new T₀ is pinned,
-so a resumed op converges on the source as it is then.
+A `sync-to` reads its target once, at the start of the operation (T₀): its
+project `HEAD`, with the manifest and lock read at that revision. A change to
+the target after T₀ cannot reach anything the op has read. On `--continue` a
+new T₀ is pinned, so a resumed op converges on the target as it is then. A
+`sync` records the tips it takes in in its op record, and `--continue` takes in
+those same tips.
 
 ## Strategy choice
 
-Both repo classes — the project repo (Phase 1') and member repos (Phase 2) —
-run under the same `--strategy`:
+`rwv sync` defaults to `ff` and `rwv sync-to` to `rebase`. In `sync-to` both
+repo classes — the project repo (Phase 1') and member repos (Phase 2) — run
+under the same `--strategy`:
 
 | Strategy | Project repo treatment | Member repo treatment |
 |---|---|---|
-| `ff` (default for `sync`) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
-| `rebase` (default for `sync-to`) | Replay CWD's unique commits onto named-workspace's tip; lock excluded | Advance CWD's repos to named-workspace's lock targets |
+| `ff` | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
+| `rebase` (default) | Replay CWD's unique commits onto the target's tip; lock excluded | Advance CWD's repos to the target's lock targets |
 
 `--strategy=rebase` requires the line `rwv.lock merge=rwv-ours` in the
 project repo's **committed** `.gitattributes`: a rebase replays each commit
@@ -157,14 +194,17 @@ merged tips.
 ## Named overrides
 
 Neither verb takes `--force`. Each precondition that can be waived has its
-own override:
+own override, named for what it gives up:
 
-- `--allow-stale-lock` — skip the lock-freshness precondition on both source
-  and destination, for a lock that is intentionally ahead of HEAD. On a
-  `sync-to` whose target lock is *behind* its HEAD it only defers the refusal
-  to advance-target's fast-forward, so refresh that lock instead.
-- `--discard-local-commits` — hard-reset CWD's project repo to the source
-  tip, discarding committed divergence on the destination side. Refused if
+- `rwv sync --reset-to-target <repo>` — move the named repo's branch to what
+  it lands on instead of integrating it, keeping the tip it leaves as a backup
+  and listing the work it drops.
+- `rwv sync-to --allow-stale-lock` — skip the lock-freshness precondition on
+  both CWD and the target, for a lock that is intentionally ahead of HEAD. On
+  a target whose lock is *behind* its HEAD it only defers the refusal to
+  advance-target's fast-forward, so refresh that lock instead.
+- `rwv sync-to --discard-local-commits` — hard-reset CWD's project repo to
+  the target's tip, discarding CWD's committed divergence. Refused if
   the project repo has uncommitted changes, which the reset would destroy
   unrecoverably. The discarded commits outlive the op: the project repo's
   savepoint is kept as a tombstone, and once `rwv abort` no longer applies,
@@ -177,23 +217,23 @@ in [destructive-operations](../destructive-operations.md#2-named-overrides-are-n
 
 ## The Phase 1' ancestor precondition
 
-Before Phase 1', the engine checks the ancestor relationship between CWD's
-project tip and the named workspace's project tip:
+Before Phase 1', `sync-to` checks the ancestor relationship between CWD's
+project tip and the target's project tip:
 
 | Relation | `ff` | `rebase` |
 |---|---|---|
 | Equal tips | No-op, allowed | No-op, allowed |
-| CWD is ancestor of named workspace | Allowed — fast-forward | Allowed |
-| Named workspace is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
+| CWD is ancestor of the target | Allowed — fast-forward | Allowed |
+| The target is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
 | Diverged (neither ancestor) | Refused | Handled by strategy |
 
 The `ff` refusal names `--strategy rebase`, which *lands* CWD's project
 commits, and `--discard-local-commits`, which *discards* them into the
 savepoint tombstone.
 
-## Parallel sync (`-j N`)
+## Parallel landing (`-j N`)
 
-With `-j N` (`N > 1`), Phase 2 fans out across a bounded worker pool. The
+With `-j N` (`N > 1`), `sync-to`'s Phase 2 fans out across a bounded worker pool. The
 default is `-j 1`. `--json` prints the same envelope whatever `-j` is, once
 the op is done: `{"$schema": "<url>", "outcomes": [...]}`, with `outcomes`
 sorted by repo path however the workers finished, beside `placements`, replay
@@ -206,11 +246,9 @@ op-state, false when a phase parked it.
 ## Auto-target
 
 Bare `rwv sync-to` inside a workweave targets the recorded parent from
-`.rwv-workweave`; in a primary weave it is an error. `rwv sync` always
-requires an explicit `<source>`: a landing has one meaning, advancing the
-parent to CWD's tip, while a downward pull would have to pick a shape (which
-of the parent's repos, at whose lock, under which strategy) that nothing has
-settled.
+`.rwv-workweave`; in a primary weave it is an error. `rwv sync` reads what it
+takes in from the checked-out branch's record, and `--target <T>` takes in
+another branch for one run.
 
 ## Related joints
 

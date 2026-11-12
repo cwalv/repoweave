@@ -68,9 +68,11 @@ post-merge manifest tips. Asking an operator to resolve a lock conflict
 by hand is asking them to compute a function whose inputs are already
 known.
 
-[`rwv sync`](./sync-semantics.md) encodes this directly. The lock is
+[`rwv sync-to`](./sync-semantics.md) encodes this directly. The lock is
 excluded from the project-repo merge phase (Phase 1') and regenerated
-in Phase 3 from the now-aligned manifest tips. Any lock-only commit on
+in Phase 3 from the now-aligned manifest tips. `rwv sync` records its lock
+once every member has taken in: each pin merged three ways against the
+merge base's lock, with every member it moved at its new tip. Any lock-only commit on
 the source side becomes an empty patch on the target side and is
 dropped automatically. The phase model and the `merge=rwv-ours`
 replay-exclusion mechanism are described in

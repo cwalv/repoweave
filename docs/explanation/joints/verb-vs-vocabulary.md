@@ -108,10 +108,11 @@ network. The lockfile is the entire artifact. Package-manager verb.
 
 ### `rwv sync` / `rwv sync-to` (not `pull` / `push`)
 
-`rwv sync <source>` absorbs another workspace's committed state into
-CWD. `rwv sync-to <target>` pushes CWD's committed state into another
-workspace. Together they are a direction-explicit pair for local-to-local
-workspace alignment. The question is why these are *their own* vocabulary
+`rwv sync` takes new work into the checked-out weave branch: a feature
+takes in the branch it lands into, and `--from <branch>` merges another
+weave branch in. `rwv sync-to <target>` pushes CWD's committed state into
+another workspace. Together they are a direction-explicit pair for
+integrating work locally. The question is why these are *their own* vocabulary
 rather than `pull`/`push` variants.
 
 **The `push` and `pull` arguments fail first.** `rwv push` is already
@@ -129,9 +130,9 @@ fast-forward it" because the remote is a shared, authoritative ref that
 you cannot mutate mid-operation.
 
 `rwv sync` and `rwv sync-to` have no such constraint. Both sides are
-local workweaves — each is owned by the operator running the command.
+local — each workspace is owned by the operator running the command.
 That ownership is what makes `--strategy rebase` meaningful: in both
-verbs, CWD's commits are replayed onto the named workspace's tip. That
+verbs, CWD's commits are replayed onto what they will land on. That
 replay rewrites CWD's history — which is safe only because CWD is yours
 to rewrite. A `push`/`pull` vocabulary would imply the VCS-remote
 contract (remote is authoritative; local rewrites are dangerous) and
@@ -146,11 +147,12 @@ regenerate `rwv.lock` in Phase 3, and handle workspace lifecycle
 (`--retire`). The sync vocabulary is doing real work, not inventing a new
 direction concept.
 
-The argument-position convention mirrors `git merge <source>` versus `git push
-<target>`: `sync <source>` identifies what CWD will absorb (argument is the
-source); `sync-to <target>` identifies where CWD's state will land (argument is
-the destination). See [sync-semantics](./sync-semantics.md) for the
-direction-explicit pair contract.
+The argument convention mirrors `git pull` versus `git push <target>`: `sync`
+takes in what the branch's record names, as `git pull` takes in a branch's
+configured upstream, and `--from <branch>` names another branch as
+`git merge <branch>` does; `sync-to <target>` identifies where CWD's state will
+land (argument is the destination). See [sync-semantics](./sync-semantics.md)
+for the direction-explicit pair contract.
 
 ## Implication for future verbs
 

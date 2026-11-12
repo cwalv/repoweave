@@ -122,17 +122,18 @@ two worktrees never compete for the same branch name. See
 
 ### Absorbing upstream changes
 
-If the parent workspace has advanced since the workweave was created
-(another workweave landed, or work was committed directly in primary), use
-`rwv sync` before landing:
+If the branch the workweave's feature lands into has advanced since the
+workweave was created (another workweave landed, or work was committed
+directly in primary), use `rwv sync` before landing:
 
 ```bash
-rwv sync primary --strategy rebase
+rwv sync --strategy rebase
 ```
 
-`rwv sync` absorbs the named workspace into CWD. The workweave's unique
-commits are replayed on top of primary's new tip; `rwv.lock` is
-regenerated. See [sync-semantics](./sync-semantics.md) for the full
+`rwv sync` takes the target's new work into the feature. Each member takes in
+the branch it lands on, and the workweave's unique commits are rebased on top
+of it; then the project branch takes in the target's tip and `rwv.lock` is
+recorded again. See [sync-semantics](./sync-semantics.md) for the full
 direction-pair contract.
 
 ## Landing: `rwv sync-to --retire`
