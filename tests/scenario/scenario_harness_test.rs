@@ -756,6 +756,12 @@ every_scenario!(
     land_into_a_workspace_presenting_another_project,
     land_names_a_member_composing_cannot_materialize,
     land_clones_a_member_its_target_took_in_by_fetch_alone,
+    cherry_pick_runs_the_printed_merge,
+    cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward,
+    cherry_pick_runs_the_printed_add_of_a_member_not_listed,
+    cherry_pick_except_judges_the_member_for_alignment,
+    cherry_pick_runs_the_printed_relock_of_an_unpinned_member,
+    cherry_pick_refuses_a_pin_this_clone_lacks,
     land_names_the_update_that_finishes_an_alignment_it_could_not_judge,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
@@ -4255,6 +4261,41 @@ fn dc04_a_conflicted_entry_is_settled_by_its_setters() {
 #[test]
 fn land_names_the_update_that_finishes_an_alignment_it_could_not_judge_scenario() {
     runner::run(scenarios::land_names_the_update_that_finishes_an_alignment_it_could_not_judge())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_runs_the_printed_merge_scenario() {
+    runner::run(scenarios::cherry_pick_runs_the_printed_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward_scenario() {
+    runner::run(scenarios::cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_runs_the_printed_add_of_a_member_not_listed_scenario() {
+    runner::run(scenarios::cherry_pick_runs_the_printed_add_of_a_member_not_listed())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_except_judges_the_member_for_alignment_scenario() {
+    runner::run(scenarios::cherry_pick_except_judges_the_member_for_alignment())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_runs_the_printed_relock_of_an_unpinned_member_scenario() {
+    runner::run(scenarios::cherry_pick_runs_the_printed_relock_of_an_unpinned_member())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_refuses_a_pin_this_clone_lacks_scenario() {
+    runner::run(scenarios::cherry_pick_refuses_a_pin_this_clone_lacks())
         .assert_fully_decided_green();
 }
 

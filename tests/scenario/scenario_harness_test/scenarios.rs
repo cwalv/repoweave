@@ -10533,3 +10533,184 @@ pub fn land_names_the_update_that_finishes_an_alignment_it_could_not_judge() -> 
         ],
     )
 }
+
+/// A member range holding a merge: the printed merge, run in the member's
+/// checkout, ports it by hand, and the printed rerun leaving the member out
+/// ports the rest.
+pub fn cherry_pick_runs_the_printed_merge() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::git(&a(), Repo::App, &["branch", "side"]),
+        Step::hand_commit(&a(), Repo::App, "side", &[("side.txt", "side\n")]),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["merge", "--no-ff", "-m", "app-merge", "side"],
+        ),
+        Step::commit(&a(), Repo::Lib, "lib-fix"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::App, State::PortMergeInRange))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed_holding(&ww("p"), "git -C ", " merge ").expect(Exit::Succeeds),
+        Step::git(&ww("p"), Repo::App, &["show", "HEAD:side.txt"]).claim(Claim::OutputLine("side")),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "--except", APP])
+            .expect(Exit::Succeeds)
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            }),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("lib-fix")),
+    ]);
+    scenario("cherry-pick runs the printed merge", steps)
+}
+
+/// A commit moving a `dependency`'s pin backward: the printed `member pin`
+/// re-pins it by name here, and the printed rerun leaving it out ports the
+/// rest.
+pub fn cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::commit(&a(), Repo::Docs, "docs-1"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "app-fix"),
+        Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "pin", DOCS, "HEAD~1", "--commit"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs]),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Docs, State::PortBackward))
+            .claim(Claim::OutputContains("rwv member pin local/remotes/docs "))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed(&ww("p"), "rwv member pin ").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "--except", DOCS])
+            .expect(Exit::Succeeds)
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Docs,
+            }),
+    ]);
+    Scenario {
+        name: "cherry-pick runs the printed pin of a dependency moved backward",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
+/// A commit moving the pin of a member the feature does not list: the
+/// printed `member add` lists it, leaving its checkout behind the pin it
+/// records; the printed `rwv update` aligns it, and the pick then ports.
+pub fn cherry_pick_runs_the_printed_add_of_a_member_not_listed() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Docs, "docs-up"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Docs, State::PortNotListed))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed(&ww("p"), "rwv member add ").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Docs, State::PinBehind))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed(&ww("p"), "rwv update").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("p"), Repo::Proj, "proj--p".to_owned()),
+                member: Repo::Docs,
+                mark: "docs-up",
+            }),
+    ]);
+    scenario(
+        "cherry-pick runs the printed add of a member not listed",
+        steps,
+    )
+}
+
+/// `--except` records a member's checked-out tip as `lock` would, so a
+/// member checked out off its branch is refused for its alignment before
+/// anything is recorded.
+pub fn cherry_pick_except_judges_the_member_for_alignment() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::commit(&a(), Repo::Lib, "main-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::git(&ww("p"), Repo::App, &["switch", "-qc", "try"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "--except", APP])
+            .expect(Exit::refuses(Repo::App, State::AlignmentOnBranch))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+    ]);
+    scenario("cherry-pick except judges the member for alignment", steps)
+}
+
+/// A member to copy onto holds a commit no lock reaches: the printed relock
+/// records it, and the pick then ports.
+pub fn cherry_pick_runs_the_printed_relock_of_an_unpinned_member() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::commit(&ww("p"), Repo::App, "p-app"),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::App, State::PinUnpinned))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed(&ww("p"), "rwv lock").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("p"), Repo::Proj, "proj--p".to_owned()),
+                member: Repo::App,
+                mark: "p-app",
+            }),
+        Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("main-app")),
+    ]);
+    scenario(
+        "cherry-pick runs the printed relock of an unpinned member",
+        steps,
+    )
+}
+
+/// A commit pinning a member to copy onto at a commit this clone lacks is
+/// refused before anything moves. Every choice it prints names a value the
+/// operator chooses, so none runs as printed.
+pub fn cherry_pick_refuses_a_pin_this_clone_lacks() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::new_machine(Machine::B),
+        Step::commit(&b(), Repo::App, "b-app"),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .may_leave_unresolved(&[Repo::App]),
+        Step::git(&ww("p"), Repo::Proj, &["fetch", "-q", "origin"])
+            .may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&ww("p"), &["cherry-pick", "origin/main"])
+            .expect(Exit::refuses(Repo::App, State::PinUnreachable))
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+    ]);
+    scenario("cherry-pick refuses a pin this clone lacks", steps)
+}

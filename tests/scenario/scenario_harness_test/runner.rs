@@ -145,12 +145,13 @@ pub enum Action {
         at: Place,
         args: Vec<String>,
     },
-    /// The choice line the last rwv step printed that begins `prefix`, run
-    /// at `at` word for word as the terminal shows it: by rwv, or by git
-    /// for a VCS action.
+    /// The choice line the last rwv step printed that begins `prefix` and
+    /// holds `holding`, run at `at` word for word as the terminal shows it:
+    /// by rwv, or by git for a VCS action.
     RwvPrinted {
         at: Place,
         prefix: &'static str,
+        holding: &'static str,
     },
     DropLockEntry {
         at: Place,
@@ -769,11 +770,18 @@ impl Step {
     /// The choice the previous rwv step printed beginning `prefix`, run as
     /// printed.
     pub fn rwv_printed(at: &Place, prefix: &'static str) -> Step {
+        Step::rwv_printed_holding(at, prefix, "")
+    }
+
+    /// [`Step::rwv_printed`] of the line that also holds `holding`, for
+    /// choices whose lines begin alike.
+    pub fn rwv_printed_holding(at: &Place, prefix: &'static str, holding: &'static str) -> Step {
         Step::new(
-            format!("the printed `{prefix}...`"),
+            format!("the printed `{prefix}...{holding}...`"),
             Action::RwvPrinted {
                 at: at.clone(),
                 prefix,
+                holding,
             },
             Expect::undecided(),
         )
@@ -1266,17 +1274,21 @@ impl Run<'_> {
                 self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
             }
-            Action::RwvPrinted { at, prefix } => {
+            Action::RwvPrinted {
+                at,
+                prefix,
+                holding,
+            } => {
                 let Some(line) = self
                     .last_rwv_output
                     .lines()
                     .map(str::trim)
-                    .find(|line| line.starts_with(prefix))
+                    .find(|line| line.starts_with(prefix) && line.contains(holding))
                 else {
                     return (
                         false,
                         format!(
-                            "no `{prefix}...` line was printed:\n{}",
+                            "no `{prefix}...{holding}...` line was printed:\n{}",
                             self.last_rwv_output
                         ),
                     );
