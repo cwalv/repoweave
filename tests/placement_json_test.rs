@@ -249,13 +249,16 @@ fn sync_to_places_both_workspaces_each_under_its_own_path() {
 }
 
 #[test]
-fn sync_places_the_end_of_op_reshare_under_two_workers() {
+fn sync_to_places_the_end_of_op_reshare_under_two_workers() {
     let weave = weave();
     let seat = weave.seat("feat");
     commit(&weave.member(), &["N1", "N2"], "primary");
     succeed(&weave.primary, &["lock", "--commit"]);
 
-    let doc = envelope(&seat, &["sync", "primary", "--json", "-j", "2"]);
+    let doc = envelope(
+        &seat,
+        &["sync-to", "--strategy", "rebase", "--json", "-j", "2"],
+    );
     let context = format!("{doc:#}");
     let placements = doc["placements"].as_array().unwrap();
     assert_eq!(placements.len(), 1, "{context}");
