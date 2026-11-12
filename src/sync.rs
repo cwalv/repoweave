@@ -4138,6 +4138,7 @@ fn guard_and_mark<'a>(
     let tsp_id = SavepointKey::LandTarget(op_id.clone());
     let mut project_anchors: Vec<(PathBuf, SavepointKey)> = Vec::new();
     let mut member_anchors: Vec<(Box<dyn Vcs>, PathBuf, SavepointKey)> = Vec::new();
+    let mut rewound_in_place: Vec<String> = Vec::new();
     let filed = (|| -> anyhow::Result<()> {
         create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &savepoint_key)?;
         project_anchors.push((cwd_project_dir.clone(), savepoint_key.clone()));
@@ -4205,11 +4206,36 @@ fn guard_and_mark<'a>(
             };
             let vcs = vcs_for(entry.vcs_type);
             let dir = workspace.join(path.as_path());
+            let head = vcs.head_revision(&dir)?;
+            if head.id() != &receiving.tip {
+                rewound_in_place.push(format!(
+                    "{}: now at {}, not at {}, where the landing read it",
+                    RepoKey::Member(path.clone()),
+                    head.id().short(),
+                    receiving.tip.short()
+                ));
+                continue;
+            }
             create_savepoint(vcs.as_ref(), &dir, &in_place_key)?;
             member_anchors.push((vcs, dir, in_place_key.clone()));
         }
         Ok(())
     })();
+    if filed.is_ok() && !rewound_in_place.is_empty() {
+        for (dir, id) in &project_anchors {
+            delete_savepoint(project_vcs.as_ref(), dir, id);
+        }
+        for (vcs, dir, id) in &member_anchors {
+            delete_savepoint(vcs.as_ref(), dir, id);
+        }
+        release_start(&acquired);
+        return Err(target_moved_line(
+            &cwd_project_name,
+            dest_workspace_dir.as_deref(),
+            rewound_in_place,
+        )
+        .refused());
+    }
     if let Err(e) = filed {
         for (dir, id) in &project_anchors {
             delete_savepoint(project_vcs.as_ref(), dir, id);

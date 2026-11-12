@@ -13034,6 +13034,9 @@ pub enum InPlaceEnd {
     /// Killed once it leased the primary, before it recorded its plan, then
     /// aborted: nothing of it is left in the primary.
     KilledBeforeThePlan,
+    /// The primary's checkout is rewound after the landing leased it: the
+    /// landing refuses before it files anything, and the commit stays dropped.
+    Rewound,
 }
 
 /// The primary detached on the project, its members still on `main`: a
@@ -13114,6 +13117,30 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                 land(),
             ]);
             return scenario("in-place fast-forward: killed before the plan", steps);
+        }
+        InPlaceEnd::Rewound => {
+            steps.extend([
+                Step::commit(&a(), Repo::App, "a-app"),
+                Step::rwv_paused(
+                    &ww("w"),
+                    &["land", "--history", "linear"],
+                    "leased-in-place",
+                    "landing",
+                ),
+                Step::git(&a(), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
+                    .may_restore(&[Repo::App])
+                    .may_strand(&[Repo::App]),
+                Step::release("landing")
+                    .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+                    .claim(Claim::OutputContains("where the landing read it")),
+                Step::rwv(&a(), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("in progress")),
+                Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                    .claim(Claim::OutputLacks("a-app")),
+                land(),
+            ]);
+            return scenario("in-place fast-forward: rewound after the lease", steps);
         }
         InPlaceEnd::AbortedFromTheSource => ww("w"),
         InPlaceEnd::AbortedFromThePrimary => a(),
