@@ -602,6 +602,11 @@ fn merge_project(
     let vcs = project_vcs();
     let path = project_rel_path(project);
     let repos = savepoint_repos(ctx, project);
+    let lineage = crate::feature_sync::feature_lineage(ctx, project)?;
+    let sides = Sides {
+        first: upstream.id().clone(),
+        second: head.id().clone(),
+    };
     let began;
     let op = match &how.resumed {
         Some((op, _)) => op,
@@ -609,6 +614,18 @@ fn merge_project(
             let tracked = vcs.tracked_dirty_file_names(dir)?;
             let mut report = Report::default();
             report.extend(judge_edits(vcs.as_ref(), &path, dir, tracked, None));
+            if let (Some(lineage), Some((merged, merging))) = (
+                &lineage,
+                crate::project_merge::member_merges_planned(vcs.as_ref(), dir, &sides)?,
+            ) {
+                lineage.judge_member_merges(
+                    ctx.active_path(),
+                    &merged,
+                    &merging,
+                    &path,
+                    &mut report,
+                )?;
+            }
             report.into_result()?;
             began = Op::begin(
                 ctx.active_path(),
@@ -635,12 +652,9 @@ fn merge_project(
             opts: how.activation,
             message: format!("Merge the upstream of {attached} into {attached}"),
             head: crate::lock_merge::Parent::Second,
-            members: crate::project_merge::MemberMerging::BothChanged,
+            members: crate::project_merge::MemberMerging::BothChanged(lineage),
         }
-        .run(&Sides {
-            first: upstream.id().clone(),
-            second: head.id().clone(),
-        })
+        .run(&sides)
         .and_then(|(commit, pruning)| {
             crate::sync::fail_on_refused_prunes(&pruning)?;
             Ok(commit)

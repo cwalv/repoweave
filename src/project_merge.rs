@@ -30,6 +30,91 @@ pub(crate) struct Sides {
     pub(crate) second: CommitId,
 }
 
+/// A member a project merge merges before the project: the first side's pin
+/// goes into the member's checkout.
+pub(crate) struct MemberMerge {
+    pub(crate) path: RepoPath,
+    pub(crate) entry: RepoEntry,
+    pub(crate) first: CommitId,
+}
+
+/// The `owned` and `fork` members of `manifest`, the merged entries, whose
+/// pin both sides changed since the base under one declared branch.
+fn both_changed(
+    manifest: &Manifest,
+    held: (Option<&Held>, &Held, &Held),
+    merged_declared: &BTreeMap<RepoPath, String>,
+) -> Vec<MemberMerge> {
+    let (base, first, second) = held;
+    manifest
+        .iter_entries()
+        .filter(|(_, entry)| matches!(entry.role, Role::Owned | Role::Fork))
+        .filter_map(|(path, entry)| {
+            let (theirs, ours) = (first.pins.get(path)?, second.pins.get(path)?);
+            let was = base.and_then(|held| held.pins.get(path));
+            let one_branch = first.declared.contains_key(path)
+                && first.declared.get(path) == second.declared.get(path)
+                && first.declared.get(path) == merged_declared.get(path);
+            let changed_apart = theirs != ours && Some(theirs) != was && Some(ours) != was;
+            (changed_apart && one_branch).then(|| MemberMerge {
+                path: path.clone(),
+                entry: entry.clone(),
+                first: theirs.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The members a merge of `sides` would merge, read without touching the
+/// checkout; `None` where the backend cannot merge trees or the merged
+/// `rwv.toml` does not come out clean.
+pub(crate) fn member_merges_planned(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    sides: &Sides,
+) -> anyhow::Result<Option<(Manifest, Vec<MemberMerge>)>> {
+    let Some(trees) = vcs.tree_merges() else {
+        return Ok(None);
+    };
+    let tree = match trees.merge_tree(dir, &sides.first, &sides.second)? {
+        TreeMerge::Clean(tree) => tree,
+        TreeMerge::Conflicted { tree, paths }
+            if paths.iter().all(|path| path == LockFile::FILE_NAME) =>
+        {
+            tree
+        }
+        TreeMerge::Conflicted { .. } => return Ok(None),
+    };
+    let Some(text) = trees.file_in_tree(dir, &tree, Manifest::FILE_NAME)? else {
+        return Ok(None);
+    };
+    let Ok(manifest) = Manifest::from_toml_str(&text) else {
+        return Ok(None);
+    };
+    let base = vcs
+        .merge_bases(dir, &sides.first, &sides.second)?
+        .into_iter()
+        .next();
+    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit);
+    let base_held = base.as_ref().map(held);
+    let (first, second) = (held(&sides.first), held(&sides.second));
+    let merged_declared: BTreeMap<RepoPath, String> = manifest
+        .iter_entries()
+        .map(|(path, entry)| {
+            (
+                path.clone(),
+                entry.branch.local_counterpart().as_str().to_owned(),
+            )
+        })
+        .collect();
+    let merging = both_changed(
+        &manifest,
+        (base_held.as_ref(), &first, &second),
+        &merged_declared,
+    );
+    Ok(Some((manifest, merging)))
+}
+
 /// Where the merged files are read from.
 enum Merged {
     Tree(crate::vcs::TreeId),
@@ -405,8 +490,9 @@ pub(crate) struct ProjectMerge<'a> {
 
 /// How a project merge settles its members.
 pub(crate) enum MemberMerging {
-    /// Merge each member whose pin both sides changed under one branch.
-    BothChanged,
+    /// Merge each member whose pin both sides changed under one branch, the
+    /// lineage rule judging each where the branch is a feature.
+    BothChanged(Option<crate::feature_sync::FeatureLineage>),
     /// The members were merged before the project: their tips.
     Done(BTreeMap<RepoPath, CommitId>),
 }
@@ -461,15 +547,25 @@ impl ProjectMerge<'_> {
             .collect();
 
         let member_merges = match &self.members {
-            MemberMerging::BothChanged => self.merge_members(
-                vcs,
-                &dir,
-                &manifest,
-                (base_held.as_ref(), &first_held, &second_held),
-                &merged_declared,
-                sides,
-                base.as_ref(),
-            )?,
+            MemberMerging::BothChanged(lineage) => {
+                let merging = both_changed(
+                    &manifest,
+                    (base_held.as_ref(), &first_held, &second_held),
+                    &merged_declared,
+                );
+                if let Some(lineage) = lineage {
+                    let mut report = crate::diagnosis::Report::default();
+                    lineage.judge_member_merges(
+                        self.ctx.active_path(),
+                        &manifest,
+                        &merging,
+                        &repo,
+                        &mut report,
+                    )?;
+                    report.into_result()?;
+                }
+                self.merge_members(vcs, &dir, &merging, sides, base.as_ref())?
+            }
             MemberMerging::Done(tips) => tips.clone(),
         };
 
@@ -612,33 +708,21 @@ impl ProjectMerge<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn merge_members(
         &self,
         vcs: &dyn Vcs,
         dir: &Path,
-        manifest: &Manifest,
-        held: (Option<&Held>, &Held, &Held),
-        merged_declared: &BTreeMap<RepoPath, String>,
+        merging: &[MemberMerge],
         sides: &Sides,
         base: Option<&CommitId>,
     ) -> anyhow::Result<BTreeMap<RepoPath, CommitId>> {
-        let (base_held, first, second) = held;
         let mut merged = BTreeMap::new();
-        for (path, entry) in manifest.iter_entries() {
-            if !matches!(entry.role, Role::Owned | Role::Fork) {
-                continue;
-            }
-            let (Some(theirs), Some(ours)) = (first.pins.get(path), second.pins.get(path)) else {
-                continue;
-            };
-            let was = base_held.and_then(|held| held.pins.get(path));
-            let one_branch = first.declared.contains_key(path)
-                && first.declared.get(path) == second.declared.get(path)
-                && first.declared.get(path) == merged_declared.get(path);
-            if theirs == ours || Some(theirs) == was || Some(ours) == was || !one_branch {
-                continue;
-            }
+        for MemberMerge {
+            path,
+            entry,
+            first: theirs,
+        } in merging
+        {
             let member_dir = self.ctx.active_path().join(path.as_path());
             if !member_dir.exists() {
                 continue;

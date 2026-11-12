@@ -1108,6 +1108,7 @@ fn settle_diverged(
                         vcs,
                         d.local.id(),
                         tip.id(),
+                        crate::feature_sync::MergeUpstreamBy::UpdateRemote,
                     )?);
                 }
             }

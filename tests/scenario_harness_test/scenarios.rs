@@ -4701,3 +4701,65 @@ pub fn sync_refuses_a_pre_schema_target_tip() -> Scenario {
         ],
     )
 }
+
+/// `w`'s `app` published, then rebased by `sync` onto `main`'s newer pin: its
+/// base is that pin, which the published `app` and the published lock's pin
+/// of it lack.
+fn feature_rebased_past_its_push_branch() -> Vec<Step> {
+    vec![
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w",
+                "--new-branch",
+                "feat-w",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("w"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-w")
+            .pushes(Remote::origin(Repo::Proj), "feat-w")
+            .expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App, Repo::Proj])
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::App,
+                rev: "feat-w",
+                mark: "main-app",
+            }),
+    ]
+}
+
+/// The lineage rule on `pull --merge-upstream`: the project branch and its
+/// upstream both re-pinned `app`, so the merge would merge `app` with the pin
+/// the upstream holds, which lacks the base `w`'s `app` was rebased onto;
+/// `pull` refuses before anything moves and names C3, since that pin's own
+/// base is on `main`. C3, run as printed, takes the upstream's lock.
+pub fn merge_upstream_off_lineage() -> Scenario {
+    let mut steps = feature_rebased_past_its_push_branch();
+    steps.extend([
+        Step::rwv(&ww("w"), &["pull", "--merge-upstream"])
+            .expect(Exit::refuses(Repo::App, State::PinOffLineage))
+            .claim(Claim::OutputContains(
+                "rwv pull --reset-to-upstream projects/proj",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv(&ww("w"), &["pull", "--reset-to-upstream", "projects/proj"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::Proj])
+            .may_rewind(&[Repo::Proj, Repo::App])
+            .claim(Claim::OutputContains("to its upstream"))
+            .claim(Claim::OutputContains("in backup")),
+    ]);
+    scenario("merge-upstream off lineage", steps)
+}

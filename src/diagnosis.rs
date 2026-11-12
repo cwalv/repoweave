@@ -1318,11 +1318,14 @@ impl State {
                         receiving branch",
                 refused_by: "`rwv sync`, for a member it would integrate, or that would follow \
                              while the branch has dependents; `rwv update --remote \
-                             --merge-upstream`, for a feature's member",
+                             --merge-upstream` and `rwv pull --merge-upstream`, for a \
+                             feature's member",
                 offers: &[Form::C22, Form::C11SetBranch],
                 verb_offers: &[
                     ("update", Form::C3UpdateRemote),
                     ("update", Form::C27),
+                    ("pull", Form::C3Pull),
+                    ("pull", Form::C27),
                 ],
             },
             Self::PinOffRemote => &StateRow {

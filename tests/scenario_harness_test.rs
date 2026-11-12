@@ -584,6 +584,7 @@ every_scenario!(
     record_retargeted_here_is_not_reported,
     record_unstored_is_stored_by_sync,
     sync_refuses_a_pre_schema_target_tip,
+    merge_upstream_off_lineage,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2668,6 +2669,11 @@ fn sync_refuses_a_member_holding_unpushed_commits_beside_its_upstreams() {
 #[test]
 fn sync_refuses_a_pre_schema_target_tip_at_that_branch() {
     runner::run(scenarios::sync_refuses_a_pre_schema_target_tip()).assert_fully_decided_green();
+}
+
+#[test]
+fn merge_upstream_refuses_a_feature_member_off_lineage() {
+    runner::run(scenarios::merge_upstream_off_lineage()).assert_fully_decided_green();
 }
 
 #[test]

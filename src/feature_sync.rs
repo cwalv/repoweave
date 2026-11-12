@@ -6,7 +6,7 @@
 //! target's tip, and the relock records the three-way merge of pins with each
 //! moved member at its new tip.
 
-use crate::diagnosis::{ChoiceId, Fact, FactKind, Judged, Report, State};
+use crate::diagnosis::{ChoiceId, Fact, FactKind, Form, Judged, Report, State};
 use crate::lineage::{Lineage, PinHistory};
 use crate::lock_merge::{merge_pins, Held, Parent, PinMerge, Reach};
 use crate::manifest::{
@@ -1919,7 +1919,48 @@ pub(crate) fn feature_lineage(
     }))
 }
 
+/// Which `--merge-upstream` merges a member: `update --remote` with the
+/// member's upstream, or `pull` with the pin the project branch's upstream
+/// holds for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MergeUpstreamBy {
+    UpdateRemote,
+    Pull { project: String },
+}
+
 impl FeatureLineage {
+    /// Judge each member a project merge merges, its checkout's commit taking
+    /// the pin the other side holds, by the lineage rule.
+    pub(crate) fn judge_member_merges(
+        &self,
+        root: &Path,
+        merged: &Manifest,
+        merging: &[crate::project_merge::MemberMerge],
+        project: &str,
+        report: &mut Report,
+    ) -> anyhow::Result<()> {
+        for member in merging {
+            let dir = root.join(member.path.as_path());
+            let vcs = vcs_for(member.entry.vcs_type);
+            if !vcs.is_repo(&dir) {
+                continue;
+            }
+            let local = vcs.head_revision(&dir)?.id().clone();
+            report.extend(self.judge_merge_upstream(
+                merged,
+                &member.path,
+                &dir,
+                vcs.as_ref(),
+                &local,
+                &member.first,
+                MergeUpstreamBy::Pull {
+                    project: project.to_owned(),
+                },
+            )?);
+        }
+        Ok(())
+    }
+
     /// Judge a merge of `upstream` into the member's work `local` by the
     /// lineage rule: refused where the upstream lacks the work's base, with
     /// C3 where the upstream's own base is on the branch the member lands
@@ -1933,6 +1974,7 @@ impl FeatureLineage {
         vcs: &dyn Vcs,
         local: &CommitId,
         upstream: &CommitId,
+        by: MergeUpstreamBy,
     ) -> anyhow::Result<Option<Judged>> {
         let pins = self.pins.of_member(path);
         let Lineage::Off { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)? else {
@@ -1955,17 +1997,13 @@ impl FeatureLineage {
             },
             _ => false,
         };
-        let choice = if on_receiving {
-            ChoiceId::C3
-        } else {
-            ChoiceId::C27
-        };
-        Ok(Some(
-            State::PinOffLineage
-                .of(path)
+        let judging = State::PinOffLineage
+            .of(path)
+            .checkout(dir)
+            .bind("<m>", path);
+        let judging = match by {
+            MergeUpstreamBy::UpdateRemote => judging
                 .member()
-                .checkout(dir)
-                .bind("<m>", path)
                 .bind("<repo>", path)
                 .subject(format!(
                     "its base {} is not on its upstream ({})",
@@ -1973,8 +2011,25 @@ impl FeatureLineage {
                     upstream.short()
                 ))
                 .by_verb("update")
-                .only(&[choice])
-                .judge(vcs),
-        ))
+                .only_forms(&[if on_receiving {
+                    Form::C3UpdateRemote
+                } else {
+                    Form::C27
+                }]),
+            MergeUpstreamBy::Pull { project } => judging
+                .bind("<repo>", project)
+                .subject(format!(
+                    "its base {} is not on the pin the upstream holds ({})",
+                    base.short(),
+                    upstream.short()
+                ))
+                .by_verb("pull")
+                .only_forms(&[if on_receiving {
+                    Form::C3Pull
+                } else {
+                    Form::C27
+                }]),
+        };
+        Ok(Some(judging.judge(vcs)))
     }
 }
