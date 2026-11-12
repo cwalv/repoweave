@@ -2087,18 +2087,7 @@ fn judge_in_place(
     let Member { path, dir, vcs, .. } = *member;
     if let [checkout] = holding {
         if let Some(workspace) = in_place_workspace(landing, path, checkout)? {
-            let dirt = vcs
-                .tracked_dirty_file_names(checkout)
-                .unwrap_or_else(|_| vec!["(status unreadable)".to_owned()]);
-            return Ok(
-                match crate::diagnosis::judge_edits(vcs, path, checkout, dirt, Some(&workspace)) {
-                    Some(edits) => {
-                        report.add(edits);
-                        None
-                    }
-                    None => Some(Moves::InPlace { workspace }),
-                },
-            );
+            return Ok(Some(Moves::InPlace { workspace }));
         }
     }
     let recorded = crate::sync::recorded_workweaves(&landing.primary)?;

@@ -3668,6 +3668,25 @@ fn run_preconditions_after_acquire(
             }
         }
     }
+    for (path, receiving) in &plan.receiving {
+        let (op_state::Moves::InPlace { workspace }, Some(entry)) =
+            (&receiving.moves, cwd_project.manifest.get_entry(path))
+        else {
+            continue;
+        };
+        judge_edits_beside_drift(
+            vcs_for(entry.vcs_type),
+            JudgedCheckout {
+                key: RepoKey::Member(path.clone()),
+                repo: path.to_string(),
+                dir: workspace.join(path.as_path()),
+                elsewhere: Some(workspace.clone()),
+            },
+            |dirt| dirt,
+            &mut report,
+            Some(&mut *drifted),
+        );
+    }
     let migrated_in = dest.map_or(cwd_project_dir, |(project_dir, _)| project_dir);
     hold(
         crate::lock_driver::refuse_unmigrated(project_vcs, migrated_in.display(), migrated_in),

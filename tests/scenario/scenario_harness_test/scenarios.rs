@@ -11304,6 +11304,9 @@ pub enum InPlaceEnd {
     AbortedFromThePrimary,
     /// The primary's checkout holds an edit: the landing refuses first.
     Dirty,
+    /// `main` moved under the primary's checkout from another worktree: the
+    /// landing refreshes the drift, then lands.
+    Drifted,
 }
 
 /// The primary detached on the project, its members still on `main`: a
@@ -11346,6 +11349,23 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                 land(),
             ]);
             return scenario("in-place fast-forward: dirty", steps);
+        }
+        InPlaceEnd::Drifted => {
+            steps.extend([
+                Step::hand_commit(&ww("w"), Repo::App, "main", &[("moved.txt", "moved\n")]),
+                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("in place in"))
+                    .claim(Claim::OutputContains("refreshed drift"))
+                    .claim(Claim::OutputContains("moved.txt"))
+                    .claim(Claim::OutputLacks("commit your edits"))
+                    .claim(Claim::WorkweaveGone(ww("w"))),
+                Step::git(&a(), Repo::App, &["log", "--format=%s", "HEAD"])
+                    .claim(Claim::OutputContains("w-app")),
+                Step::git(&a(), Repo::App, &["status", "--porcelain"])
+                    .claim(Claim::OutputLacks("moved.txt")),
+            ]);
+            return scenario("in-place fast-forward: drifted", steps);
         }
         InPlaceEnd::AbortedFromTheSource => ww("w"),
         InPlaceEnd::AbortedFromThePrimary => a(),
