@@ -755,6 +755,7 @@ every_scenario!(
     land_leaves_a_shared_member_where_the_presented_project_has_it,
     land_into_a_workspace_presenting_another_project,
     land_names_a_member_composing_cannot_materialize,
+    land_clones_a_member_its_target_took_in_by_fetch_alone,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
@@ -4248,4 +4249,10 @@ fn history_member_override_is_stored_and_a_fast_forward_reads_neither() {
 #[test]
 fn dc04_a_conflicted_entry_is_settled_by_its_setters() {
     runner::run(scenarios::dc04_conflict_setter()).assert_green();
+}
+
+#[test]
+fn land_clones_a_member_its_target_took_in_by_fetch_alone_scenario() {
+    runner::run(scenarios::land_clones_a_member_its_target_took_in_by_fetch_alone())
+        .assert_fully_decided_green();
 }

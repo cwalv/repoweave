@@ -9345,10 +9345,11 @@ pub fn land_into_a_workspace_presenting_another_project() -> Scenario {
 }
 
 /// `main` lists `docs`, which another machine added and this machine took in
-/// with git alone, so it has no clone of it. Composing the workspace onto
-/// `main` cannot make `docs`' checkout: the member's line names the failure
-/// and its route, the op parks, and `--json` records it as
-/// `materialize-failed`. Making the clone as printed lets the landing finish.
+/// with git alone, so it has no clone of it, and `docs`' remote does not
+/// answer. Composing the workspace onto `main` cannot make `docs`' clone: the
+/// member's line names the failure, the op parks, and `--json` records it as
+/// `materialize-failed`. Once the remote answers, `land --continue` clones it
+/// and the landing finishes.
 pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
     scenario(
         "land names a member composing cannot materialize",
@@ -9365,26 +9366,19 @@ pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
             Step::git(&a(), Repo::Proj, &["merge", "--ff-only", "origin/main"])
                 .may_leave_unresolved(&[Repo::Docs]),
             Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::unreachable(Remote::origin(Repo::Docs)),
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses_kind(RefusalKind::OpParked))
                 .may_leave_unresolved(&[Repo::Docs])
                 .claim(Claim::OutputContains(
                     "  local/remotes/docs: materialize failed:",
-                ))
-                .claim(Claim::OutputLine("rwv explain missing-canonical-clone"))
-                .claim(Claim::OutputContains("rwv update --project proj")),
-            Step::rwv(&ww("w"), &["explain", "missing-canonical-clone"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("canonical")),
+                )),
             Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--json"])
                 .expect(Exit::refuses_kind(RefusalKind::OpParked))
                 .may_leave_unresolved(&[Repo::Docs])
-                .claim(Claim::OutputContains("\"kind\": \"materialize-failed\""))
-                .claim(Claim::OutputContains(
-                    "\"refusal\": \"missing-canonical-clone\"",
-                )),
-            Step::rwv(&a(), &["update", "--project", "proj"]).expect(Exit::Succeeds),
+                .claim(Claim::OutputContains("\"kind\": \"materialize-failed\"")),
+            Step::reachable(Remote::origin(Repo::Docs)),
             Step::rwv(&ww("w"), &["land", "--continue"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
@@ -9392,6 +9386,51 @@ pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
                     repo: Repo::App,
                     rev: "main",
                     mark: "w-app",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Docs,
+                    branch: "main",
+                }),
+        ],
+    )
+}
+
+/// `main`'s upstream lists `docs`, which another machine added; this machine
+/// only fetched it, so neither its checked-out lock nor its disk has `docs`.
+/// The landing takes the upstream in, and composing the workspace onto it
+/// makes the canonical clone `rwv update` in a workweave would have made, so
+/// the landing finishes.
+pub fn land_clones_a_member_its_target_took_in_by_fetch_alone() -> Scenario {
+    scenario(
+        "land clones a member its target took in by fetch alone",
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            create("w"),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Docs,
+                    branch: "main",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Docs,
                 }),
         ],
     )

@@ -1736,7 +1736,9 @@ fn manifest_at_revision(
 /// CWD workspace on disk.
 ///
 /// - In a workweave: a worktree of the canonical clone at primary, born at
-///   `start` ([`crate::workweave::materialize_member`]).
+///   `start` ([`crate::workweave::materialize_member`]). A canonical clone
+///   the primary lacks is cloned first, born where the primary's lock pins
+///   it, as `rwv update` in a workweave clones one.
 /// - In a primary weave: `git clone` from the manifest URL (mirrors
 ///   `rwv clone`'s member clone).
 ///
@@ -1750,11 +1752,35 @@ fn materialize_missing_repo(
     entry: &crate::manifest::RepoEntry,
     start: &str,
     project_name: &ProjectName,
+    emit: &dyn Fn(&str),
 ) -> anyhow::Result<Option<FilePlacement>> {
     match &ctx.checkout {
         Checkout::Workweave {
             name, dir, project, ..
         } => {
+            let canonical = ctx.primary_path().join(repo_path.as_path());
+            if !canonical.exists() {
+                let primary_lock = LockFile::path_in(&crate::workspace::project_dir(
+                    ctx.primary_path(),
+                    project_name,
+                ));
+                let primary_lock = if primary_lock.exists() {
+                    Some(LockFile::from_state(&primary_lock)?)
+                } else {
+                    None
+                };
+                crate::update::clone_member(
+                    "land",
+                    vcs,
+                    repo_path,
+                    entry,
+                    &canonical,
+                    primary_lock
+                        .as_ref()
+                        .and_then(|lock| lock.get_entry(repo_path)),
+                    emit,
+                )?;
+            }
             return Ok(crate::workweave::materialize_member(
                 vcs,
                 ctx.primary_path(),
@@ -4756,6 +4782,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .get_entry(repo_path)
             .map(|e| e.version.id().as_str())
             .unwrap_or_else(|| declared.as_str());
+        let emit = |line: &str| {
+            if emit_text {
+                outln!("  {line}");
+            } else {
+                eprintln!("  {line}");
+            }
+        };
         match materialize_missing_repo(
             vcs_for(entry.vcs_type).as_ref(),
             &ctx.cwd_ctx,
@@ -4763,6 +4796,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             entry,
             start,
             &ctx.cwd_project_name,
+            &emit,
         ) {
             Ok(files) => {
                 if let Some(files) = files {
@@ -8934,6 +8968,7 @@ mod tests {
             &entry,
             "main",
             &project,
+            &|_| {},
         )
         .expect("a name nothing holds is the ordinary create");
 
@@ -8967,6 +9002,7 @@ mod tests {
             &entry,
             "main",
             &project,
+            &|_| {},
         )
         .expect("the branch is the workweave's, so the member is put back on it");
 

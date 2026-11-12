@@ -1259,7 +1259,7 @@ fn bring_one(
 /// Clone the member at `repo_path` into `dest`: born attached to the local
 /// counterpart of the branch the manifest declares, at `birth`'s pin where the
 /// clone holds it, else at that branch's tip on the remote.
-fn clone_member(
+pub(crate) fn clone_member(
     verb: &'static str,
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
