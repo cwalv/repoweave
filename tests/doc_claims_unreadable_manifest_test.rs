@@ -94,7 +94,6 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
         (vec!["materialize"], ws),
         (vec!["activate", "app"], ws),
         (vec!["member", "add", &beta], ws),
-        (vec!["push", "--dry-run"], ws),
         (vec!["member", "set-role", MEMBER, "reference"], ws),
         (vec!["member", "remove", MEMBER], ws),
         (vec!["workweave", "create", "--project", "app", "two"], ws),

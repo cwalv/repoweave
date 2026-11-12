@@ -3000,6 +3000,7 @@ mod tests {
             offering_nothing,
             [
                 State::PinWaived,
+                State::PublishRecordsRejected,
                 State::UnparseableProjectMalformed,
                 State::AlignmentAligned
             ],
