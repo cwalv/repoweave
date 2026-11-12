@@ -717,7 +717,6 @@ every_scenario!(
     member_changes_are_judged_per_field,
     an_inapplicable_consent_joins_the_report,
     the_printed_re_add_clears_a_removal,
-    landing_names_every_field,
     every_printed_setter_restores_the_target_value,
     a_followed_receiving_branch_that_exists_nowhere_is_created,
     a_dependency_moved_off_its_pin_is_refused_before_the_relock,
@@ -4204,11 +4203,6 @@ fn history_disagreement_is_reported_and_each_project_lands_by_its_own() {
 #[test]
 fn history_member_override_is_stored_and_a_fast_forward_reads_neither() {
     runner::run(scenarios::history_member_override()).assert_fully_decided_green();
-}
-
-#[test]
-fn landing_names_every_field_is_green() {
-    runner::run(scenarios::landing_names_every_field()).assert_fully_decided_green();
 }
 
 #[test]

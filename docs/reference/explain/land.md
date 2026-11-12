@@ -17,25 +17,37 @@ nothing could be landed into. Then, under an op record:
    holds commits its **receiving branch** lacks is moved: composed onto the tip
    of that branch, its branch named after
    the target when the target is itself a feature, else the branch the merged
-   entries declare, read as the newer of that branch and its upstream. A member
-   whose work that branch lacks is rebased onto it (`--strategy rebase`, the
-   default). A member holding nothing that branch lacks is not moved and keeps
-   the target's pin, unless the feature changed that pin, which the relock then
+   entries declare, read as the newer of that branch and its upstream. A
+   member holding nothing that branch lacks is not moved and keeps the
+   target's pin, unless the feature changed that pin, which the relock then
    takes. Commits a moved member's receiving branch holds beyond the target's
-   pin are listed before composing: the landing pins them into the target. The project branch is
-   rebased onto the target's tip, again the newer of the target and its
-   upstream, unless it already contains that tip. A target or receiving
-   branch behind its upstream is so taken in, fast-forward only, and the
+   pin are listed before composing: the landing pins them into the target.
+   A member whose work that branch
+   lacks lands as the target's `history` setting says, read from the target's
+   own `rwv.toml` (the member's entry, else the top level): under `linear` its
+   work is rebased onto the branch's tip after a `rebased` backup; under
+   `merge` a merge commit joins them, the receiving branch's tip as first
+   parent; under `ff-only` it refuses as `history` `not fast-forward`, naming
+   `rwv sync`, where the rebase happens. A member whose branch already holds
+   the receiving tip on its first-parent chain needs no setting: the
+   receiving branch fast-forwards. One holding it only through a merge's
+   second parent (after `rwv sync --from`) lands by a merge commit, first
+   parent the receiving tip, under `linear` and `merge`. A range a rebase
+   would replay that holds a merge commit is never rebased: it lands by a
+   merge commit instead, reported `merged`. The project branch is composed
+   with the target's tip, again the newer of the target and its upstream, the
+   same way by the target's top-level `history`. A target or receiving branch
+   behind its upstream is so taken in, fast-forward only, and the
    landing reports what it took in of the target's upstream: its commits,
    each pin they changed (`re-pinned` where the new pin does not descend
    from the old) and each member entry they changed (`member-changed`). Each
    pin of the target's lock, or of its upstream's, that this clone lacks
    refuses (`pin` `unreachable`), naming `rwv fetch`. A declared branch the
    upstream changed is taken in as a ref, and the target's workspace moves
-   onto it when it aligns. Every
-   rebase happens in this workspace; nothing outside it moves. A range a
-   rebase would replay that holds a merge commit is never rebased: the
-   landing refuses as `not-fast-forwardable`, naming the merge.
+   onto it when it aligns. Every composition
+   happens in this workspace; nothing outside it moves. Where a repo needs a
+   setting and the target records none, the landing refuses as `history`
+   `unset`, unless `--history` gives one for this run.
 2. **Relock.** The lock is recorded and committed: each member's pin merged
    three ways against the merge base's lock, every composed member at its
    composed tip. A `dependency` or `reference` member takes the pin the merge
@@ -168,6 +180,9 @@ the landing.
 | `target` | `member changes` | the landing would change the target's entries or top-level `history`, unnamed |
 | `target` | `dependents` | another weave branch lands into this one |
 | `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
+| `history` | `unset` | a repo needs more than a fast-forward and the target records no `history` for it, and no `--history` gives one |
+| `history` | `contradicted` | `--history` differs from the setting the target records for a repo |
+| `history` | `not fast-forward` | the target records `ff-only` for a repo and the landing is not a fast-forward |
 | `pin` | `off lineage` | a member's base is not on its receiving branch |
 | `pin` | `unreachable` | the target, or its upstream as last fetched, pins a commit this clone lacks |
 | `pin` | `not on declared branch` | a receiving branch does not reach the target's pin, or a `dependency` or `reference` member's branch does not reach the feature's pin |
@@ -182,11 +197,9 @@ the landing.
 | `checkout` | `in another workspace` | a receiving branch, or from the primary the target, is checked out elsewhere |
 | `alignment` | any | a member here, or in the target's workspace, is not where its branch expects it |
 
-`not-fast-forwardable` refuses `--strategy ff` where the feature does not
-already contain the target's tip, and a rebase of a range holding a merge
-commit, naming `rwv sync --from <T>` to take the target in by a merge. `missing-lock-merge-driver` refuses where
+`missing-lock-merge-driver` refuses where
 the project repo's lock merge driver is absent or was set up by an earlier
-release, in this workspace or, under `--strategy rebase`, in the target's;
+release, in this workspace or in the target's;
 run `rwv doctor --fix` where the refusal names. A conflict while composing stops the landing
 with its op record kept (`op-parked`): resolve it in the checkout named, then
 `rwv land --continue`, or `rwv abort` to put every repo back at its savepoint.
@@ -208,7 +221,7 @@ relock is what makes the lock it lands agree with the tips it lands.
 ## Invocation
 
 ```
-rwv land [--target <T>] [--allow-member-change <repo>]... [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
+rwv land [--target <T>] [--allow-member-change <repo>]... [--history <linear|merge|ff-only>] [--retire] [--json] [-j <N>] [--project <name>]
 rwv land --continue [--allow-member-change <repo>]... [--json] [--project <name>]
 ```
 
@@ -216,10 +229,10 @@ rwv land --continue [--allow-member-change <repo>]... [--json] [--project <name>
 - `--allow-member-change <repo>` — let the landing change the target's entry
   for this member, or with `projects/<p>` its top-level `history`. Repeat per
   repo. With `--continue`, adds to the names the landing started with.
-- `--strategy` — how a member holding work its receiving branch lacks is
-  composed: `rebase` (the default) replays it onto that branch's tip; `ff`
-  refuses unless the feature already contains the target's tip. The
-  fast-forward of the target is a fast-forward whatever this flag says.
+- `--history` — how a repo holding work its receiving branch lacks lands, for
+  this run, where the target records no `history` for it: `linear`, `merge`
+  or `ff-only`. A value differing from a recorded one is refused. The
+  target's own move is a fast-forward whatever the setting.
 - `--retire` — once the landing is done, remove the workweave and apply the
   deletion rule to the feature's branches. Its dirt, untracked files included,
   is judged with every other refusal before anything moves. From the primary
@@ -938,6 +951,56 @@ Schema:
           }
         },
         {
+          "description": "A range holding the merge `merge` that a rebasing setting integrated by a merge commit, first parent the receiving tip, rather than flatten.",
+          "type": "object",
+          "required": [
+            "kind",
+            "merge",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "merged"
+              ]
+            },
+            "merge": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A branch a rebase rewrote; the tip `was` it left is kept in the `rebased` backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebased"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
           "description": "A pin the landing moved backward, named by `--allow-member-change`.",
           "type": "object",
           "required": [
@@ -1562,7 +1625,7 @@ Schema:
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of `SyncFailure` for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable `VcsErrorOutput`.\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `ff-impossible` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of `SyncFailure` for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable `VcsErrorOutput`.\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `merge-failed` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
@@ -1607,7 +1670,7 @@ Schema:
             "kind": {
               "type": "string",
               "enum": [
-                "ff-impossible"
+                "merge-failed"
               ]
             },
             "message": {

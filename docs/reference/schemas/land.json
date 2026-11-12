@@ -661,6 +661,56 @@
           }
         },
         {
+          "description": "A range holding the merge `merge` that a rebasing setting integrated by a merge commit, first parent the receiving tip, rather than flatten.",
+          "type": "object",
+          "required": [
+            "kind",
+            "merge",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "merged"
+              ]
+            },
+            "merge": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A branch a rebase rewrote; the tip `was` it left is kept in the `rebased` backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebased"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
           "description": "A pin the landing moved backward, named by `--allow-member-change`.",
           "type": "object",
           "required": [
@@ -1285,7 +1335,7 @@
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `ff-impossible` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `merge-failed` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
@@ -1330,7 +1380,7 @@
             "kind": {
               "type": "string",
               "enum": [
-                "ff-impossible"
+                "merge-failed"
               ]
             },
             "message": {
