@@ -1743,6 +1743,22 @@ impl Vcs for GitVcs {
         Ok(url_remote.cloned())
     }
 
+    fn own_push_remote(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
+        for key in [
+            format!("branch.{branch}.pushRemote"),
+            "remote.pushDefault".to_owned(),
+        ] {
+            if let Some(name) = Self::config_get(repo, &key)? {
+                return Ok(Some(RemoteHandle::new(name)));
+            }
+        }
+        Ok(None)
+    }
+
     fn push_branch(
         &self,
         on: &AttachedRef,

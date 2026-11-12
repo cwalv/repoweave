@@ -896,6 +896,14 @@ impl Vcs for FakeVcs {
         unsupported("push_target_of")
     }
 
+    fn own_push_remote(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
+        unsupported("own_push_remote")
+    }
+
     fn file_versions(
         &self,
         _repo: &Path,

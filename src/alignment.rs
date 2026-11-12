@@ -297,7 +297,7 @@ pub enum Found {
     Nowhere,
 }
 
-fn find_e(
+pub(crate) fn find_e(
     vcs: &dyn Vcs,
     dir: &Path,
     entry: &RepoEntry,

@@ -702,12 +702,15 @@ impl State {
                         repo or of a member the rename would move, or a branch a remote has, \
                         as last fetched; `--adopt` takes up the remote's",
                 refused_by: "`rwv workweave create`, for the branch it mints in the project \
-                             repo and in each owned or fork member; `rwv branch rename`",
+                             repo and in each owned or fork member; `rwv branch rename`; \
+                             `rwv member set-branch --new`, for a branch the member's repo \
+                             already has",
                 offers: &[],
                 verb_offers: &[
                     ("workweave create", Form::AnotherName),
                     ("branch rename", Form::C10),
                     ("branch rename", Form::C10Adopt),
+                    ("member set-branch", Form::C11SetBranch),
                 ],
             },
             Self::NameARevision => &StateRow {
@@ -716,7 +719,7 @@ impl State {
                 means: "the branch `rwv member add` would declare reads as a commit id (seven \
                         or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`)",
                 refused_by: "`rwv member add`, for the remote's default branch or, with \
-                             `--new`, the branch the new repo is on",
+                             `--new`, the branch the new repo is on; `rwv member set-branch`",
                 offers: &[Form::C11SetBranch],
                 verb_offers: &[],
             },
@@ -728,9 +731,15 @@ impl State {
                         repo it is missing from, and the repos that have it are still read",
                 refused_by: "`rwv log`, for a range endpoint a member lacks, and for the weave \
                              branch `--against` names; `rwv branch set-mode`, for a branch the \
-                             project repo has neither locally nor on a remote as last fetched",
+                             project repo has neither locally nor on a remote as last fetched; \
+                             `rwv member set-branch`, for a branch the member's repo has neither \
+                             locally nor on a remote as last fetched; `rwv lock --commit`, for a \
+                             declared branch a hand edit named that exists nowhere",
                 offers: &[Form::C33],
-                verb_offers: &[],
+                verb_offers: &[
+                    ("member set-branch", Form::C11SetBranchNew),
+                    ("lock", Form::C11SetBranchNew),
+                ],
             },
             Self::NameReserved => &StateRow {
                 axis: Axis::Name,
@@ -739,9 +748,9 @@ impl State {
                         (`<records>/<name>`); no weave branch can take it",
                 refused_by: "`rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that \
                              align, lock, land or publish while the project repo is on a branch \
-                             of that name",
+                             of that name; `rwv member set-branch`",
                 offers: &[Form::C10],
-                verb_offers: &[],
+                verb_offers: &[("member set-branch", Form::C11SetBranch)],
             },
             Self::NameMinted => &StateRow {
                 axis: Axis::Name,
@@ -1744,19 +1753,19 @@ impl Form {
                 choice: C::C11,
                 steps: &[Rwv("rwv member set-branch <m> <b>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11SetBranchNew => &FormRow {
                 choice: C::C11,
                 steps: &[Rwv("rwv member set-branch <m> <b> --new")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11SetUrl => &FormRow {
                 choice: C::C11,
                 steps: &[Rwv("rwv member set-url <m> <url>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11SetRole => &FormRow {
                 choice: C::C11,

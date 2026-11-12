@@ -2517,6 +2517,15 @@ pub trait Vcs: Send + Sync {
         url_remote: Option<&RemoteHandle>,
     ) -> Result<Option<RemoteHandle>, VcsError>;
 
+    /// The remote the VCS was told to push `branch` to, apart from the remote
+    /// it takes in from: `None` where it was told nothing (git:
+    /// `branch.<b>.pushRemote`, else `remote.pushDefault`).
+    fn own_push_remote(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Option<RemoteHandle>, VcsError>;
+
     /// The tip of the branch on `target` named as `on` is, as last fetched, or
     /// `None` when `target` has no such branch: the push branch.
     fn push_branch(

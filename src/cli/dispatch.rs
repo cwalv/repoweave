@@ -826,6 +826,48 @@ pub fn run() -> anyhow::Result<()> {
                     &ctx,
                 )?;
             }
+            MemberAction::SetBranch {
+                repo,
+                branch,
+                new,
+                at,
+                url,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::member_branch::run_set_branch(
+                    crate::member_branch::SetBranch {
+                        repo: &repo,
+                        branch: &branch,
+                        new,
+                        at: at.as_deref(),
+                        url: url.as_deref(),
+                    },
+                    &ctx,
+                    activate::ActivateOptions { no_materialize },
+                )?;
+            }
+            MemberAction::SetUrl {
+                repo,
+                url,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::member_url::run_set_url(
+                    &repo,
+                    &url,
+                    &ctx,
+                    activate::ActivateOptions { no_materialize },
+                )?;
+            }
             MemberAction::SetRecurseSubmodules {
                 repo,
                 recurse,

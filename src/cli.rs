@@ -725,6 +725,44 @@ pub enum MemberAction {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Declare the branch a member follows, and pin the member on it
+    SetBranch {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// The branch to declare. It must exist, locally or on a remote as last
+        /// fetched, unless `--new` creates it
+        branch: String,
+        /// Create the branch, which must exist nowhere: at the member's pin, or
+        /// at `--at`
+        #[arg(long)]
+        new: bool,
+        /// Pin the member at this commit of the branch, or of its upstream, instead
+        /// of at the branch's tip; with `--new`, create the branch there
+        #[arg(long, value_name = "REV")]
+        at: Option<String>,
+        /// Set the member's url as `member set-url` does, in the same commit
+        #[arg(long)]
+        url: Option<String>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Change a member's url, and relink the branch the member sits on to the new url's remote
+    SetUrl {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// The new url
+        url: String,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
     /// Say whether new checkouts of a repo populate its submodules
     SetRecurseSubmodules {
         /// Path of the repo, as `rwv.toml` lists it
