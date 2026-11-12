@@ -289,6 +289,7 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     let s1 = seat(&weave, &target, "s1");
     let own = head(&common::under(&s1, EXTRA));
 
+    commit_note(&project_dir(&s1), "the seat's own history\n");
     drop_and_commit(&s1, "seat drops extra");
     succeed(&s1, &["member", "add", &weave.extra_url, "--role", "owned"]);
 

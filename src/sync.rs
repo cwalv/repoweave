@@ -4273,7 +4273,9 @@ impl crate::lock_merge::Reach for SourceReach<'_> {
 
 /// The landing's lock: the three-way merge of the source's and the
 /// target's pins against their merge base's lock, each member the landing
-/// composed at its composed tip, committed as an unnamed relock.
+/// composed at its composed tip, committed as an unnamed relock. A member the
+/// composed manifest names that the merge leaves unpinned was added back by a
+/// commit the source replayed, so it keeps the source's pin.
 fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()> {
     let vcs = ctx.project_vcs.as_ref();
     let dir = &ctx.cwd_project_dir;
@@ -4338,8 +4340,13 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             manifest,
         },
     );
-    let resolved: Vec<(RepoPath, ResolvedRevisionId)> = merged
-        .pins
+    let mut pins = merged.pins;
+    for path in merged_declared.keys() {
+        if let (false, Some(pin)) = (pins.contains_key(path), first.pins.get(path)) {
+            pins.insert(path.clone(), pin.clone());
+        }
+    }
+    let resolved: Vec<(RepoPath, ResolvedRevisionId)> = pins
         .iter()
         .map(|(p, c)| (p.clone(), ResolvedRevisionId::from(c.clone())))
         .collect();
