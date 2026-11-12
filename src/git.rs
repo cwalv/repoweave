@@ -1851,7 +1851,7 @@ enum Absent {
     /// no section exits 1 as well, and every key the backend asks for has
     /// one.
     ConfigKey,
-    /// `merge-base --all`: the commits share no history.
+    /// `merge-base`, with or without `--all`: the commits share no history.
     MergeBase,
 }
 
@@ -8955,6 +8955,16 @@ mod wording_tests {
             .is_empty());
         let absent = CommitId::parse(ABSENT_COMMIT).unwrap();
         assert!(GitVcs::merge_base_list(&repo, &base, &absent).is_err());
+
+        assert_eq!(
+            GitVcs::merge_base_of_merge(&repo, &base, std::slice::from_ref(&base)).unwrap(),
+            Some(base.clone())
+        );
+        assert_eq!(
+            GitVcs::merge_base_of_merge(&repo, &base, std::slice::from_ref(&unrelated)).unwrap(),
+            None
+        );
+        assert!(GitVcs::merge_base_of_merge(&repo, &base, &[absent]).is_err());
     }
 
     /// A bare `origin`, a clone of it publishing records, and a second clone

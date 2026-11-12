@@ -400,11 +400,9 @@ impl GitVcs {
     ) -> Result<Option<CommitId>, VcsError> {
         let mut args = vec!["merge-base", commit.as_str()];
         args.extend(merged.iter().map(CommitId::as_str));
-        match Self::run_trimmed(args.iter().copied(), repo) {
-            Ok(out) => commit_id(&out, &args, repo).map(Some),
-            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => Ok(None),
-            Err(e) => Err(e),
-        }
+        Self::run_trimmed_or_absent(args.iter().copied(), repo, Absent::MergeBase)?
+            .map(|out| commit_id(&out, &args, repo))
+            .transpose()
     }
 
     pub(super) fn last_message_changing(
