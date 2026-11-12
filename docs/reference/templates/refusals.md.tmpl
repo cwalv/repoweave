@@ -416,8 +416,9 @@ said.
 **Why.** Every repository operation goes through that tool, so a verb that
 started anyway would stop at its first repository read, after it may already
 have written something else. The check runs before the verb does anything.
-`rwv explain`, `rwv completions`, `rwv setup claude`, `--help` and `--version`
-touch no repository and run without the tool.
+`rwv explain`, `rwv completions`, `rwv setup claude`, `--help`, `--version` and
+an external verb (a plugin, which rwv starts without reading a repository)
+run without the tool.
 
 **Exits.** Install git at the release the message names, or newer, and put it
 on `PATH`.
@@ -1079,8 +1080,8 @@ unknown option, after it had already changed some repositories and not others.
 The check runs once, before the verb reads or writes anything. Commands newer
 than the required release are detected rather than required: rwv uses another
 way to do the same work where the installed tool lacks them. `rwv explain`,
-`rwv completions`, `rwv setup claude`, `--help` and `--version` touch no
-repository and run with any release.
+`rwv completions`, `rwv setup claude`, `--help`, `--version` and an external
+verb (a plugin) run with any release.
 
 **Exits.** Install the required release or newer and put it first on `PATH`;
 `git --version` shows which one `PATH` finds.

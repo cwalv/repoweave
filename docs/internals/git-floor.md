@@ -16,7 +16,7 @@ The floor is the oldest release in which every command the backend runs
 outside a detected capability exists. A command newer than the floor is
 either a detected capability with a fallback that does the same work, or it
 raises the floor. A fallback is right only when an older form does the same
-job; one under which promised behaviour silently stops is not a fallback.
+job; one under which promised behavior silently stops is not a fallback.
 
 The floor is one constant, `MINIMUM_RELEASE` in `src/git.rs`. The refusal
 names it through `Vcs::minimum_release`; `scripts/git-floor.sh` reads it from
@@ -44,7 +44,7 @@ and how a hook script is started on each platform are git's. Population was
 once a capability detected at 2.36, and without it the backend answered no
 population questions; measured against 2.31.0, that silently stopped making
 `reference` members read-only, stopped checking out submodules in workweaves,
-and stopped reporting file placement. That is promised behaviour disappearing,
+and stopped reporting file placement. That is promised behavior disappearing,
 not a fallback, so the floor rose to 2.36 instead.
 
 Below that, the suite run against git built from the release tarballs:

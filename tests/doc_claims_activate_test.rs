@@ -667,12 +667,11 @@ fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() 
     let ws_root = tmp.path().join("ws");
     make_npm_workspace(&ws_root, "frontend");
 
-    let empty_bin = tmp.path().join("empty-bin");
-    std::fs::create_dir_all(&empty_bin).unwrap();
+    let git_only_bin = common::tool_only_bin("git");
 
     let output = rwv()
         .args(["activate", "npm-proj"])
-        .env("PATH", &empty_bin)
+        .env("PATH", &git_only_bin)
         .current_dir(&ws_root)
         .output()
         .unwrap();
@@ -703,7 +702,10 @@ fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() 
     std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
     let output = rwv()
         .args(["activate", "npm-proj"])
-        .env("PATH", &failing_bin)
+        .env(
+            "PATH",
+            std::env::join_paths([failing_bin.as_path(), git_only_bin.as_path()]).unwrap(),
+        )
         .current_dir(&ws_root)
         .output()
         .unwrap();

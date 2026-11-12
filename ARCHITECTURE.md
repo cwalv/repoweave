@@ -546,7 +546,7 @@ installed one meets it (`Vcs::tool_readiness`). `cli::dispatch::run` asks
 every backend `vcs_for` can resolve, through `vcs::refuse_unready_tools`, once
 per invocation and before any verb that touches a repository reads anything,
 and refuses with `unsupported-vcs-tool` or `missing-vcs-tool`; `explain`,
-`completions` and `setup` are exempt by an exhaustive match, so a new verb is
+`completions`, `setup` and plugin dispatch are exempt by an exhaustive match, so a new verb is
 classified when it is added. For git the floor is `MINIMUM_RELEASE`
 (`src/git.rs`), the oldest release every command it runs outside a detected
 capability exists in, and it is read from one `git version` that every

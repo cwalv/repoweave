@@ -577,12 +577,17 @@ fn invocation() -> (String, OutputMode) {
 
 /// Whether the verb reads or writes a repository, and so needs the VCS tools
 /// its backends drive. One that does not still runs where no usable tool is
-/// installed, which is where an operator reads why the others refuse.
+/// installed, which is where an operator reads why the others refuse. A plugin
+/// is its own program: rwv reads no repository to start it, and the plugin
+/// meets whatever tools it needs itself.
 fn drives_repositories(command: Option<&Commands>) -> bool {
     match command {
-        Some(Commands::Explain { .. } | Commands::Completions { .. } | Commands::Setup { .. }) => {
-            false
-        }
+        Some(
+            Commands::Explain { .. }
+            | Commands::Completions { .. }
+            | Commands::Setup { .. }
+            | Commands::External(_),
+        ) => false,
         None
         | Some(
             Commands::Activate { .. }
@@ -606,8 +611,7 @@ fn drives_repositories(command: Option<&Commands>) -> bool {
             | Commands::Fetch { .. }
             | Commands::Pull { .. }
             | Commands::Update { .. }
-            | Commands::Push { .. }
-            | Commands::External(_),
+            | Commands::Push { .. },
         ) => true,
     }
 }

@@ -7,8 +7,8 @@
 //!
 //! The expectation is the table below, what each ecosystem's install tool is
 //! called, not the declaration under test. Each fixture is a weave whose member
-//! carries the ecosystem's manifest, activated with an empty `PATH`, so the
-//! hook runs, finds nothing, and the verb must still succeed.
+//! carries the ecosystem's manifest, activated with a `PATH` holding only git, so
+//! the hook runs, finds no tool of its own, and the verb must still succeed.
 
 mod common;
 
@@ -95,12 +95,11 @@ fn a_hook_that_cannot_find_its_tool_names_the_tool_its_integration_declares() {
     for case in CASES {
         let tmp = common::tempdir().unwrap();
         let ws = weave(tmp.path(), case);
-        let empty_bin = tmp.path().join("empty-bin");
-        std::fs::create_dir_all(&empty_bin).unwrap();
+        let git_only_bin = common::tool_only_bin("git");
 
         let output = common::rwv()
             .args(["activate", "app"])
-            .env("PATH", &empty_bin)
+            .env("PATH", &git_only_bin)
             .current_dir(&ws)
             .output()
             .unwrap();

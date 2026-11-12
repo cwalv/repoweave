@@ -27,9 +27,7 @@ mod common;
 /// evidence.
 #[test]
 fn concurrent_first_callers_share_the_link() {
-    let link = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("only-bin-git")
-        .join(if cfg!(windows) { "git.exe" } else { "git" });
+    let link = common::tool_only_bin("git").join(if cfg!(windows) { "git.exe" } else { "git" });
     let barrier = Barrier::new(2);
     let mut overlapped = 0u32;
     for _ in 0..64 {

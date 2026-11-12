@@ -194,3 +194,13 @@ fn verbs_that_touch_no_repository_run_with_an_old_git_or_none() {
     }
     assert!(old.calls().is_empty(), "{:?}", old.calls());
 }
+
+#[test]
+fn an_external_verb_is_looked_up_without_git() {
+    let empty = common::tempdir().unwrap();
+    let ws = weave();
+
+    let out = rwv_with_path(empty.path(), &["no-such-plugin-anywhere"], ws.path());
+
+    common::cli::refused(&out, RefusalKind::UnknownVerb);
+}

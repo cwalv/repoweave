@@ -4669,7 +4669,7 @@ fn git_reading() -> &'static GitReading {
     static READING: std::sync::OnceLock<GitReading> = std::sync::OnceLock::new();
     READING.get_or_init(|| match git_command().args(["version"]).output() {
         Err(e) => GitReading::Unrunnable {
-            cause: e.to_string(),
+            cause: format!("{e:#}"),
         },
         Ok(out) => reading_of(
             out.status.success(),

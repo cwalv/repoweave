@@ -79,8 +79,8 @@ for its version, once, before doing anything else. Below git 2.36 it refuses
 with [`unsupported-vcs-tool`](./refusals.md#unsupported-vcs-tool), naming the
 release it found; with no `git` it can start, it refuses with
 [`missing-vcs-tool`](./refusals.md#missing-vcs-tool). `rwv explain`, `rwv
-completions`, `rwv setup claude`, `--help` and `--version` touch no repository
-and run without git. A command newer than 2.36 is used where the installed git
+completions`, `rwv setup claude`, `--help`, `--version` and an external verb
+(a plugin, which rwv starts without reading a repository) run without git. A command newer than 2.36 is used where the installed git
 has it and replaced by an older way to do the same work where it does not.
 
 ## Verbs
