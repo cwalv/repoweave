@@ -776,6 +776,7 @@ every_scenario!(
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
     abort_after_another_landing_built_on_the_target,
+    abort_at_retire_waits_for_the_target_back,
     a_landing_meets_a_landing_stopped_as_refs,
     a_landing_meets_a_stopped_landing_in_a_checkout,
     a_landing_killed_before_its_plan_releases_its_claim_on_abort,
@@ -2734,6 +2735,13 @@ holding_rwv! {
     /// foreign tip to the first's abort.
     fn abort_after_another_landing_built_on_the_target_refuses_it_as_foreign() {
         runner::run(scenarios::abort_after_another_landing_built_on_the_target()).assert_green();
+    }
+
+    /// Abort at retire takes the target back first, so it refuses while
+    /// another landing holds it, and restores once that landing ended.
+    fn abort_at_retire_waits_for_the_target_back() {
+        runner::run(scenarios::abort_at_retire_waits_for_the_target_back())
+            .assert_fully_decided_green();
     }
 
     /// A landing stopped on a lost race still holds its claim: a second

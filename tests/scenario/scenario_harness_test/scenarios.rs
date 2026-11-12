@@ -10531,6 +10531,52 @@ pub fn abort_after_another_landing_built_on_the_target() -> Scenario {
     )
 }
 
+/// A landing stopped in its retire released its target, and a second
+/// landing into it was then killed holding it. The first's `rwv abort` must
+/// take the target back before it restores anything, so it refuses on the
+/// second's claim, naming its exits; the printed abort ends the second, and
+/// the first's abort then restores.
+pub fn abort_at_retire_waits_for_the_target_back() -> Scenario {
+    scenario(
+        "abort at retire waits for the target back",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing-1",
+            ),
+            Step::kill("landing-1"),
+            Step::rwv_paused(
+                &ww("w2"),
+                &["land", "--history", "linear", "--retire"],
+                "composed",
+                "landing-2",
+            ),
+            Step::kill("landing-2"),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+                .claim(Claim::LocalStateUnchanged(ww("w1")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed(&ww("w2"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+                .may_restore(&[Repo::Lib, Repo::Proj]),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w1-app")),
+        ],
+    )
+}
+
 /// `lost-race-abort` met by a second landing: a landing as refs stopped on a
 /// lost race after moving `app`'s `main` still holds its claim on `main`, so
 /// a second landing into `main` refuses on the claim, naming the stopped
