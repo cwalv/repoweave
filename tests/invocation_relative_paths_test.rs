@@ -175,6 +175,7 @@ fn init_project(dir: &Path) {
     common::git_in(dir, &["config", "user.email", "test@test.com"]);
     common::git_in(dir, &["config", "user.name", "Test"]);
     std::fs::write(dir.join("rwv.toml"), "[repositories]\n").unwrap();
+    common::set_up_lock_driver(dir);
     common::git_in(dir, &["add", "rwv.toml"]);
     common::git_in(dir, &["commit", "-m", "init"]);
 }

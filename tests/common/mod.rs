@@ -525,8 +525,9 @@ pub const LOCK_DRIVER_COMMAND: &str = "rwv lock --merge-driver %O %A %B";
 
 /// Set the lock merge driver up in a fixture's project repo as `rwv init`
 /// does: [`LOCK_DRIVER_ATTRIBUTE`]'s line in `.gitattributes`, any line an
-/// earlier release wrote for the lock dropped and every other line kept, for
-/// the caller to commit; and the driver's command in the clone's config.
+/// earlier release wrote for the lock dropped and every other line kept,
+/// staged for the caller's next commit; and the driver's command in the
+/// clone's config.
 pub fn set_up_lock_driver(project_dir: impl AsRef<std::path::Path>) {
     let project_dir = project_dir.as_ref();
     let path = project_dir.join(".gitattributes");
@@ -543,6 +544,7 @@ pub fn set_up_lock_driver(project_dir: impl AsRef<std::path::Path>) {
         .collect();
     text.push_str(LOCK_DRIVER_ATTRIBUTE);
     std::fs::write(&path, text).unwrap();
+    git_in(project_dir, &["add", ".gitattributes"]);
     git_in(
         project_dir,
         &["config", "merge.rwv-lock.driver", LOCK_DRIVER_COMMAND],
@@ -574,7 +576,6 @@ pub fn set_up_lock_driver_committed(project_dir: impl AsRef<std::path::Path>) {
         return;
     }
     set_up_lock_driver(project_dir);
-    git_in(project_dir, &["add", ".gitattributes"]);
     let born = git()
         .args(["rev-parse", "--verify", "-q", "HEAD"])
         .current_dir(project_dir)

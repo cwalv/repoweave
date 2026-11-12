@@ -79,6 +79,7 @@ fn make_workspace_with_project(
     // This mirrors the real-world layout where each project dir has its own
     // rwv.lock history, and is needed for rwv member add / lock operations.
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
     common::git_in(&project_dir, &["add", "rwv.toml"]);

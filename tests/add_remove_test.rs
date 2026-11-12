@@ -95,6 +95,7 @@ fn setup_named_workspace_with_project(
         assert!(status.success(), "git {:?} failed", args);
     };
     run(&["init", "--initial-branch=main"], &project_dir);
+    common::set_up_lock_driver(&project_dir);
     run(&["config", "user.email", "test@test.com"], &project_dir);
     run(&["config", "user.name", "Test"], &project_dir);
 
@@ -1926,6 +1927,7 @@ fn setup_workweave_for_add_tests(
         assert!(status.success(), "git {:?} failed", args);
     };
     git_run(&["init", "--initial-branch=main"], &primary_project_dir);
+    common::set_up_lock_driver(&primary_project_dir);
     git_run(
         &["config", "user.email", "test@test.com"],
         &primary_project_dir,
@@ -1957,6 +1959,7 @@ fn setup_workweave_for_add_tests(
     let workweave_project_dir = workweave_dir.join("projects").join("test-project");
     std::fs::create_dir_all(&workweave_project_dir).unwrap();
     git_run(&["init", "--initial-branch=main"], &workweave_project_dir);
+    common::set_up_lock_driver(&workweave_project_dir);
     git_run(
         &["config", "user.email", "test@test.com"],
         &workweave_project_dir,
@@ -2460,6 +2463,7 @@ fn setup_two_project_workspace(
     let project_a_dir = workspace.join("projects").join("project-a");
     std::fs::create_dir_all(&project_a_dir).unwrap();
     git_run(&["init", "--initial-branch=main"], &project_a_dir);
+    common::set_up_lock_driver(&project_a_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_a_dir);
     git_run(&["config", "user.name", "Test"], &project_a_dir);
     let mut manifest_a = String::from("[repositories]\n");
@@ -2476,6 +2480,7 @@ fn setup_two_project_workspace(
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     git_run(&["init", "--initial-branch=main"], &project_b_dir);
+    common::set_up_lock_driver(&project_b_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_b_dir);
     git_run(&["config", "user.name", "Test"], &project_b_dir);
     std::fs::write(project_b_dir.join("rwv.toml"), "[repositories]\n").unwrap();

@@ -21,6 +21,7 @@ fn workspace_with_project(tmp: &tempfile::TempDir) -> std::path::PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
     std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();

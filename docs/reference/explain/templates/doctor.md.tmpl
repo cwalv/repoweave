@@ -247,7 +247,7 @@ rwv doctor --fix
   earlier release wrote (`merge=rwv-ours`, `merge=ours`), or the clone's
   config does not name `rwv lock --merge-driver %O %A %B` or still defines
   `merge.rwv-ours.driver`. Run `rwv doctor --fix`: it rewrites the line,
-  committing only that (declining while another file is staged or an
+  committing only that (declining while an
   operation is in progress), and replaces the config.
 - *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
   an `rwv-`-prefixed merge driver rwv does not define. Git resolves

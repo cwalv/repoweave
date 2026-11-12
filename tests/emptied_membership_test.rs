@@ -60,6 +60,7 @@ fn setup_weave(root: &Path) {
             ],
         );
     }
+    common::set_up_lock_driver_committed(root.join("projects/demo"));
 }
 
 fn write_manifest(root: &Path, members: &[&str]) {

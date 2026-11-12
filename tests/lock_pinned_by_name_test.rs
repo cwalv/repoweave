@@ -124,6 +124,7 @@ fn published(with_extra: bool) -> Published {
     }
     std::fs::write(work.join("rwv.toml"), manifest_toml(&repos)).unwrap();
     common::fixture_lock(&work, &[(DEP, &dep_url, "v1.0.0")]);
+    common::set_up_lock_driver(&work);
     common::git_in(&work, &["add", "."]);
     common::git_in(&work, &["commit", "-m", "manifest+lock"]);
     common::git_in(&work, &["push", "origin", "main"]);

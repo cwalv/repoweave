@@ -8,7 +8,8 @@
 //! 1. **N=2 lock-only convergence** (`sync_two_workweaves_lock_only_rebase_converges`):
 //!    Two workweaves both bump the manifest lock. Primary absorbs WA; WB then
 //!    syncs primary with `--strategy=rebase`. The lock-only commit in WB's
-//!    project history should drop silently (empty patch via `merge=rwv-ours`). No
+//!    project history should drop silently (an empty patch, rwv holding the
+//!    lock merge driver to the target's lock). No
 //!    manual `git rebase --continue`.
 //!
 //! 2. **N=3 lock-only convergence** (`sync_three_workweaves_lock_only_rebase_converges`):
@@ -97,7 +98,7 @@ struct Workweave {
 /// {tmp}/ws/                      -- workspace root
 /// {tmp}/ws/github/org/lib/       -- manifest repo, initial commit
 /// {tmp}/ws/projects/app/         -- project repo with rwv.toml, rwv.lock,
-///                                   and .gitattributes (rwv.lock merge=rwv-ours)
+///                                   and .gitattributes (rwv.lock merge=rwv-lock)
 /// ```
 fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let ws = tmp.join("ws");
@@ -107,7 +108,6 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
 
-    // The replay-exclusion line that sync depends on.
     common::set_up_lock_driver(&project_dir);
 
     let manifest = format!(
@@ -172,7 +172,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// Two workweaves (WA and WB) both do a commit in the manifest repo and bump
 /// the lock. Primary absorbs WA (ff); WB then syncs primary with
 /// `--strategy=rebase`. WB's lock-only commit should drop silently via the
-/// `merge=rwv-ours` + `--empty=drop` mechanism. No manual `git rebase --continue`.
+/// held lock merge driver + `--empty=drop` mechanism. No manual `git rebase --continue`.
 #[test]
 fn sync_two_workweaves_lock_only_rebase_converges() {
     let tmp = common::tempdir().unwrap();
@@ -207,7 +207,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From WB: sync primary with rebase. This is the exact repro step:
     // WB's project history has a lock-only commit that conflicts with primary's
-    // post-WA lock on the same lines. With `.gitattributes merge=rwv-ours`, the
+    // post-WA lock on the same lines. With the lock merge driver held, the
     // lock-only commit produces an empty patch and is dropped silently.
     //
     // Before the lock-replay fix landed this step would fail with a
@@ -602,7 +602,7 @@ fn sync_ff_preserves_lock_only_commits() {
 }
 
 // ---------------------------------------------------------------------------
-// Durable driver-config plant + legacy-needle bail message
+// The source a rebase replays onto
 // ---------------------------------------------------------------------------
 
 /// The rebase-strategy sync invariant PLANTS the durable
@@ -945,23 +945,8 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
     rwv_lock_commit(&ww.root);
 
-    // Corrupt PRIMARY's committed .gitattributes to the both-lines state,
-    // directly (not through rwv) — simulating a state that arose some other
-    // way, e.g. a hand edit.
-    std::fs::write(
-        primary.project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\nrwv.lock merge=ours\n",
-    )
-    .unwrap();
-    common::git_in(&primary.project_dir, &["add", ".gitattributes"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "corrupt: both attrs lines"],
-    );
-
-    // Advance primary further via a sibling workweave, landed via ff (ff
-    // does not consult the invariant), so ww's rebase has a divergence to
-    // replay onto.
+    // Advance primary via a sibling workweave, landed via ff, so ww's
+    // rebase has a divergence to replay onto.
     let wa = create_workweave(&primary, &weaveroot, "wa");
     commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
     rwv_lock_commit(&wa.root);
@@ -971,20 +956,30 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
         .assert()
         .success();
 
+    // Put PRIMARY's committed .gitattributes back on an earlier release's
+    // line, directly (not through rwv), as a hand edit would.
+    std::fs::write(
+        primary.project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    common::git_in(&primary.project_dir, &["add", ".gitattributes"]);
+    common::git_in(
+        &primary.project_dir,
+        &["commit", "-m", "the old attribute line"],
+    );
+
     // From ww: attempt rebase sync onto primary. ww's OWN committed
     // .gitattributes is clean, so this must fail on primary's state, not
     // ww's — and the refusal must name primary's directory, not ww's.
     let assert = rwv()
         .args(["sync-to", "--strategy", "rebase"])
         .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("the workspace this rebase replays onto"),
-        "the refusal must name the rebase-base workspace's directory, not just cwd's; \
-         got:\n{stderr}"
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(
+        &out,
+        repoweave::diagnosis::State::MissingLockMergeDriverAttributeLegacy,
     );
     common::assert_names_operator_path(&stderr, &primary.project_dir);
     assert!(
@@ -999,7 +994,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
 }
 
 // ---------------------------------------------------------------------------
-// BARE git rebase — planted config alone must carry the exclusion
+// Bare git
 // ---------------------------------------------------------------------------
 
 /// Run a BARE git command via `std::process::Command` — deliberately NOT
@@ -1029,227 +1024,6 @@ fn bare_git_ok(args: &[&str], dir: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Porcelain status via bare git (string form for contains-assertions).
-fn bare_status(dir: &Path) -> String {
-    bare_git_ok(&["status", "--porcelain"], dir)
-}
-
-/// The literal incident shape this closes, driven end-to-end by a
-/// git process rwv did not spawn:
-///
-/// A rebase stops on a genuine non-lock conflict; the operator resolves it
-/// and resumes with bare `git rebase --continue` — the exact command git
-/// itself advertises in its conflict stderr. The resuming git process has
-/// no inline `-c merge.rwv-ours.driver` flag, so the ONLY thing standing
-/// between the next lock-only pick and a conflict on `rwv.lock` is the
-/// durable config planted by rwv.
-///
-/// Phase A (negative control): with NO planted config, the resumed rebase
-/// MUST conflict on `rwv.lock` — proving the fixture actually exercises
-/// the failure mode, and that a plant to a scope bare git doesn't consult
-/// would not sneak past this test.
-///
-/// Phase B: after planting via the production path (`rwv doctor --fix`),
-/// the same bare rebase + resume completes without any conflict stopping
-/// on `rwv.lock`, and the final lock content is the rebase target's
-/// ("ours" semantics).
-///
-/// NOTE on empty commits: bare git's `--empty` policy for a pick that
-/// becomes empty differs from rwv's explicit `--empty=drop`. The assertion
-/// that matters here is "no conflict stops the rebase on rwv.lock" — if
-/// the local git version stops on the now-empty pick instead of dropping
-/// it, that stop is not a conflict and the test finishes the rebase the
-/// way git's own hint says (`git rebase --skip`).
-#[test]
-fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
-    let tmp = common::tempdir().unwrap();
-    let primary = make_primary(tmp.path());
-    let repo = primary.project_dir.clone();
-
-    // -- Fixture: two divergent branches. Overlapping (both-modified)
-    //    paths: shared.txt (the genuine non-lock conflict that strands the
-    //    operator mid-rebase) and rwv.lock (the lock-only pick). --
-    commit_file(&repo, "shared.txt", "base\n", "base: add shared.txt");
-    common::git_in(&repo, &["branch", "feature"]);
-
-    // main: bump the lock and shared.txt in one commit. Both branches rewrite
-    // the same `"version"` line, so a 3-way merge without the driver is
-    // guaranteed to conflict.
-    let manifest_url = common::file_url(&primary.manifest_repo);
-    let main_pin = [(
-        MANIFEST_REPO_PATH,
-        manifest_url.as_str(),
-        "1111111111111111111111111111111111111111",
-    )];
-    common::fixture_lock(&repo, &main_pin);
-    std::fs::write(repo.join("shared.txt"), "main version\n").unwrap();
-    common::git_in(&repo, &["add", "rwv.lock", "shared.txt"]);
-    common::git_in(&repo, &["commit", "-m", "main: bump lock + shared"]);
-
-    // feature: F1 = genuine non-lock conflict; F2 = lock-only pick.
-    common::git_in(&repo, &["checkout", "feature"]);
-    commit_file(
-        &repo,
-        "shared.txt",
-        "feature version\n",
-        "F1: edit shared.txt",
-    );
-    common::fixture_lock(
-        &repo,
-        &[(
-            MANIFEST_REPO_PATH,
-            manifest_url.as_str(),
-            "2222222222222222222222222222222222222222",
-        )],
-    );
-    common::git_in(&repo, &["add", "rwv.lock"]);
-    common::git_in(&repo, &["commit", "-m", "F2: lock-only bump"]);
-    let feature_tip = common::git_in(&repo, &["rev-parse", "HEAD"]);
-
-    // Sanity: the driver config must be UNSET — nothing has planted yet
-    // (make_primary writes files directly; no rwv verb has run).
-    let pre = bare_git(
-        &["config", "--local", "--get", "merge.rwv-ours.driver"],
-        &repo,
-    );
-    assert!(
-        !pre.status.success(),
-        "fixture precondition: merge.rwv-ours.driver must be unset; got: {}",
-        String::from_utf8_lossy(&pre.stdout)
-    );
-
-    // ---- Phase A: negative control — no plant, bare rebase + resume ----
-
-    let rebase_a = bare_git(&["rebase", "main"], &repo);
-    assert!(
-        !rebase_a.status.success(),
-        "F1's shared.txt conflict must stop the bare rebase"
-    );
-    assert!(
-        bare_status(&repo).contains("UU shared.txt"),
-        "expected shared.txt in conflict; status:\n{}",
-        bare_status(&repo)
-    );
-
-    // Operator resolves the genuine conflict and resumes with bare
-    // `git rebase --continue` — as git's own conflict hint instructs.
-    std::fs::write(repo.join("shared.txt"), "merged version\n").unwrap();
-    bare_git_ok(&["add", "shared.txt"], &repo);
-    let cont_a = bare_git(&["rebase", "--continue"], &repo);
-
-    // THE BUG (negative control): the resuming git process has no driver
-    // definition anywhere, so the F2 lock-only pick 3-way merges rwv.lock
-    // and conflicts. If plant_rwv_merge_driver_config wrote to a scope
-    // bare git doesn't consult, Phase B would fail exactly like this.
-    assert!(
-        !cont_a.status.success(),
-        "without the planted config, bare `git rebase --continue` must \
-         conflict on the lock-only pick"
-    );
-    assert!(
-        bare_status(&repo).contains("UU rwv.lock"),
-        "negative control: expected rwv.lock in conflict; status:\n{}",
-        bare_status(&repo)
-    );
-
-    // Roll back to the pre-rebase state.
-    bare_git_ok(&["rebase", "--abort"], &repo);
-    assert_eq!(
-        common::git_in(&repo, &["rev-parse", "HEAD"]),
-        feature_tip,
-        "abort must restore the feature tip"
-    );
-
-    // ---- Plant via the production path: `rwv doctor --fix` ----
-    //
-    // Exit status is deliberately not asserted: the hand-built fixture
-    // lock legitimately triggers unrelated warnings (stale-lock etc.).
-    // The plant itself is asserted directly below — through bare git,
-    // the same lens the resumed rebase will use.
-    let _ = rwv()
-        .args(["doctor", "--fix"])
-        .current_dir(&primary.root)
-        .output()
-        .expect("rwv doctor --fix failed to spawn");
-    assert_eq!(
-        bare_git_ok(
-            &["config", "--local", "--get", "merge.rwv-ours.driver"],
-            &repo
-        ),
-        "true",
-        "doctor --fix must plant merge.rwv-ours.driver where bare git finds it"
-    );
-
-    // ---- Phase B: same bare rebase + resume, now armed ----
-
-    let rebase_b = bare_git(&["rebase", "main"], &repo);
-    assert!(
-        !rebase_b.status.success(),
-        "F1's genuine conflict fires again (the plant must not paper over \
-         real non-lock conflicts)"
-    );
-    assert!(
-        bare_status(&repo).contains("UU shared.txt"),
-        "expected shared.txt in conflict again; status:\n{}",
-        bare_status(&repo)
-    );
-    std::fs::write(repo.join("shared.txt"), "merged version\n").unwrap();
-    bare_git_ok(&["add", "shared.txt"], &repo);
-    let cont_b = bare_git(&["rebase", "--continue"], &repo);
-
-    // The assertion that matters: NO conflict stops the rebase on rwv.lock.
-    let status_b = bare_status(&repo);
-    assert!(
-        !status_b.contains("UU rwv.lock"),
-        "with the planted config, the lock-only pick must NOT conflict; \
-         status:\n{status_b}\ncontinue stderr:\n{}",
-        String::from_utf8_lossy(&cont_b.stderr)
-    );
-    let lock_wt = std::fs::read_to_string(repo.join("rwv.lock")).unwrap();
-    assert!(
-        !lock_wt.contains("<<<<<<<") && !lock_wt.contains(">>>>>>>"),
-        "rwv.lock must not contain conflict markers; got:\n{lock_wt}"
-    );
-
-    if !cont_b.status.success() {
-        // Not a conflict (asserted above) — some git versions stop on the
-        // now-empty pick rather than dropping it. Finish the way git's own
-        // hint says. Do NOT paper over a still-conflicted state: require
-        // mid-rebase with a clean index before skipping.
-        let rebase_merge = repo.join(".git").join("rebase-merge");
-        assert!(
-            rebase_merge.exists(),
-            "continue failed but repo is not mid-rebase; stderr:\n{}",
-            String::from_utf8_lossy(&cont_b.stderr)
-        );
-        bare_git_ok(&["rebase", "--skip"], &repo);
-    }
-
-    // Rebase fully complete: no in-flight state.
-    assert!(
-        !repo.join(".git").join("rebase-merge").exists()
-            && !repo.join(".git").join("rebase-apply").exists(),
-        "rebase must be complete (no rebase-merge/rebase-apply dirs)"
-    );
-
-    // "Ours" semantics: the final lock is the rebase TARGET's version —
-    // feature's lock edit vanished into the driver, exactly as during an
-    // rwv-driven replay.
-    let final_lock = common::read_normalized(repo.join("rwv.lock"));
-    assert_eq!(
-        final_lock,
-        common::fixture_lock_bytes(&main_pin),
-        "final rwv.lock must be main's version (ours semantics)"
-    );
-
-    // And the operator's genuine conflict resolution survived.
-    let final_shared = std::fs::read_to_string(repo.join("shared.txt")).unwrap();
-    assert_eq!(
-        final_shared, "merged version\n",
-        "the resolved non-lock conflict must survive the completed rebase"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // rwv-native `--continue` end-to-end
 //
@@ -1263,8 +1037,8 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
 
 /// Build a workweave-side commit history containing both a genuine non-lock
 /// conflict (against primary's post-lock docs edit) AND a subsequent
-/// lock-only commit that must merge to ours via the inline `rwv-ours`
-/// driver flags during rebase replay. Returns the workweave paths and the
+/// lock-only commit that must merge to ours via the inline hold on the
+/// lock merge driver during rebase replay. Returns the workweave paths and the
 /// primary's post-setup manifest-tip SHA (== primary's lock content).
 ///
 /// Layout after this helper returns:
@@ -1274,7 +1048,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
 ///   (conflicts with primary's docs edit) + one lock-bump project commit
 ///   reflecting `ww_manifest_sha` (that lock content differs from
 ///   primary's, so the pick is a legitimate 3-way merge target for the
-///   `rwv-ours` driver — patch becomes empty after driver-resolve and
+///   held driver — patch becomes empty after driver-resolve and
 ///   `--empty=drop` retires it).
 struct MidRebaseFixture {
     primary: PrimaryWorkspace,
@@ -1318,7 +1092,7 @@ fn build_project_conflict_with_lock_only_pick(
     // ww bumps its own manifest (different content than primary's) and
     // locks — this is F2, the lock-only project commit that must be
     // replayed after F1 resolves. Its lock content collides with
-    // primary's; the `rwv-ours` driver keeps primary's version and the
+    // primary's; the held driver keeps primary's version and the
     // patch drops via `--empty=drop`.
     commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
     rwv_lock_commit(&ww.root);
@@ -1354,9 +1128,9 @@ fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
 /// --continue` step. `--continue` MUST drive the entire remaining op:
 ///
 ///   1. Complete the mid-rebase (including any lock-only pick that must
-///      merge to ours via the inline `rwv-ours` driver flags — proven by
-///      deleting the durable driver config just before `--continue` so the
-///      resume rebase depends on the flags rwv re-supplies).
+///      merge to ours via the inline hold on the lock merge driver; the
+///      clone's own definition runs `rwv` from a `PATH` this test does not
+///      give this build, so only the hold settles the pick).
 ///   2. Regenerate `rwv.lock` from source's manifest tips (relock).
 ///   3. Clear op-state (`.rwv-op` gone).
 ///

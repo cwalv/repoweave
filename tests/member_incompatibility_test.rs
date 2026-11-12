@@ -178,6 +178,7 @@ fn make_doctor_workspace(
     surface(&ws, project_name, "go.work");
 
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
     common::git_in(&project_dir, &["add", "."]);

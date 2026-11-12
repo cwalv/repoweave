@@ -978,15 +978,15 @@ fn diverged_lock_with_a_recording_driver() -> (TempDir, repoweave::vcs::CommitId
     let dir = init_repo();
     let p = dir.path();
     fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
-    fs::write(p.join("rwv.lock"), "base\n").unwrap();
+    write_lock_marker(p, "base\n");
     common::git_in(p, &["add", "."]);
     common::git_in(p, &["commit", "-m", "base"]);
     common::git_in(p, &["checkout", "-q", "-b", "feat"]);
-    fs::write(p.join("rwv.lock"), "feat\n").unwrap();
+    write_lock_marker(p, "feat\n");
     common::git_in(p, &["commit", "-qam", "feat"]);
     let feat = repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "HEAD"])).unwrap();
     common::git_in(p, &["checkout", "-q", "main"]);
-    fs::write(p.join("rwv.lock"), "main\n").unwrap();
+    write_lock_marker(p, "main\n");
     common::git_in(p, &["commit", "-qam", "main"]);
     common::git_in(
         p,

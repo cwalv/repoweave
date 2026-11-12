@@ -180,11 +180,11 @@ fn a_member_one_side_added_takes_that_sides_pin() {
     let weave = Weave::new();
     let base = weave.app_tip();
     weave.project_branch("feat", "main", |w| {
-        let mut text = std::fs::read_to_string(w.project().join("rwv.toml")).unwrap();
-        text.push_str(
+        let mut manifest = std::fs::read_to_string(w.project().join("rwv.toml")).unwrap();
+        manifest.push_str(
             "\n[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://example.com/acme/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
         );
-        std::fs::write(w.project().join("rwv.toml"), text).unwrap();
+        std::fs::write(w.project().join("rwv.toml"), manifest).unwrap();
         common::fixture_lock(
             &w.project(),
             &[
@@ -400,6 +400,8 @@ fn doctor_reports_each_part_and_fix_commits_only_the_attribute_line() {
             "{sub_kind} not reported: {findings:?}"
         );
     }
+    std::fs::write(weave.project().join("staged.txt"), "s\n").unwrap();
+    common::git_in(weave.project(), &["add", "staged.txt"]);
     let before = common::git_in(weave.project(), &["rev-parse", "HEAD"]);
 
     let fix = weave.rwv(&["doctor", "--fix"]);
@@ -413,6 +415,11 @@ fn doctor_reports_each_part_and_fix_commits_only_the_attribute_line() {
         changed.trim(),
         ".gitattributes",
         "the commit holds only the line"
+    );
+    assert_eq!(
+        common::git_in(weave.project(), &["diff", "--cached", "--name-only"]),
+        "staged.txt",
+        "what else was staged stays staged"
     );
     let parent = common::git_in(weave.project(), &["rev-parse", "HEAD~1"]);
     assert_eq!(parent, before, "one commit");

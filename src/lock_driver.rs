@@ -84,9 +84,9 @@ pub(crate) struct Migrated {
 /// rewritten in the checked-out commit, committing only that, and in the
 /// working copy with its other edits in place; the definition replaced.
 ///
-/// The commit is withheld, the working copy then left alone too, while an
-/// operation is in progress or another file is staged, since a commit would
-/// carry it.
+/// The commit holds the rewrite alone, whatever else is staged; it is
+/// withheld, the working copy then left alone too, while an operation is in
+/// progress.
 pub(crate) fn migrate(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Migrated> {
     let setup = vcs.lock_driver_setup(dir)?;
     let mut migrated = Migrated::default();
@@ -99,16 +99,22 @@ pub(crate) fn migrate(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Migrated> {
         let rewritten = head
             .as_ref()
             .and_then(|_| vcs.declare_lock_driver_in(committed.as_deref()));
-        match (&rewritten, commit_withheld(vcs, dir, file)?) {
-            (Some(_), Some(why)) => migrated.withheld = Some(why),
+        match (&rewritten, vcs.mid_operation(dir)) {
+            (Some(_), Some(op)) => {
+                migrated.withheld = Some(format!(
+                    "a {} is in progress in the project repo; finish or abort it first",
+                    op.operation()
+                ))
+            }
             (Some(text), None) => {
                 vcs.stage_content(dir, Path::new(file), text.as_bytes())?;
-                vcs.commit(
-                    dir,
-                    "chore: set up the rwv.lock merge driver (rwv doctor --fix)",
-                )
-                .with_context(|| format!("failed to commit in {}", dir.display()))?;
-                migrated.committed = true;
+                migrated.committed = vcs
+                    .commit_only(
+                        dir,
+                        &[file],
+                        "chore: set up the rwv.lock merge driver (rwv doctor --fix)",
+                    )
+                    .with_context(|| format!("failed to commit in {}", dir.display()))?;
             }
             (None, _) => {}
         }
@@ -139,26 +145,6 @@ pub(crate) fn declare_in_working_copy(vcs: &dyn Vcs, dir: &Path) -> anyhow::Resu
     crate::durable_file::replace(&path, rewritten.as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(true)
-}
-
-fn commit_withheld(vcs: &dyn Vcs, dir: &Path, file: &str) -> anyhow::Result<Option<String>> {
-    if let Some(op) = vcs.mid_operation(dir) {
-        return Ok(Some(format!(
-            "a {} is in progress in the project repo; finish or abort it first",
-            op.operation()
-        )));
-    }
-    let staged = vcs
-        .staged_paths(dir)
-        .with_context(|| format!("failed to read staged paths in {}", dir.display()))?;
-    if staged.iter().any(|path| path != file) {
-        return Ok(Some(
-            "the project repo has staged changes to other files, which the commit would carry; \
-             commit or unstage them first"
-                .to_owned(),
-        ));
-    }
-    Ok(None)
 }
 
 /// How the driver ended: the merged lock written, or the file left

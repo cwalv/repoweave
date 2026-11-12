@@ -126,6 +126,7 @@ fn setup_git_project(tmp: &Path, project: &str, repos: &[(&str, &str)]) -> (Path
     std::fs::create_dir_all(&project_dir).unwrap();
 
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::set_up_lock_driver(&project_dir);
     write_manifest(&project_dir, repos);
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "init"]);

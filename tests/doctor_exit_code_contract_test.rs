@@ -14,8 +14,8 @@
 //!      the error-only rule even under a filter that matched a warning.
 //!
 //! The warning-only fixture reproduces the smallest case that showed the two
-//! modes disagreeing: `git config --unset merge.rwv-ours.driver` on an
-//! otherwise-conforming project repo, leaving `missing-merge-driver-config`
+//! modes disagreeing: `git config --unset merge.rwv-lock.driver` on an
+//! otherwise-conforming project repo, leaving `missing-lock-merge-driver`
 //! as the lone finding.
 
 use std::path::{Path, PathBuf};
@@ -49,12 +49,11 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 /// Make `project_dir` the git repo a conforming project repo is: the
-/// `rwv.lock merge=rwv-ours` replay exclusion committed, and the `rwv-ours`
-/// merge driver defined in local git config. Call after [`write_manifest`]
+/// lock merge driver set up. Call after [`write_manifest`]
 /// so `rwv.toml` commits alongside `.gitattributes`.
 fn make_project_repo_clean(project_dir: &Path) {
-    common::set_up_lock_driver(&project_dir);
     common::git_in(project_dir, &["init", "-b", "main"]);
+    common::set_up_lock_driver(&project_dir);
     common::git_in(project_dir, &["add", "."]);
     common::git_in(project_dir, &["commit", "-m", "init"]);
 }
@@ -68,7 +67,7 @@ fn parse(raw: &[u8]) -> serde_json::Value {
 }
 
 /// A workspace whose only finding is the warning-severity
-/// `missing-merge-driver-config` violation.
+/// `missing-lock-merge-driver` `config-absent` violation.
 fn warning_only_fixture(parent: &Path) -> PathBuf {
     let root = make_workspace(parent, "ws");
     let repo_path = "github/acme/server";
@@ -82,10 +81,10 @@ fn warning_only_fixture(parent: &Path) -> PathBuf {
     make_project_repo_clean(&project_dir);
     // The driver definition itself is the warning this fixture pins:
     // `.gitattributes` is correct, but local git config never got
-    // `merge.rwv-ours.driver`.
+    // `merge.rwv-lock.driver`.
     common::git_in(
         &project_dir,
-        &["config", "--unset", "merge.rwv-ours.driver"],
+        &["config", "--unset", "merge.rwv-lock.driver"],
     );
     root
 }
@@ -133,7 +132,7 @@ fn warning_only_exits_zero_without_kind_in_both_modes() {
         String::from_utf8_lossy(&text.stdout)
     );
     assert!(
-        String::from_utf8_lossy(&text.stdout).contains("merge.rwv-ours.driver"),
+        String::from_utf8_lossy(&text.stdout).contains("missing-lock-merge-driver"),
         "control: the fixture's warning must actually be reported; got:\n{}",
         String::from_utf8_lossy(&text.stdout)
     );
@@ -156,7 +155,8 @@ fn warning_only_exits_zero_without_kind_in_both_modes() {
         1,
         "fixture carries exactly one finding; got: {doc}"
     );
-    assert_eq!(violations[0]["kind"], "missing-merge-driver-config");
+    assert_eq!(violations[0]["kind"], "missing-lock-merge-driver");
+    assert_eq!(violations[0]["sub_kind"], "config-absent");
 }
 
 /// Pin 2: an error-severity finding exits non-zero, unfiltered, in both
@@ -221,7 +221,7 @@ fn kind_filtered_warning_exits_nonzero_in_both_modes() {
     let root = warning_only_fixture(tmp.path());
 
     let text = rwv()
-        .args(["doctor", "--kind", "missing-merge-driver-config"])
+        .args(["doctor", "--kind", "missing-lock-merge-driver"])
         .current_dir(&root)
         .output()
         .unwrap();
@@ -232,7 +232,7 @@ fn kind_filtered_warning_exits_nonzero_in_both_modes() {
     );
 
     let json = rwv()
-        .args(["doctor", "--json", "--kind", "missing-merge-driver-config"])
+        .args(["doctor", "--json", "--kind", "missing-lock-merge-driver"])
         .current_dir(&root)
         .output()
         .unwrap();

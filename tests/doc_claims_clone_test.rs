@@ -160,6 +160,7 @@ fn setup_workspace_with_project(
     std::fs::create_dir_all(&project_dir).unwrap();
 
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::set_up_lock_driver(&project_dir);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
 

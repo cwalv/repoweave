@@ -70,6 +70,7 @@ role = "owned"
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     common::git_in(&project_dir, &["add", "rwv.toml"]);
     common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::set_up_lock_driver_committed(&project_dir);
 
     (ws, repo_path)
 }
