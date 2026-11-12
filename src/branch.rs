@@ -35,7 +35,7 @@ pub struct SetMode {
     pub target: Option<String>,
 }
 
-fn label(project: &ProjectName) -> String {
+pub(crate) fn label(project: &ProjectName) -> String {
     project_rel_path(project)
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn named(
     }
 }
 
-fn checked_out(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<String>> {
+pub(crate) fn checked_out(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<String>> {
     Ok(match vcs.observe_head(dir)? {
         HeadObservation::Attached { name } | HeadObservation::Unborn { name } => {
             Some(name.as_str().to_owned())
@@ -79,7 +79,7 @@ fn writer_text(store: &Store<'_>, branch: &BranchName) -> anyhow::Result<String>
 /// The branches `branch` could land into: each other weave branch with a
 /// record that reads as one value, the ones sharing the most history with
 /// `branch` first.
-fn target_candidates(
+pub(crate) fn target_candidates(
     vcs: &dyn Vcs,
     dir: &Path,
     view: &View,
@@ -162,7 +162,7 @@ pub(crate) fn judge_lookup(
     })
 }
 
-fn write_refusal(
+pub(crate) fn write_refusal(
     vcs: &dyn Vcs,
     store: &Store<'_>,
     project: &ProjectName,
@@ -184,7 +184,7 @@ fn write_refusal(
     }
 }
 
-fn view_of(store: &Store<'_>) -> anyhow::Result<View> {
+pub(crate) fn view_of(store: &Store<'_>) -> anyhow::Result<View> {
     store
         .view()
         .map_err(|e| anyhow::Error::new(e).context("could not read the branch records"))
@@ -287,6 +287,28 @@ pub fn workweave_parent(
     }
 }
 
+/// The record of `branch` as a feature onto `target`, which must have a
+/// record that reads and must not lead back to `branch`; `target`'s mode as it
+/// stands is stored as `as`.
+pub(crate) fn feature_record(
+    view: &View,
+    branch: &BranchName,
+    target: &BranchName,
+) -> Result<Record, WriteError> {
+    if let Some(chain) = view.chain_back_to(branch, vec![target.clone()]) {
+        return Err(WriteError::Cycle(chain));
+    }
+    let as_mode = match view.lookup(target) {
+        Lookup::Value(record) => record.mode(),
+        Lookup::Unrecorded => return Err(WriteError::TargetUnrecorded(target.clone())),
+        other => return Err(WriteError::TargetUnreadable(target.clone(), other)),
+    };
+    Ok(Record::Feature {
+        target: target.clone(),
+        as_mode,
+    })
+}
+
 /// Record `minted`, the branch a new workweave of `project` is on, as a
 /// feature onto `parent` with `parent`'s mode as it stands, and say where it
 /// lands. A branch that already has a record keeps it.
@@ -304,20 +326,9 @@ pub fn record_workweave(
             if !matches!(view.lookup(&branch), Lookup::Unrecorded) {
                 return Ok(Vec::new());
             }
-            if let Some(chain) = view.chain_back_to(&branch, vec![parent.clone()]) {
-                return Err(WriteError::Cycle(chain));
-            }
-            let as_mode = match view.lookup(parent) {
-                Lookup::Value(record) => record.mode(),
-                Lookup::Unrecorded => return Err(WriteError::TargetUnrecorded(parent.clone())),
-                other => return Err(WriteError::TargetUnreadable(parent.clone(), other)),
-            };
             Ok(vec![Write {
                 branch: branch.clone(),
-                record: Record::Feature {
-                    target: parent.clone(),
-                    as_mode,
-                },
+                record: feature_record(view, &branch, parent)?,
             }])
         })
         .map_err(|e| write_refusal(vcs.as_ref(), &store, project, repo, &branch, e))?;
@@ -364,22 +375,7 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
         .write(|view| {
             let record = match (&request.mode, &target) {
                 (Mode::Declared, _) => Record::Declared,
-                (Mode::Feature, Some(target)) => {
-                    if let Some(chain) = view.chain_back_to(&branch, vec![target.clone()]) {
-                        return Err(WriteError::Cycle(chain));
-                    }
-                    let as_mode = match view.lookup(target) {
-                        Lookup::Value(record) => record.mode(),
-                        Lookup::Unrecorded => {
-                            return Err(WriteError::TargetUnrecorded(target.clone()))
-                        }
-                        other => return Err(WriteError::TargetUnreadable(target.clone(), other)),
-                    };
-                    Record::Feature {
-                        target: target.clone(),
-                        as_mode,
-                    }
-                }
+                (Mode::Feature, Some(target)) => feature_record(view, &branch, target)?,
                 (Mode::Feature, None) => unreachable!("dispatch requires --target with feature"),
             };
             Ok(vec![Write {
@@ -407,17 +403,33 @@ pub struct Rename {
     pub adopt: bool,
 }
 
-struct Moving {
-    label: String,
-    dir: std::path::PathBuf,
-    vcs: Box<dyn Vcs>,
+pub(crate) struct Moving {
+    pub(crate) label: String,
+    pub(crate) dir: std::path::PathBuf,
+    pub(crate) vcs: Box<dyn Vcs>,
     url_remote: Option<RemoteHandle>,
-    member: Option<RepoPath>,
+    pub(crate) member: Option<RepoPath>,
     adopted: Option<Upstream>,
 }
 
 impl Moving {
-    fn judging(&self, state: State) -> Judging {
+    pub(crate) fn present(
+        label: String,
+        dir: PathBuf,
+        vcs: Box<dyn Vcs>,
+        member: Option<RepoPath>,
+    ) -> Self {
+        Self {
+            label,
+            dir,
+            vcs,
+            url_remote: None,
+            member,
+            adopted: None,
+        }
+    }
+
+    pub(crate) fn judging(&self, state: State) -> Judging {
         let judging = state.of(&self.label).checkout(&self.dir);
         match &self.member {
             Some(path) => judging.member().bind("<m>", path),
@@ -521,12 +533,79 @@ pub(crate) fn other_projects_with_feature(
     found
 }
 
+/// A member branch a feature named `name` would take: refused where a live
+/// weave branch declares it for the member (`name` declared) or another
+/// project's feature of that name lists the member (`name` feature).
+pub(crate) fn judge_feature_name(
+    repo: &Moving,
+    name: &BranchName,
+    scan: &NameScan<'_>,
+    verb: &'static str,
+    report: &mut Report,
+) {
+    let Some(path) = &repo.member else {
+        return;
+    };
+    let declarers = scan.accounting.declarers(path, name.as_str());
+    if !declarers.is_empty() {
+        report.add(
+            repo.judging(State::NameDeclared)
+                .subject(name)
+                .listing(declarers)
+                .by_verb(verb)
+                .judge(repo.vcs.as_ref()),
+        );
+    }
+    let elsewhere = other_projects_with_feature(scan.primary, scan.project, name, path);
+    if !elsewhere.is_empty() {
+        report.add(
+            repo.judging(State::NameFeature)
+                .subject(name)
+                .listing(elsewhere)
+                .by_verb(verb)
+                .judge(repo.vcs.as_ref()),
+        );
+    }
+}
+
+/// `name` taken in the repo: a local branch, or one a remote has as last
+/// fetched unless `remote_is_free`. Reported as `name` exists; whether it was
+/// is returned.
+pub(crate) fn judge_name_taken(
+    repo: &Moving,
+    name: &BranchName,
+    remote_is_free: bool,
+    verb: &'static str,
+    report: &mut Report,
+) -> anyhow::Result<bool> {
+    let raw = RawRefName::new(name.as_str());
+    let taken_locally = repo.vcs.resolve_local_branch_tip(&repo.dir, &raw)?.is_some();
+    let copies = repo.vcs.remote_copies(&repo.dir, &raw)?;
+    if !taken_locally && (copies.is_empty() || remote_is_free) {
+        return Ok(false);
+    }
+    let mut listing = Vec::new();
+    if taken_locally {
+        listing.push(format!("{name} is a local branch"));
+    }
+    listing.extend(copies.iter().map(|c| format!("{name} is on {}", c.remote)));
+    report.add(
+        repo.judging(State::NameExists)
+            .subject(name)
+            .listing(listing)
+            .bind("<W>", name)
+            .by_verb(verb)
+            .judge(repo.vcs.as_ref()),
+    );
+    Ok(true)
+}
+
 fn judge_rename_of(
     repo: &mut Moving,
     request: &Rename,
     old: &BranchName,
     new: &BranchName,
-    scan: &RenameScan<'_>,
+    scan: &NameScan<'_>,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let old_raw = RawRefName::new(old.as_str());
@@ -552,50 +631,15 @@ fn judge_rename_of(
                     .judge(repo.vcs.as_ref()),
             );
         }
-        let declarers = scan.accounting.declarers(path, new.as_str());
-        if !declarers.is_empty() {
-            report.add(
-                repo.judging(State::NameDeclared)
-                    .subject(new)
-                    .listing(declarers)
-                    .by_verb("branch rename")
-                    .judge(repo.vcs.as_ref()),
-            );
-        }
-        let elsewhere = other_projects_with_feature(scan.primary, scan.project, new, path);
-        if !elsewhere.is_empty() {
-            report.add(
-                repo.judging(State::NameFeature)
-                    .subject(new)
-                    .listing(elsewhere)
-                    .by_verb("branch rename")
-                    .judge(repo.vcs.as_ref()),
-            );
-        }
     }
-    let taken_locally = repo
-        .vcs
-        .resolve_local_branch_tip(&repo.dir, &new_raw)?
-        .is_some();
-    let copies = repo.vcs.remote_copies(&repo.dir, &new_raw)?;
-    if taken_locally || (!copies.is_empty() && !request.adopt) {
-        let mut listing = Vec::new();
-        if taken_locally {
-            listing.push(format!("{new} is a local branch"));
-        }
-        listing.extend(copies.iter().map(|c| format!("{new} is on {}", c.remote)));
-        report.add(
-            repo.judging(State::NameExists)
-                .subject(new)
-                .listing(listing)
-                .by_verb("branch rename")
-                .judge(repo.vcs.as_ref()),
-        );
+    judge_feature_name(repo, new, scan, "branch rename", report);
+    if judge_name_taken(repo, new, request.adopt, "branch rename", report)? {
         return Ok(());
     }
     if !request.adopt {
         return Ok(());
     }
+    let copies = repo.vcs.remote_copies(&repo.dir, &new_raw)?;
     let target = repo
         .vcs
         .push_target_of(&repo.dir, &old_raw, repo.url_remote.as_ref())?;
@@ -636,10 +680,10 @@ fn judge_rename_of(
     Ok(())
 }
 
-struct RenameScan<'a> {
-    primary: &'a Path,
-    project: &'a ProjectName,
-    accounting: Accounting,
+pub(crate) struct NameScan<'a> {
+    pub(crate) primary: &'a Path,
+    pub(crate) project: &'a ProjectName,
+    pub(crate) accounting: Accounting,
 }
 
 fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Result<()> {
@@ -753,7 +797,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         record.mode() == Mode::Feature,
         &old_raw,
     )?;
-    let scan = RenameScan {
+    let scan = NameScan {
         primary: ctx.primary_path(),
         project: &project,
         accounting: Accounting::scan(ctx.primary_path()),
@@ -824,7 +868,7 @@ fn member_entries(
 /// lands: into `target`'s member branches when `target` is a feature, else into
 /// each branch `target` declares, listing the members whose entry in `branch`
 /// differs from `target`'s.
-fn target_recorded_lines(
+pub(crate) fn target_recorded_lines(
     vcs: &dyn Vcs,
     dir: &Path,
     branch: &BranchName,

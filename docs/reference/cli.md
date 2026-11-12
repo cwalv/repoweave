@@ -507,7 +507,20 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 ### `rwv branch`
 
-Record how a weave branch is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+
+### `rwv branch create <W> [--target <T> | --declared] [--at <rev>] [--project <name>]`
+
+Create `<W>`, write its record, and switch the workspace to it, as the VCS's own branch creation switches: uncommitted edits are carried, an uncommitted `rwv.toml` included. A bare create is a `feature` onto the checked-out branch, which must have a record that reads (`target` `unrecorded` otherwise); a feature's `owned` and `fork` members get branches `<W>` at their pins. A `declared` branch's members keep following the branches its entries declare. Every repo is judged first and nothing is written while any is refused.
+
+| Flag | Effect |
+|---|---|
+| `--target <T>` | A `feature` onto `<T>`, which must have a record that reads. Starts at `<T>`'s tip |
+| `--declared` | A `declared` branch, starting at the checked-out commit |
+| `--at <rev>` | Start at this revision. An uncommitted `rwv.lock` is carried only where the branch starts at the checked-out commit; elsewhere it is refused (`edits`) |
+| `--project <name>` | Operate on this project instead of the active project |
+
+From a detached project repo a spelling is required and `<W>` starts at its HEAD. A create that starts at `<T>`'s tip is refused while `<T>` and its upstream have diverged (`push-branch` `diverged`), naming `--at <T>`. Refused with nothing created: a name any repo has, locally or on a remote as last fetched (`name` `exists`); the records branch's name or one below it (`name` `reserved`); a feature name a live weave branch declares for a member (`name` `declared`) or another project's feature uses for a member both list (`name` `feature`); an operation in progress in a repo it would move (`edits`). See [`rwv explain branch`](./explain/branch.md).
 
 ### `rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]`
 
@@ -553,6 +566,19 @@ Delete `<W>` and the branches that belong to it, by the deletion rule: the proje
 Refused before anything changes: a `<W>` checked out in any workspace (`checkout`) and a `<W>` other branches' records land into (`target` `dependents`, one line each). The rule fetches only the remotes the branches have an upstream or a push branch on; a branch on a remote that could not be fetched is kept (`unconfirmed`) and nothing on it is deleted remotely, and a branch never published is judged on local refs. Remote deletes are leased to the tip the last fetch saw. A record whose branch is gone locally and from every remote, with no workspace of this machine aligned for it, is dropped in the same write.
 
 `--json` emits the envelope `{"$schema": "...", "branch": "...", "landed_on": "...", "deleted": [...], "survivors": [...], "records_dropped": [...]}`. Each `deleted` record has `path`, `branch`, `site` (`local` or `remote <name>`), `because` and `backup` when one was kept first; each survivor has `path`, `branch`, `reason` and `detail`. See [JSON envelope convention](#--json-envelope-convention).
+
+### `rwv switch <W> [--target <T> | --declared] [--project <name>]`
+### `rwv switch --detach <rev> [--project <name>]`
+
+Put the project repo on `<W>` and align the members to it, or detach the workspace at `<rev>`. A recorded branch reopens bare. An unrecorded branch is refused (`target` `unrecorded`) unless `--target <T>` or `--declared` records it, as `rwv branch set-mode` would; a spelling that differs from the record is refused (`target` `conflict`, naming `rwv branch set-mode`). `<W>` may exist only on a remote as last fetched. `rwv switch` with no branch is refused: aligning members for the checked-out branch is `rwv update`.
+
+| Flag | Effect |
+|---|---|
+| `--target <T>`, `--declared` | Record an unrecorded `<W>` as a feature onto `<T>`, or as `declared` |
+| `--detach <rev>` | Detach the project repo at `<rev>` and every member at the pin the lock holds there; no record is written |
+| `--project <name>` | Operate on this project instead of the active project |
+
+The project repo moves as the VCS moves it, carrying edits the move does not overwrite. Every repo it would move is judged before anything moves: refused are a branch checked out in another workspace (`checkout`), an operation in progress or edits the move would overwrite (`edits`), an uncommitted `rwv.toml` or `rwv.lock` (`edits`, naming `rwv lock --commit`), and a member that cannot move (`alignment`). From a detached project repo, what its HEAD holds that no branch reaches is kept as a backup first. A branch whose `rwv.toml` an earlier release wrote is switched onto and the run stops before the members (`unparseable-project` `here`). See [`rwv explain switch`](./explain/switch.md).
 
 ### `rwv status [--json] [...]`
 

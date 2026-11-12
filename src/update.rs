@@ -200,6 +200,21 @@ pub(crate) struct UpdateRun {
     pub(crate) tail: anyhow::Result<()>,
 }
 
+/// The verb a run of the alignment engine reports as, and whether it moves a
+/// member that holds edits as the VCS carries them.
+#[derive(Clone, Copy)]
+pub(crate) struct Flavor {
+    pub(crate) verb: &'static str,
+    pub(crate) carry_edits: bool,
+}
+
+impl Flavor {
+    pub(crate) const UPDATE: Self = Self {
+        verb: "update",
+        carry_edits: false,
+    };
+}
+
 /// What a run for a project that the weave root does not present does about the
 /// members that project shares with the one it does.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -226,7 +241,30 @@ pub(crate) fn update_members(
         output,
         activation,
         SharedMembers::Refuse,
+        Flavor::UPDATE,
     )
+}
+
+/// The alignment `switch` and `branch create` run once the project repo is on
+/// its branch: `rwv update`'s, reported under the verb's name, and moving a
+/// member that holds edits as the VCS carries them.
+pub(crate) fn align_after_switch(
+    ctx: &WorkspaceContext,
+    verb: &'static str,
+) -> anyhow::Result<()> {
+    update_members_for(
+        ctx,
+        &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
+        crate::parallel::resolve_jobs(None),
+        OutputMode::Text,
+        ActivateOptions::default(),
+        SharedMembers::Refuse,
+        Flavor {
+            verb,
+            carry_edits: true,
+        },
+    )?
+    .tail
 }
 
 /// The alignment half of `rwv activate --update`: every member of the project
@@ -243,6 +281,7 @@ pub(crate) fn align_for_activation(
         OutputMode::Text,
         activation,
         SharedMembers::Align,
+        Flavor::UPDATE,
     )?
     .tail
 }
@@ -254,6 +293,7 @@ fn update_members_for(
     output: OutputMode,
     activation: ActivateOptions,
     shared: SharedMembers,
+    flavor: Flavor,
 ) -> anyhow::Result<UpdateRun> {
     let invocation = ctx;
     let sole = sole_unselected_project(invocation);
@@ -272,7 +312,12 @@ fn update_members_for(
         &name,
         crate::alignment::Accounting::scan(ctx.primary_path()),
     )?;
-    refuse_detached_project(&aligner, &name)?;
+    refuse_detached_project(&aligner, &name, flavor.verb)?;
+    let aligner = if flavor.carry_edits {
+        aligner.carrying_edits()
+    } else {
+        aligner
+    };
     let aligner = match (&ctx.checkout, shared) {
         (Checkout::Primary { .. }, SharedMembers::Refuse) => {
             crate::shared_members::refuse_moving(ctx.primary_path(), &name, &|path, role| {
@@ -294,7 +339,8 @@ fn update_members_for(
     };
     if let Some(why) = &aligner.corrupt {
         eprintln!(
-            "rwv update: the workspace state of {} reads as absent: {why}",
+            "rwv {}: the workspace state of {} reads as absent: {why}",
+            flavor.verb,
             crate::workspace::project_rel_path(&name)
         );
     }
@@ -331,7 +377,7 @@ fn update_members_for(
     };
 
     let run = match bring_members(
-        "update",
+        flavor.verb,
         &project_dir,
         workspace_root,
         selection,
@@ -367,12 +413,22 @@ fn update_members_for(
             &project_dir,
             selection,
             output,
+            flavor.verb,
             &mut report.placements,
         ),
         Checkout::Primary { .. } => Ok(false),
     };
     let aligned = match &created {
-        Ok(_) => align_checkouts(ctx, &aligner, &name, &project_dir, selection, jobs, output),
+        Ok(_) => align_checkouts(
+            ctx,
+            &aligner,
+            &name,
+            &project_dir,
+            selection,
+            jobs,
+            output,
+            flavor.verb,
+        ),
         Err(_) => Ok(AlignRun::default()),
     };
     let aligned = match aligned {
@@ -412,8 +468,9 @@ fn update_members_for(
         };
     if let Some(project) = &sole {
         let msg = format!(
-            "rwv update: activating project '{project}', the only project in this weave \
-             (none was active)"
+            "rwv {}: activating project '{project}', the only project in this weave \
+             (none was active)",
+            flavor.verb
         );
         if output == OutputMode::Text {
             outln!("{msg}");
@@ -484,6 +541,7 @@ fn materialize_workweave_members(
     project_dir: &Path,
     selection: &MemberSelection,
     output: OutputMode,
+    verb: &str,
     placements: &mut Vec<PlacementOutput>,
 ) -> anyhow::Result<bool> {
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
@@ -511,7 +569,7 @@ fn materialize_workweave_members(
                 repo_path,
                 entry.role,
                 entry.recurse_submodules,
-                "rwv update: ",
+                &format!("rwv {verb}: "),
             );
             continue;
         }
@@ -545,7 +603,7 @@ fn materialize_workweave_members(
             Ok(born) => {
                 created = true;
                 let line = format!(
-                    "rwv update: gave this workweave its worktree for {repo_path}: {}{}",
+                    "rwv {verb}: gave this workweave its worktree for {repo_path}: {}{}",
                     born.summary(),
                     crate::share::files_note(born.files),
                 );
@@ -890,6 +948,7 @@ struct AlignRun {
 fn refuse_detached_project(
     aligner: &Aligner,
     project: &crate::manifest::ProjectName,
+    verb: &'static str,
 ) -> anyhow::Result<()> {
     if aligner.standing != ProjectStanding::Detached {
         return Ok(());
@@ -912,7 +971,7 @@ fn refuse_detached_project(
             )
         }))
         .checkout(&aligner.project_dir)
-        .by_verb("update")
+        .by_verb(verb)
         .judge(vcs.as_ref())
         .refused())
 }
@@ -927,6 +986,7 @@ fn align_checkouts(
     selection: &MemberSelection,
     jobs: usize,
     output: OutputMode,
+    verb: &str,
 ) -> anyhow::Result<AlignRun> {
     let _ = project;
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
@@ -992,7 +1052,7 @@ fn align_checkouts(
         if let Some(files) = files {
             run.placed.push((rp.clone(), dir.clone(), files));
             if output == OutputMode::Text {
-                outln!("rwv update: {rp}: files {files}");
+                outln!("rwv {verb}: {rp}: files {files}");
             }
         }
         match result {
@@ -1002,11 +1062,11 @@ fn align_checkouts(
                 notes,
             }) => {
                 if let Some(from) = &moved_from {
-                    say(format!("rwv update: {rp}: moved from {from}"));
+                    say(format!("rwv {verb}: {rp}: moved from {from}"));
                 }
                 for fact in &facts {
                     say(format!(
-                        "rwv update: {rp}: {}",
+                        "rwv {verb}: {rp}: {}",
                         crate::diagnosis::fact_text(fact)
                     ));
                 }
@@ -1063,7 +1123,7 @@ fn align_checkouts(
     }
     if !left.is_empty() {
         if output == OutputMode::Text {
-            outln!("{}", left.render("update").trim_end_matches('\n'));
+            outln!("{}", left.render(verb).trim_end_matches('\n'));
         }
         run.judged = left.output();
     }

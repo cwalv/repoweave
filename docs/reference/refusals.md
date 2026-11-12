@@ -78,7 +78,7 @@ The others follow.
 |---|---|---|
 | `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave; `rwv activate`, for a member the project shares with the project the weave root presents; `rwv update` and `rwv pull`, for such a member that is not aligned for a project the weave root does not present |
 | `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a shared member as `dirty` is |
-| `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push` |
+| `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push`; `rwv switch`, and `rwv branch create` for an `rwv.lock` where the branch starts at another commit than the checked-out one. In a detached project repo the choice is `rwv branch create`, which carries both files |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -88,6 +88,8 @@ The others follow.
 | `dirty`, for `rwv workweave delete` | C13: commit your edits, or set them aside | `rwv workweave delete <ww> --discard-uncommitted` | the primary | both keep edits |
 | `mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 | `rwv.toml or rwv.lock uncommitted` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
+| `rwv.toml or rwv.lock uncommitted`, for `rwv switch` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
+| `rwv.toml or rwv.lock uncommitted`, for `rwv branch create` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md); [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -101,13 +103,14 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in another workspace |
+| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete` and `rwv switch`, for a project branch checked out in another workspace |
 | `in a raw worktree` | a worktree no workweave records derives from the clone, named by path; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in a raw worktree |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `in another workspace` | C16: free the other checkout | `rwv switch <other>` | the other checkout | removal refuses over edits |
 | `in another workspace` | C16: free the other checkout | `rwv workweave delete <ww> --project <project>` | the primary | removal refuses over edits |
 | `in a raw worktree` | C16: free the other checkout | VCS action (git: `git -C <checkout> worktree remove <worktree>`) | the checkout | removal refuses over edits |
 
@@ -123,7 +126,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch |
+| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv branch create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
 | `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
 | `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it; `rwv push` publishes it |
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
@@ -135,6 +138,7 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
@@ -159,13 +163,13 @@ The others follow.
 | State | Means | Refused by |
 |---|---|---|
 | `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
-| `exists` | a repo already has a branch of the name the verb would give its checkout, standing at a revision other than the one the verb would start it at, which the line lists; it holds commits the verb did not put there. For a rename, the new name is a local branch of the project repo or of a member the rename would move, or a branch a remote has, as last fetched; `--adopt` takes up the remote's | `rwv workweave create`, for the branch it mints in the project repo and in each owned or fork member; `rwv branch rename`; `rwv member set-branch --new`, for a branch the member's repo already has |
-| `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on; `rwv member set-branch` |
-| `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv member set-branch`, for a branch the member's repo has neither locally nor on a remote as last fetched; `rwv lock --commit`, for a declared branch a hand edit named that exists nowhere |
-| `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name; `rwv member set-branch` |
+| `exists` | a repo already has a branch of the name the verb would give its checkout, standing at a revision other than the one the verb would start it at, which the line lists; it holds commits the verb did not put there. For a rename, the new name is a local branch of the project repo or of a member the rename would move, or a branch a remote has, as last fetched; `--adopt` takes up the remote's | `rwv workweave create`, for the branch it mints in the project repo and in each owned or fork member; `rwv branch rename`; `rwv branch create`, for a name any repo of the workspace has, locally or on a remote as last fetched |
+| `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
+| `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv switch`, for a branch the project repo lacks, and `rwv branch create`, for a `--target` or `--at` that names nothing here |
+| `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv branch create`, `rwv switch`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name |
 | `minted` | the project branch is the name `rwv workweave create` gave a workweave that was not given one, `<project>--<workweave>`, which is never published, and neither is its record | `rwv push` |
-| `declared` | a feature would take a name that a live weave branch declares as a member's branch, the member and the declaring branches listed: the member's branch of that name is the declared branch, and a feature's own member branch cannot be it | `rwv branch rename`, for a feature |
-| `feature` | a feature would take a name that another project's feature of that name already uses for a member both list, the project and the member named: one member branch would serve two features | `rwv branch rename`, for a feature; `rwv member set-branch`, for a branch a feature of that name uses |
+| `declared` | a feature would take a name that a live weave branch declares as a member's branch, the member and the declaring branches listed: the member's branch of that name is the declared branch, and a feature's own member branch cannot be it | `rwv branch rename`, for a feature; `rwv branch create`, for a feature |
+| `feature` | a feature would take a name that another project's feature of that name already uses for a member both list, the project and the member named: one member branch would serve two features | `rwv branch rename`, for a feature; `rwv branch create`, for a feature |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -180,19 +184,21 @@ The others follow.
 | `taken`, for `rwv update` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `taken`, for `rwv init` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `exists`, for `rwv workweave create` | use another name | — | here | nothing changes |
+| `exists`, for `rwv branch create` | use another name | — | here | nothing changes |
+| `exists`, for `rwv branch create` | open it | `rwv switch <W>` | here | moves only what alignment moves |
 | `exists`, for `rwv branch rename` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
 | `exists`, for `rwv branch rename` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
-| `exists`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
-| `a revision` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `no-such-branch` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
-| `no-such-branch`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b> --new` | a workspace with the branch checked out | re-pins by name, backup kept |
-| `no-such-branch`, for `rwv lock` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b> --new` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `no-such-branch`, for `rwv switch` | C24: look at it without a weave branch | VCS action (git: `git -C <checkout> switch --detach <r>/<b>`) | any workspace | the left HEAD holds nothing unpreserved |
+| `no-such-branch`, for `rwv switch` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
 | `reserved` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
-| `reserved`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `reserved`, for `rwv branch create` | use another name | — | here | nothing changes |
+| `reserved`, for `rwv switch` | use another name | — | here | nothing changes |
 | `minted` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
 | `declared` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
+| `declared`, for `rwv branch create` | use another name | — | here | nothing changes |
 | `feature` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
-| `feature`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `feature`, for `rwv branch create` | use another name | — | here | nothing changes |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
 
@@ -232,7 +238,7 @@ The others follow.
 | State | Means | Refused by |
 |---|---|---|
 | `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target` |
-| `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch set-mode`, for a `--target` that has no record |
+| `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch create` with no spelling, for the branch it starts at, and `--target`, for a target that has no record; `rwv switch`, for a branch with no record and no spelling; `rwv branch set-mode`, for a `--target` that has no record |
 | `conflict` | two writers recorded the branch differently and a merge kept both values, listed; the conflict stays on the machine whose merge met it | every verb that reads the branch's record on this machine |
 | `unreadable` | the branch's entry on the records branch does not read as a record, with why and the rwv release that wrote it when its commit names one; other branches' entries read as usual | every verb that reads the branch's record |
 | `cycle` | the branch's target chain returns to it, listed from the branch | `rwv branch set-mode`, for a `--target` that would close one, and every verb that reads the record of a branch a merge of records put on one |
@@ -268,7 +274,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv branch rename`, for a feature's member branch of the renamed name; `rwv push --overwrite`, for a member; `rwv branch delete` and `rwv workweave delete` with `--delete-remote` or `--delete-remote-unlanded`, for a member branch of the deleted name; `rwv sync` and `rwv sync-to` with `--strategy rebase`, for a member on the branch that has commits to replay |
+| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv branch rename`, for a feature's member branch of the renamed name; `rwv push --overwrite`, for a member |
 | `declared mode` | a project branch whose record is `declared`; rwv never rewrites it, and never deletes its unlanded push branch. Renaming it, and deleting its push branch once landed, run | `rwv push --overwrite`; `rwv branch delete --delete-remote-unlanded`, for the project repo |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.

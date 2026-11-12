@@ -1,0 +1,844 @@
+//! `rwv switch` and `rwv branch create`: open a weave branch in place. Both
+//! judge every repo they would move before anything moves, write the branch's
+//! record, put the project repo on the branch, and align the members.
+
+use std::path::{Path, PathBuf};
+
+use crate::add_remove::find_project;
+use crate::alignment::{Accounting, Aligned, Aligner, Departure, Member};
+use crate::branch::{
+    checked_out, feature_record, judge_feature_name, judge_lookup, judge_name_taken, label,
+    target_recorded_lines, write_refusal, Moving, NameScan,
+};
+use crate::diagnosis::{ChoiceId, Judged, Report, State};
+use crate::manifest::{LockFile, Manifest, ProjectName, Role};
+use crate::records::{BranchName, Entry, Lookup, NameError, Record, Store, View, Write};
+use crate::refusal::{refusal, RefusalKind};
+use crate::vcs::{
+    project_vcs, short_revision, vcs_for, HeadAttachment, LocalRefName, RawRefName, Relation,
+    RemoteTip, ResolvedRevisionId, Upstream, Vcs, VcsError,
+};
+use crate::workspace::WorkspaceContext;
+
+/// How an opening spells the branch's use, where the record does not say.
+#[derive(Debug, Clone)]
+pub enum Spelling {
+    Target(String),
+    Declared,
+}
+
+/// What `rwv branch create` is asked to do.
+#[derive(Debug, Clone)]
+pub struct Create {
+    pub branch: String,
+    pub spelling: Option<Spelling>,
+    pub at: Option<String>,
+}
+
+/// What `rwv switch` is asked to do.
+#[derive(Debug, Clone)]
+pub enum Switch {
+    Branch {
+        branch: String,
+        spelling: Option<Spelling>,
+    },
+    Detach(String),
+}
+
+const CREATE: &str = "branch create";
+const SWITCH: &str = "switch";
+
+fn named(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    text: &str,
+    verb: &'static str,
+) -> anyhow::Result<BranchName> {
+    match BranchName::parse(vcs, text) {
+        Ok(name) => Ok(name),
+        Err(NameError::Reserved) => Err(State::NameReserved
+            .of(label(project))
+            .subject(text)
+            .checkout(dir)
+            .by_verb(verb)
+            .only(&[ChoiceId::AnotherName])
+            .judge(vcs)
+            .refused()),
+        Err(NameError::Invalid(e)) => Err(refusal(
+            RefusalKind::InvalidRefName,
+            format!("`{text}` is not a usable branch name: {e:#}"),
+        )),
+    }
+}
+
+/// The project repo's files as the workspace will read them at `at`: the
+/// working tree's where `at` is the commit checked out, else the commit's.
+fn project_files(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    at: &ResolvedRevisionId,
+) -> (anyhow::Result<Manifest>, Option<LockFile>) {
+    if vcs.head_revision(dir).ok().as_ref() == Some(at) {
+        let lock_path = LockFile::path_in(dir);
+        let lock = lock_path
+            .exists()
+            .then(|| LockFile::from_state(&lock_path).ok())
+            .flatten();
+        return (Manifest::from_path(&dir.join(Manifest::FILE_NAME)), lock);
+    }
+    let manifest = vcs
+        .read_file_at_revision(dir, at, Path::new(Manifest::FILE_NAME))
+        .map_err(anyhow::Error::from)
+        .and_then(|text| Manifest::from_toml_str(&text));
+    let lock = vcs
+        .read_file_at_revision(dir, at, Path::new(LockFile::FILE_NAME))
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok());
+    (manifest, lock)
+}
+
+/// Every uncommitted name in the project repo that matters to a move of its
+/// checkout: tracked files with changes, and `rwv.toml` or `rwv.lock` where
+/// untracked.
+pub(crate) fn uncommitted_names(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Vec<String>> {
+    let mut names = vcs.tracked_dirty_file_names(dir)?;
+    for name in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
+        if dir.join(name).exists() && !vcs.is_tracked(dir, Path::new(name))? {
+            names.push(name.to_owned());
+        }
+    }
+    Ok(names)
+}
+
+/// What the move of the project repo's checkout is held back by.
+struct ProjectMove<'a> {
+    project: &'a ProjectName,
+    dir: &'a Path,
+    detached: bool,
+    verb: &'static str,
+    /// The files that refuse the move where uncommitted.
+    refused_files: &'static [&'static str],
+    /// The commit the checkout ends at, where it is not the one it is at.
+    destination: Option<&'a ResolvedRevisionId>,
+}
+
+impl ProjectMove<'_> {
+    fn judge(&self, vcs: &dyn Vcs, report: &mut Report) -> anyhow::Result<()> {
+        let uncommitted = uncommitted_names(vcs, self.dir)?;
+        let files: Vec<String> = uncommitted
+            .iter()
+            .filter(|name| self.refused_files.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        let mut dirty: Vec<String> = uncommitted
+            .into_iter()
+            .filter(|name| !files.contains(name))
+            .collect();
+        if let Some(to) = self.destination {
+            let from = vcs.head_revision(self.dir)?;
+            let changed = vcs.changed_paths_between(self.dir, &from, to)?;
+            dirty.retain(|name| changed.contains(name));
+        } else {
+            dirty.clear();
+        }
+        report.extend(crate::diagnosis::judge_edits(
+            vcs,
+            label(self.project),
+            self.dir,
+            dirty,
+            None,
+        ));
+        if !files.is_empty() {
+            let choice = if self.detached {
+                ChoiceId::C30
+            } else {
+                ChoiceId::C5
+            };
+            report.add(
+                State::EditsLockFilesUncommitted
+                    .of(label(self.project))
+                    .listing(files)
+                    .checkout(self.dir)
+                    .bind("<W>", "<W>")
+                    .by_verb(self.verb)
+                    .only(&[choice])
+                    .judge(vcs),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Each member the workspace has on disk that moving the project repo to the
+/// branch would move, judged as alignment would judge it.
+fn judge_members(
+    ctx: &WorkspaceContext,
+    aligner: &Aligner,
+    manifest: &Manifest,
+    lock: Option<&LockFile>,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    for (path, entry) in manifest.iter_entries() {
+        let dir = ctx.active_path().join(path.as_path());
+        if !dir.exists()
+            || crate::workweave::is_symlinked_member(&dir)
+            || crate::workweave::is_dangling_link(&dir)
+        {
+            continue;
+        }
+        let vcs = vcs_for(entry.vcs_type);
+        let member = Member {
+            path,
+            entry,
+            dir: &dir,
+            vcs: vcs.as_ref(),
+        };
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let plan = aligner.plan(&member, lock)?;
+        for judged in aligner.blocked(&member, &plan, path)? {
+            report.add(judged);
+        }
+    }
+    Ok(())
+}
+
+fn judge_members_at(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    at: &ResolvedRevisionId,
+    branch: Option<(&BranchName, &Record)>,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let (manifest, lock) = project_files(vcs, dir, at);
+    let Ok(manifest) = manifest else {
+        return Ok(());
+    };
+    let aligner = Aligner::prospective(
+        ctx.active_path(),
+        project,
+        Accounting::scan(ctx.primary_path()),
+        branch,
+    )?;
+    judge_members(ctx, &aligner, &manifest, lock.as_ref(), report)
+}
+
+/// The copy of `branch` a remote holds that this clone takes it from: the
+/// only one, else the project's home remote's.
+fn remote_copy(vcs: &dyn Vcs, dir: &Path, branch: &RawRefName) -> anyhow::Result<Option<RemoteTip>> {
+    let copies = vcs.remote_copies(dir, branch)?;
+    Ok(match copies.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        several => match vcs.project_url_remote(dir)? {
+            Some(url_remote) => {
+                let home = vcs.home_remote(dir, &url_remote)?;
+                several.iter().find(|copy| copy.remote == home).cloned()
+            }
+            None => None,
+        },
+    })
+}
+
+fn branch_tip(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &RawRefName,
+) -> anyhow::Result<Option<ResolvedRevisionId>> {
+    if let Some(tip) = vcs.resolve_local_branch_tip(dir, branch)? {
+        return Ok(Some(tip));
+    }
+    Ok(remote_copy(vcs, dir, branch)?.map(|copy| copy.tip))
+}
+
+fn no_such_branch(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    what: impl std::fmt::Display,
+    verb: &'static str,
+) -> Judged {
+    State::NameNoSuchBranch
+        .of(label(project))
+        .project_repo()
+        .subject(what)
+        .checkout(dir)
+        .by_verb(verb)
+        .only(&[ChoiceId::C33])
+        .judge(vcs)
+}
+
+/// A refusal for a move the VCS declined: the edits it would have
+/// overwritten, where the repo holds any.
+fn refused_move(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    error: VcsError,
+) -> anyhow::Error {
+    let dirty = vcs.dirty_file_names(dir).unwrap_or_default();
+    match crate::diagnosis::judge_edits(vcs, label(project), dir, dirty, None) {
+        Some(judged) => judged.refused(),
+        None => anyhow::Error::new(error),
+    }
+}
+
+fn after_project_move(
+    ctx: &WorkspaceContext,
+    dir: &Path,
+    verb: &'static str,
+) -> anyhow::Result<()> {
+    Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+    crate::update::align_after_switch(ctx, verb)
+}
+
+/// A failed record computation as the judged line of the state it is: the
+/// target that lacks a record, the cycle, the record that does not read.
+fn judged_write_error(
+    vcs: &dyn Vcs,
+    store: &Store<'_>,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+    error: crate::records::WriteError,
+) -> anyhow::Result<Judged> {
+    use crate::records::WriteError;
+    match error {
+        WriteError::Cycle(chain) => {
+            judge_lookup(vcs, store, project, dir, branch, Lookup::Cycle(chain))
+        }
+        WriteError::TargetUnrecorded(target) | WriteError::Unrecorded(target) => {
+            judge_lookup(vcs, store, project, dir, &target, Lookup::Unrecorded)
+        }
+        WriteError::TargetUnreadable(target, lookup) => {
+            judge_lookup(vcs, store, project, dir, &target, lookup)
+        }
+        other => Err(write_refusal(vcs, store, project, dir, branch, other)),
+    }
+}
+
+fn spelled_record(
+    view: &View,
+    branch: &BranchName,
+    spelling: &Spelling,
+    parse: &dyn Fn(&str) -> anyhow::Result<BranchName>,
+) -> anyhow::Result<Result<Record, crate::records::WriteError>> {
+    Ok(match spelling {
+        Spelling::Declared => Ok(Record::Declared),
+        Spelling::Target(target) => feature_record(view, branch, &parse(target)?),
+    })
+}
+
+fn agrees(existing: &Record, spelled: &Record) -> bool {
+    match (existing, spelled) {
+        (Record::Declared, Record::Declared) => true,
+        (Record::Feature { target: a, .. }, Record::Feature { target: b, .. }) => a == b,
+        _ => false,
+    }
+}
+
+/// `rwv branch create <W> [--target <T> | --declared] [--at <rev>]`.
+pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let parse = |text: &str| named(vcs, &project, &dir, text, CREATE);
+    let new = parse(&request.branch)?;
+    let new_raw = RawRefName::new(new.as_str());
+    let current = checked_out(vcs, &dir)?;
+    let detached = current.is_none();
+    let head = vcs.head_revision(&dir)?;
+
+    let target = match (&request.spelling, &current) {
+        (Some(Spelling::Declared), _) => None,
+        (Some(Spelling::Target(text)), _) => Some(parse(text)?),
+        (None, Some(text)) => Some(parse(text)?),
+        (None, None) => {
+            return Err(refusal(
+                RefusalKind::HeadNotOnBranch,
+                "rwv branch create: the project repo is on a detached HEAD, so a bare create has \
+                 no branch to land into; spell it: `rwv branch create <W> --target <T>` or \
+                 `rwv branch create <W> --declared`",
+            ));
+        }
+    };
+
+    let store = Store::open(vcs, &dir)?;
+    let view = store
+        .settle()
+        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &new, e))?;
+    let mut report = Report::default();
+
+    let record = match &target {
+        None => Some(Record::Declared),
+        Some(target) if *target == new => None,
+        Some(target) => match feature_record(&view, &new, target) {
+            Ok(record) => Some(record),
+            Err(error) => {
+                report.add(judged_write_error(vcs, &store, &project, &dir, &new, error)?);
+                None
+            }
+        },
+    };
+
+    let target_raw = target.as_ref().map(|t| RawRefName::new(t.as_str()));
+    let start_text = request.at.clone();
+    let start = match (&start_text, &target_raw, &request.spelling) {
+        (Some(rev), _, _) => match vcs.resolve_revision(&dir, rev) {
+            Ok(at) => Some(at),
+            Err(_) => {
+                report.add(no_such_branch(vcs, &project, &dir, rev, CREATE));
+                None
+            }
+        },
+        (None, Some(target_raw), _) if request.spelling.is_some() => {
+            match branch_tip(vcs, &dir, target_raw)? {
+                Some(tip) => Some(tip),
+                None => {
+                    report.add(no_such_branch(
+                        vcs,
+                        &project,
+                        &dir,
+                        target_raw.as_str(),
+                        CREATE,
+                    ));
+                    None
+                }
+            }
+        }
+        _ => Some(head.clone()),
+    };
+
+    if let (Some(target_raw), None, Some(_)) = (&target_raw, &start_text, &start) {
+        diverged_start(vcs, &project, &dir, target_raw, &mut report)?;
+    }
+
+    let Some(start) = start else {
+        return report.into_result();
+    };
+    report_names(
+        ctx,
+        vcs,
+        &project,
+        &dir,
+        &new,
+        record.as_ref(),
+        &start,
+        &mut report,
+    )?;
+
+    let at_head = start == head;
+    ProjectMove {
+        project: &project,
+        dir: &dir,
+        detached,
+        verb: CREATE,
+        refused_files: if at_head {
+            &[]
+        } else {
+            &[crate::manifest::LockFile::FILE_NAME]
+        },
+        destination: (!at_head).then_some(&start),
+    }
+    .judge(vcs, &mut report)?;
+    if let Some(record) = &record {
+        judge_members_at(
+            ctx,
+            &project,
+            vcs,
+            &dir,
+            &start,
+            Some((&new, record)),
+            &mut report,
+        )?;
+    }
+    report.into_result()?;
+    let record = record.expect("a record that did not read refused above");
+
+    let replaced = view.entry(&new);
+    store
+        .write(|view| {
+            Ok(vec![Write {
+                branch: new.clone(),
+                record: match &record {
+                    Record::Declared => Record::Declared,
+                    Record::Feature { target, .. } => feature_record(view, &new, target)?,
+                },
+            }])
+        })
+        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &new, e))?;
+    if let Some(old) = replaced {
+        outln!(
+            "replaced the record of {new}: its branch exists nowhere ({})",
+            match old {
+                Entry::Value(old) => old.to_string(),
+                Entry::Conflict(..) => "conflict".to_owned(),
+                Entry::Unreadable(why) => format!("unreadable: {why}"),
+            }
+        );
+    }
+    let departure = Departure::of_project_move(vcs, &dir, &start)?;
+    vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
+        .map_err(|e| refused_move(vcs, &project, &dir, e))?;
+    outln!(
+        "created {new} at {}: {record}",
+        short_revision(start.id().as_str())
+    );
+    if let Record::Feature { target, as_mode } = &record {
+        for line in target_recorded_lines(vcs, &dir, &new, target, *as_mode)? {
+            outln!("{line}");
+        }
+    }
+    after_project_move(ctx, &dir, CREATE)
+}
+
+fn diverged_start(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    target: &RawRefName,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let Some(local) = vcs.resolve_local_branch_tip(dir, target)? else {
+        return Ok(());
+    };
+    let Some(upstream) = vcs.upstream_of(dir, target)? else {
+        return Ok(());
+    };
+    let Some(copy) = vcs
+        .remote_copies(dir, &upstream.branch)?
+        .into_iter()
+        .find(|copy| copy.remote == upstream.remote)
+    else {
+        return Ok(());
+    };
+    if vcs.relation(dir, &local, &copy.tip)? != Relation::Diverged {
+        return Ok(());
+    }
+    let unpushed = vcs.unpushed_commits(dir, target)?;
+    report.add(
+        State::PushBranchDiverged
+            .of(label(project))
+            .project_repo()
+            .subject(format!("{target} and {}/{}", upstream.remote, upstream.branch))
+            .listing(
+                unpushed
+                    .iter()
+                    .map(|c| format!("{} {}", short_revision(c.id.as_str()), c.subject)),
+            )
+            .checkout(dir)
+            .bind("<T>", target)
+            .by_verb(CREATE)
+            .only(&[ChoiceId::C34])
+            .judge(vcs),
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn report_names(
+    ctx: &WorkspaceContext,
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    new: &BranchName,
+    record: Option<&Record>,
+    start: &ResolvedRevisionId,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let (manifest, _) = project_files(vcs, dir, start);
+    let manifest = manifest?;
+    let mut repos = vec![(
+        Moving::present(label(project), dir.to_path_buf(), project_vcs(), None),
+        None,
+    )];
+    for (path, entry) in manifest.iter_entries() {
+        let member_dir = ctx.active_path().join(path.as_path());
+        let member_vcs = vcs_for(entry.vcs_type);
+        if !member_vcs.is_repo(&member_dir) {
+            continue;
+        }
+        repos.push((
+            Moving::present(path.to_string(), member_dir, member_vcs, Some(path.clone())),
+            Some(entry.role),
+        ));
+    }
+    let scan = NameScan {
+        primary: ctx.primary_path(),
+        project,
+        accounting: Accounting::scan(ctx.primary_path()),
+    };
+    let feature = matches!(record, Some(Record::Feature { .. }));
+    for (repo, role) in &repos {
+        if feature && matches!(role, Some(Role::Owned | Role::Fork)) {
+            judge_feature_name(repo, new, &scan, CREATE, report);
+        }
+        judge_name_taken(repo, new, false, CREATE, report)?;
+    }
+    Ok(())
+}
+
+/// `rwv switch <W> [--target <T> | --declared]` and `rwv switch --detach
+/// <rev>`.
+pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let (text, spelling) = match &request {
+        Switch::Detach(rev) => return switch_detached(ctx, vcs, &project, &dir, rev),
+        Switch::Branch { branch, spelling } => (branch, spelling),
+    };
+    let parse = |text: &str| named(vcs, &project, &dir, text, SWITCH);
+    let branch = parse(text)?;
+    let raw = RawRefName::new(branch.as_str());
+    let current = checked_out(vcs, &dir)?;
+    let detached = current.is_none();
+    let mut report = Report::default();
+
+    let local = vcs.resolve_local_branch_tip(&dir, &raw)?;
+    let copy = if local.is_none() {
+        remote_copy(vcs, &dir, &raw)?
+    } else {
+        None
+    };
+    let destination = local.clone().or_else(|| copy.as_ref().map(|c| c.tip.clone()));
+    let Some(destination) = destination else {
+        return Err(no_branch_here(ctx, &project, vcs, &dir, &branch));
+    };
+
+    let store = Store::open(vcs, &dir)?;
+    let view = store
+        .settle()
+        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &branch, e))?;
+    let mut to_write: Option<Record> = None;
+    let record = match (view.lookup(&branch), spelling) {
+        (Lookup::Value(record), None) => Some(record),
+        (Lookup::Value(record), Some(spelling)) => {
+            match spelled_record(&view, &branch, spelling, &parse)? {
+                Ok(spelled) if agrees(&record, &spelled) => Some(record),
+                Ok(spelled) => {
+                    report.add(judge_lookup(
+                        vcs,
+                        &store,
+                        &project,
+                        &dir,
+                        &branch,
+                        Lookup::Conflict(record, spelled),
+                    )?);
+                    None
+                }
+                Err(error) => {
+                    return Err(write_refusal(vcs, &store, &project, &dir, &branch, error))
+                }
+            }
+        }
+        (Lookup::Unrecorded, Some(spelling)) => {
+            match spelled_record(&view, &branch, spelling, &parse)? {
+                Ok(spelled) => {
+                    to_write = Some(spelled.clone());
+                    Some(spelled)
+                }
+                Err(error) => {
+                    return Err(write_refusal(vcs, &store, &project, &dir, &branch, error))
+                }
+            }
+        }
+        (lookup, _) => {
+            report.add(judge_lookup(vcs, &store, &project, &dir, &branch, lookup)?);
+            None
+        }
+    };
+
+    if current.as_deref() != Some(branch.as_str()) {
+        let recorded = crate::sync::recorded_workweaves(ctx.primary_path())?;
+        let here = crate::path_spelling::CanonicalPath::of(&dir);
+        for checkout in vcs.checkouts_of_branch(&dir, &raw)? {
+            if crate::path_spelling::CanonicalPath::of(&checkout) != here {
+                report.add(crate::sync::judge_checkout(
+                    vcs,
+                    label(&project),
+                    &checkout,
+                    &dir,
+                    &recorded,
+                ));
+            }
+        }
+    }
+
+    ProjectMove {
+        project: &project,
+        dir: &dir,
+        detached,
+        verb: SWITCH,
+        refused_files: &[Manifest::FILE_NAME, LockFile::FILE_NAME],
+        destination: Some(&destination),
+    }
+    .judge(vcs, &mut report)?;
+    if let Some(record) = &record {
+        judge_members_at(
+            ctx,
+            &project,
+            vcs,
+            &dir,
+            &destination,
+            Some((&branch, record)),
+            &mut report,
+        )?;
+    }
+    report.into_result()?;
+
+    if let Some(record) = to_write {
+        store
+            .write(|view| {
+                Ok(vec![Write {
+                    branch: branch.clone(),
+                    record: match &record {
+                        Record::Declared => Record::Declared,
+                        Record::Feature { target, .. } => feature_record(view, &branch, target)?,
+                    },
+                }])
+            })
+            .map_err(|e| write_refusal(vcs, &store, &project, &dir, &branch, e))?;
+        outln!("recorded {branch}: {record}");
+    }
+    if current.as_deref() != Some(branch.as_str()) {
+        let departure = Departure::of_project_move(vcs, &dir, &destination)?;
+        if local.is_none() {
+            let copy = copy.expect("a branch found nowhere refused above");
+            vcs.create_branch(
+                &dir,
+                &raw,
+                &copy.tip,
+                Some(&Upstream {
+                    remote: copy.remote,
+                    branch: raw.clone(),
+                }),
+            )?;
+        }
+        vcs.reattach_head(
+            vcs.head_attachment(&dir)?,
+            &LocalRefName::of_branch(&raw),
+            &departure,
+        )
+        .map_err(|e| refused_move(vcs, &project, &dir, e))?;
+    }
+    outln!("switched to {branch}");
+    after_project_move(ctx, &dir, SWITCH)
+}
+
+fn no_branch_here(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &BranchName,
+) -> anyhow::Error {
+    let raw = RawRefName::new(branch.as_str());
+    let mut report = Report::default();
+    let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME)).ok();
+    let mut members: Vec<(String, PathBuf, Box<dyn Vcs>, Option<RemoteTip>)> = Vec::new();
+    for (path, entry) in manifest.iter().flat_map(|m| m.iter_entries()) {
+        let member_dir = ctx.active_path().join(path.as_path());
+        let member_vcs = vcs_for(entry.vcs_type);
+        if !member_vcs.is_repo(&member_dir) {
+            continue;
+        }
+        let local = member_vcs
+            .resolve_local_branch_tip(&member_dir, &raw)
+            .ok()
+            .flatten()
+            .is_some();
+        let copy = member_vcs
+            .remote_copies(&member_dir, &raw)
+            .ok()
+            .and_then(|copies| copies.into_iter().next());
+        if local || copy.is_some() {
+            members.push((path.to_string(), member_dir, member_vcs, copy));
+        }
+    }
+    if members.is_empty() {
+        report.add(no_such_branch(vcs, project, dir, branch, SWITCH));
+    }
+    for (path, member_dir, member_vcs, copy) in members {
+        let unpushed = match member_vcs.observe_head(&member_dir) {
+            Ok(crate::vcs::HeadObservation::Detached { at }) => member_vcs
+                .stray_commits(&member_dir, &at, None, None)
+                .map(|commits| !commits.is_empty())
+                .unwrap_or(true),
+            _ => false,
+        };
+        let choice = if unpushed {
+            ChoiceId::C14
+        } else {
+            ChoiceId::C24
+        };
+        let remote = copy.map_or_else(|| "origin".to_owned(), |copy| copy.remote.to_string());
+        report.add(
+            State::NameNoSuchBranch
+                .of(&path)
+                .member()
+                .subject(format!("{branch} is a branch of {path} only"))
+                .checkout(&member_dir)
+                .bind("<r>", remote)
+                .bind("<b>", branch)
+                .by_verb(SWITCH)
+                .only(&[choice])
+                .judge(member_vcs.as_ref()),
+        );
+    }
+    report
+        .into_result()
+        .expect_err("a report holding a line refuses")
+}
+
+fn switch_detached(
+    ctx: &WorkspaceContext,
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    rev: &str,
+) -> anyhow::Result<()> {
+    let mut report = Report::default();
+    let detached = checked_out(vcs, dir)?.is_none();
+    let Ok(destination) = vcs.resolve_revision(dir, rev) else {
+        return Err(no_such_branch(vcs, project, dir, rev, SWITCH).refused());
+    };
+    ProjectMove {
+        project,
+        dir,
+        detached,
+        verb: SWITCH,
+        refused_files: &[Manifest::FILE_NAME, LockFile::FILE_NAME],
+        destination: Some(&destination),
+    }
+    .judge(vcs, &mut report)?;
+    judge_members_at(ctx, project, vcs, dir, &destination, None, &mut report)?;
+    report.into_result()?;
+
+    let departure = Departure::of_project_move(vcs, dir, &destination)?;
+    match vcs.head_attachment(dir)? {
+        HeadAttachment::Attached(on) => vcs.detach_head(&on, &destination, &departure),
+        HeadAttachment::Detached(was) => vcs.advance_detached_head(&was, &destination),
+        HeadAttachment::Unborn(_) => Err(VcsError::CommandFailed {
+            args: vec!["switch".to_owned(), "--detach".to_owned()],
+            repo: dir.to_path_buf(),
+            stderr: "the project repo has no commit to leave".to_owned(),
+        }),
+    }
+    .map_err(|e| refused_move(vcs, project, dir, e))?;
+    let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME));
+    let aligner = Aligner::open(ctx.active_path(), project, Accounting::default())?;
+    let mut state = aligner.state.clone();
+    state.aligned = Some(Aligned::Detached);
+    crate::alignment::store_state(vcs, dir, &state)?;
+    outln!(
+        "detached at {}: this workspace is detached; every repo is at its pin",
+        short_revision(destination.id().as_str())
+    );
+    manifest?;
+    crate::update::align_after_switch(ctx, SWITCH)
+}

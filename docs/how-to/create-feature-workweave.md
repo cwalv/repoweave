@@ -35,6 +35,23 @@ rwv workweave create payments --capture-dirty
 
 `--capture-dirty` moves uncommitted edits to `rwv.toml` and `rwv.lock` into the workweave: once the workweave exists, `projects/web-app/` in the source holds their committed versions again, so a later `rwv sync-to` is not refused over the source's copy. Other uncommitted files in `projects/web-app/` stay in the source, and `create` lists them. Commit or stash the captured edits in the workweave before running `rwv sync-to`.
 
+## Start the feature in the workspace you are in
+
+A new workweave is one way to isolate a feature. To start one where you are, create the branch and switch to it:
+
+```bash
+rwv branch create payments
+```
+
+This records `payments` as a feature onto the branch the project repo had checked out, gives each `owned` and `fork` member a `payments` branch at its pin, and moves the workspace onto them, carrying uncommitted edits. Return to the branch you came from, and reopen the feature, with `rwv switch`:
+
+```bash
+rwv switch main
+rwv switch payments
+```
+
+`rwv branch create payments --declared` records a branch whose members keep following the branches its `rwv.toml` entries declare; `--target <T>` makes the feature land into `<T>` instead of the checked-out branch. A branch made with `git switch -c` has no record: `rwv switch <branch> --target <T>` records it as it opens it.
+
 ## Work across repos
 
 Every member repo is already checked out on its `web-app--payments` ephemeral branch. Edit, test, and commit directly in each worktree:

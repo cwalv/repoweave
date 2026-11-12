@@ -28,6 +28,7 @@ const WORKWEAVE_EXPLAIN: &str = include_str!("../docs/reference/explain/workweav
 const ABORT_EXPLAIN: &str = include_str!("../docs/reference/explain/abort.md");
 const BACKUP_EXPLAIN: &str = include_str!("../docs/reference/explain/backup.md");
 const BRANCH_EXPLAIN: &str = include_str!("../docs/reference/explain/branch.md");
+const SWITCH_EXPLAIN: &str = include_str!("../docs/reference/explain/switch.md");
 const MEMBER_EXPLAIN: &str = include_str!("../docs/reference/explain/member.md");
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
@@ -241,6 +242,7 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("abort", ABORT_EXPLAIN),
     ("backup", BACKUP_EXPLAIN),
     ("branch", BRANCH_EXPLAIN),
+    ("switch", SWITCH_EXPLAIN),
     ("member", MEMBER_EXPLAIN),
     ("lock", LOCK_EXPLAIN),
     ("activate", ACTIVATE_EXPLAIN),

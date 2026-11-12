@@ -36,6 +36,21 @@ impl Departure {
     pub(crate) fn granted() -> Self {
         Self(())
     }
+
+    /// The proof for the project repo's own move to `destination`: a detached
+    /// HEAD that `destination` does not reach keeps what it holds as a backup
+    /// first, and a branch keeps its own commits.
+    pub fn of_project_move(
+        vcs: &dyn Vcs,
+        project_dir: &Path,
+        destination: &ResolvedRevisionId,
+    ) -> anyhow::Result<Self> {
+        let head = vcs.head_revision(project_dir)?;
+        if !vcs.is_ancestor(project_dir, &head, destination)? {
+            vcs.backup_unpreserved_head(project_dir)?;
+        }
+        Ok(Self(()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -437,6 +452,7 @@ pub struct Aligner {
     pub accounting: Accounting,
     checked_out: Option<String>,
     outgoing: Option<Box<Aligner>>,
+    carry_edits: bool,
 }
 
 impl Aligner {
@@ -509,7 +525,51 @@ impl Aligner {
             accounting,
             checked_out,
             outgoing: None,
+            carry_edits: false,
         })
+    }
+
+    /// The workspace as it will read once the project repo is on `branch`
+    /// (`None`: detached), judged before the project repo moves. Members that
+    /// hold edits move as the VCS carries them.
+    pub fn prospective(
+        root: &Path,
+        project: &ProjectName,
+        accounting: Accounting,
+        branch: Option<(&BranchName, &Record)>,
+    ) -> anyhow::Result<Self> {
+        let project_dir = crate::workspace::project_dir(root, project);
+        let reading = read_state(project_vcs().as_ref(), &project_dir)?;
+        let (mode, checked_out) = match branch {
+            Some((name, Record::Feature { .. })) => (
+                Mode::Feature {
+                    branch: name.to_string(),
+                },
+                Some(name.to_string()),
+            ),
+            Some((name, Record::Declared)) => (Mode::Declared, Some(name.to_string())),
+            None => (Mode::Detached, None),
+        };
+        Ok(Self {
+            root: root.to_path_buf(),
+            project: project.clone(),
+            project_dir,
+            mode,
+            standing: ProjectStanding::Aligned,
+            state: reading.state,
+            corrupt: reading.corrupt,
+            accounting,
+            checked_out,
+            outgoing: None,
+            carry_edits: true,
+        })
+    }
+
+    /// Move a member that holds edits as the VCS carries them: only edits the
+    /// move would overwrite hold it back.
+    pub fn carrying_edits(mut self) -> Self {
+        self.carry_edits = true;
+        self
     }
 
     /// Count a member aligned for `outgoing`'s branch as one that may be left,
@@ -853,7 +913,10 @@ impl Aligner {
             _ => Vec::new(),
         };
         let off = self.standing_of(m, plan)?;
-        let dirty = m.vcs.tracked_dirty_file_names(m.dir)?;
+        let mut dirty = m.vcs.tracked_dirty_file_names(m.dir)?;
+        if self.carry_edits {
+            dirty = self.overwritten(m, plan, dirty)?;
+        }
         let busy = m.vcs.mid_operation(m.dir).is_some();
         if dirty.is_empty() && !busy && self.may_leave(m, &off) {
             return Ok(Vec::new());
@@ -863,6 +926,56 @@ impl Aligner {
             judged.push(edits);
         }
         Ok(judged)
+    }
+
+    /// The commit the plan leaves the member's checkout at, where it has one.
+    fn destination(m: &Member<'_>, plan: &Plan) -> Option<ResolvedRevisionId> {
+        match &plan.target {
+            Target::AsFound => None,
+            Target::Detached { at, .. } => Some(at.clone()),
+            Target::Branch {
+                found,
+                fast_forward_to,
+                ..
+            } => {
+                if fast_forward_to.is_some() {
+                    return fast_forward_to.clone();
+                }
+                match (found, &plan.pin) {
+                    (Found::Local { tip } | Found::LocalGivenUpstream { tip, .. }, _) => {
+                        Some(tip.clone())
+                    }
+                    (Found::OnRemote { tip, .. }, Pin::At(pin)) if reaches(m.vcs, m.dir, pin, tip) => {
+                        Some(pin.clone())
+                    }
+                    (Found::OnRemote { tip, .. }, _) => Some(tip.clone()),
+                    (Found::Nowhere, Pin::At(pin)) => Some(pin.clone()),
+                    (Found::Foreign { .. } | Found::Nowhere, _) => None,
+                }
+            }
+        }
+    }
+
+    /// The edited files the move to the plan's commit would overwrite: all of
+    /// them where the destination is not known.
+    fn overwritten(
+        &self,
+        m: &Member<'_>,
+        plan: &Plan,
+        dirty: Vec<String>,
+    ) -> anyhow::Result<Vec<String>> {
+        if dirty.is_empty() {
+            return Ok(dirty);
+        }
+        let Some(to) = Self::destination(m, plan) else {
+            return Ok(dirty);
+        };
+        let from = m.vcs.head_revision(m.dir)?;
+        let changed = m.vcs.changed_paths_between(m.dir, &from, &to)?;
+        Ok(dirty
+            .into_iter()
+            .filter(|file| changed.contains(file))
+            .collect())
     }
 
     /// The refusal for a member that is not where its plan puts it, `None`

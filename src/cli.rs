@@ -175,6 +175,36 @@ pub enum Commands {
         action: BranchAction,
     },
 
+    /// Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one needs `--target` or `--declared`; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
+    ///
+    /// The project repo moves as the VCS moves it, carrying edits that the move
+    /// does not overwrite, and every member it would move is judged first:
+    /// nothing moves while any is refused. An uncommitted `rwv.toml` or
+    /// `rwv.lock` is refused, and a checkout mid-operation. From a detached
+    /// project repo, what it holds that no branch reaches is kept as a backup
+    /// first. `--detach` makes the workspace a detached one: every repo at the
+    /// pins of the revision, and no record is written. A branch whose `rwv.toml`
+    /// an earlier release wrote is switched onto and stops before the members
+    /// (`rwv doctor --fix` there).
+    #[command(arg_required_else_help = true)]
+    Switch {
+        /// The branch to switch to, local or on a remote as last fetched
+        #[arg(value_name = "W", conflicts_with = "detach")]
+        branch: Option<String>,
+        /// For a branch with no record: record it as a feature that lands into `<T>`, which must itself have a record. A record that differs is refused
+        #[arg(long, value_name = "T", requires = "branch", conflicts_with = "declared")]
+        target: Option<String>,
+        /// For a branch with no record: record it as `declared`. A record that differs is refused
+        #[arg(long, requires = "branch")]
+        declared: bool,
+        /// Detach the workspace at this revision instead: every repo sits at the pins of its lock, and no record is written
+        #[arg(long, value_name = "REV", conflicts_with_all = ["target", "declared"])]
+        detach: Option<String>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+
     // ── Workweaves ────────────────────────────────────────────────────────────
     /// Create, delete, or list workweaves
     #[command(arg_required_else_help = true)]
@@ -606,6 +636,31 @@ pub enum BranchAction {
         /// Take up a branch a remote already has under `<new>` (a rename made on the forge, or on another machine): each renamed branch takes in from the remote's `<new>`. Refused where the two have diverged
         #[arg(long)]
         adopt: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Create a weave branch, record it, and switch the workspace to it: bare, a feature onto the checked-out branch; `--target <T>`, a feature onto `<T>`; `--declared`, a branch whose members follow its own entries. The branch starts at `--at`, else at the checked-out commit (a bare create or `--target`: at the tip of the branch it lands into)
+    ///
+    /// The workspace switches as the VCS's own branch creation does, carrying
+    /// uncommitted edits, an uncommitted `rwv.toml` included, and an
+    /// uncommitted `rwv.lock` too where the branch starts at the checked-out
+    /// commit. From a detached project repo a spelling is required and the
+    /// branch starts at its HEAD. A feature's `owned` and `fork` members get
+    /// branches of the same name at their pins. A name any repo of the
+    /// workspace already has is refused, nothing created.
+    Create {
+        /// The new branch
+        branch: String,
+        /// Record it as a feature that lands into `<T>`, which must itself have a record
+        #[arg(long, value_name = "T", conflicts_with = "declared")]
+        target: Option<String>,
+        /// Record it as `declared`: its members follow the branches its own `rwv.toml` entries declare
+        #[arg(long)]
+        declared: bool,
+        /// Start the branch at this revision
+        #[arg(long, value_name = "REV")]
+        at: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

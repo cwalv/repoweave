@@ -3660,6 +3660,36 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn create_branch_and_attach(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+        at: &ResolvedRevisionId,
+        departure: &crate::alignment::Departure,
+    ) -> Result<(), VcsError> {
+        let _ = departure;
+        if self.resolve_local_branch_tip(repo, name)?.is_some() {
+            return Err(VcsError::CommandFailed {
+                args: local_branch_tip_args(name.as_str()),
+                repo: repo.to_path_buf(),
+                stderr: format!("a local branch named '{name}' already exists"),
+            });
+        }
+        Self::run(
+            [
+                "checkout",
+                "--no-guess",
+                "--no-track",
+                "-b",
+                name.as_str(),
+                at.id().as_str(),
+                "--",
+            ],
+            repo,
+        )?;
+        Ok(())
+    }
+
     fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError> {
         // Classify before acting, the way `materialize_worktree_on_ref`
         // does. Omitting `-b` does NOT make git refuse an absent branch —

@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Record how a **weave branch** is used, list the weave branches with their
-records, rename one, and delete one. A weave branch is a branch of the project repo that
+Create a **weave branch**, record how one is used, list the weave branches with
+their records, rename one, and delete one. A weave branch is a branch of the project repo that
 carries `rwv.toml` and `rwv.lock`.
 
 A branch's **record** is one of two modes:
@@ -25,6 +25,44 @@ used). Nothing falls back to `declared`.
 `rwv init` and `rwv clone` record the branch they leave checked out as
 `declared`, and a bare `rwv workweave create` records the new workweave's branch
 as a feature onto the branch the workspace it was made from has checked out.
+
+### `create`
+
+Creates `<W>`, writes its record, and switches the workspace to it: the project
+repo moves as the VCS's own branch creation moves it, carrying uncommitted
+edits, and the members are aligned.
+
+- A bare `rwv branch create <W>` is a **feature** onto the checked-out branch,
+  which must have a record that reads (`target` `unrecorded` otherwise: a
+  branch is not opened by guess). `--target <T>` makes it a feature onto `<T>`,
+  which needs a record of its own; `<T>`'s mode is stored as `as`.
+  `--declared` makes it `declared`: its members follow the branches its own
+  `rwv.toml` entries declare, and no member gets a branch of its name.
+- `<W>` starts at `--at <rev>`; else a `--declared` create starts at the
+  checked-out commit, and a bare create or `--target` at the tip of the branch
+  it lands into (a bare create's is the checked-out one). Members start at the
+  pins of that commit's lock. A feature's `owned` and `fork` members get
+  branches `<W>` at their pins.
+- From a detached project repo a spelling is required (`--target` or
+  `--declared`) and `<W>` starts at its HEAD, so the project repo ends on a
+  branch and nothing it held is left behind.
+- An uncommitted `rwv.toml` is carried to the new branch; so is an uncommitted
+  `rwv.lock` where `<W>` starts at the checked-out commit. Where it starts
+  elsewhere, an uncommitted `rwv.lock` is refused (`edits`, naming `rwv lock
+  --commit`) and edits the move would overwrite are refused (`edits`).
+- A create that starts at `<T>`'s tip is refused while `<T>` and its upstream
+  have diverged (`push-branch` `diverged`, the unpushed commits listed), naming
+  `--at <T>` to start from this clone's `<T>`.
+- A name that any repo of the workspace has, locally or on a remote as last
+  fetched, is refused (`name` `exists`), as is the records branch's name or one
+  below it (`name` `reserved`), a feature name a live weave branch declares for a
+  member (`name` `declared`) and one another project's feature uses for a member
+  both list (`name` `feature`). A record whose branch exists nowhere is
+  replaced, reported.
+- A feature's record prints where it lands (`target-recorded`), as `set-mode`
+  does. Every repo is judged before anything is written, and the writes are
+  ordered (record, project branch, members) so that a run which stopped partway
+  is completed by running it again.
 
 ### `set-mode`
 
@@ -164,6 +202,7 @@ recording `a/b`.
 ## Invocation
 
 ```
+rwv branch create <W> [--target <T> | --declared] [--at <rev>] [--project <name>]
 rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]
 rwv branch list [--json] [--project <name>]
 rwv branch rename <new> [--adopt] [--project <name>]
@@ -179,6 +218,8 @@ Run `rwv branch --help` for the full clap surface.
 
 ## Output
 
+`create` prints `created <W> at <rev>: <record>`, the `target-recorded` lines, and
+the alignment `update` reports under the `rwv branch create` prefix.
 `set-mode` prints one line saying what is recorded, then any `target-recorded`
 and dependent lines. `list` prints one line per branch, or `no weave branches`.
 `rename` prints `renamed <repo>: <old> -> <new>` for each branch it renamed,
@@ -205,7 +246,7 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
 
 ## Exit codes
 
-- `0` — the record was written (or already held), the listing printed, the
+- `0` — the branch was created, the record was written (or already held), the listing printed, the
   rename done, or `delete` deleted everything that belongs to the branch.
 - `3` — `delete` finished and the rule kept at least one branch; the output
   lists each and why.
@@ -213,6 +254,19 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
   not read.
 
 ## Examples
+
+Start a feature onto the checked-out branch, in the workspace you are in:
+
+```
+rwv branch create feat-x
+```
+
+Cut a release line from `main`, whose members keep following their declared
+branches:
+
+```
+rwv branch create stable --declared --at v1.4.0
+```
 
 Say that a branch made by hand is the project's trunk:
 
@@ -271,6 +325,10 @@ rwv branch delete feat-x --discard-unlanded --delete-remote
   listed; pick a `--target` outside it.
 - *name reserved* — the name is the one rwv keeps its branch records under, or is
   below it.
+- *name exists* with `rwv branch create` — a repo of the workspace already has
+  the branch. Open it with `rwv switch <W>`, or use another name.
+- *push-branch diverged* with `rwv branch create` — the branch it would start
+  at has diverged from its upstream; `--at <T>` starts from this clone's.
 - *target dependents* — other branches' records land into the branch. Each is
   listed; rebind it with `rwv branch set-mode <dependent> feature --target
   <T>`.

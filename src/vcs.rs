@@ -3940,6 +3940,18 @@ pub trait Vcs: Send + Sync {
     /// obstacle.
     fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
 
+    /// Create the local branch `name` at `at` and put `repo`'s HEAD on it in
+    /// one step, carrying uncommitted edits as the VCS's own branch creation
+    /// does. Refuses, with nothing created and nothing moved, a name already
+    /// taken and edits the move to `at` would overwrite.
+    fn create_branch_and_attach(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+        at: &ResolvedRevisionId,
+        departure: &Departure,
+    ) -> Result<(), VcsError>;
+
     /// VCS-specific half of [`reattach_head`]: put `repo`'s HEAD on the
     /// existing local branch `name`.
     ///

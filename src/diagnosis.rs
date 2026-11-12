@@ -557,9 +557,15 @@ impl State {
                 name: "rwv.toml or rwv.lock uncommitted",
                 means: "the project repo's only uncommitted changes are to `rwv.toml` or \
                         `rwv.lock`, or either is not yet tracked",
-                refused_by: "`rwv push`",
+                refused_by: "`rwv push`; `rwv switch`, and `rwv branch create` for an `rwv.lock` \
+                             where the branch starts at another commit than the checked-out \
+                             one. In a detached project repo the choice is `rwv branch create`, \
+                             which carries both files",
                 offers: &[Form::C5Lock],
-                verb_offers: &[],
+                verb_offers: &[
+                    ("switch", Form::C30BranchCreate),
+                    ("branch create", Form::C30BranchCreate),
+                ],
             },
             Self::CheckoutInAnotherWorkspace => &StateRow {
                 axis: Axis::Checkout,
@@ -567,8 +573,8 @@ impl State {
                 means: "a workweave's checkout derives from the clone, named; or the \
                         branch is checked out there",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
-                             of a dropped member there; `rwv branch delete`, for a branch \
-                             checked out in another workspace",
+                             of a dropped member there; `rwv branch delete` and `rwv switch`, \
+                             for a project branch checked out in another workspace",
                 offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
                 verb_offers: &[],
             },
@@ -588,9 +594,11 @@ impl State {
                 name: "diverged",
                 means: "the branch and its upstream each hold commits the other lacks, counted \
                         on the line",
-                refused_by: "`rwv pull`, for the project branch",
+                refused_by: "`rwv pull`, for the project branch; `rwv branch create`, for a branch \
+                             that would start at the tip of a branch that has diverged from \
+                             its upstream",
                 offers: &[Form::C2Pull, Form::C3Pull],
-                verb_offers: &[],
+                verb_offers: &[("branch create", Form::C34)],
             },
             Self::PushBranchBehind => &StateRow {
                 axis: Axis::PushBranch,
@@ -704,10 +712,13 @@ impl State {
                 refused_by: "`rwv workweave create`, for the branch it mints in the project \
                              repo and in each owned or fork member; `rwv branch rename`; \
                              `rwv member set-branch --new`, for a branch the member's repo \
-                             already has",
+                             already has; `rwv branch create`, for a name any repo of the \
+                             workspace has, locally or on a remote as last fetched",
                 offers: &[],
                 verb_offers: &[
                     ("workweave create", Form::AnotherName),
+                    ("branch create", Form::AnotherName),
+                    ("branch create", Form::OpenSwitch),
                     ("branch rename", Form::C10),
                     ("branch rename", Form::C10Adopt),
                     ("member set-branch", Form::C11SetBranch),
@@ -734,11 +745,15 @@ impl State {
                              project repo has neither locally nor on a remote as last fetched; \
                              `rwv member set-branch`, for a branch the member's repo has neither \
                              locally nor on a remote as last fetched; `rwv lock --commit`, for a \
-                             declared branch a hand edit named that exists nowhere",
+                             declared branch a hand edit named that exists nowhere; `rwv switch`, \
+                             for a branch the project repo lacks, and `rwv branch create`, for a \
+                             `--target` or `--at` that names nothing here",
                 offers: &[Form::C33],
                 verb_offers: &[
                     ("member set-branch", Form::C11SetBranchNew),
                     ("lock", Form::C11SetBranchNew),
+                    ("switch", Form::C24),
+                    ("switch", Form::C14Keep),
                 ],
             },
             Self::NameReserved => &StateRow {
@@ -746,11 +761,15 @@ impl State {
                 name: "reserved",
                 means: "the name is the one rwv keeps its branch records under, or is below it \
                         (`<records>/<name>`); no weave branch can take it",
-                refused_by: "`rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that \
-                             align, lock, land or publish while the project repo is on a branch \
-                             of that name; `rwv member set-branch`",
+                refused_by: "`rwv branch set-mode`, `rwv branch create`, `rwv switch`, `rwv init`, \
+                             `rwv clone`, and the verbs that align, lock, land or publish while \
+                             the project repo is on a branch of that name; `rwv member set-branch`",
                 offers: &[Form::C10],
-                verb_offers: &[("member set-branch", Form::C11SetBranch)],
+                verb_offers: &[
+                    ("member set-branch", Form::C11SetBranch),
+                    ("branch create", Form::AnotherName),
+                    ("switch", Form::AnotherName),
+                ],
             },
             Self::NameMinted => &StateRow {
                 axis: Axis::Name,
@@ -769,9 +788,10 @@ impl State {
                         member's branch, the member and the declaring branches listed: the \
                         member's branch of that name is the declared branch, and a feature's \
                         own member branch cannot be it",
-                refused_by: "`rwv branch rename`, for a feature",
+                refused_by: "`rwv branch rename`, for a feature; `rwv branch create`, for a \
+                             feature",
                 offers: &[Form::C10],
-                verb_offers: &[],
+                verb_offers: &[("branch create", Form::AnotherName)],
             },
             Self::NameFeature => &StateRow {
                 axis: Axis::Name,
@@ -779,10 +799,14 @@ impl State {
                 means: "a feature would take a name that another project's feature of that \
                         name already uses for a member both list, the project and the member \
                         named: one member branch would serve two features",
-                refused_by: "`rwv branch rename`, for a feature; `rwv member set-branch`, \
-                             for a branch a feature of that name uses",
+                refused_by: "`rwv branch rename`, for a feature; `rwv branch create`, for a \
+                             feature; `rwv member set-branch`, for a branch a feature of that \
+                             name uses",
                 offers: &[Form::C10],
-                verb_offers: &[("member set-branch", Form::C11SetBranch)],
+                verb_offers: &[
+                    ("member set-branch", Form::C11SetBranch),
+                    ("branch create", Form::AnotherName),
+                ],
             },
             Self::PublishWithheld => &StateRow {
                 axis: Axis::Publish,
@@ -879,7 +903,10 @@ impl State {
                 refused_by: "`rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and \
                              `rwv push`, for the project repo's checked-out branch; `rwv \
                              workweave create`, for the branch it forks from; `rwv branch \
-                             set-mode`, for a `--target` that has no record",
+                             create` with no spelling, for the branch it starts at, and `--target`, \
+                             for a target that has no record; `rwv switch`, for a branch with no \
+                             record and no spelling; `rwv branch set-mode`, for a `--target` that \
+                             has no record",
                 offers: &[Form::C33, Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },
@@ -1008,7 +1035,7 @@ impl State {
                 means: "the project repo's HEAD is on no branch and the workspace was not made \
                         detached; the commits it holds that no branch reaches are listed",
                 refused_by: "`rwv update`; `rwv status` reports it",
-                offers: &[Form::C14Keep, Form::C30Switch],
+                offers: &[Form::C14Keep, Form::C30Switch, Form::C30BranchCreate],
                 verb_offers: &[],
             },
             Self::PinNotOnDeclaredBranch => &StateRow {
@@ -1218,6 +1245,7 @@ pub enum ChoiceId {
     C39,
     C40,
     AnotherName,
+    OpenIt,
     DoctorFix,
     ConvertIndex,
 }
@@ -1411,6 +1439,11 @@ impl ChoiceId {
                 phrase: "use another name",
                 keeps_work: "nothing changes",
             },
+            Self::OpenIt => &ChoiceRow {
+                id: None,
+                phrase: "open it",
+                keeps_work: "moves only what alignment moves",
+            },
             Self::DoctorFix => &ChoiceRow {
                 id: None,
                 phrase: "rewrite the keys an earlier release wrote, committing only that",
@@ -1559,6 +1592,7 @@ pub enum Form {
     C39,
     C40,
     AnotherName,
+    OpenSwitch,
     DoctorFix,
     ConvertIndex,
 }
@@ -1572,7 +1606,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 65] = [
+    pub const ALL: [Form; 66] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1636,6 +1670,7 @@ impl Form {
         Self::C39,
         Self::C40,
         Self::AnotherName,
+        Self::OpenSwitch,
         Self::DoctorFix,
         Self::ConvertIndex,
     ];
@@ -1860,7 +1895,7 @@ impl Form {
                 choice: C::C16,
                 steps: &[Rwv("rwv switch <other>")],
                 at: W::OtherCheckout,
-                shipped: false,
+                shipped: true,
             },
             Self::C16WorkweaveDelete => &FormRow {
                 choice: C::C16,
@@ -1944,13 +1979,16 @@ impl Form {
                 choice: C::C30,
                 steps: &[Rwv("rwv switch <b>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C30BranchCreate => &FormRow {
                 choice: C::C30,
-                steps: &[Rwv("rwv branch create <W>")],
+                steps: &[
+                    Rwv("rwv branch create <W> --target <T>"),
+                    Rwv("rwv branch create <W> --declared"),
+                ],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C31 => &FormRow {
                 choice: C::C31,
@@ -1974,7 +2012,7 @@ impl Form {
                 choice: C::C34,
                 steps: &[Rerun("--at <T>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C35 => &FormRow {
                 choice: C::C35,
@@ -1998,7 +2036,7 @@ impl Form {
                 choice: C::C37,
                 steps: &[Rwv("rwv branch create <W>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C37WorkweaveCreate => &FormRow {
                 choice: C::C37,
@@ -2027,6 +2065,12 @@ impl Form {
             Self::AnotherName => &FormRow {
                 choice: C::AnotherName,
                 steps: &[],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::OpenSwitch => &FormRow {
+                choice: C::OpenIt,
+                steps: &[Rwv("rwv switch <W>")],
                 at: W::Here,
                 shipped: true,
             },

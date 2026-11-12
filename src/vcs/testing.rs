@@ -1047,6 +1047,16 @@ impl Vcs for FakeVcs {
         unsupported("set_detached_head")
     }
 
+    fn create_branch_and_attach(
+        &self,
+        _repo: &Path,
+        _name: &RawRefName,
+        _at: &ResolvedRevisionId,
+        _departure: &crate::alignment::Departure,
+    ) -> Result<(), VcsError> {
+        unsupported("create_branch_and_attach")
+    }
+
     fn attach_head_to(&self, _repo: &Path, _name: &LocalRefName) -> Result<(), VcsError> {
         unsupported("attach_head_to")
     }

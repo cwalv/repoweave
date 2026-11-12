@@ -515,8 +515,13 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "branch",
-            summary: "record how a weave branch is used, list the weave branches with their records, or delete one",
+            summary: "create a weave branch, record how a weave branch is used, list the weave branches with their records, rename one, or delete one",
             schema: Some(schema_branch),
+        },
+        Verb {
+            name: "switch",
+            summary: "put the project repo on a weave branch and align the members to it, or detach the workspace at a revision",
+            schema: None,
         },
         Verb {
             name: "member",

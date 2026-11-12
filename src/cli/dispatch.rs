@@ -81,6 +81,14 @@ fn resolve_cwd_override(operand: Operand, cwd: &InvocationDir) -> anyhow::Result
 /// the mode, so a branch named like a mode is still a branch when two words
 /// are given. A mode that is neither, `--target` with `declared`, and
 /// `feature` without `--target` are usage errors, as clap's own are.
+fn spelling_of(target: Option<String>, declared: bool) -> Option<crate::switch::Spelling> {
+    match (target, declared) {
+        (Some(target), _) => Some(crate::switch::Spelling::Target(target)),
+        (None, true) => Some(crate::switch::Spelling::Declared),
+        (None, false) => None,
+    }
+}
+
 fn set_mode_request(mut words: Vec<String>, target: Option<String>) -> crate::branch::SetMode {
     use clap::error::ErrorKind;
     let usage = |kind: ErrorKind, message: String| -> ! {
@@ -1165,6 +1173,25 @@ pub fn run() -> anyhow::Result<()> {
                     OutputMode::from_flag(json),
                 )?;
             }
+            BranchAction::Create {
+                branch,
+                target,
+                declared,
+                at,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::switch::run_create(
+                    &ctx,
+                    crate::switch::Create {
+                        branch,
+                        spelling: spelling_of(target, declared),
+                        at,
+                    },
+                )?;
+            }
             BranchAction::Rename {
                 new,
                 adopt,
@@ -1187,6 +1214,33 @@ pub fn run() -> anyhow::Result<()> {
                 crate::branch::run_set_mode(&ctx, request)?;
             }
         },
+        Some(Commands::Switch {
+            branch,
+            target,
+            declared,
+            detach,
+            project,
+        }) => {
+            let request = match (branch, detach) {
+                (Some(branch), None) => crate::switch::Switch::Branch {
+                    branch,
+                    spelling: spelling_of(target, declared),
+                },
+                (None, Some(rev)) => crate::switch::Switch::Detach(rev),
+                _ => Cli::command()
+                    .find_subcommand_mut("switch")
+                    .expect("`switch` is a Commands variant")
+                    .error(
+                        clap::error::ErrorKind::MissingRequiredArgument,
+                        "name the branch to switch to, or `--detach <rev>`; aligning members \
+                         for the checked-out branch is `rwv update`",
+                    )
+                    .exit(),
+            };
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            crate::switch::run_switch(&ctx, request)?;
+        }
         Some(Commands::Backup { action }) => match action {
             BackupAction::List { json, project } => {
                 let project_override =
