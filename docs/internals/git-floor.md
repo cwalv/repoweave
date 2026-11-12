@@ -86,8 +86,15 @@ passing at the floor.
 | `git hook run` | 2.36 | the floor |
 | `merge-tree --write-tree` | 2.38 | detected capability |
 
+The lock merge driver reads the heads a merge names from the `GITHEAD_<id>`
+variables `git merge` and `git pull` export to a merge driver; 2.36 exports
+them as the newest releases do, and with none exported the driver takes no
+side and leaves git's conflict.
+
 The suite itself also sets git up with `GIT_CONFIG_COUNT` (2.31) and
-`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` (2.32), all below the floor.
+`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` (2.32), all below the floor. A test
+fixture is held to the floor as production is: `worktree add --orphan` (2.42),
+for one, is not available to it.
 
 ## Testing at the floor
 

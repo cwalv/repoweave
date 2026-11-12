@@ -526,7 +526,6 @@ fn init_sets_the_driver_up_and_a_linked_worktree_needs_nothing_more() {
         &[
             "worktree",
             "add",
-            "--orphan",
             "-b",
             "other",
             linked.to_str().unwrap(),
