@@ -335,7 +335,7 @@ fn take_in_project(
     let head = vcs.head_revision(&dir)?;
     let operand = RepoOperand::Project(project.clone());
     for named in &how.flags.reset_to_upstream {
-        if *named != operand {
+        if named.repo != operand || named.branch.is_some() {
             crate::refuse!(
                 RefusalKind::InapplicableFlag,
                 "`rwv pull --reset-to-upstream` resets the project repo, `{operand}`; `{named}` \

@@ -6,7 +6,7 @@
 //! flags it was given, which `--continue` re-applies.
 
 use crate::diagnosis::{Report, State};
-use crate::manifest::{ProjectName, RepoKey, RepoOperand};
+use crate::manifest::{ProjectName, RepoKey, RepoOperand, ResetOperand};
 use crate::op_state::{
     self, AcquiredOp, OpId, OpVerb, OwnerRecord, RefMove, SavepointKey, TakeInRecord,
     TouchedWorkspaces,
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Default)]
 pub struct Flags {
     pub merge_upstream: bool,
-    pub reset_to_upstream: Vec<RepoOperand>,
+    pub reset_to_upstream: Vec<ResetOperand>,
 }
 
 impl Flags {
@@ -32,7 +32,16 @@ impl Flags {
     }
 
     pub(crate) fn resets(&self, operand: &RepoOperand) -> bool {
-        self.reset_to_upstream.contains(operand)
+        self.reset_to_upstream
+            .iter()
+            .any(|named| named.repo == *operand && named.branch.is_none())
+    }
+
+    /// Whether `--reset-to-upstream <m>:<branch>` names `branch` of `operand`.
+    pub(crate) fn resets_branch(&self, operand: &RepoOperand, branch: &str) -> bool {
+        self.reset_to_upstream
+            .iter()
+            .any(|named| named.repo == *operand && named.branch.as_deref() == Some(branch))
     }
 
     pub(crate) fn recorded(&self, take_in: &TakeInRecord) -> Self {

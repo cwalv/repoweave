@@ -1631,7 +1631,7 @@ pub fn run() -> anyhow::Result<()> {
                     dirty,
                     commit,
                     output,
-                    &selector.parse_filter()?,
+                    &update_remote::Selection::parse(&selector.roles, &selector.repos)?,
                     jobs,
                     opts,
                     if do_continue {

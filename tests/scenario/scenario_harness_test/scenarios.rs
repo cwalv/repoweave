@@ -6950,10 +6950,10 @@ fn push_refuses_main_diverged() -> Step {
             "'main' is declared by a commit being pushed",
         ))
         .claim(Claim::OutputContains(
-            "rwv update --remote --merge-upstream --repo local/remotes/lib",
+            "rwv update --remote --merge-upstream --repo local/remotes/lib:main",
         ))
         .claim(Claim::OutputContains(
-            "rwv update --remote --reset-to-upstream local/remotes/lib",
+            "rwv update --remote --reset-to-upstream local/remotes/lib:main",
         ))
 }
 
@@ -7115,6 +7115,68 @@ pub fn main_diverged_after_member_change_reset() -> Scenario {
             .expect(Exit::Succeeds),
     ]);
     scenario("main diverged after member change, reset", steps)
+}
+
+/// `main-diverged-after-member-change` with `dev` holding a commit of its own
+/// that its push branch lacks: the printed reset of `main` resets `main`
+/// alone, and `dev` and the lock's pin on it stay.
+pub fn main_diverged_reset_leaves_the_expected_branch() -> Scenario {
+    let mut steps = member_change_leaves_main_unpushed();
+    steps.extend([
+        Step::commit(&a(), Repo::Lib, "dev-own"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::forge(Forge::Commit {
+            repo: Repo::Lib,
+            branch: "main",
+            mark: "lib-remote",
+        }),
+        push_refuses_main_diverged(),
+        Step::rwv_printed(&a(), "rwv update --remote --reset-to-upstream")
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::Lib])
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "lib-remote",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "dev",
+                mark: "dev-own",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::Lib,
+            }),
+        Step::rwv(
+            &a(),
+            &[
+                "update",
+                "--remote",
+                "--reset-to-upstream",
+                "local/remotes/lib:dev",
+            ],
+        )
+        .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+        .claim(Claim::OutputContains("name it `local/remotes/lib`")),
+        Step::rwv(
+            &a(),
+            &[
+                "update",
+                "--remote",
+                "--reset-to-upstream",
+                "local/remotes/lib:nope",
+            ],
+        )
+        .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+        .claim(Claim::OutputContains("declares 'nope'")),
+        Step::rwv(&a(), &["update", "--remote", "--repo", "glob:local/*:main"])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::OutputContains("never one branch of a repo")),
+    ]);
+    scenario("main diverged, its reset leaves the expected branch", steps)
 }
 
 /// The member change race under `--json`: the envelope lists the fix as a

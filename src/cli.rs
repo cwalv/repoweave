@@ -506,7 +506,7 @@ pub enum Commands {
         merge_upstream: bool,
         /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
-        reset_to_upstream: Vec<crate::manifest::RepoOperand>,
+        reset_to_upstream: Vec<crate::manifest::ResetOperand>,
         /// Resume the pull a conflict stopped, from the workspace it runs in
         #[arg(long = "continue")]
         do_continue: bool,
@@ -530,17 +530,17 @@ pub enum Commands {
         /// Advance each repo to its branch HEAD on the remote and record the advanced tips in the lock
         #[arg(long)]
         remote: bool,
-        /// With --remote, merge each acted-on member branch that has diverged from its upstream, first parent the upstream. A branch no checkout has attached merges as refs and touches no working tree; so does each member branch a commit of the project branch's unpushed range declares, which `push` publishes. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
+        /// With --remote, merge each acted-on member branch that has diverged from its upstream, first parent the upstream. A branch no checkout has attached merges as refs and touches no working tree; so does a member branch a commit of the project branch's unpushed range declares, which `push` publishes, named `--repo <m>:<branch>`. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
         #[arg(long, requires = "remote", conflicts_with = "do_continue")]
         merge_upstream: bool,
-        /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup, and each branch of it a commit of the project branch's unpushed range declares that no checkout holds. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
+        /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup. `<m>` is the branch this workspace expects for the member; `<m>:<branch>` is that one other branch, which a commit of the project branch's unpushed range declares and no checkout holds, moved as refs. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(
             long,
             value_name = "REPO",
             requires = "remote",
             conflicts_with = "do_continue"
         )]
-        reset_to_upstream: Vec<crate::manifest::RepoOperand>,
+        reset_to_upstream: Vec<crate::manifest::ResetOperand>,
         /// With --remote, resume the update a conflict stopped, from the workspace it runs in
         #[arg(long = "continue", requires = "remote")]
         do_continue: bool,

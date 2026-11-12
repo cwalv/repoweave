@@ -153,7 +153,8 @@ pub(crate) struct Subject<'a> {
     /// The divergence is rwv's own rebase of what was published: a `rebased`
     /// backup holds the push branch's tip.
     pub(crate) republish: bool,
-    /// Why this branch is judged, where it is not the one checked out.
+    /// Why this branch is judged, where it is not the one checked out; its
+    /// choices then name it as `<repo>:<branch>`.
     pub(crate) why: Option<&'a str>,
 }
 
@@ -193,6 +194,10 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
         judging = judging.bind("<b>", declared);
     }
     judging = judging.bind("<repo>", subject.repo);
+    if subject.member && subject.why.is_some() {
+        let operand = format!("{}:{}", subject.repo, subject.branch);
+        judging = judging.bind("<m>", &operand).bind("<repo>", &operand);
+    }
     if subject.republish {
         judging = judging.by_verb("push");
     }

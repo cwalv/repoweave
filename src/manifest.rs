@@ -334,7 +334,8 @@ impl fmt::Display for RepoOperandError {
         write!(
             f,
             "a repo is named by its workspace-relative path, or `{PROJECTS_DIR}/<name>` for a \
-             project repo; got `{}`",
+             project repo, and one branch of a member as `<member>:<branch>` where a verb takes \
+             it; got `{}`",
             self.text
         )
     }
@@ -367,6 +368,50 @@ impl FromStr for RepoOperand {
                 Ok(RepoKey::Project) | Err(_) => Err(refused()),
             },
         }
+    }
+}
+
+/// A repo `--reset-to-upstream` names: bare, the branch the workspace
+/// expects it on; `<member>:<branch>`, that one other branch of a member.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResetOperand {
+    pub repo: RepoOperand,
+    pub branch: Option<String>,
+}
+
+impl fmt::Display for ResetOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.branch {
+            Some(branch) => write!(f, "{}:{branch}", self.repo),
+            None => write!(f, "{}", self.repo),
+        }
+    }
+}
+
+impl FromStr for ResetOperand {
+    type Err = RepoOperandError;
+
+    /// Neither a repo path nor a branch name holds `:`, so the first one
+    /// separates them.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some((repo, branch)) = s.split_once(':') else {
+            return Ok(Self {
+                repo: s.parse()?,
+                branch: None,
+            });
+        };
+        let refused = || RepoOperandError { text: s.to_owned() };
+        let repo: RepoOperand = repo.parse().map_err(|_| refused())?;
+        if matches!(repo, RepoOperand::Project(_))
+            || branch.is_empty()
+            || branch.contains(char::is_whitespace)
+        {
+            return Err(refused());
+        }
+        Ok(Self {
+            repo,
+            branch: Some(branch.to_owned()),
+        })
     }
 }
 
@@ -2598,6 +2643,27 @@ mod tests {
             RepoOperand::of(&member("github/o/r"), &other),
             "a member is the same repo in every project"
         );
+    }
+
+    #[test]
+    fn a_reset_operand_names_one_branch_of_a_member_only_after_a_colon() {
+        let bare: ResetOperand = "github/o/r".parse().unwrap();
+        assert_eq!(bare.branch, None);
+        let named: ResetOperand = "github/o/r:main".parse().unwrap();
+        assert_eq!(
+            named.repo,
+            RepoOperand::of(&member("github/o/r"), &ProjectName::new("p").unwrap())
+        );
+        assert_eq!(named.branch.as_deref(), Some("main"));
+        assert_eq!(named.to_string(), "github/o/r:main");
+        for refused in [
+            "github/o/r:",
+            "projects/web:main",
+            ":main",
+            "github/o/r:a b",
+        ] {
+            assert!(refused.parse::<ResetOperand>().is_err(), "{refused}");
+        }
     }
 
     #[test]

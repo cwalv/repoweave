@@ -84,6 +84,12 @@ fn a_diverged_main_resolves_a_derived_path_to_its_upstream() {
 }
 
 #[test]
+fn the_printed_reset_of_a_diverged_main_leaves_the_expected_branch_and_its_pin() {
+    runner::run(scenarios::main_diverged_reset_leaves_the_expected_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_diverged_main_still_stops_on_an_undeclared_path_both_sides_changed() {
     runner::run(scenarios::main_diverged_still_stops_on_an_undeclared_path()).assert_green();
 }
@@ -951,6 +957,7 @@ every_scenario!(
     main_diverged_after_member_change_reset,
     main_diverged_resolves_derived_to_the_upstream,
     main_diverged_still_stops_on_an_undeclared_path,
+    main_diverged_reset_leaves_the_expected_branch,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
     backward_pin_reported_in_json,

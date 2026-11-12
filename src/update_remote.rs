@@ -129,7 +129,7 @@ pub fn run_update_remote(
     dirty: bool,
     commit: Option<lock::CommitMessage>,
     output: OutputMode,
-    filter: &RepoFilter,
+    selection: &Selection,
     jobs: usize,
     opts: crate::activate::ActivateOptions,
     take: Take,
@@ -142,12 +142,12 @@ pub fn run_update_remote(
             None
         }
     };
-    let record_filter;
-    let (dirty, commit, filter, opts, state) = match (take, resumed) {
+    let record_selection;
+    let (dirty, commit, selection, opts, state) = match (take, resumed) {
         (Take::Fresh(flags, wire), None) => (
             dirty,
             commit,
-            filter,
+            selection,
             opts,
             State {
                 flags,
@@ -158,13 +158,13 @@ pub fn run_update_remote(
             },
         ),
         (_, Some((op, _, record))) => {
-            record_filter = RepoFilter::parse(&record.roles, &record.repos)?;
+            record_selection = Selection::parse(&record.roles, &record.repos)?;
             (
                 record.dirty,
                 record
                     .commit
                     .then(|| lock::CommitMessage::from_flag(record.message.clone())),
-                &record_filter,
+                &record_selection,
                 crate::activate::ActivateOptions {
                     no_materialize: record.no_materialize,
                 },
@@ -204,7 +204,7 @@ pub fn run_update_remote(
         dirty,
         commit,
         output,
-        filter,
+        selection,
         jobs,
         opts,
         &state,
@@ -247,6 +247,88 @@ type Fetched = Result<Option<ResolvedRevisionId>, String>;
 
 /// Extended work item: repo path + manifest entry + old tip SHA captured
 /// before the advance loop runs.
+/// One branch of a member other than the one this workspace expects, named
+/// `<m>:<branch>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchOperand {
+    pub repo: RepoPath,
+    pub branch: RawRefName,
+}
+
+impl std::fmt::Display for BranchOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.repo, self.branch)
+    }
+}
+
+/// What `--role` and `--repo` select: the members fetched and recorded, and
+/// the branches named `<m>:<branch>`. A member named only that way has its
+/// expected branch left alone.
+pub struct Selection {
+    pub filter: RepoFilter,
+    bare: RepoFilter,
+    pub branches: Vec<BranchOperand>,
+}
+
+impl Selection {
+    pub fn parse(roles: &[String], repos: &[String]) -> anyhow::Result<Self> {
+        let mut bare: Vec<String> = Vec::new();
+        let mut branches: Vec<BranchOperand> = Vec::new();
+        for raw in repos {
+            let pattern = raw
+                .strip_prefix("glob:")
+                .or_else(|| raw.strip_prefix("re:"));
+            if let Some(pattern) = pattern {
+                if pattern.contains(':') {
+                    crate::refuse!(
+                        crate::refusal::RefusalKind::InapplicableFlag,
+                        "`--repo {raw}`: a `glob:` or `re:` pattern selects repos, never one \
+                         branch of a repo, and no repo path holds `:`; name the member by its \
+                         path, `--repo <m>:<branch>`"
+                    );
+                }
+                bare.push(raw.clone());
+                continue;
+            }
+            let Some((_, branch)) = raw.split_once(':') else {
+                bare.push(raw.clone());
+                continue;
+            };
+            let named = raw
+                .parse::<crate::manifest::ResetOperand>()
+                .ok()
+                .and_then(|named| match named.repo {
+                    crate::manifest::RepoOperand::Member(path) => Some(path),
+                    crate::manifest::RepoOperand::Project(_) => None,
+                });
+            let Some(path) = named else {
+                crate::refuse!(
+                    crate::refusal::RefusalKind::InapplicableFlag,
+                    "`--repo {raw}` names no member's branch: `<m>:<branch>` takes a member's \
+                     workspace-relative path"
+                );
+            };
+            branches.push(BranchOperand {
+                repo: path,
+                branch: RawRefName::new(branch.to_owned()),
+            });
+        }
+        let mut selecting = bare.clone();
+        selecting.extend(branches.iter().map(|named| named.repo.as_str().to_owned()));
+        Ok(Self {
+            filter: RepoFilter::parse(roles, &selecting)?,
+            bare: RepoFilter::parse(roles, &bare)?,
+            branches,
+        })
+    }
+
+    /// The member is selected only through a `<m>:<branch>` operand.
+    fn branch_only(&self, path: &RepoPath, role: crate::manifest::Role) -> bool {
+        self.branches.iter().any(|named| named.repo == *path)
+            && (self.bare.is_empty() || !self.bare.matches(path, role))
+    }
+}
+
 struct WorkItem {
     repo_path: RepoPath,
     entry: RepoEntry,
@@ -276,11 +358,12 @@ fn update_for_project(
     dirty: bool,
     commit: Option<lock::CommitMessage>,
     output: OutputMode,
-    filter: &RepoFilter,
+    selection: &Selection,
     jobs: usize,
     opts: crate::activate::ActivateOptions,
     state: &State,
 ) -> anyhow::Result<()> {
+    let filter = &selection.filter;
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
     let project_dir = crate::workspace::project_dir(active_root, project_name);
@@ -377,10 +460,11 @@ fn update_for_project(
         )?,
         workweave_dir.is_some(),
     )?;
-    let settled = settle_diverged(ctx, project_name, &work_items, &fetched, state)?;
+    let settled = settle_diverged(ctx, project_name, &work_items, &fetched, selection, state)?;
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |idx, item| {
-        if settled.as_refs.contains(&idx) {
+        if settled.as_refs.contains(&idx) || selection.branch_only(&item.repo_path, item.entry.role)
+        {
             let head = item
                 .vcs
                 .head_revision(item.checkout.path())
@@ -1065,18 +1149,36 @@ struct DeclaredElsewhere {
     branch: RawRefName,
     local: ResolvedRevisionId,
     upstream: ResolvedRevisionId,
+    relation: Relation,
 }
 
+/// The branches [`DeclaredElsewhere`] names.
+#[derive(Default)]
+struct Elsewhere {
+    found: Vec<DeclaredElsewhere>,
+}
+
+/// Each branch `named` names, judged as `<m>:<branch>` must be: a branch of
+/// a member this update acts on, not the one this workspace expects for it,
+/// that a commit of the project branch's unpushed range declares, that
+/// exists here and no checkout holds; the ones off their upstream found.
 fn declared_elsewhere(
     items: &[WorkItem],
     project_dir: &Path,
-) -> anyhow::Result<Vec<DeclaredElsewhere>> {
-    if items.iter().any(|item| item.feature) {
-        return Ok(Vec::new());
+    named: &[BranchOperand],
+) -> anyhow::Result<Elsewhere> {
+    use crate::refusal::RefusalKind::InapplicableFlag;
+    if named.is_empty() {
+        return Ok(Elsewhere::default());
     }
     let pvcs = crate::vcs::project_vcs();
     let HeadAttachment::Attached(attached) = pvcs.head_attachment(project_dir)? else {
-        return Ok(Vec::new());
+        crate::refuse!(
+            InapplicableFlag,
+            "`{}` names a branch a commit of the project branch's unpushed range declares, and \
+             the project repo is on no branch",
+            named[0]
+        );
     };
     let raw = RawRefName::new(attached.to_string());
     let tip = pvcs.head_revision(project_dir)?;
@@ -1089,42 +1191,80 @@ fn declared_elsewhere(
         url_remote.as_ref(),
     )?;
     let mut found = Vec::new();
-    for (idx, item) in items.iter().enumerate() {
-        let dir = item.checkout.path();
-        let owned = matches!(
-            item.entry.role,
-            crate::manifest::Role::Owned | crate::manifest::Role::Fork
-        );
-        let Some(names) = declared
-            .get(&item.repo_path)
-            .filter(|_| owned && dir.exists())
+    for operand in named {
+        let Some((idx, item)) = items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.repo_path == operand.repo)
         else {
-            continue;
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}` names no member this update acts on"
+            );
         };
+        let dir = item.checkout.path();
         let vcs = item.vcs.as_ref();
-        for name in names.iter().filter(|name| *name != item.expected.as_str()) {
-            let branch = RawRefName::new(name.clone());
-            let Some(local) = vcs.resolve_local_branch_tip(dir, &branch)? else {
-                continue;
-            };
-            if !vcs.checkouts_of_branch(dir, &branch)?.is_empty() {
-                continue;
-            }
-            let Some((_, upstream)) = crate::push_branch::upstream_copy(vcs, dir, &branch, None)?
-            else {
-                continue;
-            };
-            if vcs.relation(dir, &local, &upstream)? == Relation::Diverged {
-                found.push(DeclaredElsewhere {
-                    idx,
-                    branch,
-                    local,
-                    upstream,
-                });
-            }
+        let branch = &operand.branch;
+        if branch.as_str() == item.expected.as_str() {
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}` names '{branch}', the branch this workspace expects for {m}; name \
+                 it `{m}`",
+                m = item.repo_path
+            );
         }
+        let declares = !item.feature
+            && matches!(
+                item.entry.role,
+                crate::manifest::Role::Owned | crate::manifest::Role::Fork
+            )
+            && declared
+                .get(&item.repo_path)
+                .is_some_and(|names| names.contains(branch.as_str()));
+        if !declares {
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}`: no commit of '{raw}' its push branch lacks declares '{branch}' for \
+                 {m}; `<m>:<branch>` names only such a branch, and `{m}` names the one this \
+                 workspace expects",
+                m = item.repo_path
+            );
+        }
+        let Some(local) = vcs.resolve_local_branch_tip(dir, branch)? else {
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}`: {m} has no branch '{branch}' here",
+                m = item.repo_path
+            );
+        };
+        if let Some(holder) = vcs.checkouts_of_branch(dir, branch)?.into_iter().next() {
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}`: '{branch}' is checked out in {}; run `rwv update --remote` in the \
+                 workspace holding it, naming `{m}`",
+                holder.display(),
+                m = item.repo_path
+            );
+        }
+        let Some((_, upstream)) = crate::push_branch::upstream_copy(vcs, dir, branch, None)? else {
+            crate::refuse!(
+                InapplicableFlag,
+                "`{operand}`: '{branch}' takes in from no upstream",
+            );
+        };
+        let relation = vcs.relation(dir, &local, &upstream)?;
+        if relation == Relation::Even {
+            continue;
+        }
+        found.push(DeclaredElsewhere {
+            idx,
+            branch: branch.clone(),
+            local,
+            upstream,
+            relation,
+        });
     }
-    Ok(found)
+    Ok(Elsewhere { found })
 }
 
 /// Refuse, all together and before anything moves, each member that has
@@ -1135,6 +1275,7 @@ fn settle_diverged(
     project: &ProjectName,
     items: &[WorkItem],
     fetched: &[Fetched],
+    selection: &Selection,
     state: &State,
 ) -> anyhow::Result<Settled> {
     let mut settled = Settled {
@@ -1152,14 +1293,40 @@ fn settle_diverged(
             .cloned()
             .collect(),
     };
-    let found = divergences(items, fetched);
+    let mut found = divergences(items, fetched);
+    found.retain(|d| {
+        let item = &items[d.idx];
+        !selection.branch_only(&item.repo_path, item.entry.role)
+    });
     let project_vcs = crate::vcs::project_vcs();
     let project_dir = crate::workspace::project_dir(ctx.active_path(), project);
-    let elsewhere = if state.flags.merge_upstream || !state.flags.reset_to_upstream.is_empty() {
-        declared_elsewhere(items, &project_dir)?
-    } else {
-        Vec::new()
-    };
+    for named in &state.flags.reset_to_upstream {
+        let is_member = matches!(&named.repo, crate::manifest::RepoOperand::Member(path)
+            if items.iter().any(|item| item.repo_path == *path));
+        if !is_member {
+            crate::refuse!(
+                crate::refusal::RefusalKind::InapplicableFlag,
+                "`--reset-to-upstream {named}` names no member this update acts on; the project \
+                 repo is reset by `rwv pull --reset-to-upstream {}`",
+                named.repo
+            );
+        }
+    }
+    let mut named_branches: Vec<BranchOperand> = selection.branches.clone();
+    for named in &state.flags.reset_to_upstream {
+        if let (crate::manifest::RepoOperand::Member(repo), Some(branch)) =
+            (&named.repo, &named.branch)
+        {
+            let operand = BranchOperand {
+                repo: repo.clone(),
+                branch: RawRefName::new(branch.clone()),
+            };
+            if !named_branches.contains(&operand) {
+                named_branches.push(operand);
+            }
+        }
+    }
+    let elsewhere = declared_elsewhere(items, &project_dir, &named_branches)?;
     let mut report = crate::diagnosis::Report::default();
     let mut acting: Vec<(&Divergence, bool)> = Vec::new();
     let lineage = if state.flags.merge_upstream && !found.is_empty() {
@@ -1170,17 +1337,6 @@ fn settle_diverged(
     let ours = crate::manifest::Manifest::from_path(
         &project_dir.join(crate::manifest::Manifest::FILE_NAME),
     )?;
-    for named in &state.flags.reset_to_upstream {
-        let is_member = matches!(named, crate::manifest::RepoOperand::Member(path)
-            if items.iter().any(|item| item.repo_path == *path));
-        if !is_member {
-            crate::refuse!(
-                crate::refusal::RefusalKind::InapplicableFlag,
-                "`--reset-to-upstream {named}` names no member this update acts on; the project \
-                 repo is reset by `rwv pull --reset-to-upstream {named}`"
-            );
-        }
-    }
     for d in &found {
         let item = &items[d.idx];
         let dir = item.checkout.path();
@@ -1284,13 +1440,14 @@ fn settle_diverged(
         acting.push((d, reset));
     }
     let mut settling: Vec<(&DeclaredElsewhere, bool)> = Vec::new();
-    for e in &elsewhere {
+    for e in &elsewhere.found {
         let item = &items[e.idx];
         let dir = item.checkout.path();
         let vcs = item.vcs.as_ref();
-        let reset = state.flags.resets(&crate::manifest::RepoOperand::Member(
-            item.repo_path.clone(),
-        ));
+        let reset = state.flags.resets_branch(
+            &crate::manifest::RepoOperand::Member(item.repo_path.clone()),
+            e.branch.as_str(),
+        );
         if reset {
             crate::merge_upstream::judge_reset(
                 item.repo_path.as_str(),
@@ -1301,24 +1458,43 @@ fn settle_diverged(
                 None,
                 &mut report,
             );
-        } else if state.flags.merge_upstream {
-            if let crate::vcs::RefMerge::Conflicted { paths } = vcs.merge_as_refs(
-                dir,
-                e.upstream.id(),
-                e.local.id(),
-                "probe",
-                crate::vcs::DerivedContentPolicy::keep_incoming_side(),
-                e.upstream.id(),
-            )? {
-                report.note(format!(
-                    "{}: '{}' is checked out nowhere and its merge conflicts in {}",
-                    item.repo_path,
-                    e.branch,
-                    paths.join(", ")
-                ));
-            }
-        } else {
+        } else if e.relation != Relation::Diverged {
             continue;
+        } else if !state.flags.merge_upstream {
+            let operand = BranchOperand {
+                repo: item.repo_path.clone(),
+                branch: e.branch.clone(),
+            };
+            let (ahead, behind) = vcs.ahead_behind(dir, e.upstream.id(), e.local.id());
+            report.add(
+                crate::diagnosis::State::PushBranchDiverged
+                    .of(&item.repo_path)
+                    .member()
+                    .checkout(dir)
+                    .bind("<m>", &operand)
+                    .bind("<repo>", &operand)
+                    .subject(format!("'{}' {ahead} ahead, {behind} behind", e.branch))
+                    .only_forms(&[
+                        crate::diagnosis::Form::C2UpdateRemote,
+                        crate::diagnosis::Form::C3UpdateRemote,
+                    ])
+                    .judge(vcs),
+            );
+            continue;
+        } else if let crate::vcs::RefMerge::Conflicted { paths } = vcs.merge_as_refs(
+            dir,
+            e.upstream.id(),
+            e.local.id(),
+            "probe",
+            crate::vcs::DerivedContentPolicy::keep_incoming_side(),
+            e.upstream.id(),
+        )? {
+            report.note(format!(
+                "{}: '{}' is checked out nowhere and its merge conflicts in {}",
+                item.repo_path,
+                e.branch,
+                paths.join(", ")
+            ));
         }
         settling.push((e, reset));
     }
