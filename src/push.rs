@@ -1841,24 +1841,28 @@ fn publish(
     }
 
     if let Some(message) = project_error {
-        if output.is_json() {
-            let envelope = PushJsonOutput {
-                schema_url: PUSH_SCHEMA_URL.to_string(),
-                outcomes: json_outcomes,
-                refused: Vec::new(),
-                reported: reported.output(),
-                resolution: Some(ctx.resolution()),
-            };
-            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
-                outln!("{out}");
-            }
-        }
-        return Err(crate::untokened!(
-            EnvironmentPassthrough,
-            "project-repo push failed after all member repos pushed cleanly: {message}. \
-             Member-side state is published; the lock carrier is not. \
-             Retry `rwv push` once the project-repo issue is resolved."
+        let mut withheld = Report::default();
+        withheld.add(
+            State::PublishWithheld
+                .of(project_label(&pushed.project))
+                .project_repo()
+                .checkout(&pushed.project_dir)
+                .listing(message.lines())
+                .bind("<b>", pushed.branch.as_str())
+                .only(&[ChoiceId::C7, ChoiceId::C17])
+                .judge(pvcs),
+        );
+        withheld.note(format!(
+            "projects/{} {} was not pushed; the members' branches that were pushed are published",
+            pushed.project, pushed.branch
         ));
+        let refusal = withheld
+            .into_result()
+            .expect_err("a rejected project push is judged withheld");
+        if output.is_json() {
+            print_envelope(json_outcomes, &refusal, reported, ctx);
+        }
+        return Err(refusal);
     }
 
     if output.is_json() {
@@ -1899,10 +1903,13 @@ fn gate_reachability(pushed: &Pushed, members: &[Member], fetched: &Fetched, gat
             gate.add(judging(State::PublishNoPin).judge(vcs));
             continue;
         };
-        if !member.dir.exists() {
-            continue;
-        }
-        let Ok(pin) = vcs.resolve_revision(&member.dir, entry.version.as_str()) else {
+        let pin = match member.dir.exists() {
+            true => vcs
+                .resolve_revision(&member.dir, entry.version.as_str())
+                .ok(),
+            false => None,
+        };
+        let Some(pin) = pin else {
             gate.add(
                 judging(State::PinUnreachable)
                     .subject(entry.version.short_display())

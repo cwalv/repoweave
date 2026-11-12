@@ -283,7 +283,7 @@ fn push_dash_j_project_repo_runs_after_manifest_pushes() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("project-repo push") || stderr.contains("lock carrier is not"),
+        stderr.contains("publish withheld"),
         "error should surface project-side failure clearly under -j; got: {stderr}"
     );
 }

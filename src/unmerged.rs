@@ -150,12 +150,8 @@ pub(crate) fn analyze(
                 }
                 let pins = (first_pin.clone(), other_pin.clone());
                 if let Some(tip_pin) = tip_held.pins.get(member.path) {
-                    let (Some(has_first), Some(has_other)) = (
-                        reaches(member, first_pin, tip_pin),
-                        reaches(member, other_pin, tip_pin),
-                    ) else {
-                        continue;
-                    };
+                    let has_first = reaches(member, first_pin, tip_pin) == Some(true);
+                    let has_other = reaches(member, other_pin, tip_pin) == Some(true);
                     if has_first && has_other {
                         continue;
                     }

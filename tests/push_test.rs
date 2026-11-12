@@ -1064,7 +1064,7 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("project-repo push") || stderr.contains("lock carrier is not"),
+        stderr.contains("projects/alpha: publish withheld"),
         "error should surface project-side failure clearly; got: {stderr}"
     );
 

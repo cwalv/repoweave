@@ -196,15 +196,17 @@ pub(crate) fn run(
             );
         }
     }
-    for path in &changes.added {
-        let located = loaded.checkout(ctx, path);
-        if !located.dir.exists() {
-            return Err(crate::untokened!(
-                Owed,
-                "{path}: the manifest lists a member whose directory is absent; run `rwv update` \
-                 to materialize it, then re-run `rwv lock --commit`"
-            ));
-        }
+    if let Some(path) = changes
+        .added
+        .iter()
+        .find(|path| !loaded.checkout(ctx, path).dir.exists())
+    {
+        refusals.into_result()?;
+        return Err(crate::untokened!(
+            Owed,
+            "{path}: the manifest lists a member whose directory is absent; run `rwv update` \
+             to materialize it, then re-run `rwv lock --commit`"
+        ));
     }
     let skipping: BTreeSet<RepoPath> = moving.iter().map(|m| m.member.clone()).collect();
     if let Err(e) = crate::lock::relock(

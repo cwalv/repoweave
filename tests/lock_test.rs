@@ -1950,3 +1950,40 @@ fn lock_message_without_commit_is_a_usage_error() {
         "a rejected invocation writes nothing"
     );
 }
+
+/// A whole-file lock commit names every refusal before it stops on a member
+/// whose directory is absent.
+#[test]
+fn a_lock_commit_lists_its_refusals_before_an_absent_member_directory() {
+    let ws = common::build_workspace(
+        "alpha",
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(ws.workspace.join("local/org/b/README"), "dirty").unwrap();
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    let (_, b_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/b")
+        .unwrap();
+    let b_url = common::file_url(b_bare);
+    let mut edited = manifest.replace(
+        &format!("url = \"{b_url}\"\nbranch = \"main\"\nrole = \"owned\""),
+        &format!("url = \"{b_url}\"\nbranch = \"main\"\nrole = \"reference\""),
+    );
+    assert_ne!(edited, manifest);
+    edited.push_str(&format!(
+        "[repositories.\"local/org/new\"]\ntype = \"git\"\nurl = \"{b_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+    ));
+    std::fs::write(project_dir.join("rwv.toml"), edited).unwrap();
+
+    let out = common::rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("local/org/b: edits dirty"), "{stderr}");
+}
