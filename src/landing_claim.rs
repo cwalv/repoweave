@@ -210,7 +210,7 @@ fn take_within(
         let seen = match path.read() {
             Ok(seen) => seen,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => e.to_string().into_bytes(),
+            Err(e) => format!("{e:#}").into_bytes(),
         };
         let blocking = match standing(&seen) {
             Standing::Live(holder) if holder.op == *op => {
@@ -221,7 +221,7 @@ fn take_within(
                 })
             }
             Standing::Dead(dead) => {
-                match remove_dead(&path.dir().join(LANDING_CLAIM_FILE), &seen, &dead.op, &mine)
+                match remove_dead(Removable::Claim(&path), &seen, &dead.op, &mine)
                     .with_context(|| format!("failed to take over the dead claim {path}"))?
                 {
                     None => continue,
@@ -285,12 +285,12 @@ fn take_within(
 /// Returns what blocks the removal: a guard another standing op holds, or
 /// one this rwv does not read.
 fn remove_dead(
-    path: &Path,
+    path: Removable<'_>,
     seen: &[u8],
     dead: &OpId,
     mine: &Holder,
 ) -> anyhow::Result<Option<Standing>> {
-    let guard = guard_of(path, dead);
+    let guard = path.guard(dead);
     loop {
         match crate::durable_file::create_new(&guard, &mine.bytes()?) {
             Ok(()) => break,
@@ -300,12 +300,14 @@ fn remove_dead(
         let held = match std::fs::read(&guard) {
             Ok(held) => held,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Ok(Some(Standing::Unread(e.to_string()))),
+            Err(e) => return Ok(Some(Standing::Unread(format!("{e:#}")))),
         };
         match standing(&held) {
             Standing::Live(holder) if holder.op == mine.op => break,
             Standing::Dead(holder) => {
-                if let Some(blocking) = remove_dead(&guard, &held, &holder.op, mine)? {
+                if let Some(blocking) =
+                    remove_dead(Removable::Guard(&guard), &held, &holder.op, mine)?
+                {
                     return Ok(Some(blocking));
                 }
             }
@@ -313,17 +315,50 @@ fn remove_dead(
         }
     }
     crate::test_pause::point("landing-claim-takeover");
-    if std::fs::read(path).is_ok_and(|now| now == seen) {
-        crate::durable_file::remove_named(path)?;
+    if path.read().is_ok_and(|now| now == seen) {
+        path.remove()?;
     }
     crate::durable_file::remove_named(&guard)?;
     Ok(None)
 }
 
-fn guard_of(path: &Path, dead: &OpId) -> std::path::PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(format!(".{TAKEOVER}.{dead}"));
-    name.into()
+/// What [`remove_dead`] removes: the claim, or a takeover guard beside it.
+#[derive(Clone, Copy)]
+enum Removable<'a> {
+    Claim(&'a StatePath),
+    Guard(&'a Path),
+}
+
+impl Removable<'_> {
+    fn read(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::Claim(path) => path.read(),
+            Self::Guard(path) => std::fs::read(path),
+        }
+    }
+
+    fn remove(self) -> std::io::Result<()> {
+        match self {
+            Self::Claim(path) => match path.remove() {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                removed => removed,
+            },
+            Self::Guard(path) => crate::durable_file::remove_named(path),
+        }
+    }
+
+    fn guard(self, dead: &OpId) -> std::path::PathBuf {
+        match self {
+            Self::Claim(path) => path
+                .dir()
+                .join(format!("{LANDING_CLAIM_FILE}.{TAKEOVER}.{dead}")),
+            Self::Guard(path) => {
+                let mut name = path.as_os_str().to_owned();
+                name.push(format!(".{TAKEOVER}.{dead}"));
+                name.into()
+            }
+        }
+    }
 }
 
 const TAKEOVER: &str = "takeover";
@@ -363,7 +398,7 @@ fn sweep_dead_takeovers(dir: &Path, mine: &Holder) {
             continue;
         };
         if let Standing::Dead(holder) = standing(&held) {
-            let _ = remove_dead(&guard, &held, &holder.op, mine);
+            let _ = remove_dead(Removable::Guard(&guard), &held, &holder.op, mine);
         }
     }
 }
@@ -489,10 +524,6 @@ mod tests {
         assert!(!path.exists());
     }
 
-    fn file_of(path: &StatePath) -> std::path::PathBuf {
-        path.dir().join(LANDING_CLAIM_FILE)
-    }
-
     fn holder(op: OpId, owner: &Path) -> Holder {
         Holder {
             op,
@@ -515,20 +546,26 @@ mod tests {
         let live = tmp.path().join("live");
         std::fs::create_dir_all(&live).unwrap();
         record(&live, &op(2));
-        assert!(
-            remove_dead(&file_of(&path), &seen, &dead.op, &holder(op(2), &live))
-                .unwrap()
-                .is_none()
-        );
+        assert!(remove_dead(
+            Removable::Claim(&path),
+            &seen,
+            &dead.op,
+            &holder(op(2), &live)
+        )
+        .unwrap()
+        .is_none());
         let _held = take_within(path.clone(), "t", &op(2), &live, Duration::ZERO).unwrap();
         let late = tmp.path().join("late");
         std::fs::create_dir_all(&late).unwrap();
         record(&late, &op(3));
-        assert!(
-            remove_dead(&file_of(&path), &seen, &dead.op, &holder(op(3), &late))
-                .unwrap()
-                .is_none()
-        );
+        assert!(remove_dead(
+            Removable::Claim(&path),
+            &seen,
+            &dead.op,
+            &holder(op(3), &late)
+        )
+        .unwrap()
+        .is_none());
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
     }
 
@@ -575,9 +612,9 @@ mod tests {
         std::fs::create_dir_all(path.dir()).unwrap();
         let died = tmp.path().join("died");
         std::fs::create_dir_all(&died).unwrap();
-        let guard = guard_of(&file_of(&path), &op(1));
+        let guard = Removable::Claim(&path).guard(&op(1));
         crate::durable_file::create_new(&guard, &holder(op(2), &died).bytes().unwrap()).unwrap();
-        let nested = guard_of(&guard, &op(4));
+        let nested = Removable::Guard(&guard).guard(&op(4));
         crate::durable_file::create_new(&nested, &holder(op(4), &died).bytes().unwrap()).unwrap();
         let next = tmp.path().join("next");
         std::fs::create_dir_all(&next).unwrap();
@@ -598,7 +635,7 @@ mod tests {
         let stopped = tmp.path().join("stopped");
         std::fs::create_dir_all(&stopped).unwrap();
         record(&stopped, &op(2));
-        let guard = guard_of(&file_of(&path), &dead.op);
+        let guard = Removable::Claim(&path).guard(&dead.op);
         crate::durable_file::create_new(&guard, &holder(op(2), &stopped).bytes().unwrap()).unwrap();
         let next = tmp.path().join("next");
         std::fs::create_dir_all(&next).unwrap();
