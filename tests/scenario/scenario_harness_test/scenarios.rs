@@ -8800,30 +8800,49 @@ pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario 
     )
 }
 
-/// A moved member's receiving branch is checked out in a third workspace, so
-/// nothing would fast-forward it where the target is: the landing refuses,
-/// and aligning the third workspace, which frees that checkout, lets it
-/// land. The printed choices are not run here.
-pub fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenario {
+/// A moved member's receiving branch is checked out in a third workspace, a
+/// workweave of the same project: the landing fast-forwards it in place
+/// there, and the target's own checkout, detached, follows the new pin.
+/// Checked out in a raw worktree, which belongs to no workspace, the landing
+/// refuses it before anything moves.
+pub fn land_into_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenario {
     scenario(
-        "land refuses a receiving branch checked out in a third workspace",
+        "land into a receiving branch checked out in a third workspace",
         vec![
             create("w"),
             create("w3"),
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
-            Step::git(&ww("w3"), Repo::Lib, &["switch", "main"]),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["worktree", "add", "-q", "../lib-raw", "main"],
+            ),
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Lib, State::CheckoutInAnotherWorkspace))
-                .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&ww("w3"), &["update"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+                .expect(Exit::refuses(Repo::Lib, State::CheckoutInRawWorktree))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::git(&a(), Repo::Lib, &["worktree", "remove", "../lib-raw"]),
+            Step::git(&ww("w3"), Repo::Lib, &["switch", "main"]),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("in place in"))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::Lib,
                     rev: "main",
+                    mark: "w-lib",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w3"),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "w-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
                     mark: "w-lib",
                 }),
         ],

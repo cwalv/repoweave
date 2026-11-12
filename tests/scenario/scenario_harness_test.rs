@@ -831,7 +831,7 @@ every_scenario!(
     land_resolves_a_target_that_publishes_where_its_record_is,
     land_refuses_a_target_diverged_from_its_upstream,
     land_refuses_a_receiving_branch_diverged_from_its_upstream,
-    land_refuses_a_receiving_branch_checked_out_in_a_third_workspace,
+    land_into_a_receiving_branch_checked_out_in_a_third_workspace,
     land_from_the_primary_refuses_a_target_in_a_workweave,
     land_refuses_a_target_member_off_its_receiving_branch,
     land_refuses_a_target_checkout_diverged_from_its_pin,
@@ -4313,8 +4313,8 @@ fn land_refuses_a_receiving_branch_diverged_from_its_upstream_scenario() {
 }
 
 #[test]
-fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace_scenario() {
-    runner::run(scenarios::land_refuses_a_receiving_branch_checked_out_in_a_third_workspace())
+fn land_into_a_receiving_branch_checked_out_in_a_third_workspace_scenario() {
+    runner::run(scenarios::land_into_a_receiving_branch_checked_out_in_a_third_workspace())
         .assert_fully_decided_green();
 }
 
