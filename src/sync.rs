@@ -6339,7 +6339,7 @@ fn switch_primary_to_target(ctx: &OpContext<'_>, target_branch: &str) -> anyhow:
             dir.display()
         )
     })?;
-    let departure = crate::alignment::Departure::of_project_move(vcs, dir, &tip)?;
+    let departure = crate::alignment::Departure::of_move(vcs, dir, &tip)?;
     vcs.reattach_head(
         attachment,
         &crate::vcs::LocalRefName::of_branch(&raw),
