@@ -162,7 +162,7 @@ impl SkippedEffect {
                 )
             }
             SkipReason::ProjectAlreadyActive { project } => {
-                format!("project `{project}` was already active, so this update activated nothing")
+                format!("project `{project}` is the one presented here, and aligning its members runs none")
             }
             SkipReason::NoMaterialize => "--no-materialize".to_string(),
             SkipReason::InsideWorkweave => {

@@ -300,8 +300,8 @@ hooks, says so in one line naming the command that does it:
 
 - an update that activates nothing but created or moved a checkout (at primary a
   member clone; in a workweave a member worktree it created): `[skipped] core:
-  the install hooks did not run (project `<project>` was already active, so this
-  update activated nothing); `rwv materialize` runs them` — or, for a project the
+  the install hooks did not run (project `<project>` is the one presented here,
+  and aligning its members runs none); `rwv materialize` runs them` — or, for a project the
   weave root does not present, `(`<project>` is not the project this weave root
   presents); `rwv activate <project>` runs them`. An update that changed no
   checkout says nothing;

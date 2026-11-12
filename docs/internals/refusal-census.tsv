@@ -114,7 +114,7 @@ src/feature_sync.rs	push-branch diverged	tests/push_test.rs	4
 src/feature_sync.rs	target dependents	-	2
 src/feature_sync.rs	target gone	-	1
 src/feature_sync.rs	target no target	-	1
-src/feature_sync.rs	unparseable-project malformed	-	1
+src/feature_sync.rs	unparseable-project at	tests/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
 src/fetch_claim.rs	state-claim-held	-	1
 src/health_floor.rs	health-floor-too-low	-	1

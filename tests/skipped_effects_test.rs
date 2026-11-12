@@ -522,8 +522,8 @@ fn clone_names_what_its_activation_skipped_in_text_and_json() {
 #[test]
 fn an_update_names_materialize_only_when_it_moved_or_created_a_checkout() {
     let weave = Weave::new();
-    let line = "[skipped] core: the install hooks did not run (project `app` was already active, \
-                so this update activated nothing); `rwv materialize` runs them";
+    let line = "[skipped] core: the install hooks did not run (project `app` is the one presented \
+                here, and aligning its members runs none); `rwv materialize` runs them";
     let record = serde_json::json!({
         "effect": "install-hooks",
         "reason": {"project-already-active": {"project": "app"}},
@@ -610,8 +610,8 @@ fn an_update_in_a_workweave_names_materialize_only_for_a_worktree_it_created() {
     );
     assert!(
         run.stderr.contains(
-            "[skipped] core: the install hooks did not run (project `app` was already active, \
-             so this update activated nothing); `rwv materialize` runs them"
+            "[skipped] core: the install hooks did not run (project `app` is the one presented \
+             here, and aligning its members runs none); `rwv materialize` runs them"
         ),
         "{}",
         run.report()
