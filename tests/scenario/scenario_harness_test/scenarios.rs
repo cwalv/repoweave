@@ -6108,23 +6108,15 @@ fn seat_recorded(seat: &str, recorded: bool) -> Claim {
     }
 }
 
-/// A seat's `land --retire` while another landing into the same target is
-/// held: the design has it wait on the landing claim and then land; it is
-/// refused on the other's lease instead, and nothing of the seat or the
-/// target moves.
-fn landing_into_a_held_target(seat: &str) -> Step {
-    Step::rwv(&ww(seat), &["land", "--history", "linear", "--retire"])
-        .expect(Exit::Defect(Defect::LandingRefusedOnAnotherLandingsLease))
-        .claim(Claim::LocalStateUnchanged(ww(seat)))
-        .claim(Claim::LocalStateUnchanged(a()))
-}
-
 /// `records-local-writers`: eight seats created at once on one machine, all
 /// but the last held before their records compare-and-swap, each losing it
 /// and retrying, every record kept; then retires whose drops race a create,
 /// the drop retried against the winner's write and dropping only what is
-/// gone. A second landing into the target while one runs meets a known
-/// defect in place of the landing claim.
+/// gone. Four seats then land `--retire` at once, three held in their
+/// retires' record writes while the fourth lands and retires: each landing
+/// waits only on the claim on `main`, which a landing gives up once `main`'s
+/// workspace took its last fast-forward, so none refuses on another's lease,
+/// and every landing and every drop is kept.
 pub fn records_local_writers() -> Scenario {
     let (held, last) = SEATS.split_at(SEATS.len() - 1);
     let mut steps: Vec<Step> = held
@@ -6163,26 +6155,29 @@ pub fn records_local_writers() -> Scenario {
         };
         steps.push(Step::commit(&ww(seat), repo, mark));
     }
-    steps.extend([
-        Step::rwv_paused(
-            &ww("s1"),
+    let retiring = ["s1", "s2", "s3"];
+    for seat in retiring {
+        steps.push(Step::rwv_paused(
+            &ww(seat),
             &["land", "--history", "linear", "--retire"],
             "records-write",
-            "retire-s1",
-        ),
-        create("s9"),
-        landing_into_a_held_target("s2"),
-        Step::release("retire-s1")
+            Box::leak(format!("retire-{seat}").into_boxed_str()),
+        ));
+        if seat == "s1" {
+            steps.push(create("s9"));
+        }
+    }
+    steps.push(
+        Step::rwv(&ww("s4"), &["land", "--history", "linear", "--retire"])
             .expect(Exit::Succeeds)
-            .claim(Claim::WorkweaveGone(ww("s1")))
-            .claim(seat_recorded("s1", false))
-            .claim(seat_recorded("s9", true)),
-    ]);
-    for seat in ["s2", "s3", "s4"] {
+            .claim(Claim::WorkweaveGone(ww("s4"))),
+    );
+    for seat in retiring {
         steps.push(
-            Step::rwv(&ww(seat), &["land", "--history", "linear", "--retire"])
+            Step::release(Box::leak(format!("retire-{seat}").into_boxed_str()))
                 .expect(Exit::Succeeds)
-                .claim(Claim::WorkweaveGone(ww(seat))),
+                .claim(Claim::WorkweaveGone(ww(seat)))
+                .claim(seat_recorded(seat, false)),
         );
     }
     let mut after = Step::rwv(&a(), &["branch", "list"]).expect(Exit::Succeeds);
@@ -6193,7 +6188,71 @@ pub fn records_local_writers() -> Scenario {
         ));
     }
     steps.push(after.claim(seat_recorded("s9", true)));
+    for (repo, landed) in [
+        (Repo::App, "main:s1-app.txt"),
+        (Repo::Lib, "main:s2-lib.txt"),
+        (Repo::Docs, "main:s3-docs.txt"),
+        (Repo::App, "main:s4-app.txt"),
+    ] {
+        steps.push(Step::git(&a(), repo, &["cat-file", "-e", landed]));
+    }
     scenario("records local writers", steps)
+}
+
+/// Two seats land into `main` at once: the first held before its
+/// fast-forward, holding the claim on `main`, the second waiting on that
+/// claim rather than refusing on the first's lease. Released, the first lands;
+/// the second then reads the tips the first left and lands on them.
+pub fn a_landing_waits_on_another_landings_claim() -> Scenario {
+    scenario(
+        "a landing waits on another landing's claim",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "advance-target",
+                "land-w1",
+            ),
+            Step::rwv_paused(
+                &ww("w2"),
+                &["land", "--history", "linear", "--retire"],
+                "landing-claim-held",
+                "land-w2",
+            ),
+            Step::release("land-w1")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w1"))),
+            Step::release("land-w2")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w1-app",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w2-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::App,
+                    mark: "w1-app",
+                })
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "w2-lib",
+                }),
+        ],
+    )
 }
 
 /// `records-local-writers`, a drop racing a create: `branch create` makes
@@ -6301,11 +6360,12 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
 /// `parallel-retire-fetch`: four published seats retire in one clone. A
 /// pruning fetch that meets the store's fetch claim held by a retiring seat
 /// waits for it rather than failing on a ref lock, and each retire's
-/// deletion completes. A second landing into the same target while one runs
-/// meets the known defect `landing_into_a_held_target` names. `main`
-/// records `merge`, so each later seat lands by a merge commit whose first
-/// parent is `main` and which its published branch is an ancestor of: no
-/// published branch is rewritten, and each retire deletes what landed.
+/// deletion completes. A second seat lands while the first retires, its
+/// landing claim on `main` already given up, and its own retire's fetch then
+/// waits on the first's, as a plain fetch does. `main` records `merge`, so
+/// each later seat lands by a merge commit whose first parent is `main` and
+/// which its published branch is an ancestor of: no published branch is
+/// rewritten, and each retire deletes what landed.
 pub fn parallel_retire_fetch() -> Scenario {
     let seats = [
         ("s1", "feat-1", "f1-app"),
@@ -6349,6 +6409,15 @@ pub fn parallel_retire_fetch() -> Scenario {
                 mark,
             })
     };
+    let after_s1 = |step: Step| {
+        step.claim(Claim::OutputLacks("rebased"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main^1",
+                mark: "f1-app",
+            })
+    };
     steps.extend([
         Step::rwv_paused(
             &ww("s1"),
@@ -6356,21 +6425,15 @@ pub fn parallel_retire_fetch() -> Scenario {
             "fetch-under-claim",
             "retire-s1",
         ),
-        landing_into_a_held_target("s2"),
-        Step::rwv_paused(&ww("s2"), &["fetch"], "claim-held", "fetch-s2"),
+        Step::rwv_paused(&ww("s2"), &["land", "--retire"], "claim-held", "retire-s2"),
+        Step::rwv_paused(&a(), &["fetch"], "claim-held", "fetch-a"),
         retired(Step::release("retire-s1"), "s1", "f1-app"),
-        Step::release("fetch-s2").expect(Exit::Succeeds),
+        retired(after_s1(Step::release("retire-s2")), "s2", "f2-app"),
+        Step::release("fetch-a").expect(Exit::Succeeds),
     ]);
-    for (seat, _, mark) in &seats[1..] {
+    for (seat, _, mark) in &seats[2..] {
         steps.push(retired(
-            Step::rwv(&ww(seat), &["land", "--retire"])
-                .claim(Claim::OutputLacks("rebased"))
-                .claim(Claim::Contains {
-                    at: a(),
-                    repo: Repo::App,
-                    rev: "main^1",
-                    mark: "f1-app",
-                }),
+            after_s1(Step::rwv(&ww(seat), &["land", "--retire"])),
             seat,
             mark,
         ));

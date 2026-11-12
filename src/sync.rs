@@ -2514,6 +2514,9 @@ struct OpContext<'a> {
     retire_left: std::sync::atomic::AtomicBool,
     jobs: usize,
     handler: &'a dyn OutputHandler,
+    /// The landing's claim on its target, held until the target's workspace
+    /// took the last fast-forward.
+    landing_claim: std::sync::Mutex<Option<crate::landing_claim::LandingClaim>>,
     /// The CWD project repo's backend. One per invocation, because the
     /// project repo is one per invocation — see [`crate::vcs::project_vcs`]
     /// for why it cannot be resolved from a manifest entry.
@@ -2699,7 +2702,7 @@ impl OpContext<'_> {
 
 /// What a `land` invocation asks the machine to do: start an op, or resume
 /// the one recorded where it runs.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum SyncRequest {
     Fresh {
         landing: Box<crate::land::Landing>,
@@ -2820,11 +2823,16 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 // Post-transition write. Until this commits, a crash leaves
                 // the record at the just-completed phase, which re-runs
                 // idempotently on resume.
+                let retiring = p == op_state::OpPhase::Retire;
                 op_state::set_phase(&ctx.owner_workspace_dir, p)
                     .context("failed to advance phase between iterations")?;
+                if retiring {
+                    release_target(ctx)?;
+                }
             }
             None => {
                 let stranded = stranded_checkouts(ctx)?;
+                release_landing_claim(ctx)?;
                 cleanup(ctx)?;
                 ctx.handler.record_complete();
                 announce_completion(ctx);
@@ -2836,6 +2844,31 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 return Ok(());
             }
         }
+    }
+}
+
+/// Once the target's workspace took the last fast-forward and the record
+/// says so, the landing neither moves nor holds it: its lease there goes,
+/// then its claim on the target, so a landing waiting on the claim never
+/// meets a lease whose op `--retire` is about to remove.
+fn release_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    if crate::path_spelling::CanonicalPath::of(&ctx.dest_workspace_dir)
+        != crate::path_spelling::CanonicalPath::of(&ctx.owner_workspace_dir)
+    {
+        op_state::clear_lease(&ctx.dest_workspace_dir);
+    }
+    release_landing_claim(ctx)
+}
+
+fn release_landing_claim(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let held = ctx
+        .landing_claim
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    match held {
+        Some(claim) => claim.release(),
+        None => Ok(()),
     }
 }
 
@@ -3360,11 +3393,12 @@ fn guard_and_mark<'a>(
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
     let FreshOp {
-        landing,
+        mut landing,
         history,
         retire,
         jobs,
     } = op;
+    let landing_claim = std::sync::Mutex::new(landing.claim.take());
 
     let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
@@ -3391,7 +3425,7 @@ fn guard_and_mark<'a>(
     // The touched-workspace set is claimed atomically before any
     // precondition runs, so two landings judging the same workspaces never
     // both pass; a refusal below releases the claim and leaves no trace.
-    let op_id = OpId::new_now();
+    let op_id = landing.op_id.clone();
     let owner_workspace_dir = cwd_workspace_dir.clone();
     let initial_record = OwnerRecord::new_land(
         &op_id,
@@ -3660,6 +3694,7 @@ fn guard_and_mark<'a>(
         verb: op_state::OpVerb::Land,
         op_id,
         snapshot,
+        landing_claim,
     })
 }
 
@@ -3744,6 +3779,20 @@ fn load_continuing_context<'a>(
                 )
             })?;
     let project_vcs = project_vcs();
+
+    let landing_claim = match (&record.phase, &take_in.sync_from) {
+        _ if record.verb != op_state::OpVerb::Land => None,
+        (op_state::OpPhase::Retire, _) | (_, None) => None,
+        (_, Some(op_state::SyncFrom::Target(target) | op_state::SyncFrom::From(target))) => {
+            Some(crate::landing_claim::LandingClaim::take(
+                project_vcs.as_ref(),
+                &cwd_project_dir,
+                &cwd_project_name,
+                target,
+                &op_id,
+            )?)
+        }
+    };
 
     // A target that moved after the landing composed is a plan the landing no
     // longer describes: only `rwv abort` and a fresh landing judge the new
@@ -3864,6 +3913,7 @@ fn load_continuing_context<'a>(
         verb: record.verb,
         op_id,
         snapshot,
+        landing_claim: std::sync::Mutex::new(landing_claim),
     })
 }
 
@@ -6833,6 +6883,20 @@ pub fn run_abort(
                 .collect(),
             };
             restore_landing_refs(record, &members, &stores, abandon, &mut tally);
+            if let Some(op_state::SyncFrom::Target(target) | op_state::SyncFrom::From(target)) =
+                record.take_in.as_ref().and_then(|t| t.sync_from.as_ref())
+            {
+                if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
+                    project_vcs().as_ref(),
+                    &cwd_project_dir,
+                    &op_project_name,
+                    target,
+                    &op_id,
+                ) {
+                    eprintln!("  {e:#}");
+                    tally.any_failure = true;
+                }
+            }
         }
     }
 

@@ -771,6 +771,7 @@ every_scenario!(
     dc29_no_bring,
     concurrent_landing_merge_upstream,
     records_local_writers,
+    a_landing_waits_on_another_landings_claim,
     records_drop_races_create,
     landed_history_pin_no_ref_keeps,
     parallel_retire_fetch,
@@ -3977,6 +3978,14 @@ holding_rwv! {
     /// branch; every lost compare-and-swap retries and no record is lost.
     fn records_written_at_once_on_one_machine_are_all_kept_and_drops_retry_against_the_winner() {
         runner::run(scenarios::records_local_writers()).assert_green();
+    }
+}
+
+holding_rwv! {
+    /// A landing into a target another landing holds waits on the claim on
+    /// it, then lands on the tips the first left.
+    fn a_landing_into_a_held_target_waits_and_then_lands() {
+        runner::run(scenarios::a_landing_waits_on_another_landings_claim()).assert_green();
     }
 }
 

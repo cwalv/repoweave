@@ -25,8 +25,12 @@ use std::path::{Path, PathBuf};
 
 /// A landing of the checked-out feature into its target, as resolved before
 /// the op begins.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Landing {
+    /// The op the landing runs as.
+    pub op_id: crate::op_state::OpId,
+    /// The landing's claim on `T`, taken before `T`'s tips were read.
+    pub claim: Option<crate::landing_claim::LandingClaim>,
     pub project: ProjectName,
     /// The checked-out feature, `W`.
     pub feature: BranchName,
@@ -217,6 +221,10 @@ pub fn resolve(
             ));
         }
     }
+    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    let op_id = crate::op_state::OpId::new_now();
+    let claim =
+        crate::landing_claim::LandingClaim::take(vcs, &dir, &project, target.as_str(), &op_id)?;
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
     let target_tip = match crate::push_branch::newer_of_branch_and_upstream(
@@ -277,6 +285,8 @@ pub fn resolve(
         }
     };
     Ok(Landing {
+        op_id,
+        claim: Some(claim),
         project,
         feature,
         target,

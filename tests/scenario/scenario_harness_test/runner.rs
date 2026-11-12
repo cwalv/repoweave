@@ -274,12 +274,6 @@ pub enum Exit {
 /// gives the step the exit the design decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Defect {
-    /// A landing into a target another landing holds is refused on that
-    /// landing's lease, by a token that depends on the phase the other has
-    /// reached (`dead-op-lease`, naming `rwv doctor --fix`, which would
-    /// release a live op's lease, or `op-in-progress`); the design has it
-    /// wait on a landing claim and then land.
-    LandingRefusedOnAnotherLandingsLease,
     /// A lock in the target's history pins a member commit no ref of the
     /// clone keeps (locked, then amended and re-pinned by name), so every
     /// clone lacking it refuses a landing in that member as `pin`
@@ -290,9 +284,6 @@ pub enum Defect {
 impl Defect {
     fn describe(self) -> &'static str {
         match self {
-            Defect::LandingRefusedOnAnotherLandingsLease => {
-                "a landing into a target another landing holds is refused rather than waiting"
-            }
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
             }

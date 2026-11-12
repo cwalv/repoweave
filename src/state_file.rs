@@ -52,6 +52,9 @@ pub enum StateFile {
     FetchClaim,
     /// Replaced, by a writer holding [`StateFile::FetchClaim`].
     FetchRecord,
+    /// Created exclusively by the landing that claims its target, taken over
+    /// by that landing's own `--continue`, and removed on release.
+    LandingClaim,
 }
 
 /// Files in rwv's namespace that rwv reads and rewrites but does not own: an
@@ -63,7 +66,7 @@ pub const OPERATOR_AUTHORED: [&str; 2] = [
 ];
 
 impl StateFile {
-    pub const ALL: [StateFile; 14] = [
+    pub const ALL: [StateFile; 15] = [
         StateFile::OwnedDigests,
         StateFile::ActiveProject,
         StateFile::WorkweaveMarker,
@@ -78,6 +81,7 @@ impl StateFile {
         StateFile::IndexClaim,
         StateFile::FetchClaim,
         StateFile::FetchRecord,
+        StateFile::LandingClaim,
     ];
 
     pub fn file_name(self) -> &'static str {
@@ -96,6 +100,7 @@ impl StateFile {
             StateFile::IndexClaim => crate::workweave_index::INDEX_CLAIM_FILE,
             StateFile::FetchClaim => crate::fetch_claim::FETCH_CLAIM_FILE,
             StateFile::FetchRecord => crate::fetch_claim::FETCH_RECORD_FILE,
+            StateFile::LandingClaim => crate::landing_claim::LANDING_CLAIM_FILE,
         }
     }
 
