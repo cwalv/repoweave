@@ -1431,22 +1431,26 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
                 "legacy-workweave-index/old-path",
             ]),
         ),
-        // One message family for the two legacy-spelling migrations (with
-        // and without a commit), matched by their shared prefix.
         (
-            "{migration} in {}/.gitattributes",
+            "set up the lock merge driver's attribute line in",
             Findings(&[
-                "missing-replay-exclusion/legacy-spelling",
-                "missing-replay-exclusion/legacy-alongside-current",
+                "missing-lock-merge-driver/attribute-absent",
+                "missing-lock-merge-driver/attribute-legacy",
             ]),
         ),
         (
-            "wrote `rwv.lock merge=rwv-ours`",
-            Findings(&["missing-replay-exclusion/absent"]),
+            "wrote the lock merge driver's attribute line in",
+            Findings(&[
+                "missing-lock-merge-driver/attribute-absent",
+                "missing-lock-merge-driver/attribute-legacy",
+            ]),
         ),
         (
-            "planted `{}` config",
-            Findings(&["missing-merge-driver-config"]),
+            "defined the lock merge driver in",
+            Findings(&[
+                "missing-lock-merge-driver/config-absent",
+                "missing-lock-merge-driver/config-legacy",
+            ]),
         ),
         // --- apply_finding_repairs -------------------------------------
         (
@@ -1654,7 +1658,7 @@ fn the_repair_walk_actually_reads_the_arms() {
         "the walk sees no repair announcement in `apply_prelude_repairs`"
     );
     assert!(
-        per_fn("apply_workspace_repairs") >= 8,
+        per_fn("apply_workspace_repairs") >= 7,
         "the walk sees only {} repair announcements in `apply_workspace_repairs` — the \
          pre-collection pass this instrument exists for has gone dark to it",
         per_fn("apply_workspace_repairs")

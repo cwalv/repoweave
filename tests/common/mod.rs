@@ -554,6 +554,9 @@ pub fn set_up_lock_driver(project_dir: impl AsRef<std::path::Path>) {
 /// init` made holds without a commit of its own.
 pub fn set_up_lock_driver_committed(project_dir: impl AsRef<std::path::Path>) {
     let project_dir = project_dir.as_ref();
+    if !project_dir.join(".git").exists() {
+        return;
+    }
     let committed = git()
         .args(["show", "HEAD:.gitattributes"])
         .current_dir(project_dir)

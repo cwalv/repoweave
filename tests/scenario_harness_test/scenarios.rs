@@ -859,8 +859,16 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         ]);
     }
+    if main_moves {
+        steps.extend(lock_conflict_resolved_by_hand("feat-x"));
+    } else {
+        steps.push(Step::git(
+            &a(),
+            Repo::Proj,
+            &["merge", "--no-edit", "feat-x"],
+        ));
+    }
     steps.extend([
-        Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "feat-x"]),
         Step::git(&a(), Repo::App, &["merge", "--no-edit", "feat-x"]),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         publishes_records(Step::rwv(&a(), &["push"]))
@@ -887,6 +895,19 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
         }),
     ]);
     scenario(name, steps)
+}
+
+/// A raw merge of `branch` into the project's `main` whose pins diverged under
+/// one branch: the lock merge driver leaves `rwv.lock` conflicted, every verb
+/// refuses it, and the operator keeps `main`'s pins by hand and concludes it.
+fn lock_conflict_resolved_by_hand(branch: &'static str) -> Vec<Step> {
+    vec![
+        Step::git(&a(), Repo::Proj, &["merge", "--no-edit", branch]).expect(Exit::Code(1)),
+        Step::rwv(&a(), &["status"]).expect(Exit::refuses(Repo::Proj, State::EditsLockUnresolved)),
+        Step::git(&a(), Repo::Proj, &["checkout", "--ours", "rwv.lock"]),
+        Step::git(&a(), Repo::Proj, &["add", "rwv.lock"]),
+        Step::git(&a(), Repo::Proj, &["commit", "--no-edit"]),
+    ]
 }
 
 pub fn raw_merge_real() -> Scenario {
@@ -2191,7 +2212,9 @@ pub fn waiver_per_merge() -> Scenario {
         Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "main-app"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "feat-x"]),
+    ]);
+    steps.extend(lock_conflict_resolved_by_hand("feat-x"));
+    steps.extend([
         Step::rwv(&a(), &["push", "--repo", &app])
             .pushes(Remote::origin(Repo::App), "main")
             .expect(Exit::Succeeds),

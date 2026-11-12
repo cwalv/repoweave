@@ -145,9 +145,9 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "the canonical clone a checkout derives from is gone",
     ),
     (
-        "missing-replay-exclusion",
-        &["doctor", "refusal"],
-        "the replay exclusion a workweave needs is absent",
+        "missing-lock-merge-driver",
+        &["doctor", "kind"],
+        "the project repo's lock merge driver is not set up as this release sets it up",
     ),
     (
         "pin",

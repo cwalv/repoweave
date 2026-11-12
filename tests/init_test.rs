@@ -165,10 +165,7 @@ fn init_runs_git_init_in_project_dir() {
 }
 
 #[test]
-fn init_writes_gitattributes_with_replay_exclusion() {
-    // `rwv init` must seed `.gitattributes` with the
-    // `rwv.lock merge=rwv-ours` line so future `rwv sync` rebases keep
-    // source's lock through the replay.
+fn init_writes_gitattributes_with_the_lock_merge_driver() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
@@ -181,8 +178,8 @@ fn init_writes_gitattributes_with_replay_exclusion() {
     let attrs = std::fs::read_to_string(ws.join("projects/my-app/.gitattributes"))
         .expect("rwv init should create .gitattributes");
     assert!(
-        attrs.contains("rwv.lock merge=rwv-ours"),
-        ".gitattributes should contain `rwv.lock merge=rwv-ours`; got: {attrs:?}"
+        attrs.contains("rwv.lock merge=rwv-lock"),
+        ".gitattributes should contain `rwv.lock merge=rwv-lock`; got: {attrs:?}"
     );
 }
 

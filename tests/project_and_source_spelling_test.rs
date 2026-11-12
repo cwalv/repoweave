@@ -368,8 +368,7 @@ fn clone_refuses_a_plain_path_source_and_names_both_spellings() {
     assert!(
         findings
             .iter()
-            .all(|f| f.starts_with("missing-replay-exclusion")
-                || f.starts_with("missing-merge-driver-config")),
+            .all(|f| f.starts_with("missing-lock-merge-driver")),
         "{findings:?}"
     );
 }

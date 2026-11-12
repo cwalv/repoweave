@@ -972,6 +972,52 @@ fn a_linked_worktree_shares_its_clones_definition() {
     assert_eq!(setup(&linked).definition, LockDriverPart::Current);
 }
 
+/// A repo whose lock both `main` and `feat` changed from their base, with a
+/// lock merge driver that records each run in `driver-ran` and conflicts.
+fn diverged_lock_with_a_recording_driver() -> (TempDir, repoweave::vcs::CommitId) {
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
+    fs::write(p.join("rwv.lock"), "base\n").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "base"]);
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    fs::write(p.join("rwv.lock"), "feat\n").unwrap();
+    common::git_in(p, &["commit", "-qam", "feat"]);
+    let feat = repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "HEAD"])).unwrap();
+    common::git_in(p, &["checkout", "-q", "main"]);
+    fs::write(p.join("rwv.lock"), "main\n").unwrap();
+    common::git_in(p, &["commit", "-qam", "main"]);
+    common::git_in(
+        p,
+        &[
+            "config",
+            "merge.rwv-lock.driver",
+            "echo ran >> driver-ran; exit 1",
+        ],
+    );
+    (dir, feat)
+}
+
+#[test]
+fn rwvs_own_merges_settle_the_lock_without_running_the_driver() {
+    let (dir, feat) = diverged_lock_with_a_recording_driver();
+    let p = dir.path();
+    let main = repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "HEAD"])).unwrap();
+    if let Some(trees) = git_vcs().tree_merges() {
+        assert!(matches!(
+            trees.merge_tree(p, &main, &feat).unwrap(),
+            repoweave::vcs::TreeMerge::Clean(_)
+        ));
+    }
+    let conflicted = git_vcs().start_merge(p, &feat).unwrap();
+    assert!(conflicted.is_empty(), "{conflicted:?}");
+    assert!(
+        !p.join("driver-ran").exists(),
+        "rwv writes the lock of a merge it makes; the driver must not run"
+    );
+}
+
 #[test]
 fn reading_the_setup_outside_a_repo_is_an_error_not_an_absence() {
     let dir = common::tempdir().unwrap();

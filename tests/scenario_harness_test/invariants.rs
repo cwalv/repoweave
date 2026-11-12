@@ -443,6 +443,10 @@ pub fn snapshot(sandbox: &Sandbox) -> Snapshot {
         for project in [Repo::Proj, Repo::Proj2] {
             let checkout = sandbox.checkout(&place, project);
             if let Ok(text) = std::fs::read_to_string(checkout.join("rwv.lock")) {
+                let unmerged = sandbox.git(&checkout, &["ls-files", "-u", "--", "rwv.lock"]);
+                if !unmerged.stdout.is_empty() {
+                    continue;
+                }
                 let out = sandbox.git(&checkout, &["symbolic-ref", "--short", "-q", "HEAD"]);
                 let branch = if out.status.success() {
                     String::from_utf8(out.stdout).unwrap().trim().to_owned()

@@ -21,6 +21,9 @@ pub(crate) fn refuse_unmigrated(
     repo: impl fmt::Display,
     dir: &Path,
 ) -> anyhow::Result<()> {
+    if !vcs.is_repo(dir) {
+        return Ok(());
+    }
     let setup = vcs.lock_driver_setup(dir).with_context(|| {
         format!(
             "failed to read the lock merge driver setup in {}",
@@ -182,7 +185,7 @@ pub fn run(base: &Path, ours: &Path, theirs: &Path, dir: &Path) -> anyhow::Resul
         std::fs::read_to_string(path).map_err(|e| {
             crate::untokened!(
                 HookInput,
-                "rwv lock --merge-driver: cannot read {}: {e}; this form is the command a VCS \
+                "rwv lock --merge-driver: cannot read {}: {e:#}; this form is the command a VCS \
                  runs to merge rwv.lock, given the base, ours and theirs files it wrote",
                 path.display()
             )

@@ -61,14 +61,14 @@ fn init_repo(path: &Path) {
 }
 
 /// A weave holding a finding with no sub-kind (an orphaned clone), one with a
-/// sub-kind (a project with no replay exclusion), and an integration issue (a
+/// sub-kind (a project with no lock merge driver), and an integration issue (a
 /// declared static file that is not there).
 fn weave_with_findings(parent: &Path) -> PathBuf {
     let root = parent.join("ws");
     init_repo(&root.join("github/acme/server"));
     init_repo(&root.join("github/acme/stray-clone"));
     let project = root.join("projects/my-app");
-    std::fs::create_dir_all(&project).unwrap();
+    init_repo(&project);
     std::fs::write(
         project.join("rwv.toml"),
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
@@ -93,7 +93,7 @@ fn every_token_the_text_report_prints_is_one_explain_serves() {
     let tokens: Vec<&str> = stdout.lines().filter_map(printed_token).collect();
     for expected in [
         "orphaned-clone",
-        "missing-replay-exclusion/absent",
+        "missing-lock-merge-driver/attribute-absent",
         "managed-file-missing",
     ] {
         assert!(
