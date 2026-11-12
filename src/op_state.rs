@@ -1083,7 +1083,8 @@ pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()>
 /// tip to the op.
 pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
-        anyhow::anyhow!(
+        crate::untokened!(
+            InternalInvariant,
             "no owner record at {} to journal in",
             workspace_dir.display()
         )
@@ -1097,7 +1098,8 @@ pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyho
 /// Journal a branch the op moved as a ref, checked out nowhere.
 pub fn journal_ref_move(workspace_dir: &Path, moved: RefMove) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
-        anyhow::anyhow!(
+        crate::untokened!(
+            InternalInvariant,
             "no owner record at {} to journal in",
             workspace_dir.display()
         )

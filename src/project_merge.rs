@@ -195,7 +195,7 @@ fn merge_member_as_refs(
 ) -> Result<Joined, MemberStop> {
     let vcs = vcs_for(entry.vcs_type);
     let branch = RawRefName::new(entry.branch.local_counterpart().as_str());
-    let refuse = |why: String| MemberStop::Refused(anyhow::anyhow!("{repo}: {why}"));
+    let refuse = |why: String| MemberStop::Refused(crate::untokened!(Owed, "{repo}: {why}"));
     let Some(tip) = vcs.resolve_local_branch_tip(dir, &branch)? else {
         return Err(refuse(format!(
             "no checkout has a branch attached and '{branch}' does not exist here, so there is \
@@ -417,11 +417,13 @@ impl ProjectMerge<'_> {
 
         if matches!(merged, Merged::Tree(_)) {
             let paths = vcs.start_merge(&dir, &sides.first)?;
-            anyhow::ensure!(
-                paths.iter().all(|path| path == LockFile::FILE_NAME),
-                "the merge computed as clean conflicts in {}",
-                paths.join(", ")
-            );
+            if !paths.iter().all(|path| path == LockFile::FILE_NAME) {
+                return Err(crate::untokened!(
+                    InternalInvariant,
+                    "the merge computed as clean conflicts in {}",
+                    paths.join(", ")
+                ));
+            }
         }
 
         let reach = MemberReach {

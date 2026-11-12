@@ -219,10 +219,12 @@ pub fn run_pull(
             jobs,
         },
         (_, Some((op, project, record))) => {
-            anyhow::ensure!(
-                project == project_name,
-                "the op was started for project `{project}`, not `{project_name}`"
-            );
+            if project != project_name {
+                return Err(crate::untokened!(
+                    Owed,
+                    "the op was started for project `{project}`, not `{project_name}`"
+                ));
+            }
             How {
                 flags: Flags::default().recorded(&record),
                 resumed: Some((op, record)),
