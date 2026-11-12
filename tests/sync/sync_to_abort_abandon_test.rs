@@ -383,9 +383,9 @@ fn sync_to_abandon_covers_both_copies_with_a_backup_each() {
 // Consent does not reach an unnamed repo on the target side
 // ---------------------------------------------------------------------------
 
-/// Consent for one repo abandons that repo's target-side copy and does
-/// nothing for a different repo in the same target workspace: the unnamed
-/// repo's refusal stands and the abort still fails overall.
+/// Consent for one repo does nothing for a different repo in the same
+/// target workspace: the unnamed repo's refusal stands, and the abort fails
+/// before anything moves, the named repo's copy included.
 #[test]
 fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
     let tmp = common::tempdir().unwrap();
@@ -393,7 +393,7 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
     let op_id = "land-abandon-scope";
 
     let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, op_id);
-    make_commit(&primary.server_dir, "s.txt", "s\n", "foreign: server");
+    let server_foreign = make_commit(&primary.server_dir, "s.txt", "s\n", "foreign: server");
     let project_foreign = make_commit(&primary.project_dir, "p.txt", "p\n", "foreign: project");
 
     let output = rwv()
@@ -408,16 +408,15 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stdout.contains(&format!(
-            "[target] {SERVER_PATH}: restored (abandoned foreign tip"
-        )),
-        "the named repo's target-side copy must be abandoned.\nstdout:\n{stdout}"
+        !stdout.contains("restored"),
+        "a refused abort restores nothing.\nstdout:\n{stdout}"
     );
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        primary_server_sp,
-        "the named repo's target-side branch must be restored"
+        server_foreign,
+        "the named repo's target-side branch is not moved by a refused abort"
     );
+    assert_ne!(server_foreign, primary_server_sp);
     assert!(
         stderr.contains("[target] projects/web-app: foreign-tip violation"),
         "the unnamed repo's target-side refusal must stand.\nstderr:\n{stderr}"

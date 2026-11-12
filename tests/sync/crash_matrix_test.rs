@@ -2786,11 +2786,10 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
         foreign_server_tip,
         "[cell6] server foreign tip must NOT be reset"
     );
-    // Op-advanced project IS restored (the regression proof).
-    assert_eq!(
+    assert_ne!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
-        "[cell6] op-advanced project must be restored (was attributed via intent)"
+        "[cell6] a refused abort moves nothing, the op-advanced project included"
     );
     // Op-state retained (server refused).
     assert!(

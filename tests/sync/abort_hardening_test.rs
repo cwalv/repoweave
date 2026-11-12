@@ -1155,7 +1155,8 @@ fn abandon_foreign_tip_refuses_a_value_naming_no_repo() {
 
 /// Per-repo means per-repo: consent naming one repo must not reach another
 /// whose tip is foreign in exactly the same way. The unnamed repo keeps its
-/// tip, abort still fails, and op-state is still retained.
+/// tip, abort still fails before anything moves, the named repo included,
+/// and op-state is still retained.
 ///
 /// This is the pin for "no bare all-repos form" at the level that matters —
 /// not the absence of a spelling, but the absence of the behavior.
@@ -1170,7 +1171,7 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
     let op_id = "20991231T000021Z";
 
     let named_savepoint = common::git_in(named_dir, &["rev-parse", "HEAD"]);
-    make_commit(named_dir, "foreign.txt", "foreign\n", "foreign: named repo");
+    let named_foreign = make_commit(named_dir, "foreign.txt", "foreign\n", "foreign: named repo");
     plant_savepoint(named_dir, op_id, &named_savepoint);
 
     let unnamed_savepoint = common::git_in(unnamed_dir, &["rev-parse", "HEAD"]);
@@ -1198,8 +1199,8 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
 
     assert_eq!(
         common::git_in(named_dir, &["rev-parse", "HEAD"]),
-        named_savepoint,
-        "the named repo must be restored"
+        named_foreign,
+        "a refused abort moves nothing, the named repo included"
     );
     assert_eq!(
         common::git_in(unnamed_dir, &["rev-parse", "HEAD"]),

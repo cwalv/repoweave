@@ -266,15 +266,12 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
         transcript(&out)
     );
     assert!(
-        stderr.contains("\trwv abort --abandon-foreign-tip projects/app\n"),
-        "the refusal must name the flag that settles it:\n{}",
-        transcript(&out)
-    );
-    assert!(
         mid_op(&parked.seat.lib)
-            && stderr.contains(&format!("\trwv abort --abandon-foreign-tip {LIB}\n")),
+            && stderr.contains(&format!(
+                "\trwv abort --abandon-foreign-tip projects/app --abandon-foreign-tip {LIB}\n"
+            )),
         "with no step recorded, the member's rebase is not taken for the op's: it is \
-         refused, naming the flag that ends it:\n{}",
+         refused, and one command naming both repos ends it:\n{}",
         transcript(&out)
     );
 

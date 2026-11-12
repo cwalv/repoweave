@@ -9184,21 +9184,18 @@ fn plan_in_place(
     let converged = record.tips.converged();
     for workspace in take_in.in_place_workspaces() {
         plan.steps.push(AbortStep::BeginInPlace);
-        for (repo_key, receiving) in &take_in.receiving {
-            let (RepoKey::Member(path), op_state::Moves::InPlace { workspace: at }) =
-                (repo_key, &receiving.moves)
+        for (repo_key, wrote) in take_in.in_place_moves(&workspace) {
+            let (RepoKey::Member(path), Some(receiving)) =
+                (repo_key, take_in.receiving.get(repo_key))
             else {
                 continue;
             };
-            if *at != workspace {
-                continue;
-            }
             let dir = workspace.join(path.as_path());
             let vcs = crate::vcs::probe_vcs();
             let named = RepoOperand::of(repo_key, project);
             let label = format!("[{}] {named}", workspace.display());
             if !vcs.is_repo(&dir) {
-                if let Some(wrote) = take_in.wrote_in_target.get(repo_key) {
+                if let Some(wrote) = wrote {
                     plan_in_place_as_ref(
                         plan, vcs, stores, path, receiving, wrote, &key, label, named,
                     );
@@ -9212,7 +9209,7 @@ fn plan_in_place(
                 vcs,
                 on_target: true,
             };
-            if !take_in.moved_in_target.contains(repo_key) {
+            if wrote.is_none() {
                 plan.steps.push(AbortStep::LeaveCheckout {
                     at,
                     key: key.clone(),
@@ -9223,7 +9220,7 @@ fn plan_in_place(
                 continue;
             }
             let attribution = Attribution {
-                intent: take_in.wrote_in_target.get(repo_key),
+                intent: wrote,
                 converged: converged.and_then(|tips| tips.get(repo_key)),
                 started_from: None,
                 integrates: Integrates::No,
@@ -9589,8 +9586,15 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
         let wrote = match (as_ref, created, &receiving.moves) {
             (Some(moved), _, _) => moved.to.clone(),
             (None, Some(made), _) => made.at.clone(),
-            (None, None, op_state::Moves::InCheckout | op_state::Moves::InPlace { .. }) => {
-                match take_in.wrote_in_target.get(repo) {
+            (None, None, op_state::Moves::InCheckout) => match take_in.wrote_in_target.get(repo) {
+                Some(wrote) => wrote.clone(),
+                None => continue,
+            },
+            (None, None, op_state::Moves::InPlace { workspace }) => {
+                match take_in
+                    .in_place_moves(workspace)
+                    .find_map(|(moved, wrote)| (moved == repo).then_some(wrote).flatten())
+                {
                     Some(wrote) => wrote.clone(),
                     None => continue,
                 }

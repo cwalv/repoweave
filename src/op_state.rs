@@ -746,6 +746,28 @@ impl TakeInRecord {
         }
         out
     }
+
+    /// Each checkout the landing moved in place in `workspace`: the repo,
+    /// and the tip it wrote there, `None` where it has not moved it yet.
+    pub fn in_place_moves<'a>(
+        &'a self,
+        workspace: &'a Path,
+    ) -> impl Iterator<Item = (&'a RepoKey, Option<&'a CommitId>)> + 'a {
+        self.receiving
+            .iter()
+            .filter(move |(_, receiving)| {
+                matches!(&receiving.moves, Moves::InPlace { workspace: at } if at == workspace)
+            })
+            .map(|(repo, _)| {
+                (
+                    repo,
+                    self.moved_in_target
+                        .contains(repo)
+                        .then(|| self.wrote_in_target.get(repo))
+                        .flatten(),
+                )
+            })
+    }
 }
 
 impl LandingReport {
