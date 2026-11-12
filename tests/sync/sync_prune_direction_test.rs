@@ -947,7 +947,7 @@ fn a_landing_that_cannot_file_a_savepoint_does_not_start() {
     common::commit_staged(&lib, "feature");
     let primary_lib = common::under(&weave.root, LIB);
     let before = common::git_in(&primary_lib, &["rev-parse", "main"]);
-    let primary_project = common::git_in(&project_dir(&weave.root), &["rev-parse", "HEAD"]);
+    let primary_project = common::git_in(project_dir(&weave.root), &["rev-parse", "HEAD"]);
     common::git_in(&primary_lib, &["update-ref", "refs/rwv/pre-op", "HEAD"]);
 
     let out = run(&s1, &["land", "--history", "linear"]);
@@ -959,7 +959,7 @@ fn a_landing_that_cannot_file_a_savepoint_does_not_start() {
     );
     assert_eq!(common::git_in(&primary_lib, &["rev-parse", "main"]), before);
     assert_eq!(
-        common::git_in(&project_dir(&weave.root), &["rev-parse", "HEAD"]),
+        common::git_in(project_dir(&weave.root), &["rev-parse", "HEAD"]),
         primary_project
     );
     for dir in [project_dir(&s1), project_dir(&weave.root)] {
