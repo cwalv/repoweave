@@ -85,7 +85,8 @@ fn a_diverged_main_resolves_a_derived_path_to_its_upstream() {
 
 #[test]
 fn a_landing_stops_at_alignment_where_the_landed_lock_does_not_read_and_continues() {
-    runner::run(scenarios::landing_stops_where_the_landed_lock_does_not_read()).assert_green();
+    runner::run(scenarios::landing_stops_where_the_landed_lock_does_not_read())
+        .assert_fully_decided_green();
 }
 
 #[test]

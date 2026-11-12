@@ -296,7 +296,7 @@ src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	5
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
-src/sync.rs	op-parked	-	6
+src/sync.rs	op-parked	-	7
 src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
 src/sync.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/sync.rs	pin unmerged	tests/sync/push_test.rs	1

@@ -7138,6 +7138,7 @@ pub fn landing_stops_where_the_landed_lock_does_not_read() -> Scenario {
             ),
             Step::git(&a(), Repo::Proj, &["mv", "rwv.lock", "rwv.lock.aside"]),
             Step::release("aligning")
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
                 .claim(Claim::OutputContains("has no rwv.lock"))
                 .claim(Claim::OutputContains("rwv land --continue")),
             Step::git(&a(), Repo::Proj, &["mv", "rwv.lock.aside", "rwv.lock"]),

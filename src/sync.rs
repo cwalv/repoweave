@@ -7324,23 +7324,31 @@ fn journal_alignment(
     dest_workspace_dir: &Path,
     dest_project_dir: &Path,
 ) -> anyhow::Result<Vec<(RepoKey, Option<Standing>)>> {
-    let landed =
-        Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()).with_context(|| {
+    let stopped = |what: String| {
+        crate::refusal::refusal(
+            crate::refusal::RefusalKind::OpParked,
             format!(
-                "the landed project in {} does not read, so the alignment it moves cannot be \
-                 journaled; the landing stopped before aligning, and `rwv land --continue` \
-                 resumes it once the project reads",
+                "{what}, so the alignment it moves cannot be journaled; the landing stopped \
+                 before aligning: `{}` resumes it once that reads, or `rwv abort` puts \
+                 everything back",
+                op_state::resume_command(OpVerb::Land)
+            ),
+        )
+    };
+    let landed = match Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()) {
+        Ok(landed) => landed,
+        Err(e) => {
+            return Err(stopped(format!(
+                "the landed project in {} does not read ({e:#})",
                 dest_project_dir.display()
-            )
-        })?;
+            )))
+        }
+    };
     let Some(lock) = landed.lock.as_ref() else {
-        return Err(crate::untokened!(
-            EnvironmentPassthrough,
-            "the landed project in {} has no rwv.lock, so the alignment it moves cannot be \
-             journaled; the landing stopped before aligning, and `rwv land --continue` resumes \
-             it once the lock is back",
+        return Err(stopped(format!(
+            "the landed project in {} has no rwv.lock",
             dest_project_dir.display()
-        ));
+        )));
     };
     let others =
         crate::shared_members::held_by_presented(dest_workspace_dir, &ctx.cwd_project_name);
