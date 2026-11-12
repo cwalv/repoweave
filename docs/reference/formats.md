@@ -177,6 +177,20 @@ An older or hand-edited lock may still carry an entry pinned by a tag or branch 
 
 Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock` from a workweave updates the workweave's lock, not primary's.
 
+### Re-pins by name in lock commits
+
+A lock commit made by a verb that re-pins members by name ends with one `Rwv-Repin` trailer per member whose pin it moves, forward or backward: the member's path as a JSON string, its old pin (`none` where the lock had none), its new pin, both as full commit ids, and the verb:
+
+```
+member pin github/chatly/server 0123abcd --commit
+
+Rwv-Repin: "github/chatly/server" 7a3b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b 0123abcd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b member pin
+```
+
+The verbs that write it: `rwv member pin --commit`; `rwv member set-branch`, and `--set-branch`, `--set-new-branch` and `--pin` on `rwv branch create` and `rwv workweave create`; `rwv lock --commit` over a hand-edited `branch` of an entry; `rwv update --remote --reset-to-upstream <repo> --commit`, for the member it names. The old pin is the one the commit's first parent's lock holds, so a merge commit's trailer reads against the branch the merge was made on. `rwv lock`, with or without `--repo`, a relock by `rwv update --remote` or `rwv sync`, rwv's own merges, and `rwv member add` write none.
+
+`rwv push` reads it: a merge in the pushed range that left a member's pins unmerged is waived (`pin` `waived`) only by a commit at or after it, the merge's own included, whose trailer re-pins that member backward to a commit reaching neither pin the merge left. A commit made with git carries no trailer and waives nothing; a trailer whose pins are not the ones the commit's parent and the commit itself hold waives nothing and is listed. `rwv member pin <m> <rev> --commit` is the by-name re-pin `pin` `unmerged` offers.
+
 ## Branch records
 
 Lives on the `rwv-records` branch of the project repo: an orphan branch with no working tree and no history in common with any weave branch, so it carries no `rwv.toml` and is no weave branch. `rwv branch set-mode` writes it, and so do `rwv init`, `rwv clone` and `rwv workweave create`; every verb that aligns members, locks, lands or publishes reads it. It holds one file per weave branch, in one flat tree, named for the branch with `%` written `%25` and `/` written `%2F` (`feat/x` is the file `feat%2Fx`), so a branch and a branch below its name (`a` and `a/b`) each keep their own file. A file whose name is not one a branch name encodes to (a directory, a raw `/`, any other `%` sequence) is not read as a record, and rwv never changes or removes it. Each commit on it ends with a trailer naming the release that wrote it:
