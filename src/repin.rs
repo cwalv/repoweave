@@ -25,10 +25,11 @@ pub(crate) enum Naming {
 
 impl Naming {
     pub(crate) fn by_name(verb: &'static str, members: impl IntoIterator<Item = RepoPath>) -> Self {
-        Self::ByName {
-            verb,
-            members: members.into_iter().collect(),
+        let members: BTreeSet<RepoPath> = members.into_iter().collect();
+        if members.is_empty() {
+            return Self::Unnamed;
         }
+        Self::ByName { verb, members }
     }
 }
 

@@ -338,7 +338,7 @@ Every refusal is reported before the lock is written or the member moves. A deta
 
 | Flag | Effect |
 |---|---|
-| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo stay out of the commit and as they are |
+| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes, recording the re-pin in an `Rwv-Repin` trailer ([formats](./formats.md#re-pins-by-name-in-lock-commits)). Other uncommitted changes in the project repo stay out of the commit and as they are. Without it the lock is left written and uncommitted, and the `rwv lock --commit` that later commits it records no re-pin by name |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 ### `rwv member set-branch <path> <branch> [--new] [--at <rev>] [--url <url>]`
@@ -471,7 +471,7 @@ The record is published as one commit on the push target's records branch as las
 | `--dry-run` | Print the push plan without fetching or pushing; it says it judged refs as last fetched, and how long ago rwv last fetched the remote the project branch pushes to |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`--json` emits the envelope `{"$schema": "...", "outcomes": [...], "refused": [...], "reported": [...]}`, `reported` holding the repos judged and left unpushed and the merges a later lock waived. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the branch's record follows as `records-published` or `records-rejected`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. When a member's push is rejected, the project repo is withheld: `refused` lists each such member as `publish` `withheld`; a rejected project push is listed the same way. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "outcomes": [...], "refused": [...], "reported": [...]}`, `reported` holding the repos judged and left unpushed and the merges a re-pin by name waived. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the branch's record follows as `records-published` or `records-rejected`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. When a member's push is rejected, the project repo is withheld: `refused` lists each such member as `publish` `withheld`; a rejected project push is listed the same way. See [JSON envelope convention](#--json-envelope-convention).
 
 See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 

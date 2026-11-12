@@ -95,6 +95,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, the one-segment renderings `ProjectName::flat` and `WorkweaveId::flat` (typed `FlatProjectName` and `FlatAddress`, which nothing else can construct), and the two seams that recover an identity from what it renders — `workweave_name_in` for a caller holding the project, `resolve_flat_address` for one holding only what an operator typed. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
 | `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
+| `repin` (`src/repin.rs`) | The `Rwv-Repin` record of a re-pin by name: `Naming`, `Repin`'s one-line format, and `commit` / `commit_merge`, the only callers of the seam's commit operations, which derive each record from the lock change itself. `unmerged` reads it back with `recorded`. [`docs/internals/repin-record.md`](docs/internals/repin-record.md). |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
 | `workweave_index` (`src/workweave_index.rs`) | The workweave index a project clone keeps in the directory its worktrees share: the basedir setting and, per workweave, its path and the workspace it was forked from. Converts an index an earlier release kept at the old path. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
@@ -530,6 +531,10 @@ requires.** The proof is a value that cannot be forged:
 Several witness types deliberately have **no `as_str()`** — `TrackingRef`,
 `FoundBranch`, `AttachedRef` — so a caller cannot launder a proof back into a
 bare string. `compile_fail` doctests pin this.
+
+A commit carries key/value **annotations** beside its message:
+`commit_only` and `commit_merge` take `&[Annotation]`, and
+`annotation_values` reads one commit's values under a key (git: trailers).
 
 `VcsError` carries a `kind()` of stable kebab-case tags and a
 serializable mirror, `VcsErrorOutput`, for `--json`.

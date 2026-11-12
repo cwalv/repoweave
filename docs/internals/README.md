@@ -58,6 +58,9 @@ backstop unnecessary.
   `rwv.lock` and which only read it, the three sites that compare a tip
   against it, the question each one answers, and why `rwv doctor --locked` is
   not a renderer over the violation pipeline.
+- [repin-record](./repin-record.md) — the `Rwv-Repin` annotation a by-name
+  lock commit carries, the one function that writes it, and how `pin`
+  `waived` reads it.
 - [branch-model](./branch-model.md) — the MOVE / ATTACH / DESTROY /
   DESTROY-STORE classification, the deletion rule, and the type split
   (`AttachedRef`, `DestroyProof`, consent tokens) that makes ref discipline hold by
