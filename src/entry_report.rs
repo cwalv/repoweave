@@ -41,7 +41,7 @@ pub(crate) struct Standing {
     pub(crate) store: bool,
 }
 
-fn fields_between(was: &RepoEntry, now: &RepoEntry) -> Vec<FieldChange> {
+pub(crate) fn fields_between(was: &RepoEntry, now: &RepoEntry) -> Vec<FieldChange> {
     let mut fields = Vec::new();
     let mut note = |name: &'static str, was: String, now: String| {
         if was != now {

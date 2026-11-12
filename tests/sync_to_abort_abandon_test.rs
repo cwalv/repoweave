@@ -155,7 +155,7 @@ fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
     );

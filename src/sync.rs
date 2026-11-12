@@ -1929,7 +1929,7 @@ pub(crate) fn recorded_workweaves(
 /// The local-only refusal in the primary arm is what keeps `remove_dir_all`
 /// off a live workweave's object store; [`judge_store_checkouts`] stands in
 /// *front* of the destroy as well.
-fn prune_dropped_repo(
+pub(crate) fn prune_dropped_repo(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
@@ -2966,7 +2966,7 @@ fn announce_completion(ctx: &OpContext<'_>) {
         return;
     }
     match ctx.verb {
-        op_state::OpVerb::Sync => {}
+        op_state::OpVerb::Sync | op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => {}
         op_state::OpVerb::SyncTo => {
             eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
         }
@@ -3003,7 +3003,7 @@ fn run_phase(
 /// After relock, plain `sync` is done; `sync-to` continues with advance-target.
 fn next_after_relock(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
     match ctx.verb {
-        op_state::OpVerb::Sync => None,
+        op_state::OpVerb::Sync | op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => None,
         op_state::OpVerb::SyncTo => Some(op_state::OpPhase::AdvanceTarget),
     }
 }
@@ -3852,10 +3852,11 @@ fn load_continuing_context<'a>(
     // workspace land into its target instead. The refusal buys the
     // diagnosis, not the outcome.
     let recorded_verb = match record.verb {
-        op_state::OpVerb::Sync => MachineVerb::Sync,
-        op_state::OpVerb::SyncTo => MachineVerb::SyncTo,
+        op_state::OpVerb::Sync => Some(MachineVerb::Sync),
+        op_state::OpVerb::SyncTo => Some(MachineVerb::SyncTo),
+        op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => None,
     };
-    if !verbs_match(verb, recorded_verb) {
+    let Some(recorded_verb) = recorded_verb.filter(|recorded| verbs_match(verb, *recorded)) else {
         crate::refuse!(
             RefusalKind::ResumeContradictsRecord,
             "in-progress op is `{recorded}` but `{invoked}` was invoked. \
@@ -3864,7 +3865,7 @@ fn load_continuing_context<'a>(
             invoked = op_state::resume_command(verb.op_verb()),
             resume = op_state::resume_command(record.verb),
         );
-    }
+    };
 
     // The record is authoritative for a resumed op, so `--project` can only
     // assert what it already says. Every phase that already ran used the

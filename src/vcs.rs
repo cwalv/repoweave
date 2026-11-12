@@ -1185,6 +1185,56 @@ pub struct FileChange {
     pub content: Option<Vec<u8>>,
 }
 
+/// A tree of files, named by the backend's object name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeId(String);
+
+impl TreeId {
+    pub(crate) fn from_object_name(name: &str) -> Self {
+        Self(name.trim().to_owned())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// How a merge computed as a tree ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeMerge {
+    Clean(TreeId),
+    Conflicted { tree: TreeId, paths: Vec<String> },
+}
+
+/// How a merge computed with no checkout and no ref moved ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefMerge {
+    Merged(CommitId),
+    Conflicted { paths: Vec<String> },
+}
+
+/// Merges a backend computes as trees, without a checkout. A backend answers
+/// these through [`Vcs::tree_merges`] or not at all; where it does not, the
+/// merge runs in a checkout, stopped before its commit.
+pub trait TreeMerges: Send + Sync {
+    /// The merge of `second` into `first`, as a tree; a conflict names its
+    /// paths and writes nothing a checkout could keep.
+    fn merge_tree(
+        &self,
+        repo: &Path,
+        first: &CommitId,
+        second: &CommitId,
+    ) -> Result<TreeMerge, VcsError>;
+
+    /// The content of `path` in `tree`, `None` where the tree has none.
+    fn file_in_tree(
+        &self,
+        repo: &Path,
+        tree: &TreeId,
+        path: &str,
+    ) -> Result<Option<String>, VcsError>;
+}
+
 /// Where the records branch is read: this repo's own, or a remote's as last
 /// fetched.
 #[derive(Debug, Clone, Copy)]
@@ -4309,6 +4359,99 @@ pub trait Vcs: Send + Sync {
     /// files.
     fn population(&self) -> Option<&dyn WorkspacePopulation> {
         None
+    }
+
+    /// The merges this backend computes as trees, or `None` where its release
+    /// has no way to (git: before 2.38).
+    fn tree_merges(&self) -> Option<&dyn TreeMerges> {
+        None
+    }
+
+    /// Merge `other` into the checkout, leaving the result staged and
+    /// uncommitted, and list the paths left conflicted (none: a clean merge,
+    /// ready for [`Vcs::commit_merge`]). A merge already in flight refuses.
+    fn start_merge(&self, checkout: &Path, other: &CommitId) -> Result<Vec<String>, VcsError>;
+
+    /// The commit a merge in flight in `checkout` is merging in.
+    fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// The paths of `checkout` a merge left conflicted and nothing has staged.
+    fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// The staged content of `path` in `checkout`, `None` where nothing is
+    /// staged there.
+    fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError>;
+
+    /// Commit what is staged in `checkout` with `first` then `second` as
+    /// parents, moving the checkout's branch (or detached HEAD) to it and
+    /// ending any merge in flight.
+    fn commit_merge(
+        &self,
+        checkout: &Path,
+        first: &CommitId,
+        second: &CommitId,
+        message: &str,
+    ) -> Result<CommitId, VcsError>;
+
+    /// The merge of `second` into `first` as a commit, with no checkout and no
+    /// ref moved.
+    fn merge_as_refs(
+        &self,
+        repo: &Path,
+        first: &CommitId,
+        second: &CommitId,
+        message: &str,
+    ) -> Result<RefMerge, VcsError>;
+
+    /// Move the local branch `branch` from `expected` to `to`, a fast-forward,
+    /// refusing where the branch is no longer at `expected`.
+    fn advance_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        expected: &CommitId,
+        to: &CommitId,
+    ) -> Result<(), VcsError>;
+
+    /// Move the local branch `branch` from `expected` to `to`, which need not
+    /// descend from it, after `kept` backed `expected` up.
+    fn reset_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        expected: &CommitId,
+        to: &CommitId,
+        kept: &BackupWitness,
+    ) -> Result<(), VcsError>;
+
+    /// Put the local branch `branch` back at `original`, where an operation
+    /// moved it to `moved_to`, refusing where it has moved since.
+    fn restore_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        moved_to: &CommitId,
+        original: &CommitId,
+    ) -> Result<(), VcsError>;
+
+    /// Reset the ref `on` witnesses to `to`, which need not descend from it,
+    /// after `kept` backed the tip being left up.
+    fn reset_attached_ref_keeping(
+        &self,
+        on: &AttachedRef,
+        to: &ResolvedRevisionId,
+        kept: &BackupWitness,
+    ) -> Result<(), VcsError> {
+        let head = self.head_revision(on.repo())?;
+        if kept.repo() != on.repo() || kept.backup().tip != head {
+            return Err(VcsError::StaleRefWitness {
+                repo: on.repo().to_path_buf(),
+                expected: format!("a backup of {}", head.id().short()),
+                observed: format!("a backup of {}", kept.backup().tip.id().short()),
+            });
+        }
+        self.verify_attachment(on)?;
+        self.hard_reset(on.repo(), to)
     }
 }
 

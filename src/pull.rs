@@ -1,14 +1,18 @@
 //! `rwv pull` — fetch, fast-forward the project branch, then update.
 //!
-//! The project branch moves only forward: a branch that is behind its
-//! upstream takes it in, one that is even or ahead has nothing to take, and
-//! one that has diverged is refused with nothing changed. The members are
-//! then aligned to the lock the pulled commit brought.
+//! A branch that is behind its upstream takes it in, one that is even or ahead
+//! has nothing to take, and one that has diverged is refused with nothing
+//! changed, unless `--merge-upstream` merges it or `--reset-to-upstream` moves
+//! it to the upstream, keeping a backup. The members are then aligned to the
+//! lock the pulled commit brought.
 
 use crate::activate::ActivateOptions;
 use crate::diagnosis::{judge_edits, Report, State};
 use crate::fetch::{fetch_repos, FetchedRepoOutput};
-use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath};
+use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath};
+use crate::merge_upstream::{Flags, Op};
+use crate::op_state::{OpVerb, TakeInRecord};
+use crate::project_merge::{ProjectMerge, Sides};
 use crate::member_selection::MemberSelection;
 use crate::parallel::OutputMode;
 use crate::placement::PlacementOutput;
@@ -16,13 +20,15 @@ use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::skipped::SkippedEffect;
 use crate::update::{update_members, MemberOutcomeOutput};
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment};
+use crate::vcs::{
+    project_vcs, vcs_for, AttachedRef, HeadAttachment, RawRefName, ResolvedRevisionId, Vcs,
+};
 use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Schema URL embedded in `rwv pull --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/pull.json`.
@@ -42,6 +48,10 @@ pub enum TakeIn {
     NoUpstream,
     /// The project repo is on no branch.
     Detached,
+    /// The branch had diverged and was merged with its upstream.
+    Merged,
+    /// The branch was moved to its upstream, its own tip kept in a backup.
+    Reset,
 }
 
 /// A member whose pin the pulled lock moved backward, or to a commit that does
@@ -80,12 +90,15 @@ pub struct ProjectTakeInOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     pub result: TakeIn,
-    /// The branch's tip before. Present for `advanced`.
+    /// The branch's tip before. Present for `advanced`, `merged` and `reset`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    /// The branch's tip after. Present for `advanced`.
+    /// The branch's tip after. Present for `advanced`, `merged` and `reset`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// The backup holding the tip a `reset` left.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
     /// Members the pulled lock re-pinned backward.
     pub re_pinned: Vec<RePinnedOutput>,
     /// Member entries the pulled `rwv.toml` added, removed or changed.
@@ -156,39 +169,76 @@ impl Recorded {
 /// Run `rwv pull`: the pruning fetch of every repo, a fast-forward of the
 /// project branch, then `rwv update`, which `selection` narrows.
 ///
-/// The fetch moves no branch; the fast-forward moves the project branch and
+/// The fetch moves no branch; the take-in moves the project branch and
 /// nothing else; the update aligns the members to the lock the project
-/// branch now holds.
+/// branch now holds. With `flags`, a diverged project branch is merged or
+/// reset under the op record, and `resume` finishes the one a conflict
+/// stopped.
 pub fn run_pull(
     ctx: &WorkspaceContext,
     selection: &MemberSelection,
     jobs: usize,
     output: OutputMode,
     activation: ActivateOptions,
+    take: Take,
 ) -> anyhow::Result<()> {
-    let everything = MemberSelection::new(RepoFilter::parse(&[], &[])?, false);
-    let fetched = fetch_repos(ctx, &everything, jobs, output)?;
-    if fetched.unconfirmed > 0 {
-        crate::refuse!(
-            RefusalKind::PartialRunAborted,
-            "pull could not complete the fetch of {} repo(s) out of {}; nothing was taken in. \
-             `rwv update` aligns the members to the lock as it stands",
-            fetched.unconfirmed,
-            fetched.records.len()
-        );
-    }
+    let resumed = match &take {
+        Take::Continue => Some(Op::resume(ctx, OpVerb::Pull)?),
+        Take::Fresh(_) => {
+            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+            None
+        }
+    };
+    let fetched = match &resumed {
+        Some(_) => None,
+        None => {
+            let everything = MemberSelection::new(RepoFilter::parse(&[], &[])?, false);
+            let fetched = fetch_repos(ctx, &everything, jobs, output)?;
+            if fetched.unconfirmed > 0 {
+                crate::refuse!(
+                    RefusalKind::PartialRunAborted,
+                    "pull could not complete the fetch of {} repo(s) out of {}; nothing was \
+                     taken in. `rwv update` aligns the members to the lock as it stands",
+                    fetched.unconfirmed,
+                    fetched.records.len()
+                );
+            }
+            Some(fetched)
+        }
+    };
     let project_name = match &ctx.checkout {
         Checkout::Primary { .. } => ctx.require_active_project_on_disk()?.clone(),
         Checkout::Workweave { project, .. } => project.clone(),
     };
     crate::branch::require_recorded(ctx)?;
-    let project = take_in_project(ctx, &project_name, output)?;
+    let how = match (&take, resumed) {
+        (Take::Fresh(flags), None) => How {
+            flags: flags.clone(),
+            resumed: None,
+            activation,
+            jobs,
+        },
+        (_, Some((op, project, record))) => {
+            anyhow::ensure!(
+                project == project_name,
+                "the op was started for project `{project}`, not `{project_name}`"
+            );
+            How {
+                flags: Flags::default().recorded(&record),
+                resumed: Some((op, record)),
+                activation,
+                jobs,
+            }
+        }
+        (Take::Continue, None) => unreachable!("a continue resumes an op"),
+    };
+    let project = take_in_project(ctx, &project_name, output, &how)?;
 
     let run = update_members(ctx, selection, jobs, output, activation)?;
     if output.is_json() {
         PullJsonOutput {
             schema: PULL_SCHEMA_URL.to_owned(),
-            fetched: fetched.records,
+            fetched: fetched.map(|fetched| fetched.records).unwrap_or_default(),
             project,
             outcomes: run.envelope.outcomes,
             judged: run.envelope.judged,
@@ -201,12 +251,43 @@ pub fn run_pull(
     run.tail
 }
 
-/// Fast-forward the project repo's branch to its upstream when it is behind,
-/// and report what the commits it took in changed.
+/// What `pull` was asked to do for a diverged branch.
+pub enum Take {
+    Fresh(Flags),
+    Continue,
+}
+
+struct How {
+    flags: Flags,
+    resumed: Option<(Op, TakeInRecord)>,
+    activation: ActivateOptions,
+    jobs: usize,
+}
+
+/// Every repo a merge or reset may move: the project repo and each member
+/// checked out here.
+fn savepoint_repos(ctx: &WorkspaceContext, project: &ProjectName) -> Vec<(PathBuf, Box<dyn Vcs>)> {
+    let dir = project_dir(ctx.active_path(), project);
+    let mut repos: Vec<(PathBuf, Box<dyn Vcs>)> = vec![(dir.clone(), project_vcs())];
+    if let Ok(manifest) = Manifest::from_path(&dir.join(Manifest::FILE_NAME)) {
+        for (path, entry) in manifest.iter_entries() {
+            let member = ctx.active_path().join(path.as_path());
+            if member.exists() {
+                repos.push((member, vcs_for(entry.vcs_type)));
+            }
+        }
+    }
+    repos
+}
+
+/// Take in the project repo's branch from its upstream: fast-forward it where
+/// it is behind, and merge or reset it where it has diverged and the flags
+/// say so; report what the commits it took in changed.
 fn take_in_project(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     output: OutputMode,
+    how: &How,
 ) -> anyhow::Result<ProjectTakeInOutput> {
     let dir = project_dir(ctx.active_path(), project);
     let path = project_rel_path(project);
@@ -222,6 +303,7 @@ fn take_in_project(
         result: TakeIn::Detached,
         from: None,
         to: None,
+        backup: None,
         re_pinned: Vec::new(),
         member_changes: Vec::new(),
     };
@@ -234,31 +316,59 @@ fn take_in_project(
         }
     };
     taken.branch = Some(attached.to_string());
-    let Some(upstream) = vcs.upstream_tip(&attached)? else {
+    let recorded_upstream = how
+        .resumed
+        .as_ref()
+        .and_then(|(_, record)| record.upstream_tips.get(&RepoKey::Project))
+        .map(|tip| ResolvedRevisionId::from(tip.clone()));
+    let upstream = match recorded_upstream {
+        Some(tip) => Some(tip),
+        None => vcs.upstream_tip(&attached)?,
+    };
+    let Some(upstream) = upstream else {
         taken.result = TakeIn::NoUpstream;
         say(format!("{path}: '{attached}' has no upstream to take in"));
         return Ok(taken);
     };
     let head = vcs.head_revision(&dir)?;
-    if head == upstream {
+    let operand = RepoOperand::Project(project.clone());
+    for named in &how.flags.reset_to_upstream {
+        if *named != operand {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "`rwv pull --reset-to-upstream` resets the project repo, `{operand}`; `{named}` \
+                 is reset by `rwv update --remote --reset-to-upstream {named}`"
+            );
+        }
+    }
+    let contains_upstream = vcs.is_ancestor(&dir, &upstream, &head)?;
+    let reset = how.flags.resets(&operand) && head != upstream;
+    if head == upstream && !reset {
         taken.result = TakeIn::Even;
         say(format!("{path}: '{attached}' is at its upstream"));
         return Ok(taken);
     }
-    if vcs.is_ancestor(&dir, &upstream, &head)? {
+    let diverged = !contains_upstream && !vcs.is_ancestor(&dir, &head, &upstream)?;
+    if contains_upstream && !reset && how.resumed.is_none() {
         taken.result = TakeIn::Ahead;
         say(format!(
             "{path}: '{attached}' is ahead of its upstream, so nothing to take in"
         ));
         return Ok(taken);
     }
-    if !vcs.is_ancestor(&dir, &head, &upstream)? {
-        let (ahead, behind) = vcs.ahead_behind(&dir, upstream.id(), head.id());
-        return Err(State::PushBranchDiverged
-            .of(&path)
-            .subject(format!("{ahead} ahead, {behind} behind"))
-            .judge(vcs.as_ref())
-            .refused());
+    if reset {
+        return reset_project(ctx, project, &dir, &attached, &upstream, &head, how, taken, &say);
+    }
+    if diverged || (contains_upstream && how.resumed.is_some()) {
+        if !how.flags.merge_upstream {
+            let (ahead, behind) = vcs.ahead_behind(&dir, upstream.id(), head.id());
+            return Err(State::PushBranchDiverged
+                .of(&path)
+                .subject(format!("{ahead} ahead, {behind} behind"))
+                .judge(vcs.as_ref())
+                .refused());
+        }
+        return merge_project(ctx, project, &dir, &attached, &upstream, &head, how, taken, &say);
     }
 
     let tracked = vcs.tracked_dirty_file_names(&dir)?;
@@ -389,4 +499,132 @@ fn differing_fields(was: &RepoEntry, now: &RepoEntry) -> Vec<String> {
         bool::from(now.recurse_submodules).to_string(),
     );
     fields
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reset_project(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    dir: &Path,
+    attached: &AttachedRef,
+    upstream: &ResolvedRevisionId,
+    head: &ResolvedRevisionId,
+    how: &How,
+    mut taken: ProjectTakeInOutput,
+    say: &dyn Fn(String),
+) -> anyhow::Result<ProjectTakeInOutput> {
+    let vcs = project_vcs();
+    let path = project_rel_path(project);
+    let branch = RawRefName::new(attached.to_string());
+    let tracked = vcs.tracked_dirty_file_names(dir)?;
+    let mut report = Report::default();
+    crate::merge_upstream::judge_reset(
+        &path,
+        dir,
+        vcs.as_ref(),
+        Some(upstream),
+        &crate::merge_upstream::dependents_of(vcs.as_ref(), dir, attached.to_string().as_str())?,
+        judge_edits(vcs.as_ref(), &path, dir, tracked, None),
+        &mut report,
+    );
+    report.into_result()?;
+    let repos = savepoint_repos(ctx, project);
+    let op = match &how.resumed {
+        Some(_) => None,
+        None => Some(Op::begin(
+            ctx.active_path(),
+            project,
+            OpVerb::Pull,
+            how.flags.into_record(),
+            &repos,
+        )?),
+    };
+    let op = op.context("an op that reset the project repo has nothing left to resume")?;
+    op.record_upstream(RepoKey::Project, upstream.id())?;
+    let backup = crate::merge_upstream::reset_to_upstream(
+        ctx.active_path(),
+        RepoKey::Project,
+        vcs.as_ref(),
+        dir,
+        &branch,
+        Some(attached),
+        upstream,
+    )?;
+    op.finish(&repos);
+    taken.result = TakeIn::Reset;
+    taken.from = Some(head.id().as_str().to_owned());
+    taken.to = Some(upstream.id().as_str().to_owned());
+    taken.backup = Some(backup.clone());
+    say(format!(
+        "{path}: reset '{attached}' from {} to its upstream {}, keeping {} in backup {backup}",
+        head.id().short(),
+        upstream.id().short(),
+        head.id().short()
+    ));
+    Ok(taken)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_project(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    dir: &Path,
+    attached: &AttachedRef,
+    upstream: &ResolvedRevisionId,
+    head: &ResolvedRevisionId,
+    how: &How,
+    mut taken: ProjectTakeInOutput,
+    say: &dyn Fn(String),
+) -> anyhow::Result<ProjectTakeInOutput> {
+    let vcs = project_vcs();
+    let path = project_rel_path(project);
+    let repos = savepoint_repos(ctx, project);
+    let began;
+    let op = match &how.resumed {
+        Some((op, _)) => op,
+        None => {
+            let tracked = vcs.tracked_dirty_file_names(dir)?;
+            let mut report = Report::default();
+            report.extend(judge_edits(vcs.as_ref(), &path, dir, tracked, None));
+            report.into_result()?;
+            began = Op::begin(
+                ctx.active_path(),
+                project,
+                OpVerb::Pull,
+                how.flags.into_record(),
+                &repos,
+            )?;
+            &began
+        }
+    };
+    if how.resumed.is_none() {
+        op.record_upstream(RepoKey::Project, upstream.id())?;
+    }
+    let merged = if vcs.is_ancestor(dir, upstream, head)? {
+        head.id().clone()
+    } else {
+        ProjectMerge {
+            ctx,
+            project,
+            verb: "pull",
+            resume: "rwv pull --continue",
+            jobs: how.jobs,
+            opts: how.activation,
+            message: format!("Merge the upstream of {attached} into {attached}"),
+        }
+        .run(&Sides {
+            first: upstream.id().clone(),
+            second: head.id().clone(),
+        })?
+    };
+    op.finish(&repos);
+    taken.result = TakeIn::Merged;
+    taken.from = Some(head.id().as_str().to_owned());
+    taken.to = Some(merged.as_str().to_owned());
+    say(format!(
+        "{path}: merged '{attached}' with its upstream {}, into {}",
+        upstream.id().short(),
+        merged.short()
+    ));
+    Ok(taken)
 }

@@ -140,7 +140,7 @@ fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &st
         "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
     );
@@ -247,7 +247,7 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
         "{{\"id\": \"reentry-test-advance\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
     );
@@ -451,7 +451,7 @@ fn write_sync_to_owner_record_at_phase(
         "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
     );
@@ -711,7 +711,7 @@ fn write_sync_to_retire_record(
         "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
     );
@@ -1067,7 +1067,7 @@ fn write_sync_to_record_with_strategy(
         "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
     );

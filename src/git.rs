@@ -4,7 +4,7 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
-    AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange,
+    AbsentRemote, AttachedRef, Backup, BackupMark, BackupWitness, RefMerge, TreeMerges, BackupName, BackupSource, BranchChange,
     BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
     DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
     FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
@@ -25,6 +25,7 @@ use std::process::Stdio;
 
 mod argv;
 mod backup;
+mod merge;
 mod records;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
@@ -4086,6 +4087,85 @@ impl Vcs for GitVcs {
     fn population(&self) -> Option<&dyn WorkspacePopulation> {
         git_answers_population().then_some(self as &dyn WorkspacePopulation)
     }
+
+    fn tree_merges(&self) -> Option<&dyn TreeMerges> {
+        git_merges_trees().then_some(self as &dyn TreeMerges)
+    }
+
+    fn start_merge(&self, checkout: &Path, other: &CommitId) -> Result<Vec<String>, VcsError> {
+        Self::begin_checkout_merge(checkout, other)
+    }
+
+    fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        Self::merge_head(checkout)
+    }
+
+    fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError> {
+        Self::unmerged(checkout)
+    }
+
+    fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {
+        Self::staged(checkout, path)
+    }
+
+    fn commit_merge(
+        &self,
+        checkout: &Path,
+        first: &CommitId,
+        second: &CommitId,
+        message: &str,
+    ) -> Result<CommitId, VcsError> {
+        Self::commit_staged_merge(checkout, first, second, message)
+    }
+
+    fn merge_as_refs(
+        &self,
+        repo: &Path,
+        first: &CommitId,
+        second: &CommitId,
+        message: &str,
+    ) -> Result<RefMerge, VcsError> {
+        self.merge_commit_as_refs(repo, first, second, message)
+    }
+
+    fn advance_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        expected: &CommitId,
+        to: &CommitId,
+    ) -> Result<(), VcsError> {
+        if !Self::descends(repo, expected.as_str(), to.as_str())? {
+            return Err(VcsError::CommandFailed {
+                args: vec!["update-ref".to_owned(), local_branch(branch.as_str())],
+                repo: repo.to_path_buf(),
+                stderr: "not a fast-forward".to_owned(),
+            });
+        }
+        Self::update_branch_ref(repo, branch, expected, to)
+    }
+
+    fn restore_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        moved_to: &CommitId,
+        original: &CommitId,
+    ) -> Result<(), VcsError> {
+        Self::update_branch_ref(repo, branch, moved_to, original)
+    }
+
+    fn reset_branch_ref(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        expected: &CommitId,
+        to: &CommitId,
+        kept: &BackupWitness,
+    ) -> Result<(), VcsError> {
+        Self::witness_backs_up(repo, expected, kept)?;
+        Self::update_branch_ref(repo, branch, expected, to)
+    }
 }
 
 /// The ref namespace savepoints live under.
@@ -4276,9 +4356,12 @@ enum WorktreeFiles {
 /// `post-checkout` hook `worktree add` would have, arrived in 2.36.
 const FIRST_RELEASE_ANSWERING_POPULATION: (u32, u32) = (2, 36);
 
-fn git_answers_population() -> bool {
-    static ANSWERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ANSWERS.get_or_init(|| {
+/// `merge-tree --write-tree`, which computes a merge as a tree, arrived in 2.38.
+const FIRST_RELEASE_MERGING_TREES: (u32, u32) = (2, 38);
+
+fn git_release() -> Option<(u32, u32)> {
+    static RELEASE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *RELEASE.get_or_init(|| {
         git_command()
             .args(["version"])
             .output()
@@ -4286,8 +4369,15 @@ fn git_answers_population() -> bool {
             .filter(|out| out.status.success())
             .and_then(|out| String::from_utf8(out.stdout).ok())
             .and_then(|version| release_of(&version))
-            .is_some_and(|release| release >= FIRST_RELEASE_ANSWERING_POPULATION)
     })
+}
+
+fn git_answers_population() -> bool {
+    git_release().is_some_and(|release| release >= FIRST_RELEASE_ANSWERING_POPULATION)
+}
+
+fn git_merges_trees() -> bool {
+    git_release().is_some_and(|release| release >= FIRST_RELEASE_MERGING_TREES)
 }
 
 /// `(major, minor)` from `git version`, whose tail vendors extend freely

@@ -1,9 +1,10 @@
 //! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv sync-to`.
 //!
-//! # Schema v2 (no back-compat with v1)
+//! # Schema v3 (no back-compat with v2)
 //!
-//! An in-flight v1 `.rwv-op` across an upgrade is resolved by the operator
-//! with `abort`. Do not add v1-compat parsing.
+//! A record carries its `schema`. One that carries another, or none, is
+//! refused by every reader, naming the release that wrote it: it is finished
+//! or aborted with that release. Do not add older-schema parsing.
 //!
 //! ## Owner record (`.rwv-op`)
 //!
@@ -92,6 +93,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+/// The schema every record this release writes carries.
+pub(crate) const OP_RECORD_SCHEMA: u32 = 3;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
@@ -260,7 +264,10 @@ impl FromStr for SavepointKey {
 /// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
 /// made where the message is written.
 pub fn resume_command(verb: OpVerb) -> String {
-    format!("rwv {verb} --continue")
+    match verb {
+        OpVerb::UpdateRemote => "rwv update --remote --continue".to_owned(),
+        _ => format!("rwv {verb} --continue"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +306,10 @@ pub enum OpVerb {
     Sync,
     /// Two-step sync-to.
     SyncTo,
+    /// `rwv pull` with `--merge-upstream` or `--reset-to-upstream`.
+    Pull,
+    /// `rwv update --remote` with `--merge-upstream` or `--reset-to-upstream`.
+    UpdateRemote,
 }
 
 impl std::fmt::Display for OpVerb {
@@ -476,6 +487,34 @@ impl FromIterator<Override> for Overrides {
     }
 }
 
+/// What `pull` and `update --remote` were asked to do, kept so `--continue`
+/// re-applies it and so a resumed op acts on the tips the first run planned.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TakeInRecord {
+    pub merge_upstream: bool,
+    /// The repos named by `--reset-to-upstream`, spelled as an operand.
+    pub reset_to_upstream: Vec<String>,
+    pub roles: Vec<String>,
+    pub repos: Vec<String>,
+    pub dirty: bool,
+    pub commit: bool,
+    pub message: Option<String>,
+    pub no_materialize: bool,
+    /// Each repo's upstream tip as the op's fetch left it.
+    pub upstream_tips: BTreeMap<RepoKey, CommitId>,
+    /// Each branch the op moved as a ref, where it was and where it went.
+    pub ref_moves: Vec<RefMove>,
+}
+
+/// A branch checked out nowhere that the op moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefMove {
+    pub repo: RepoKey,
+    pub branch: String,
+    pub from: CommitId,
+    pub to: CommitId,
+}
+
 // ---------------------------------------------------------------------------
 // OwnerRecord — the full op record at the initiating workspace
 // ---------------------------------------------------------------------------
@@ -525,6 +564,8 @@ pub struct OwnerRecord {
     pub overrides: Overrides,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
+    /// What a `pull` or `update --remote` op was asked to do.
+    pub take_in: Option<TakeInRecord>,
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +588,8 @@ pub struct OwnerRecord {
 /// it in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WireOwnerRecord {
+    schema: u32,
+    release: String,
     id: OpId,
     verb: OpVerb,
     strategy: SyncStrategy,
@@ -559,6 +602,7 @@ struct WireOwnerRecord {
     converged_tips: BTreeMap<RepoKey, CommitId>,
     overrides: Vec<Override>,
     started_at: String,
+    take_in: Option<TakeInRecord>,
 }
 
 impl From<WireOwnerRecord> for OwnerRecord {
@@ -584,6 +628,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
             tips,
             overrides: w.overrides.into_iter().collect(),
             started_at: w.started_at,
+            take_in: w.take_in,
         }
     }
 }
@@ -596,6 +641,8 @@ impl From<OwnerRecord> for WireOwnerRecord {
             PhaseTips::Converged(m) => (BTreeMap::new(), m),
         };
         Self {
+            schema: OP_RECORD_SCHEMA,
+            release: crate::rwv_version().to_string(),
             id: r.id,
             verb: r.verb,
             strategy: r.strategy,
@@ -608,6 +655,7 @@ impl From<OwnerRecord> for WireOwnerRecord {
             converged_tips,
             overrides: r.overrides.iter().collect(),
             started_at: r.started_at,
+            take_in: r.take_in,
         }
     }
 }
@@ -635,6 +683,7 @@ impl OwnerRecord {
             tips: PhaseTips::default(),
             overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
+            take_in: None,
         }
     }
 
@@ -661,6 +710,32 @@ impl OwnerRecord {
             tips: PhaseTips::default(),
             overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
+            take_in: None,
+        }
+    }
+
+    /// Build a new [`OwnerRecord`] for a `pull` or `update --remote` that
+    /// merges or resets, which acts on one workspace alone.
+    pub fn new_take_in(
+        op_id: &OpId,
+        verb: OpVerb,
+        project: ProjectName,
+        workspace: &Path,
+        take_in: TakeInRecord,
+    ) -> Self {
+        Self {
+            id: op_id.clone(),
+            verb,
+            strategy: SyncStrategy::Ff,
+            project,
+            source: CanonicalPath::of(workspace),
+            target: CanonicalPath::of(workspace),
+            retire: false,
+            phase: OpPhase::Replay,
+            tips: PhaseTips::default(),
+            overrides: Overrides::default(),
+            started_at: utc_now_rfc3339(),
+            take_in: Some(take_in),
         }
     }
 
@@ -704,7 +779,9 @@ impl OwnerHeader {
     /// as long as its record exists.
     pub fn savepoint_keys(&self) -> Vec<SavepointKey> {
         match self.verb {
-            OpVerb::Sync => vec![SavepointKey::Op(self.id.clone())],
+            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => {
+                vec![SavepointKey::Op(self.id.clone())]
+            }
             OpVerb::SyncTo => vec![
                 SavepointKey::Op(self.id.clone()),
                 SavepointKey::SyncToTarget(self.id.clone()),
@@ -930,6 +1007,7 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
     let json = path
         .read_to_string()
         .with_context(|| format!("failed to read owner record from {path}"))?;
+    refuse_other_schema(&path, &json)?;
     let whole_error = match serde_json::from_str::<OwnerRecord>(&json) {
         Ok(record) => return Ok(Some(OwnerReading::Whole(record))),
         Err(e) => e,
@@ -952,6 +1030,23 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
     }
 }
 
+fn refuse_other_schema(path: &StatePath, json: &str) -> anyhow::Result<()> {
+    let record: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    if record.get("schema").and_then(serde_json::Value::as_u64) == Some(u64::from(OP_RECORD_SCHEMA))
+    {
+        return Ok(());
+    }
+    let writer = match record.get("release").and_then(serde_json::Value::as_str) {
+        Some(release) => format!("rwv {release}"),
+        None => format!("an rwv release before {}", crate::rwv_version()),
+    };
+    anyhow::bail!(
+        "the operation recorded at {path} was written by {writer}, in a record schema this \
+         release does not read, so neither `--continue` nor `rwv abort` acts on it. Finish or \
+         abort it with the release that wrote it, then rerun"
+    )
+}
+
 /// The header of the `.rwv-op` file in `workspace_dir`, whether or not the
 /// rest of the record parses.
 pub fn read_owner_header(workspace_dir: &Path) -> anyhow::Result<Option<OwnerHeader>> {
@@ -972,6 +1067,27 @@ pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()>
         )
     })?;
     record.phase = new_phase;
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal `tip` as where this op moved `repo`, so `rwv abort` attributes the
+/// tip to the op.
+pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?
+        .ok_or_else(|| anyhow::anyhow!("no owner record at {} to journal in", workspace_dir.display()))?;
+    if let Some(advanced) = record.tips.advanced_mut() {
+        advanced.insert(repo, tip.clone());
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal a branch the op moved as a ref, checked out nowhere.
+pub fn journal_ref_move(workspace_dir: &Path, moved: RefMove) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?
+        .ok_or_else(|| anyhow::anyhow!("no owner record at {} to journal in", workspace_dir.display()))?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in.ref_moves.push(moved);
+    }
     write_owner(workspace_dir, &record)
 }
 
@@ -1167,7 +1283,7 @@ pub struct TouchedWorkspaces {
 impl TouchedWorkspaces {
     pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: &Path) -> Self {
         let leases = match verb {
-            OpVerb::Sync => Vec::new(),
+            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => Vec::new(),
             OpVerb::SyncTo => vec![dest_workspace_dir.to_path_buf()],
         };
         Self {

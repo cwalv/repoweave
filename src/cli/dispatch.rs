@@ -1426,6 +1426,9 @@ pub fn run() -> anyhow::Result<()> {
             )?;
         }
         Some(Commands::Pull {
+            merge_upstream,
+            reset_to_upstream,
+            do_continue,
             project,
             selector,
             jobs,
@@ -1441,10 +1444,21 @@ pub fn run() -> anyhow::Result<()> {
                 crate::parallel::resolve_jobs(jobs),
                 OutputMode::from_flag(json),
                 activate::ActivateOptions { no_materialize },
+                if do_continue {
+                    pull::Take::Continue
+                } else {
+                    pull::Take::Fresh(crate::merge_upstream::Flags {
+                        merge_upstream,
+                        reset_to_upstream,
+                    })
+                },
             )?;
         }
         Some(Commands::Update {
             remote,
+            merge_upstream,
+            reset_to_upstream,
+            do_continue,
             dirty,
             commit,
             message,
@@ -1483,6 +1497,14 @@ pub fn run() -> anyhow::Result<()> {
                     &selector.parse_filter()?,
                     jobs,
                     opts,
+                    if do_continue {
+                        update_remote::Take::Continue
+                    } else {
+                        update_remote::Take::Fresh(crate::merge_upstream::Flags {
+                            merge_upstream,
+                            reset_to_upstream,
+                        })
+                    },
                 )?;
             } else {
                 update::run_update(

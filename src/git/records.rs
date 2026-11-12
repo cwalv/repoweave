@@ -15,7 +15,7 @@ use std::process::Stdio;
 pub(super) const RECORDS_BRANCH: &str = "rwv-records";
 
 const REMOTE_TRACKING_ROOT: &str = "refs/remotes/";
-const FALLBACK_IDENTITY: [(&str, &str); 4] = [
+pub(super) const FALLBACK_IDENTITY: [(&str, &str); 4] = [
     ("GIT_AUTHOR_NAME", "rwv"),
     ("GIT_AUTHOR_EMAIL", "rwv@localhost"),
     ("GIT_COMMITTER_NAME", "rwv"),
@@ -24,7 +24,7 @@ const FALLBACK_IDENTITY: [(&str, &str); 4] = [
 
 type RemoteSettings = (Option<String>, Option<String>);
 
-fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
+pub(super) fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
     VcsError::CommandFailed {
         args: args.iter().map(|a| (*a).to_owned()).collect(),
         repo: repo.to_path_buf(),
@@ -32,7 +32,7 @@ fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
     }
 }
 
-fn commit_id(text: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
+pub(super) fn commit_id(text: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
     CommitId::parse(text.trim()).map_err(|e| failed(args, repo, format!("{e:#}")))
 }
 
@@ -120,11 +120,11 @@ impl GitVcs {
         }
     }
 
-    fn run_bytes(args: &[&str], repo: &Path, input: &[u8]) -> Result<Vec<u8>, VcsError> {
+    pub(super) fn run_bytes(args: &[&str], repo: &Path, input: &[u8]) -> Result<Vec<u8>, VcsError> {
         Self::run_bytes_in(args, repo, input, &[])
     }
 
-    fn run_bytes_in(
+    pub(super) fn run_bytes_in(
         args: &[&str],
         repo: &Path,
         input: &[u8],
@@ -295,7 +295,7 @@ impl GitVcs {
         commit_id(&commit, &["commit-tree"], repo)
     }
 
-    fn has_identity(repo: &Path) -> Result<bool, VcsError> {
+    pub(super) fn has_identity(repo: &Path) -> Result<bool, VcsError> {
         let output = git_command()
             .args(["var", "GIT_COMMITTER_IDENT"])
             .current_dir(repo)

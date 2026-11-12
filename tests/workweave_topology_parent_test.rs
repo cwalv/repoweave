@@ -221,7 +221,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
         "{{\"id\": \"planted-delete-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
     );
@@ -264,7 +264,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
         "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&main.root),
         tgt = common::json_escaped(&ww.root),
     );

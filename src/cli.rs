@@ -470,8 +470,17 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds.
+    /// Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. A diverged branch is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream.
     Pull {
+        /// Merge a diverged project branch with its upstream, first parent the upstream, merging each member whose pin both sides changed first, and recording the merged pins in the commit. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
+        #[arg(long, conflicts_with = "do_continue")]
+        merge_upstream: bool,
+        /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
+        #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
+        reset_to_upstream: Vec<crate::manifest::RepoOperand>,
+        /// Resume the pull a conflict stopped, from the workspace it runs in
+        #[arg(long = "continue")]
+        do_continue: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -492,6 +501,15 @@ pub enum Commands {
         /// Advance each repo to its branch HEAD on the remote and record the advanced tips in the lock
         #[arg(long)]
         remote: bool,
+        /// With --remote, merge each acted-on member branch that has diverged from its upstream, first parent the upstream. A branch no checkout has attached merges as refs and touches no working tree. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
+        #[arg(long, requires = "remote", conflicts_with = "do_continue")]
+        merge_upstream: bool,
+        /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
+        #[arg(long, value_name = "REPO", requires = "remote", conflicts_with = "do_continue")]
+        reset_to_upstream: Vec<crate::manifest::RepoOperand>,
+        /// With --remote, resume the update a conflict stopped, from the workspace it runs in
+        #[arg(long = "continue", requires = "remote")]
+        do_continue: bool,
         /// Allow update with uncommitted changes in repos when relocking
         #[arg(long, requires = "remote")]
         dirty: bool,

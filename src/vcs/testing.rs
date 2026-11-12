@@ -721,6 +721,73 @@ impl Vcs for FakeVcs {
         unsupported("write_commit")
     }
 
+    fn start_merge(&self, _checkout: &Path, _other: &CommitId) -> Result<Vec<String>, VcsError> {
+        unsupported("start_merge")
+    }
+
+    fn merge_in_flight(&self, _checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        unsupported("merge_in_flight")
+    }
+
+    fn unmerged_paths(&self, _checkout: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("unmerged_paths")
+    }
+
+    fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {
+        unsupported("staged_file")
+    }
+
+    fn commit_merge(
+        &self,
+        _checkout: &Path,
+        _first: &CommitId,
+        _second: &CommitId,
+        _message: &str,
+    ) -> Result<CommitId, VcsError> {
+        unsupported("commit_merge")
+    }
+
+    fn merge_as_refs(
+        &self,
+        _repo: &Path,
+        _first: &CommitId,
+        _second: &CommitId,
+        _message: &str,
+    ) -> Result<crate::vcs::RefMerge, VcsError> {
+        unsupported("merge_as_refs")
+    }
+
+    fn advance_branch_ref(
+        &self,
+        _repo: &Path,
+        _branch: &crate::vcs::RawRefName,
+        _expected: &CommitId,
+        _to: &CommitId,
+    ) -> Result<(), VcsError> {
+        unsupported("advance_branch_ref")
+    }
+
+    fn restore_branch_ref(
+        &self,
+        _repo: &Path,
+        _branch: &crate::vcs::RawRefName,
+        _moved_to: &CommitId,
+        _original: &CommitId,
+    ) -> Result<(), VcsError> {
+        unsupported("restore_branch_ref")
+    }
+
+    fn reset_branch_ref(
+        &self,
+        _repo: &Path,
+        _branch: &crate::vcs::RawRefName,
+        _expected: &CommitId,
+        _to: &CommitId,
+        _kept: &crate::vcs::BackupWitness,
+    ) -> Result<(), VcsError> {
+        unsupported("reset_branch_ref")
+    }
+
     fn merge_bases(
         &self,
         _repo: &Path,

@@ -3,18 +3,12 @@
 //! pins, unless the tip declares the member elsewhere or a later lock in the
 //! range abandons the pin the merge left behind.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use crate::lock_merge::Held;
 use crate::manifest::{LockFile, Manifest, RepoPath};
 use crate::vcs::{CommitId, RangeCommit, ResolvedRevisionId, Vcs};
-
-/// The pins and declared branches one project commit holds.
-#[derive(Default, Clone)]
-struct Held {
-    pins: BTreeMap<RepoPath, CommitId>,
-    declared: BTreeMap<RepoPath, String>,
-}
 
 /// A member checkout the analysis asks about ancestry in.
 pub(crate) struct Member<'a> {
@@ -54,42 +48,42 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn held(&mut self, commit: &CommitId) -> &Held {
         if !self.cache.contains_key(commit) {
-            let held = self.read(commit);
+            let held = held_at(self.vcs, self.dir, commit);
             self.cache.insert(commit.clone(), held);
         }
         &self.cache[commit]
     }
+}
 
-    fn read(&self, commit: &CommitId) -> Held {
-        let at = ResolvedRevisionId::from(commit.clone());
-        let mut held = Held::default();
-        if let Some(lock) = self
-            .vcs
-            .read_file_at_revision(self.dir, &at, Path::new(LockFile::FILE_NAME))
-            .ok()
-            .and_then(|text| LockFile::from_json_str(&text).ok())
-        {
-            for (path, entry) in lock.iter_entries() {
-                if let Some(pin) = entry.version.as_commit_id() {
-                    held.pins.insert(path.clone(), pin);
-                }
+/// The pins and declared branches `commit` of the project repo at `dir`
+/// holds; a file that is absent or does not parse holds nothing.
+pub(crate) fn held_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Held {
+    let at = ResolvedRevisionId::from(commit.clone());
+    let mut held = Held::default();
+    if let Some(lock) = vcs
+        .read_file_at_revision(dir, &at, Path::new(LockFile::FILE_NAME))
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok())
+    {
+        for (path, entry) in lock.iter_entries() {
+            if let Some(pin) = entry.version.as_commit_id() {
+                held.pins.insert(path.clone(), pin);
             }
         }
-        if let Some(manifest) = self
-            .vcs
-            .read_file_at_revision(self.dir, &at, Path::new(Manifest::FILE_NAME))
-            .ok()
-            .and_then(|text| Manifest::from_toml_str(&text).ok())
-        {
-            for (path, entry) in manifest.iter_entries() {
-                held.declared.insert(
-                    path.clone(),
-                    entry.branch.local_counterpart().as_str().to_owned(),
-                );
-            }
-        }
-        held
     }
+    if let Some(manifest) = vcs
+        .read_file_at_revision(dir, &at, Path::new(Manifest::FILE_NAME))
+        .ok()
+        .and_then(|text| Manifest::from_toml_str(&text).ok())
+    {
+        for (path, entry) in manifest.iter_entries() {
+            held.declared.insert(
+                path.clone(),
+                entry.branch.local_counterpart().as_str().to_owned(),
+            );
+        }
+    }
+    held
 }
 
 fn reaches(member: &Member<'_>, ancestor: &CommitId, of: &CommitId) -> Option<bool> {
