@@ -304,7 +304,7 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
     assert_no_durable_definition(&ww.managed_repo);
 
     let synced = rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -391,7 +391,7 @@ fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
     add_a_verb_and_lock(&ww, "weave");
 
     let out = rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -449,7 +449,7 @@ fn the_templates_the_generator_reads_stay_authored() {
     }
 
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
