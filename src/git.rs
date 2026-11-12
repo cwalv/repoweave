@@ -7397,11 +7397,15 @@ mod branch_model_tests {
     // Savepoint keys: the ref names an op's savepoints have always had
     // -----------------------------------------------------------------------
 
-    fn both_sides(op: &str) -> [(SavepointKey, String); 2] {
+    fn both_sides(op: &str) -> [(SavepointKey, String); 3] {
         let op: OpId = op.parse().unwrap();
         [
             (SavepointKey::Op(op.clone()), op.to_string()),
             (SavepointKey::LandTarget(op.clone()), format!("{op}-target")),
+            (
+                SavepointKey::LandInPlace(op.clone()),
+                format!("{op}-in-place"),
+            ),
         ]
     }
 
@@ -7432,7 +7436,7 @@ mod branch_model_tests {
     #[test]
     fn the_two_sides_of_an_op_do_not_share_a_savepoint() {
         let p = repo();
-        let [(owner, _), (target, _)] = both_sides("1779769917405921588");
+        let [(owner, _), (target, _), _] = both_sides("1779769917405921588");
         GitVcs.create_savepoint(p.path(), &owner).unwrap();
 
         assert!(GitVcs.resolve_savepoint(p.path(), &owner).is_some());
@@ -7445,7 +7449,7 @@ mod branch_model_tests {
     #[test]
     fn savepoints_listed_read_back_as_the_keys_that_filed_them() {
         let p = repo();
-        let [(owner, _), (target, _)] = both_sides("1779769917405921588");
+        let [(owner, _), (target, _), _] = both_sides("1779769917405921588");
         GitVcs.create_savepoint(p.path(), &owner).unwrap();
         GitVcs.create_savepoint(p.path(), &target).unwrap();
         git(

@@ -6749,7 +6749,8 @@ pub fn member_change_left_behind_on_continue() -> Scenario {
 /// `main` would change `main`'s entry for `lib`. The refusal prints the
 /// rebind onto `stable` first, then the setter that keeps `main`'s value,
 /// then the consent, which states what it changes; the rebind, run as
-/// printed, lands the hotfix into `stable`.
+/// printed, lands the hotfix into `stable`, whose `app` is `main`, which the
+/// primary holds: it fast-forwards there in place.
 pub fn member_change_choice_order() -> Scenario {
     scenario(
         "member change choice order",
@@ -6763,10 +6764,6 @@ pub fn member_change_choice_order() -> Scenario {
                     "--declared",
                     "--set-branch",
                     "local/remotes/lib=dev",
-                    "--set-new-branch",
-                    "local/remotes/app=app-stable",
-                    "--set-new-branch",
-                    "local/remotes/docs=docs-stable",
                 ],
             )
             .expect(Exit::Succeeds)
@@ -6807,8 +6804,7 @@ pub fn member_change_choice_order() -> Scenario {
                     "rwv member set-branch local/remotes/lib main",
                     "land these changes too (this changes the target's entries, or its \
                      top-level setting)",
-                    "rwv land --allow-member-change local/remotes/app --allow-member-change \
-                     local/remotes/docs --allow-member-change local/remotes/lib",
+                    "rwv land --allow-member-change local/remotes/lib",
                 ]))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(
@@ -6825,12 +6821,120 @@ pub fn member_change_choice_order() -> Scenario {
             .expect(Exit::Succeeds),
             Step::rwv(&ww("hotfix"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("in place in"))
                 .claim(Claim::Contains {
                     at: ww("st"),
                     repo: Repo::App,
                     rev: "HEAD",
                     mark: "hotfix-app",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "hotfix-app",
                 }),
+            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// `shared-checkout-detached`: the primary on `main` holds `docs`'s `main`;
+/// a workweave on `stable`, which declares `main` for `docs` too, leaves
+/// `docs` detached at its pin, stated as the `checkout` fact; a hotfix onto
+/// `stable` moving `main` fast-forwards the primary's clean checkout of it in
+/// place; then commits on the detached checkout take C14.
+pub fn shared_checkout_detached() -> Scenario {
+    scenario(
+        "shared checkout detached",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "create",
+                    "stable",
+                    "--declared",
+                    "--set-branch",
+                    "local/remotes/lib=dev",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "st",
+                    "--branch",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
+            Step::rwv(&ww("st"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("checkout: main is checked out in"))
+                .claim(Claim::OutputContains(
+                    "local/remotes/docs: alignment aligned",
+                )),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "hotfix",
+                    "--at",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("hotfix"),
+                &[
+                    "branch",
+                    "set-mode",
+                    "proj--hotfix",
+                    "feature",
+                    "--target",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("hotfix"), Repo::Docs, "hotfix-docs"),
+            Step::rwv(&ww("hotfix"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("in place in"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Docs,
+                    rev: "main",
+                    mark: "hotfix-docs",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Docs,
+                    rev: "HEAD",
+                    mark: "hotfix-docs",
+                })
+                .claim(Claim::Contains {
+                    at: ww("st"),
+                    repo: Repo::Docs,
+                    rev: "HEAD",
+                    mark: "hotfix-docs",
+                }),
+            Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
+            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
+            Step::commit(&ww("st"), Repo::Docs, "st-docs"),
+            Step::rwv(&ww("st"), &["lock"])
+                .expect(Exit::refuses(Repo::Docs, State::AlignmentDetachedUnpushed))
+                .claim(Claim::OutputContains("keep this work on a branch")),
         ],
     )
 }

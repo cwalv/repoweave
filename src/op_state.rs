@@ -127,6 +127,11 @@ pub struct OpId(String);
 /// `land`. No [`OpId`] ends with it.
 const TARGET_SUFFIX: &str = "-target";
 
+/// What a [`SavepointKey`] appends to an op id to name a checkout a `land`
+/// fast-forwards in place, outside both its workspaces. No [`OpId`] ends
+/// with it.
+const IN_PLACE_SUFFIX: &str = "-in-place";
+
 /// Text that is not an op id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpIdError {
@@ -138,7 +143,8 @@ impl fmt::Display for OpIdError {
         write!(
             f,
             "{:?} is not an op id: an op id is one or more ASCII letters, digits, `-` or `_`, \
-             and does not end in `{TARGET_SUFFIX}`, which names the target side of a savepoint",
+             and does not end in `{TARGET_SUFFIX}` or `{IN_PLACE_SUFFIX}`, which name the other \
+             sides of a savepoint",
             self.text
         )
     }
@@ -175,7 +181,7 @@ impl FromStr for OpId {
         let spellable = !s.is_empty()
             && s.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if spellable && !s.ends_with(TARGET_SUFFIX) {
+        if spellable && !s.ends_with(TARGET_SUFFIX) && !s.ends_with(IN_PLACE_SUFFIX) {
             Ok(Self(s.to_owned()))
         } else {
             Err(OpIdError { text: s.to_owned() })
@@ -220,13 +226,16 @@ pub enum SavepointKey {
     Op(OpId),
     /// The workspace a `land` advances.
     LandTarget(OpId),
+    /// A checkout outside both of a `land`'s workspaces that holds a
+    /// receiving branch, which the landing fast-forwards in place.
+    LandInPlace(OpId),
 }
 
 impl SavepointKey {
     /// The op this savepoint belongs to, on either side.
     pub fn op(&self) -> &OpId {
         match self {
-            Self::Op(op) | Self::LandTarget(op) => op,
+            Self::Op(op) | Self::LandTarget(op) | Self::LandInPlace(op) => op,
         }
     }
 }
@@ -236,6 +245,7 @@ impl fmt::Display for SavepointKey {
         match self {
             Self::Op(op) => write!(f, "{op}"),
             Self::LandTarget(op) => write!(f, "{op}{TARGET_SUFFIX}"),
+            Self::LandInPlace(op) => write!(f, "{op}{IN_PLACE_SUFFIX}"),
         }
     }
 }
@@ -244,12 +254,18 @@ impl FromStr for SavepointKey {
     type Err = OpIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.strip_suffix(TARGET_SUFFIX) {
-            Some(op) => op
-                .parse()
-                .map(Self::LandTarget)
-                .map_err(|_| OpIdError { text: s.to_owned() }),
-            None => s.parse().map(Self::Op),
+        let side = |op: &str, as_key: fn(OpId) -> Self| {
+            op.parse()
+                .map(as_key)
+                .map_err(|_| OpIdError { text: s.to_owned() })
+        };
+        match (
+            s.strip_suffix(TARGET_SUFFIX),
+            s.strip_suffix(IN_PLACE_SUFFIX),
+        ) {
+            (Some(op), _) => side(op, Self::LandTarget),
+            (_, Some(op)) => side(op, Self::LandInPlace),
+            (None, None) => s.parse().map(Self::Op),
         }
     }
 }
@@ -686,6 +702,22 @@ pub enum LandingReport {
     },
 }
 
+impl TakeInRecord {
+    /// Each workspace a landing fast-forwards a checkout of in place, outside
+    /// both of its own, and leases.
+    pub fn in_place_workspaces(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for receiving in self.receiving.values() {
+            if let Moves::InPlace { workspace } = &receiving.moves {
+                if !out.contains(workspace) {
+                    out.push(workspace.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
 impl LandingReport {
     pub fn is_entry_change(&self) -> bool {
         matches!(self, Self::EntryChanged { .. } | Self::EntryRemoved { .. })
@@ -797,12 +829,16 @@ pub struct Receiving {
 }
 
 /// How a landing moves a receiving branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Moves {
     /// The member is composed onto `tip`, then the branch fast-forwards in
     /// `T`'s workspace's checkout, which must be on it.
     InCheckout,
+    /// The member is composed onto `tip`, then the branch fast-forwards in
+    /// place in the clean checkout `workspace` has of the member, outside
+    /// both of the landing's workspaces, which the landing leases.
+    InPlace { workspace: PathBuf },
     /// The member is composed onto `tip`, then the branch, which no checkout
     /// holds, moves as a ref; it is created at `tip` first when `create`.
     AsRef { create: bool },
@@ -1101,7 +1137,12 @@ impl OwnerRecord {
                 take_in
                     .receiving
                     .iter()
-                    .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
+                    .filter(|(_, r)| {
+                        matches!(
+                            r.moves,
+                            Moves::InCheckout | Moves::AsRef { .. } | Moves::InPlace { .. }
+                        )
+                    })
                     .map(|(key, _)| key.clone()),
             );
             if let Some(pick) = &take_in.pick {
@@ -1147,6 +1188,7 @@ impl OwnerHeader {
             OpVerb::Land => vec![
                 SavepointKey::Op(self.id.clone()),
                 SavepointKey::LandTarget(self.id.clone()),
+                SavepointKey::LandInPlace(self.id.clone()),
             ],
         }
     }
@@ -1828,6 +1870,19 @@ impl TouchedWorkspaces {
         }
     }
 
+    /// The same set, leasing as well each of `more` it does not hold yet.
+    pub fn leasing(mut self, more: impl IntoIterator<Item = PathBuf>) -> Self {
+        for ws in more {
+            let at = CanonicalPath::of(&ws);
+            if CanonicalPath::of(&self.owner) != at
+                && !self.leases.iter().any(|held| CanonicalPath::of(held) == at)
+            {
+                self.leases.push(ws);
+            }
+        }
+        self
+    }
+
     pub fn owner(&self) -> &Path {
         &self.owner
     }
@@ -1963,6 +2018,57 @@ pub fn acquire_op(
     Ok(AcquiredOp {
         touched: touched.clone(),
     })
+}
+
+/// Lease each of `more` to the op `acquired` holds, as [`acquire_op`] leases:
+/// a workspace another op holds refuses, and the leases this call wrote are
+/// taken back. Those already held are left as they are.
+pub fn acquire_more_leases(
+    acquired: &mut AcquiredOp,
+    more: &[PathBuf],
+    owner_record: &OwnerRecord,
+) -> anyhow::Result<()> {
+    let widened = acquired.touched.clone().leasing(more.iter().cloned());
+    let fresh: Vec<PathBuf> = widened.leases[acquired.touched.leases.len()..].to_vec();
+    let mut written: Vec<PathBuf> = Vec::with_capacity(fresh.len());
+    for ws in &fresh {
+        let refused = match in_flight_refusal_for(ws)? {
+            Some(err) => Some(err),
+            None => {
+                let lease = LeaseRecord {
+                    id: owner_record.id.clone(),
+                    owner: CanonicalPath::of(acquired.touched.owner()),
+                    created_at: Some(utc_now_rfc3339()),
+                };
+                let json = serde_json::to_string_pretty(&lease)
+                    .context("failed to serialize lease record")?;
+                match LeaseRecord::path_in(ws).create(json.as_bytes()) {
+                    Ok(()) => None,
+                    Err(CreateNewError::AlreadyExists) => {
+                        Some(in_flight_refusal_for(ws)?.unwrap_or_else(|| {
+                            crate::refusal::refusal(
+                                RefusalKind::OpAcquisitionRaced,
+                                format!("raced with a concurrent op at {}; retry", ws.display()),
+                            )
+                        }))
+                    }
+                    Err(CreateNewError::Io(e)) => Some(
+                        anyhow::Error::new(e)
+                            .context(format!("failed to acquire a lease at {}", ws.display())),
+                    ),
+                }
+            }
+        };
+        if let Some(err) = refused {
+            for taken in &written {
+                clear_lease(taken);
+            }
+            return Err(err);
+        }
+        written.push(ws.clone());
+    }
+    acquired.touched = widened;
+    Ok(())
 }
 
 /// Undo an acquisition performed by [`acquire_op`] — clear the owner record and
@@ -2336,6 +2442,7 @@ mod tests {
             "a.b",
             "1779769917405921588-target",
             "-target",
+            "1779769917405921588-in-place",
         ] {
             assert!(text.parse::<OpId>().is_err(), "{text:?} is not an op id");
         }
@@ -2384,7 +2491,11 @@ mod tests {
         assert_eq!(sync.savepoint_keys(), vec![SavepointKey::Op(op.clone())]);
         assert_eq!(
             landing.savepoint_keys(),
-            vec![SavepointKey::Op(op.clone()), SavepointKey::LandTarget(op)]
+            vec![
+                SavepointKey::Op(op.clone()),
+                SavepointKey::LandTarget(op.clone()),
+                SavepointKey::LandInPlace(op)
+            ]
         );
     }
 

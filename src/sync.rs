@@ -3067,7 +3067,21 @@ fn release_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }) {
         op_state::clear_lease(dest);
     }
+    for workspace in ctx.take_in.in_place_workspaces() {
+        clear_lease_of(&workspace, &ctx.op_id);
+    }
     release_landing_claim(ctx)
+}
+
+/// Clear the lease in `workspace` where it is `op`'s.
+fn clear_lease_of(workspace: &Path, op: &OpId) {
+    if op_state::read_lease(workspace)
+        .ok()
+        .flatten()
+        .is_some_and(|lease| &lease.id == op)
+    {
+        op_state::clear_lease(workspace);
+    }
 }
 
 fn release_landing_claim(ctx: &OpContext<'_>) -> anyhow::Result<()> {
@@ -3747,7 +3761,7 @@ fn guard_and_mark<'a>(
         &owner_workspace_dir,
         dest_workspace_dir.as_deref(),
     );
-    let acquired = op_state::acquire_op(&touched, &initial_record)?;
+    let mut acquired = op_state::acquire_op(&touched, &initial_record)?;
 
     let project_vcs = project_vcs();
     let mut drifted = Vec::new();
@@ -3803,7 +3817,21 @@ fn guard_and_mark<'a>(
         op_state::release_acquired(&acquired);
         return Err(e);
     }
-    let _ = acquired;
+    let in_place: Vec<PathBuf> = {
+        let mut out: Vec<PathBuf> = Vec::new();
+        for receiving in plan.receiving.values() {
+            if let op_state::Moves::InPlace { workspace } = &receiving.moves {
+                if !out.contains(workspace) {
+                    out.push(workspace.clone());
+                }
+            }
+        }
+        out
+    };
+    if let Err(e) = op_state::acquire_more_leases(&mut acquired, &in_place, &initial_record) {
+        op_state::release_acquired(&acquired);
+        return Err(e);
+    }
 
     // Savepoints on both sides: the source's repos replay, the target's
     // fast-forward, and `rwv abort` restores either. The target's are filed
@@ -3868,6 +3896,19 @@ fn guard_and_mark<'a>(
                 vcs.create_ref_savepoint(&dir, &tsp_id, &receiving.branch, read.id())?;
                 member_anchors.push((vcs, dir, tsp_id.clone()));
             }
+        }
+        let in_place_key = SavepointKey::LandInPlace(op_id.clone());
+        for (path, receiving) in &plan.receiving {
+            let op_state::Moves::InPlace { workspace } = &receiving.moves else {
+                continue;
+            };
+            let Some(entry) = cwd_project.manifest.get_entry(path) else {
+                continue;
+            };
+            let vcs = vcs_for(entry.vcs_type);
+            let dir = workspace.join(path.as_path());
+            create_savepoint(vcs.as_ref(), &dir, &in_place_key)?;
+            member_anchors.push((vcs, dir, in_place_key.clone()));
         }
         Ok(())
     })();
@@ -3979,7 +4020,7 @@ fn guard_and_mark<'a>(
             op_state::Receiving {
                 branch: receiving.branch.as_str().to_owned(),
                 tip: receiving.tip.clone(),
-                moves: receiving.moves,
+                moves: receiving.moves.clone(),
             },
         );
     }
@@ -4384,7 +4425,7 @@ fn target_moved(
             .collect(),
     };
     for (key, receiving) in &take_in.receiving {
-        let to = match (receiving.moves, composed) {
+        let to = match (&receiving.moves, composed) {
             (op_state::Moves::Follows { .. }, _) => continue,
             (op_state::Moves::Enters, _) | (_, None) => &receiving.tip,
             (_, Some(composed)) => match composed.get(key) {
@@ -4396,7 +4437,9 @@ fn target_moved(
         let create = match receiving.moves {
             op_state::Moves::AsRef { create } => Some(create),
             op_state::Moves::Enters => Some(true),
-            op_state::Moves::InCheckout | op_state::Moves::Follows { .. } => None,
+            op_state::Moves::InCheckout
+            | op_state::Moves::InPlace { .. }
+            | op_state::Moves::Follows { .. } => None,
         };
         if let Some(create) = create {
             let (vcs, dir) = match key {
@@ -4461,15 +4504,17 @@ fn target_moved(
             }
             continue;
         }
-        let Some(target_workspace) = target_workspace else {
-            continue;
+        let in_place = SavepointKey::LandInPlace(read.op().clone());
+        let (workspace, read) = match &receiving.moves {
+            op_state::Moves::InPlace { workspace } => (workspace.as_path(), &in_place),
+            _ => match target_workspace {
+                Some(target_workspace) => (target_workspace, read),
+                None => continue,
+            },
         };
         let (dir, vcs) = match key {
-            RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
-            RepoKey::Member(path) => (
-                target_workspace.join(path.as_path()),
-                crate::vcs::probe_vcs(),
-            ),
+            RepoKey::Project => (project_dir(workspace, project), project_vcs()),
+            RepoKey::Member(path) => (workspace.join(path.as_path()), crate::vcs::probe_vcs()),
         };
         if !vcs.is_repo(&dir) {
             continue;
@@ -6289,7 +6334,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let create = match receiving.moves {
             op_state::Moves::AsRef { create } => create,
             op_state::Moves::Enters | op_state::Moves::Follows { create: true } => true,
-            op_state::Moves::InCheckout | op_state::Moves::Follows { create: false } => continue,
+            op_state::Moves::InCheckout
+            | op_state::Moves::InPlace { .. }
+            | op_state::Moves::Follows { create: false } => continue,
         };
         let Some(entry) = cwd_project_final.manifest.get_entry(repo_path) else {
             continue;
@@ -6411,6 +6458,48 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 if let Err(e) = moved.absorb(Err(e)) {
                     if emit_text {
                         eprintln!("  {}: ff-advance failed: {e:#}", repo_path);
+                    }
+                    any_ff_failure = true;
+                }
+            }
+        }
+    }
+    for (key, receiving) in &ctx.take_in.receiving {
+        let (RepoKey::Member(repo_path), op_state::Moves::InPlace { workspace }) =
+            (key, &receiving.moves)
+        else {
+            continue;
+        };
+        let Some(entry) = cwd_project_final.manifest.get_entry(repo_path) else {
+            continue;
+        };
+        let vcs = vcs_for(entry.vcs_type);
+        let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        let there = workspace.join(repo_path.as_path());
+        let (branch, cwd_tip) = planned(key)?;
+        journal_fast_forward(ctx, key)?;
+        match ff_advance_repo(vcs.as_ref(), repo_path, &there, &cwd_repo, branch, &cwd_tip) {
+            Ok(advance) => {
+                if emit_text {
+                    outln!(
+                        "  {repo_path}: {} in place in {}",
+                        ff_advance_line(&advance, &cwd_tip),
+                        workspace.display()
+                    );
+                }
+                if advance.onto.is_some() {
+                    ctx.handler.record_step3_advance(
+                        key,
+                        advance.from.id().as_str(),
+                        cwd_tip.id().as_str(),
+                    );
+                }
+            }
+            Err(e) => {
+                unjournal_unless_at(ctx, key, vcs.as_ref(), &there, cwd_tip.id())?;
+                if let Err(e) = moved.absorb(Err(e)) {
+                    if emit_text {
+                        eprintln!("  {repo_path}: ff-advance in place failed: {e:#}");
                     }
                     any_ff_failure = true;
                 }
@@ -7134,6 +7223,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.owner_workspace_dir,
         ctx.dest_workspace_dir.as_deref(),
     )
+    .leasing(ctx.take_in.in_place_workspaces())
     .clear();
     Ok(())
 }
@@ -7425,16 +7515,21 @@ pub fn run_abort(
     ctx: &WorkspaceContext,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
 ) -> anyhow::Result<()> {
-    let workspace = ctx.active_root();
-    let workspace_dir = workspace.as_path().to_path_buf();
-
     // resolve_for_abort follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
     // the same record.
-    let Some((reading, owner_workspace)) = op_state::resolve_for_abort(&workspace_dir)? else {
+    let Some((reading, owner_workspace)) =
+        op_state::resolve_for_abort(ctx.active_root().as_path())?
+    else {
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
     let header = reading.header();
+    let workspace = if header.target.as_ref() == Some(ctx.active_root()) {
+        ctx.active_root()
+    } else {
+        &owner_workspace
+    };
+    let workspace_dir = workspace.as_path().to_path_buf();
     if let op_state::OwnerReading::HeaderOnly { parse_error, .. } = &reading {
         eprintln!(
             "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
@@ -7598,6 +7693,7 @@ pub fn run_abort(
     }
 
     if let op_state::OwnerReading::Whole(record) = &reading {
+        restore_in_place(record, &op_project_name, abandon, &mut tally);
         let ref_moves = record
             .take_in
             .as_ref()
@@ -7869,6 +7965,87 @@ fn restore_abort_workspace(
     );
 }
 
+/// Restore each checkout a landing fast-forwarded in place, outside both of
+/// its workspaces, then end the landing's lease on each workspace whose
+/// checkouts all came back. One the journal does not name was never moved by
+/// the landing: it is left as it stands.
+fn restore_in_place(
+    record: &op_state::OwnerRecord,
+    project: &ProjectName,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    tally: &mut AbortTally,
+) {
+    let Some(take_in) = &record.take_in else {
+        return;
+    };
+    let key = SavepointKey::LandInPlace(record.id.clone());
+    let converged = record.tips.converged();
+    for workspace in take_in.in_place_workspaces() {
+        let before = (tally.any_foreign, tally.any_failure);
+        tally.any_foreign = false;
+        tally.any_failure = false;
+        for (repo_key, receiving) in &take_in.receiving {
+            let (RepoKey::Member(path), op_state::Moves::InPlace { workspace: at }) =
+                (repo_key, &receiving.moves)
+            else {
+                continue;
+            };
+            if *at != workspace {
+                continue;
+            }
+            let dir = workspace.join(path.as_path());
+            let vcs = crate::vcs::probe_vcs();
+            if !vcs.is_repo(&dir) {
+                continue;
+            }
+            let named = RepoOperand::of(repo_key, project);
+            let label = format!("[{}] {named}", workspace.display());
+            if !take_in.moved_in_target.contains(repo_key) {
+                if let Some(saved) = vcs.resolve_savepoint(&dir, &key) {
+                    let source = vcs
+                        .head_backup_source(&dir)
+                        .unwrap_or(crate::vcs::BackupSource::DetachedHead);
+                    if let Err(e) = keep_unreached(vcs.as_ref(), &dir, &source, saved.id(), &named)
+                    {
+                        eprintln!("  {label}: {e:#}");
+                        tally.any_failure = true;
+                        continue;
+                    }
+                }
+                let _ = vcs.drop_checkout_savepoint(&dir, &key);
+                tally.noise.untouched += 1;
+                continue;
+            }
+            let attribution = Attribution {
+                intent: None,
+                converged: converged.and_then(|tips| tips.get(repo_key)),
+                started_from: None,
+                integrates: Integrates::No,
+            };
+            match abort_one_repo(
+                vcs.as_ref(),
+                &dir,
+                &key,
+                &attribution,
+                abandon.covers(repo_key, project),
+            ) {
+                Ok(outcome) => {
+                    report_abort_outcome(vcs.as_ref(), &label, &named, &outcome, &dir, tally);
+                }
+                Err(e) => {
+                    eprintln!("  {label}: {e:#}");
+                    tally.any_failure = true;
+                }
+            }
+        }
+        if tally.clean() {
+            clear_lease_of(&workspace, &record.id);
+        }
+        tally.any_foreign |= before.0;
+        tally.any_failure |= before.1;
+    }
+}
+
 /// Keep `saved`, a savepoint's tip abort is about to drop, as a backup when
 /// no branch reaches it, so dropping a savepoint someone else's move left
 /// behind leaves no commit on no ref.
@@ -8001,13 +8178,14 @@ fn end_released_landing(
         .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
         .map_or_else(|| "the target".to_owned(), |r| format!("'{}'", r.branch));
     if let Some(target) = &record.target {
-        if op_state::read_lease(target.as_path())
-            .ok()
-            .flatten()
-            .is_some_and(|lease| lease.id == record.id)
-        {
-            op_state::clear_lease(target.as_path());
-        }
+        clear_lease_of(target.as_path(), &record.id);
+    }
+    for workspace in record
+        .take_in
+        .iter()
+        .flat_map(op_state::TakeInRecord::in_place_workspaces)
+    {
+        clear_lease_of(&workspace, &record.id);
     }
     op_state::TouchedWorkspaces::of(record.verb, owner_workspace.as_path(), None).clear();
     outln!(

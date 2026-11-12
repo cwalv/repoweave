@@ -62,6 +62,11 @@ fn a_landing_lists_what_a_declared_branch_change_leaves_behind_and_status_keeps_
 }
 
 #[test]
+fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
+    runner::run(scenarios::shared_checkout_detached()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_member_change_refusal_prints_the_rebind_then_the_setter_then_the_consent() {
     runner::run(scenarios::member_change_choice_order()).assert_fully_decided_green();
 }
@@ -765,6 +770,7 @@ every_scenario!(
     backward_pin_reported_in_json,
     continue_reports_a_created_receiving_branch,
     member_change_choice_order,
+    shared_checkout_detached,
     removal_is_member_change,
     dc06_member_set_from_merge,
     continue_rejudges_the_resolved_manifest,

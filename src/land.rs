@@ -42,6 +42,10 @@ pub struct Landing {
     /// The primary, where it is the source and `T` is checked out nowhere: it
     /// switches to `T` once `T` landed.
     pub switches_primary: Option<PathBuf>,
+    /// The workspace the landing runs in.
+    pub source: PathBuf,
+    /// The weave's primary.
+    pub primary: PathBuf,
     /// The newer of `T` and its upstream.
     pub target_tip: CommitId,
     /// `T`'s mode as its record holds it now.
@@ -110,9 +114,12 @@ impl Plan {
 
     /// The members the landing composes onto their receiving branch's tip.
     pub fn composed(&self) -> impl Iterator<Item = (&RepoPath, &Receiving)> {
-        self.receiving
-            .iter()
-            .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
+        self.receiving.iter().filter(|(_, r)| {
+            matches!(
+                r.moves,
+                Moves::InCheckout | Moves::AsRef { .. } | Moves::InPlace { .. }
+            )
+        })
     }
 }
 
@@ -310,6 +317,8 @@ pub fn resolve(
         switches_primary: (target_workspace.is_none()
             && matches!(ctx.checkout, Checkout::Primary { .. }))
         .then(|| ctx.primary_path().to_path_buf()),
+        source: ctx.active_path().to_path_buf(),
+        primary: ctx.primary_path().to_path_buf(),
         target_workspace,
         target_tip,
         target_mode: target_record.mode(),
@@ -1850,10 +1859,10 @@ fn judge_member(
     } else if created {
         Moves::AsRef { create: true }
     } else if declared_changed {
-        if !judge_unheld_receiving(landing, member, &receiving, report)? {
-            return Ok(());
+        match judge_unheld_receiving(landing, member, &receiving, report)? {
+            Some(moves) => moves,
+            None => return Ok(()),
         }
-        Moves::AsRef { create: false }
     } else {
         judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?
     };
@@ -2012,31 +2021,75 @@ fn judge_unheld_receiving(
     member: &Member<'_>,
     receiving: &RawRefName,
     report: &mut Report,
-) -> anyhow::Result<bool> {
-    let Member { path, dir, vcs, .. } = *member;
+) -> anyhow::Result<Option<Moves>> {
+    let Member { dir, vcs, .. } = *member;
     let holding = vcs.checkouts_of_branch(dir, receiving)?;
     if holding.is_empty() {
-        return Ok(true);
+        return Ok(Some(Moves::AsRef { create: false }));
     }
-    report.add(
-        State::CheckoutInAnotherWorkspace
-            .of(path)
-            .member()
-            .checkout(dir)
-            .subject(format!(
-                "'{receiving}', which this lands into, is checked out outside '{}''s workspace",
-                landing.target
-            ))
-            .listing(holding.iter().map(|p| p.display().to_string()))
-            .by_verb("land")
-            .judge(vcs),
-    );
-    Ok(false)
+    judge_in_place(landing, member, &holding, report)
+}
+
+/// `U` checked out outside both of the landing's workspaces fast-forwards in
+/// place, in that checkout, where it is a member checkout of the primary or
+/// of a recorded workweave, whichever project that workspace presents, and
+/// is clean. A checkout of `U` anywhere else refuses.
+fn judge_in_place(
+    landing: &Landing,
+    member: &Member<'_>,
+    holding: &[PathBuf],
+    report: &mut Report,
+) -> anyhow::Result<Option<Moves>> {
+    let Member { path, dir, vcs, .. } = *member;
+    if let [checkout] = holding {
+        if let Some(workspace) = in_place_workspace(landing, path, checkout)? {
+            let dirt = vcs
+                .tracked_dirty_file_names(checkout)
+                .unwrap_or_else(|_| vec!["(status unreadable)".to_owned()]);
+            return Ok(
+                match crate::diagnosis::judge_edits(vcs, path, checkout, dirt, Some(&workspace)) {
+                    Some(edits) => {
+                        report.add(edits);
+                        None
+                    }
+                    None => Some(Moves::InPlace { workspace }),
+                },
+            );
+        }
+    }
+    let recorded = crate::sync::recorded_workweaves(&landing.primary)?;
+    for checkout in holding {
+        report.add(crate::sync::judge_checkout(
+            vcs, path, checkout, dir, &recorded, None,
+        ));
+    }
+    Ok(None)
+}
+
+/// The workspace whose checkout of `path` is `checkout`: the primary or a
+/// recorded workweave, neither the source nor `T`'s.
+fn in_place_workspace(
+    landing: &Landing,
+    path: &RepoPath,
+    checkout: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
+    let at = crate::path_spelling::CanonicalPath::of(checkout);
+    let is = |ws: &Path| crate::path_spelling::CanonicalPath::of(&ws.join(path.as_path())) == at;
+    if is(&landing.source) || landing.target_workspace.as_deref().is_some_and(is) {
+        return Ok(None);
+    }
+    if is(&landing.primary) {
+        return Ok(Some(landing.primary.clone()));
+    }
+    Ok(crate::sync::recorded_workweaves(&landing.primary)?
+        .into_iter()
+        .map(|(_, root)| root.as_path().to_path_buf())
+        .find(|root| is(root)))
 }
 
 /// `U` fast-forwards where `T`'s workspace has it checked out: that member
-/// must sit on `U` there. Checked out in a third workspace, it is moved by
-/// nothing yet. Where `T`'s upstream declares `U` in place of the branch the
+/// must sit on `U` there. Checked out in a third workspace, it fast-forwards
+/// in place there. Where `T`'s upstream declares `U` in place of the branch the
 /// member sits on there, aligned for `T`'s own entries, `U` is checked out
 /// nowhere and moves as a ref, and aligning `T`'s workspace takes it.
 fn judge_receiving_checkout(
@@ -2052,13 +2105,8 @@ fn judge_receiving_checkout(
     let (Some(target_workspace), Some(target_aligner)) =
         (landing.target_workspace.as_deref(), target_aligner)
     else {
-        return Ok(
-            if judge_unheld_receiving(landing, member, receiving, report)? {
-                Moves::AsRef { create: false }
-            } else {
-                Moves::InCheckout
-            },
-        );
+        return Ok(judge_unheld_receiving(landing, member, receiving, report)?
+            .unwrap_or(Moves::InCheckout));
     };
     let there = target_workspace.join(path.as_path());
     if !vcs.is_repo(&there) {
@@ -2078,22 +2126,9 @@ fn judge_receiving_checkout(
         .filter(|c| crate::path_spelling::CanonicalPath::of(c) != own)
         .collect();
     if !elsewhere.is_empty() {
-        report.add(
-            State::CheckoutInAnotherWorkspace
-                .of(path)
-                .member()
-                .checkout(&there)
-                .subject(format!(
-                    "'{receiving}', which this lands into, is checked out outside '{}''s \
-                     workspace",
-                    landing.target
-                ))
-                .listing(elsewhere.iter().map(|p| p.display().to_string()))
-                .elsewhere(target_workspace)
-                .by_verb("land")
-                .judge(vcs),
+        return Ok(
+            judge_in_place(landing, member, &elsewhere, report)?.unwrap_or(Moves::InCheckout)
         );
-        return Ok(Moves::InCheckout);
     }
     let checked = crate::alignment::Member {
         path,
