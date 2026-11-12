@@ -11536,6 +11536,10 @@ fn ff_advance_repo(
         }); // already at the right tip
     }
 
+    let mut parked = Report::default();
+    judge_edits_in(vcs, &label, target_repo, Vec::new(), None, &mut parked);
+    parked.into_result()?;
+
     // Landing must name the ref it lands on. `merge --ff-only` against a
     // detached HEAD moves HEAD alone and reports success, leaving the work on
     // no branch — and the source's branch, the only other ref holding it, is
@@ -12251,6 +12255,35 @@ mod tests {
             "a refused landing must leave the target's detached HEAD where it was — \
              this is the assertion that fails if the MOVE goes back to taking a path \
              instead of the target's witness"
+        );
+    }
+
+    #[test]
+    fn ff_advance_repo_names_a_target_stopped_in_a_rebase_as_edits_mid_operation() {
+        let tmp = crate::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+        git(&target, &["config", "user.email", "t@t"]);
+        git(&target, &["config", "user.name", "T"]);
+        git(&target, &["switch", "-q", "-c", "topic"]);
+        std::fs::write(target.join("f"), "topic").unwrap();
+        git(&target, &["commit", "-qam", "topic"]);
+        git(&target, &["switch", "-q", "main"]);
+        std::fs::write(target.join("f"), "main").unwrap();
+        git(&target, &["commit", "-qam", "main-f"]);
+        let stopped = std::process::Command::new("git")
+            .args(["rebase", "main", "topic"])
+            .current_dir(&target)
+            .output()
+            .unwrap();
+        assert!(!stopped.status.success(), "the rebase must stop");
+
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
+            .expect_err("a target stopped in a rebase must refuse");
+        let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
+        assert_eq!(
+            report.lines()[0].state(),
+            State::EditsMidOperation,
+            "{err:#}"
         );
     }
 
