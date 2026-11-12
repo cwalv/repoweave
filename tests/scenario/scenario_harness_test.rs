@@ -490,6 +490,7 @@ every_scenario!(
     c22_prints_both,
     dc29_no_bring,
     concurrent_landing_merge_upstream,
+    records_local_writers,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2880,4 +2881,12 @@ fn dc29_work_off_lineage_is_ported_by_cherry_pick_and_lands_with_no_porting_verb
 #[test]
 fn concurrent_landings_merge_by_pull_merge_upstream_and_publish() {
     runner::run(scenarios::concurrent_landing_merge_upstream()).assert_fully_decided_green();
+}
+
+holding_rwv! {
+    /// Eight creates and a retire's drop race on one machine's records
+    /// branch; every lost compare-and-swap retries and no record is lost.
+    fn records_written_at_once_on_one_machine_are_all_kept_and_drops_retry_against_the_winner() {
+        runner::run(scenarios::records_local_writers()).assert_green();
+    }
 }

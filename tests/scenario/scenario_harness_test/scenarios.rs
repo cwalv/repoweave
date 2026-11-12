@@ -5861,3 +5861,91 @@ pub fn concurrent_landing_merge_upstream() -> Scenario {
         ],
     )
 }
+
+const SEATS: [&str; 8] = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
+
+fn seat_recorded(seat: &str, recorded: bool) -> Claim {
+    let branch: &'static str = Box::leak(format!("proj--{seat}").into_boxed_str());
+    Claim::RecordIs {
+        machine: Machine::A,
+        branch,
+        record: recorded.then(|| feature_onto("main", Mode::Declared)),
+    }
+}
+
+/// `records-local-writers`: eight seats created at once on one machine, all
+/// but the last held before their records compare-and-swap, each losing it
+/// and retrying, every record kept; then retires whose drops race a create,
+/// the drop retried against the winner's write and dropping only what is
+/// gone. Two landings into one target at once wait on the landing claim,
+/// which this scenario leaves undecided.
+pub fn records_local_writers() -> Scenario {
+    let (held, last) = SEATS.split_at(SEATS.len() - 1);
+    let mut steps: Vec<Step> = held
+        .iter()
+        .map(|seat| {
+            Step::rwv_paused(
+                &a(),
+                &["workweave", "create", "--project", "proj", seat],
+                "records-write",
+                Box::leak(format!("create-{seat}").into_boxed_str()),
+            )
+        })
+        .collect();
+    steps.push(create(last[0]));
+    for seat in held {
+        steps.push(
+            Step::release(Box::leak(format!("create-{seat}").into_boxed_str()))
+                .expect(Exit::Succeeds),
+        );
+    }
+    let mut every = Step::rwv(&a(), &["branch", "list"]).expect(Exit::Succeeds);
+    for seat in SEATS {
+        every = every.claim(seat_recorded(seat, true));
+    }
+    steps.push(every);
+    for (seat, mark) in [
+        ("s1", "s1-app"),
+        ("s2", "s2-lib"),
+        ("s3", "s3-docs"),
+        ("s4", "s4-app"),
+    ] {
+        let repo = match &mark[3..] {
+            "app" => Repo::App,
+            "lib" => Repo::Lib,
+            _ => Repo::Docs,
+        };
+        steps.push(Step::commit(&ww(seat), repo, mark));
+    }
+    steps.extend([
+        Step::rwv_paused(
+            &ww("s1"),
+            &["land", "--retire"],
+            "records-write",
+            "retire-s1",
+        ),
+        create("s9"),
+        Step::rwv(&ww("s2"), &["land", "--retire"]),
+        Step::release("retire-s1")
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("s1")))
+            .claim(seat_recorded("s1", false))
+            .claim(seat_recorded("s9", true)),
+    ]);
+    for seat in ["s2", "s3", "s4"] {
+        steps.push(
+            Step::rwv(&ww(seat), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww(seat))),
+        );
+    }
+    let mut after = Step::rwv(&a(), &["branch", "list"]).expect(Exit::Succeeds);
+    for seat in SEATS {
+        after = after.claim(seat_recorded(
+            seat,
+            !["s1", "s2", "s3", "s4"].contains(&seat),
+        ));
+    }
+    steps.push(after.claim(seat_recorded("s9", true)));
+    scenario("records local writers", steps)
+}

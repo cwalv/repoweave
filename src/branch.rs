@@ -1083,7 +1083,10 @@ pub fn run_delete(
 
 /// Drop the records whose branches exist nowhere: no local branch, no
 /// remote-tracking branch, and no workspace of this machine aligned for it.
-/// Nothing drops while a fetch of the project repo went unconfirmed.
+/// Nothing drops while a fetch of the project repo went unconfirmed. Each is
+/// judged as the write that drops it reads the records, so a branch another
+/// writer recorded while this one lost its compare-and-swap is still there;
+/// one that cannot be judged is kept.
 pub fn drop_records(
     project: &ProjectName,
     primary: &Path,
@@ -1094,35 +1097,41 @@ pub fn drop_records(
     }
     let vcs = project_vcs();
     let dir = crate::workspace::project_dir(primary, project);
-    let existing: std::collections::BTreeSet<String> = vcs
-        .named_branches(&dir)?
-        .into_iter()
-        .map(|b| b.name)
-        .collect();
-    let mut aligned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut workspaces: Vec<std::path::PathBuf> = vec![dir.clone()];
-    for (id, root) in crate::sync::recorded_workweaves(primary)? {
-        if &id.project == project {
-            workspaces.push(crate::workspace::project_dir(root.as_path(), project));
-        }
-    }
-    for workspace in workspaces {
-        if let crate::alignment::StateReading {
-            state:
-                crate::alignment::WorkspaceState {
-                    aligned: Some(crate::alignment::Aligned::Branch(name)),
-                    ..
-                },
-            ..
-        } = crate::alignment::read_state(vcs.as_ref(), &workspace)?
+    let gone = |name: &str| -> anyhow::Result<bool> {
+        if vcs
+            .named_branches(&dir)?
+            .iter()
+            .any(|branch| branch.name == name)
         {
-            aligned.insert(name);
+            return Ok(false);
         }
-    }
+        let mut workspaces: Vec<std::path::PathBuf> = vec![dir.clone()];
+        for (id, root) in crate::sync::recorded_workweaves(primary)? {
+            if &id.project == project {
+                workspaces.push(crate::workspace::project_dir(root.as_path(), project));
+            }
+        }
+        for workspace in workspaces {
+            if let crate::alignment::StateReading {
+                state:
+                    crate::alignment::WorkspaceState {
+                        aligned: Some(crate::alignment::Aligned::Branch(aligned)),
+                        ..
+                    },
+                ..
+            } = crate::alignment::read_state(vcs.as_ref(), &workspace)?
+            {
+                if aligned == name {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    };
     let store = Store::open(vcs.as_ref(), &dir)?;
     let written = store
         .write_dropping(|_| Ok(Vec::new()), &|name: &str| {
-            !existing.contains(name) && !aligned.contains(name)
+            gone(name).unwrap_or(false)
         })
         .map_err(|e| anyhow::Error::new(e).context("could not drop the branch records"))?;
     Ok(written.dropped)
