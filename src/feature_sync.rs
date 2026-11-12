@@ -114,14 +114,27 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
     ResolvedRevisionId::from(commit.clone())
 }
 
+/// What a run reports beyond its refusal.
+#[derive(Default)]
+struct Reported {
+    members: Vec<crate::sync::MemberOutput>,
+    placements: Vec<crate::placement::PlacementOutput>,
+    advisories: Vec<crate::workspace::AdvisoryOutput>,
+}
+
 pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow::Result<()> {
-    let mut members = Vec::new();
-    let result = take(ctx, run, output, &mut members);
+    let mut reported = Reported::default();
+    let result = take(ctx, run, output, &mut reported);
+    let Reported {
+        members,
+        placements,
+        advisories,
+    } = reported;
     if output.is_json() {
         let envelope = crate::sync::SyncJsonOutput {
             schema: crate::sync::SYNC_JSON_SCHEMA_URL.to_owned(),
             outcomes: Vec::new(),
-            placements: Vec::new(),
+            placements,
             members: members.clone(),
             complete: result.is_ok(),
             refused: result
@@ -129,7 +142,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
                 .err()
                 .map(crate::diagnosis::refused_output)
                 .unwrap_or_default(),
-            advisories: Vec::new(),
+            advisories,
             resolution: Some(ctx.resolution()),
         };
         outln!(
@@ -145,7 +158,7 @@ fn take(
     ctx: &WorkspaceContext,
     run: Run,
     output: OutputMode,
-    members: &mut Vec<crate::sync::MemberOutput>,
+    reported: &mut Reported,
 ) -> anyhow::Result<()> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
@@ -163,14 +176,16 @@ fn take(
         Run::Fresh(args) => {
             crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
             crate::branch::require_recorded(ctx)?;
-            fresh(ctx, project, dir, vcs, branch, args, output, members)
+            fresh(ctx, project, dir, vcs, branch, args, output, reported)
         }
         Run::Continue => {
             let (op, recorded, take_in) = Op::resume(ctx, OpVerb::Sync)?;
-            anyhow::ensure!(
-                recorded == project,
-                "the op was started for project `{recorded}`, not `{project}`"
-            );
+            if recorded != project {
+                return Err(crate::untokened!(
+                    Owed,
+                    "the op was started for project `{recorded}`, not `{project}`"
+                ));
+            }
             let owner = crate::op_state::read_owner(&op.workspace)?
                 .context("the op record vanished while it was resumed")?;
             let from = take_in
@@ -189,7 +204,7 @@ fn take(
                 strategy: owner.strategy,
                 jobs: 1,
             };
-            act(&sync, &op, &take_in, output, members)
+            act(&sync, &op, &take_in, output, reported)
         }
     }
 }
@@ -217,7 +232,7 @@ fn fresh(
     branch: String,
     args: Args,
     output: OutputMode,
-    members: &mut Vec<crate::sync::MemberOutput>,
+    reported: &mut Reported,
 ) -> anyhow::Result<()> {
     let name = crate::branch::named(vcs.as_ref(), &project, &dir, &branch)?;
     let record = crate::branch::recorded_value(vcs.as_ref(), &project, &dir, &name)?;
@@ -337,7 +352,7 @@ fn fresh(
             say(output, &line);
         }
     }
-    act(&sync, &op, &take_in, output, members)
+    act(&sync, &op, &take_in, output, reported)
 }
 
 impl Member {
@@ -628,7 +643,12 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
 
     let attached = match vcs.head_attachment(dir)? {
         HeadAttachment::Attached(attached) => attached,
-        _ => anyhow::bail!("the project repo left its branch while sync judged it"),
+        _ => {
+            return Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "the project repo left its branch while sync judged it"
+            ))
+        }
     };
     let project_act = if resets_project {
         report.add_opt(judge_reset_site(sync, vcs, dir, &label, &dependents));
@@ -1198,7 +1218,7 @@ fn act(
     op: &Op,
     take_in: &TakeInRecord,
     output: OutputMode,
-    members: &mut Vec<crate::sync::MemberOutput>,
+    reported: &mut Reported,
 ) -> anyhow::Result<()> {
     let key = SavepointKey::Op(op.id.clone());
     let source = take_in
@@ -1240,9 +1260,15 @@ fn act(
         )?;
         let before = vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone());
         if before.as_ref() != Some(&tip) || reset {
+            moved.insert(path.clone(), tip);
+        }
+    }
+    for (path, entry) in pre_manifest.iter_entries() {
+        let dir = sync.ctx.active_path().join(path.as_path());
+        let vcs = vcs_for(entry.vcs_type);
+        if vcs.is_repo(&dir) {
             vcs.refresh_index_to_head_if_safe(&dir);
             vcs.refresh_working_tree_to_head_if_safe(&dir);
-            moved.insert(path.clone(), tip);
         }
     }
 
@@ -1268,7 +1294,7 @@ fn act(
                 first: head.clone(),
                 second: source.clone(),
             })?;
-            members.extend(pruning);
+            reported.members.extend(pruning);
             say(
                 output,
                 &format!(
@@ -1285,7 +1311,32 @@ fn act(
         take_project(sync, &head, &source, resets_project, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project)?;
     }
-    settle(sync, &pre_manifest, members, output)?;
+    settle(sync, &pre_manifest, reported, output)?;
+    let hits = delivered_materialized_inputs(sync, &key);
+    if !hits.is_empty() {
+        say(
+            output,
+            &format!(
+                "delivered changes touch materialized inputs ({}); run `rwv materialize` to \
+                 bring the generated ecosystem state up to date",
+                hits.iter()
+                    .map(|(repo, file)| format!("{repo}: {file}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        reported.advisories.push(crate::workspace::AdvisoryOutput {
+            kind: crate::workspace::AdvisoryKindOutput::DerivedStateStale,
+            remedy: "rwv materialize".to_owned(),
+            inputs: hits
+                .iter()
+                .map(|(repo, file)| match repo {
+                    RepoKey::Project => format!("{}/{file}", sync.label()),
+                    RepoKey::Member(path) => format!("{path}/{file}"),
+                })
+                .collect(),
+        });
+    }
     let repos = savepoint_repos(sync);
     op.finish(&repos);
     say(output, &format!("took in {}", sync.source_name()));
@@ -1331,10 +1382,18 @@ fn take_member(
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
         vcs.rebase_continue(dir, DerivedContentPolicy::keep_target_side())
             .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
+        if let Some(replayed) = vcs.resolve_savepoint(dir, &SavepointKey::Op(op.id.clone())) {
+            report_dropped_derived(path.as_str(), dir, vcs, &rev(source), &replayed);
+        }
     }
     let attached = match vcs.head_attachment(dir)? {
         HeadAttachment::Attached(attached) => attached,
-        _ => anyhow::bail!("{path}: left its branch during the sync"),
+        _ => {
+            return Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "{path}: left its branch during the sync"
+            ))
+        }
     };
     let head = vcs.head_revision(dir)?;
     let branch = RawRefName::new(attached.to_string());
@@ -1438,10 +1497,39 @@ fn take_member(
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
+    report_dropped_derived(path.as_str(), dir, vcs, &src, &head);
     let tip = vcs.head_revision(dir)?.id().clone();
     journal(&tip)?;
     say(output, &format!("{path}: rebased onto {}", source.short()));
     Ok(tip)
+}
+
+/// Name the declared derived paths a rebase onto `onto` resolved to its
+/// side, so what `replayed` carried there is not what landed.
+fn report_dropped_derived(
+    repo: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    onto: &ResolvedRevisionId,
+    replayed: &ResolvedRevisionId,
+) {
+    let dropped = vcs
+        .head_revision(dir)
+        .and_then(|landed| vcs.derived_content_dropped_by_replay(dir, onto, replayed, &landed));
+    match dropped {
+        Ok(dropped) if dropped.is_empty() => {}
+        Ok(dropped) => eprintln!(
+            "rwv sync: {repo}: the rebase kept the target's version of these declared derived \
+             paths, so what was replayed is not what landed:\n    {}\n  regenerate them from \
+             their source of record in {repo} and commit; until then the tree is stale at those \
+             paths",
+            dropped.join("\n    ")
+        ),
+        Err(e) => eprintln!(
+            "rwv sync: {repo}: could not read which declared derived paths the rebase resolved: \
+             {e:#}"
+        ),
+    }
 }
 
 fn take_in_tip(op: &Op) -> anyhow::Result<Option<CommitId>> {
@@ -1476,7 +1564,12 @@ fn take_project(
     }
     let attached = match vcs.head_attachment(dir)? {
         HeadAttachment::Attached(attached) => attached,
-        _ => anyhow::bail!("{label}: left its branch during the sync"),
+        _ => {
+            return Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "{label}: left its branch during the sync"
+            ))
+        }
     };
     let branch = RawRefName::new(attached.to_string());
     let src = rev(source);
@@ -1518,6 +1611,7 @@ fn take_project(
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
+    report_dropped_derived(&label, dir, vcs, &src, &here);
     say(output, &format!("{label}: rebased onto {}", source.short()));
     Ok(())
 }
@@ -1603,9 +1697,10 @@ fn relock(
 fn settle(
     sync: &Sync<'_>,
     before: &Manifest,
-    members: &mut Vec<crate::sync::MemberOutput>,
+    reported: &mut Reported,
     output: OutputMode,
 ) -> anyhow::Result<()> {
+    let members = &mut reported.members;
     let now = Manifest::from_path(&sync.dir.join(Manifest::FILE_NAME))?;
     for (path, entry) in before.iter_entries() {
         let checkout = sync.ctx.active_path().join(path.as_path());
@@ -1627,17 +1722,66 @@ fn settle(
             );
         }
     }
-    crate::update::update_members(
-        sync.ctx,
-        &crate::member_selection::MemberSelection::new(
-            crate::selector::RepoFilter::parse(&[], &[])?,
-            false,
-        ),
-        sync.jobs,
-        output,
-        crate::activate::ActivateOptions::default(),
-    )?
-    .tail
+    let run = crate::update::align_after_sync(sync.ctx, sync.jobs, output)?;
+    reported.placements.extend(run.envelope.placements);
+    run.tail
+}
+
+/// The inputs of the materialized project the sync changed, each with the
+/// repo it is in: the project's `rwv.toml` and `rwv.lock`, and each member's
+/// detection manifest for an integration the project enables. Empty where the
+/// weave root does not present the project, since nothing is materialized
+/// there to go stale.
+fn delivered_materialized_inputs(sync: &Sync<'_>, key: &SavepointKey) -> Vec<(RepoKey, String)> {
+    use crate::integration::Integration;
+    let root = sync.ctx.active_path();
+    let presented =
+        crate::workspace::observe_root(root).and_then(|obs| obs.presented_project().cloned());
+    if presented.as_ref() != Some(&sync.project) {
+        return Vec::new();
+    }
+    let Ok(project) = crate::manifest::Project::from_dir_skip_lock(&sync.dir, sync.project.clone())
+    else {
+        return Vec::new();
+    };
+    let builtin = crate::integrations::builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let config = crate::manifest::IntegrationConfig::default();
+    let member_inputs: BTreeSet<&str> =
+        crate::integration_runner::enabled_integrations(&integrations, &project.manifest, &config)
+            .flat_map(|(integration, _)| integration.detection_manifests().iter().copied())
+            .collect();
+    let changed = |vcs: &dyn Vcs, dir: &Path| -> Vec<String> {
+        let Some(pre) = vcs.resolve_savepoint(dir, key) else {
+            return Vec::new();
+        };
+        match vcs.head_revision(dir) {
+            Ok(head) if head != pre => vcs
+                .changed_paths_between(dir, &pre, &head)
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    let mut hits = Vec::new();
+    let in_project = changed(sync.vcs.as_ref(), &sync.dir);
+    for file in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
+        if in_project.iter().any(|p| p == file) {
+            hits.push((RepoKey::Project, file.to_owned()));
+        }
+    }
+    for (path, entry) in project.manifest.iter_entries() {
+        let dir = root.join(path.as_path());
+        if !dir.exists() {
+            continue;
+        }
+        for file in changed(vcs_for(entry.vcs_type).as_ref(), &dir)
+            .into_iter()
+            .filter(|p| member_inputs.contains(p.as_str()))
+        {
+            hits.push((RepoKey::Member(path.clone()), file));
+        }
+    }
+    hits
 }
 
 /// What the lineage rule reads for a feature's members: its target's pins

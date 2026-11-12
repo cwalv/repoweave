@@ -264,6 +264,27 @@ pub(crate) fn align_after_switch(ctx: &WorkspaceContext, verb: &'static str) -> 
     .tail
 }
 
+/// The alignment `sync` runs once the project branch has taken in its
+/// source: `rwv update`'s, reported under `sync`'s name.
+pub(crate) fn align_after_sync(
+    ctx: &WorkspaceContext,
+    jobs: usize,
+    output: OutputMode,
+) -> anyhow::Result<UpdateRun> {
+    update_members_for(
+        ctx,
+        &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
+        jobs,
+        output,
+        ActivateOptions::default(),
+        SharedMembers::Refuse,
+        Flavor {
+            verb: "sync",
+            carry_edits: false,
+        },
+    )
+}
+
 /// The alignment half of `rwv activate --update`: every member of the project
 /// `ctx` is bound to, cloned where missing and aligned as `rwv update` aligns
 /// them, the ones it shares with the presented project included.
