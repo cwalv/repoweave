@@ -155,7 +155,7 @@ pub fn run_pin(
         to.id().short(),
         was.as_ref().map_or("none", |was| was.short_display())
     );
-    if let Pin::At(was) = crate::alignment::pin_of(vcs.as_ref(), dir, old.as_ref(), &path) {
+    if let Pin::At(was) = crate::alignment::pin_of(vcs.as_ref(), dir, old.as_ref(), &path)? {
         lock::report_backward_repin(vcs.as_ref(), dir, "member pin", &path, &was, &to)?;
     }
 

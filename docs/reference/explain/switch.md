@@ -19,6 +19,12 @@ A branch's **record** says how it is used (see `rwv explain branch`), and
   declared` (which work for a branch local or only on a remote), then open it.
 - `<W>` may exist locally or only on a remote as last fetched; a remote-only
   branch is created from the remote's copy, taking in from it.
+- A feature whose `owned` or `fork` member has a branch of its name that a
+  live weave branch declares is refused as `name` `declared`, and one another
+  project's feature of that name uses for a member both list as `name`
+  `feature`. A collision that arrives after the feature was opened refuses
+  the verbs that align or publish it the same way, naming `rwv branch rename`
+  and `rwv branch set-mode <W> declared`.
 
 `rwv switch` with no branch is refused: aligning members for the checked-out
 branch is `rwv update`.

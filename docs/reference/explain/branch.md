@@ -40,7 +40,8 @@ edits, and the members are aligned.
   `rwv.toml` entries declare, and no member gets a branch of its name.
 - `<W>` starts at `--at <rev>`; else a `--declared` create starts at the
   checked-out commit, and a bare create or `--target` at the tip of the branch
-  it lands into (a bare create's is the checked-out one). Members start at the
+  it lands into (a bare create's is the checked-out one): the newer of that
+  branch and its upstream as last fetched. Members start at the
   pins of that commit's lock. A feature's `owned` and `fork` members get
   branches `<W>` at their pins.
 - From a detached project repo a spelling is required (`--target` or
@@ -80,6 +81,10 @@ branch is named) and nothing else: no branch moves, no checkout changes.
 - `feature` needs `--target <T>`, which must itself have a record that reads as
   one value; its mode is stored as `as`. A `--target` whose chain of targets
   returns to `<W>`, `<W>` itself included, is refused as `target` `cycle`.
+  A feature whose `owned` or `fork` member has a branch of its name that a
+  live weave branch declares is refused as `name` `declared`, and one another
+  project's feature of that name uses for a member both list as `name`
+  `feature`.
 - `declared` takes no `--target`.
 - Recording a feature prints where it lands (`target-recorded`): into `<T>`'s
   member branches when `<T>` is a feature, else into each branch `<T>` declares,
@@ -144,7 +149,7 @@ that some live weave branch declares is protected and is never renamed.
 - The record that moves is the old branch's; where it has none and `<new>`
   has one, a run that stopped partway left it there and is completed. A
   `<new>` that already holds a record of another value is never overwritten:
-  it is refused as `name` `exists`, or with `--adopt` as `target` `conflict`
+  it is refused as `name` `exists`, or with `--adopt` as `target` `differs`
   listing both values. An equal record is fine.
 
 Refused, before anything changes, each as its own line: `<old>` with no record

@@ -57,7 +57,7 @@ src/branch.rs	protected declared	-	1
 src/branch.rs	push-branch diverged	tests/push_test.rs	1
 src/branch.rs	target conflict	tests/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/branch_create_switch_test.rs	1
-src/branch.rs	target differs	tests/branch_create_switch_test.rs	1
+src/branch.rs	target differs	tests/branch_rename_test.rs	1
 src/branch.rs	target no target	-	1
 src/branch.rs	target unreadable	tests/branch_gate_test.rs	1
 src/branch.rs	target unrecorded	tests/branch_gate_test.rs	1

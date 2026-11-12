@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use crate::add_remove::find_project;
 use crate::alignment::{Accounting, Aligned, Aligner, Departure, Member};
 use crate::branch::{
-    checked_out, feature_record, judge_feature_name, judge_lookup, judge_name_taken, label,
-    target_recorded_lines, write_refusal, Moving, NameScan,
+    checked_out, feature_record, judge_lookup, judge_name_taken, label, target_recorded_lines,
+    write_refusal, Moving,
 };
 use crate::diagnosis::{ChoiceId, Judged, Report, State};
-use crate::manifest::{LockFile, Manifest, ProjectName, Role};
+use crate::manifest::{LockFile, Manifest, ProjectName};
+use crate::names::{judge_feature_names, NameScan};
 use crate::records::{BranchName, Entry, Lookup, NameError, Record, Store, View, Write};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
@@ -72,18 +73,20 @@ pub(crate) fn named(
 
 /// The project repo's files as the workspace will read them at `at`: the
 /// working tree's where `at` is the commit checked out, else the commit's.
+/// The manifest is its own result, since a pre-schema one moves the project
+/// repo alone; a lock that is there and does not read is an error.
 pub(crate) fn project_files(
     vcs: &dyn Vcs,
     dir: &Path,
     at: &ResolvedRevisionId,
-) -> (anyhow::Result<Manifest>, Option<LockFile>) {
-    if vcs.head_revision(dir).ok().as_ref() == Some(at) {
+) -> anyhow::Result<(anyhow::Result<Manifest>, Option<LockFile>)> {
+    if &vcs.head_revision(dir)? == at {
         let lock_path = LockFile::path_in(dir);
-        let lock = lock_path
-            .exists()
-            .then(|| LockFile::from_state(&lock_path).ok())
-            .flatten();
-        return (Manifest::from_path(&dir.join(Manifest::FILE_NAME)), lock);
+        let lock = match lock_path.exists() {
+            true => Some(LockFile::from_state(&lock_path)?),
+            false => None,
+        };
+        return Ok((Manifest::from_path(&dir.join(Manifest::FILE_NAME)), lock));
     }
     committed_files(vcs, dir, at)
 }
@@ -94,16 +97,17 @@ pub(crate) fn committed_files(
     vcs: &dyn Vcs,
     dir: &Path,
     at: &ResolvedRevisionId,
-) -> (anyhow::Result<Manifest>, Option<LockFile>) {
+) -> anyhow::Result<(anyhow::Result<Manifest>, Option<LockFile>)> {
     let manifest = vcs
         .read_file_at_revision(dir, at, Path::new(Manifest::FILE_NAME))
         .map_err(anyhow::Error::from)
         .and_then(|text| Manifest::from_toml_str(&text));
-    let lock = vcs
-        .read_file_at_revision(dir, at, Path::new(LockFile::FILE_NAME))
-        .ok()
-        .and_then(|text| LockFile::from_json_str(&text).ok());
-    (manifest, lock)
+    let lock = match vcs.read_file_at_revision(dir, at, Path::new(LockFile::FILE_NAME)) {
+        Ok(text) => Some(LockFile::from_json_str(&text)?),
+        Err(VcsError::RevisionNotFound { .. }) => None,
+        Err(e) => return Err(e.into()),
+    };
+    Ok((manifest, lock))
 }
 
 /// Every uncommitted name in the project repo that matters to a move of its
@@ -238,7 +242,7 @@ fn judge_members_at(
     branch: Option<(&BranchName, &Record)>,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let (manifest, lock) = project_files(vcs, dir, at);
+    let (manifest, lock) = project_files(vcs, dir, at)?;
     let Ok(manifest) = manifest else {
         return Ok(());
     };
@@ -270,17 +274,6 @@ fn remote_copy(
             None => None,
         },
     })
-}
-
-fn branch_tip(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    branch: &RawRefName,
-) -> anyhow::Result<Option<ResolvedRevisionId>> {
-    if let Some(tip) = vcs.resolve_local_branch_tip(dir, branch)? {
-        return Ok(Some(tip));
-    }
-    Ok(remote_copy(vcs, dir, branch)?.map(|copy| copy.tip))
 }
 
 pub(crate) fn no_such_branch(
@@ -384,6 +377,14 @@ fn agrees(existing: &Record, spelled: &Record) -> bool {
     }
 }
 
+/// Where a created branch starts.
+#[derive(Clone, Copy)]
+enum Start<'a> {
+    At(&'a str),
+    Head,
+    TargetTip(&'a RawRefName),
+}
+
 /// What a create judged: the branch, its record (`None` where the record did
 /// not compute, which the report says), where it starts, and the parent
 /// project repo's own commit.
@@ -423,12 +424,13 @@ pub(crate) fn judge_creation(
         (Some(Spelling::Target(text)), _) => Some(parse(text)?),
         (None, Some(text)) => Some(parse(text)?),
         (None, None) => {
-            return Err(refusal(
-                RefusalKind::HeadNotOnBranch,
-                format!(
-                    "rwv {verb}: the project repo is on a detached HEAD, so a bare create has \
-                     no branch to land into; spell it with `--target <T>` or `--declared`"
-                ),
+            return Err(crate::branch::refuse_off_branch(
+                vcs,
+                dir,
+                project,
+                verb,
+                "a bare create has no branch to land into; spell it with `--target <T>` or \
+                 `--declared`",
             ));
         }
     };
@@ -440,7 +442,6 @@ pub(crate) fn judge_creation(
 
     let record = match &target {
         None => Some(Record::Declared),
-        Some(target) if *target == new => None,
         Some(target) => match feature_record(&view, &new, target) {
             Ok(record) => Some(record),
             Err(error) => {
@@ -451,29 +452,42 @@ pub(crate) fn judge_creation(
     };
 
     let target_raw = target.as_ref().map(|t| RawRefName::new(t.as_str()));
-    let start = match (at, &target_raw, spelling) {
-        (Some(rev), _, _) => match vcs.resolve_revision(dir, rev) {
+    let start_from = match (at, &target_raw) {
+        (Some(rev), _) => Start::At(rev),
+        (None, _) if detached => Start::Head,
+        (None, None) => Start::Head,
+        (None, Some(target_raw)) => Start::TargetTip(target_raw),
+    };
+    let start = match start_from {
+        Start::At(rev) => match vcs.resolve_revision(dir, rev) {
             Ok(at) => Some(at),
-            Err(_) => {
+            Err(VcsError::RevisionNotFound { .. }) => {
                 report.add(no_such_branch(vcs, project, dir, rev, verb));
                 None
             }
+            Err(e) => return Err(e.into()),
         },
-        (None, Some(target_raw), _) if spelling.is_some() => {
-            match branch_tip(vcs, dir, target_raw)? {
-                Some(tip) => Some(tip),
-                None => {
+        Start::Head => Some(head.clone()),
+        Start::TargetTip(target_raw) => {
+            let home = vcs.project_url_remote(dir)?;
+            match crate::push_branch::newer_of_branch_and_upstream(
+                vcs,
+                dir,
+                target_raw,
+                home.as_ref(),
+            )? {
+                crate::push_branch::NewerOfBranchAndUpstream::Tip(tip) => Some(tip),
+                crate::push_branch::NewerOfBranchAndUpstream::Diverged { local, .. } => {
+                    diverged_start(vcs, project, dir, target_raw, verb, report)?;
+                    Some(local)
+                }
+                crate::push_branch::NewerOfBranchAndUpstream::Nowhere => {
                     report.add(no_such_branch(vcs, project, dir, target_raw.as_str(), verb));
                     None
                 }
             }
         }
-        _ => Some(head.clone()),
     };
-
-    if let (Some(target_raw), None, Some(_)) = (&target_raw, at, &start) {
-        diverged_start(vcs, project, dir, target_raw, verb, report)?;
-    }
 
     let Some(start) = start else {
         return Ok(None);
@@ -589,7 +603,7 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     }
     let mut steps = Vec::new();
     if let Some(record) = &record {
-        let (manifest, lock) = project_files(vcs, &dir, &start);
+        let (manifest, lock) = project_files(vcs, &dir, &start)?;
         if let Ok(manifest) = manifest {
             steps = crate::member_branch::judge_entries(
                 ctx,
@@ -602,8 +616,10 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
             )?;
         }
     }
+    let Some(record) = record else {
+        return report.into_result();
+    };
     report.into_result()?;
-    let record = record.expect("a record that did not read refused above");
 
     if let Some(line) = write_created_record(vcs, &project, &dir, &new, &record)? {
         outln!("{line}");
@@ -678,13 +694,15 @@ fn report_names(
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let (manifest, _) = if from_commits {
-        committed_files(vcs, dir, start)
+        committed_files(vcs, dir, start)?
     } else {
-        project_files(vcs, dir, start)
+        project_files(vcs, dir, start)?
     };
     let manifest = manifest?;
-    let mut repos = vec![(
-        Moving::present(label(project), dir.to_path_buf(), project_vcs(), None),
+    let mut repos = vec![Moving::present(
+        label(project),
+        dir.to_path_buf(),
+        project_vcs(),
         None,
     )];
     for (path, entry) in manifest.iter_entries() {
@@ -693,21 +711,20 @@ fn report_names(
         if !member_vcs.is_repo(&member_dir) {
             continue;
         }
-        repos.push((
-            Moving::present(path.to_string(), member_dir, member_vcs, Some(path.clone())),
-            Some(entry.role),
+        repos.push(Moving::present(
+            path.to_string(),
+            member_dir,
+            member_vcs,
+            Some(path.clone()),
         ));
     }
-    let scan = NameScan {
-        primary: ctx.primary_path(),
-        project,
-        accounting: Accounting::scan(ctx.primary_path()),
-    };
-    let feature = matches!(record, Some(Record::Feature { .. }));
-    for (repo, role) in &repos {
-        if feature && matches!(role, Some(Role::Owned | Role::Fork)) {
-            judge_feature_name(repo, new, &scan, verb, report);
+    if matches!(record, Some(Record::Feature { .. })) {
+        let scan = NameScan::of(ctx.primary_path(), project);
+        for judged in judge_feature_names(ctx.active_path(), &scan, new, &manifest, Some(verb))? {
+            report.add(judged);
         }
+    }
+    for repo in &repos {
         judge_name_taken(repo, new, false, verb, report)?;
     }
     Ok(())
@@ -776,6 +793,17 @@ pub(crate) fn judge_opening(
             None
         }
     };
+
+    if let Some(Record::Feature { .. }) = &record {
+        if let Ok(manifest) = committed_files(vcs, dir, &destination)?.0 {
+            let scan = NameScan::of(ctx.primary_path(), project);
+            for judged in
+                judge_feature_names(ctx.active_path(), &scan, &branch, &manifest, Some(verb))?
+            {
+                report.add(judged);
+            }
+        }
+    }
 
     if !matches!(checkouts, Checkouts::Unchecked) {
         let recorded = crate::sync::recorded_workweaves(ctx.primary_path())?;
@@ -977,8 +1005,12 @@ fn switch_detached(
 ) -> anyhow::Result<()> {
     let mut report = Report::default();
     let detached = checked_out(vcs, dir)?.is_none();
-    let Ok(destination) = vcs.resolve_revision(dir, rev) else {
-        return Err(no_such_branch(vcs, project, dir, rev, SWITCH).refused());
+    let destination = match vcs.resolve_revision(dir, rev) {
+        Ok(destination) => destination,
+        Err(VcsError::RevisionNotFound { .. }) => {
+            return Err(no_such_branch(vcs, project, dir, rev, SWITCH).refused())
+        }
+        Err(e) => return Err(e.into()),
     };
     ProjectMove {
         project,

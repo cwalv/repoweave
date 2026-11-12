@@ -755,7 +755,7 @@ fn refuse_backwards(
             }
         }
         let Ok(tip) = tip else { continue };
-        let subject = match crate::alignment::pin_of(item.vcs.as_ref(), dir, lock, &item.repo_path)
+        let subject = match crate::alignment::pin_of(item.vcs.as_ref(), dir, lock, &item.repo_path)?
         {
             crate::alignment::Pin::None => continue,
             crate::alignment::Pin::Unreachable => "the pin is in no ref here".to_owned(),

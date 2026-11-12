@@ -898,26 +898,44 @@ fn opening_or_recording_a_feature_whose_name_a_live_branch_declares_is_refused()
     let w = weave(&[LIB]);
     let ws = &w.workspace;
     let project = project_dir(ws);
-    declare_lib_on_rel(ws, "feat-d");
     git_ok(&project, &["branch", "feat-d", "main"]);
-
-    common::cli::refused(
-        &run(&["switch", "feat-d", "--target", "main"], ws),
-        State::NameDeclared,
+    git_ok(&project, &["branch", "feat-e", "main"]);
+    succeed(
+        &[
+            "branch", "set-mode", "feat-e", "feature", "--target", "main",
+        ],
+        ws,
     );
+    declare_lib_on_rel(ws, "feat-d");
+    let toml = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    assert!(
+        toml.contains("branch = \"main\""),
+        "main declares lib on main"
+    );
+    succeed(&["switch", "rel"], ws);
+    let rel = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        rel.replace("branch = \"feat-d\"", "branch = \"feat-e\""),
+    )
+    .unwrap();
+    git_ok(&project, &["commit", "-qam", "declare feat-e too"]);
+    succeed(&["switch", "main"], ws);
+
+    common::cli::refused(&run(&["switch", "feat-e"], ws), State::NameDeclared);
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
-    assert!(record_of(ws, "feat-d").is_none());
 
     common::cli::refused(
         &run(
             &[
-                "branch", "set-mode", "feat-d", "feature", "--target", "main",
+                "branch", "set-mode", "feat-e", "feature", "--target", "main",
             ],
             ws,
         ),
         State::NameDeclared,
     );
     assert!(record_of(ws, "feat-d").is_none());
+    assert!(record_of(ws, "feat-e").unwrap().contains("feature"));
 }
 
 #[test]
@@ -954,23 +972,6 @@ fn an_untracked_file_the_start_tracks_refuses_a_create_before_its_record_is_writ
     assert!(record_of(ws, "f").is_none());
     assert!(!has_branch(&project, "f"));
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
-}
-
-#[test]
-fn a_spelling_that_differs_from_the_record_is_not_reported_as_a_records_conflict() {
-    let w = weave(&[LIB]);
-    let ws = &w.workspace;
-    succeed(&["branch", "create", "rel", "--declared"], ws);
-    succeed(&["switch", "main"], ws);
-
-    let out = common::cli::refused(
-        &run(&["switch", "rel", "--target", "main"], ws),
-        State::TargetDiffers,
-    );
-
-    assert!(out.contains("target differs (rel)"), "{out}");
-    assert!(!out.contains("target conflict"), "{out}");
-    assert!(out.contains("recorded: declared"), "{out}");
 }
 
 #[test]

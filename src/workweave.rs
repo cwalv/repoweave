@@ -1869,7 +1869,7 @@ fn judge_intent(
         }
     };
     if let (Some(branch), Some(record)) = (&intent.branch, &intent.creating) {
-        let (manifest, lock) = crate::switch::committed_files(vcs, source_project, &intent.start);
+        let (manifest, lock) = crate::switch::committed_files(vcs, source_project, &intent.start)?;
         if let Ok(manifest) = manifest {
             intent.steps = crate::member_branch::judge_entries(
                 ctx,
@@ -2006,7 +2006,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     };
     report.into_result()?;
     let (manifest, workspace_lock) =
-        crate::switch::committed_files(project_vcs.as_ref(), &source_project, &intent.start);
+        crate::switch::committed_files(project_vcs.as_ref(), &source_project, &intent.start)?;
     let manifest = manifest?;
     if let Some(opening) = &intent.opening {
         crate::switch::localize_opened(project_vcs.as_ref(), &source_project, opening)?;

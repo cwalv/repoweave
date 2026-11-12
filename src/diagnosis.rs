@@ -945,11 +945,10 @@ impl State {
             Self::TargetDiffers => &StateRow {
                 axis: Axis::Target,
                 name: "differs",
-                means: "a spelling of how the branch is used differs from its record, both \
-                        listed: the record is how every verb reads the branch, and a spelling \
-                        never redirects it; nothing on the records branch is conflicted",
-                refused_by: "an opening spelling of a recorded branch; `rwv branch rename \
-                             --adopt` onto a name recorded otherwise",
+                means: "the record a verb would give the branch differs from the one it holds, \
+                        both listed: a record is replaced only by `rwv branch set-mode`; \
+                        nothing on the records branch is conflicted",
+                refused_by: "`rwv branch rename --adopt` onto a name recorded otherwise",
                 offers: &[Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },
