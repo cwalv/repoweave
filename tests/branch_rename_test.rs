@@ -385,10 +385,7 @@ fn a_gone_project_push_branch_offers_the_rename_that_adopts() {
 fn a_declared_mode_project_branch_is_protected_against_an_overwrite_and_an_unlanded_remote_delete()
 {
     let w = weave(&[LIB]);
-    common::git_in(
-        &project_dir(&w.workspace),
-        &["push", "-q", "origin", "main"],
-    );
+    common::git_in(project_dir(&w.workspace), &["push", "-q", "origin", "main"]);
 
     let stderr = refuse(&["push", "--overwrite", "projects/p"], &w.workspace);
     assert!(
@@ -397,7 +394,7 @@ fn a_declared_mode_project_branch_is_protected_against_an_overwrite_and_an_unlan
     );
     assert_routes_to(&stderr, "protected");
 
-    common::git_in(&project_dir(&w.workspace), &["branch", "side"]);
+    common::git_in(project_dir(&w.workspace), &["branch", "side"]);
     succeed(&["branch", "set-mode", "side", "declared"], &w.workspace);
     let stderr = refuse(
         &[
