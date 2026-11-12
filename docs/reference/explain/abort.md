@@ -28,6 +28,7 @@ when the repo's current tip is attributable to the op. The classification:
 | Equal to the recorded intent tip (`advanced_tips[repo]`) | `restored (from recorded intent tip)` — op advanced this repo during replay before crashing; reset to savepoint |
 | Equal to the recorded converged tip (`converged_tips[repo]`) | `restored (from recorded converged tip)` — op converged repo before crash; reset to savepoint |
 | Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op canceled; reset to savepoint |
+| Anything else, in the target workspace of a `land`, in a repo whose branch the landing never fast-forwarded | `left at <tip>, where something other than this landing moved it` — not the op's, so not restored and not a violation |
 | Anything else | `foreign-tip violation` — restore refused, the tip left where it is, nothing written |
 | Anything else, in a repo named on `--abandon-foreign-tip` | `restored (abandoned foreign tip)` — the tip is first kept as a backup marked `abandoned`, then the repo is reset to the savepoint |
 

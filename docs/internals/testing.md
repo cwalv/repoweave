@@ -496,7 +496,7 @@ to do, read only by the invariants:
   step with claims and no exit; a new constructor goes in that test's list,
   which `every_scenario_constructor_is_walked` holds to the file.
 - Its claims are facts about the state afterward: marks reachable from a
-  ref, on a remote it names (`RemoteContains`, any remote, a fork or a
+  ref, or not (`Lacks`), on a remote it names (`RemoteContains`, any remote, a fork or a
   mirror included), a pin containing a mark, a workweave gone, a line
   judging a repo in a state (`Judged`), the step's output holding a text,
   or one of its lines being exactly a text (`OutputLine`, for a listing,

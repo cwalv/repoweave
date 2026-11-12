@@ -336,6 +336,14 @@ pub enum Claim {
         rev: &'static str,
         mark: &'static str,
     },
+    /// The checkout of `repo` at `at` has `rev`, and `rev` does not reach the
+    /// commit `mark` names.
+    Lacks {
+        at: Place,
+        repo: Repo,
+        rev: &'static str,
+        mark: &'static str,
+    },
     RemoteContains {
         remote: Remote,
         branch: &'static str,
@@ -1888,6 +1896,30 @@ impl Run<'_> {
                 rev,
                 mark,
             } => self.contains(&sb.checkout(at, *repo), rev, mark),
+            Claim::Lacks {
+                at,
+                repo,
+                rev,
+                mark,
+            } => {
+                let dir = sb.checkout(at, *repo);
+                let sha = self.mark(mark)?;
+                if !self
+                    .sandbox
+                    .git(&dir, &["rev-parse", "--verify", "--quiet", rev])
+                    .status
+                    .success()
+                {
+                    return Err(format!("{} has no {rev}", dir.display()));
+                }
+                match self.contains(&dir, rev, mark) {
+                    Ok(()) => Err(format!(
+                        "{} at {rev} contains {mark} ({sha})",
+                        dir.display()
+                    )),
+                    Err(_) => Ok(()),
+                }
+            }
             Claim::RemoteContains {
                 remote,
                 branch,

@@ -11,7 +11,7 @@ use crate::lineage::{Lineage, PinHistory};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
-use crate::op_state::{CreatedRef, ReceivingRef};
+use crate::op_state::{CreatedRef, Moves};
 use crate::records::{BranchName, Mode, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::vcs::{
@@ -19,7 +19,7 @@ use crate::vcs::{
     ResolvedRevisionId, Site, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// A landing of the checked-out feature into its target, as resolved before
@@ -47,18 +47,31 @@ pub struct Landing {
 /// What [`judge`] planned.
 #[derive(Debug, Clone, Default)]
 pub struct Plan {
-    /// The receiving branch's tip each `owned` or `fork` member is composed
-    /// onto, or moves to where it follows.
-    pub sources: BTreeMap<RepoPath, CommitId>,
-    /// The members whose declared branch the landing changes and that hold
-    /// no new work: each takes its receiving branch's tip, merging nothing.
-    pub follows: BTreeSet<RepoPath>,
-    /// The receiving branches no checkout holds, moved as refs, each created
-    /// first where it exists nowhere.
-    pub receiving_refs: BTreeMap<RepoPath, ReceivingRef>,
+    /// Each member's receiving branch: the one map of every branch the
+    /// landing composes onto, moves, creates or follows.
+    pub receiving: BTreeMap<RepoPath, Receiving>,
     /// For each named declared-branch change, the commits `T`'s pin reaches
     /// that the new receiving branch lacks.
     pub left_behind: Vec<LeftBehind>,
+}
+
+/// A receiving branch `U`, its tip as the landing read it (the newer of it
+/// and its upstream; for a branch the landing creates, where it starts), and
+/// how the landing moves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Receiving {
+    pub branch: RawRefName,
+    pub tip: CommitId,
+    pub moves: Moves,
+}
+
+impl Plan {
+    /// The members the landing composes onto their receiving branch's tip.
+    pub fn composed(&self) -> impl Iterator<Item = (&RepoPath, &Receiving)> {
+        self.receiving
+            .iter()
+            .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
+    }
 }
 
 /// The commits a declared-branch change leaves on the old branch.
@@ -72,6 +85,44 @@ pub struct LeftBehind {
     /// Where the new branch is checked out once the landing aligns `T`'s
     /// workspace.
     pub checkout: PathBuf,
+}
+
+/// How the landing composes a branch that does not contain the tip it lands
+/// on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Composing {
+    /// Rebased onto that tip.
+    Rebase,
+    /// Not composed: such a branch refuses.
+    FastForwardOnly,
+}
+
+/// A range a rebase would replay that holds a merge is never rebased: the
+/// one judgement `sync` makes, made here for the landing so it joins the
+/// landing's one report.
+#[allow(clippy::too_many_arguments)]
+fn judge_merge_in_range(
+    composing: Composing,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    repo: &str,
+    head: &CommitId,
+    onto: &CommitId,
+    target: &BranchName,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    if composing == Composing::Rebase && !vcs.is_ancestor(dir, &rev(onto), &rev(head))? {
+        crate::feature_sync::judge_merge_in_range(
+            vcs,
+            dir,
+            repo,
+            head,
+            onto,
+            target.as_str(),
+            report,
+        )?;
+    }
+    Ok(())
 }
 
 fn rev(commit: &CommitId) -> ResolvedRevisionId {
@@ -385,6 +436,7 @@ pub fn judge(
     landing: &Landing,
     source_root: &Path,
     primary: &Path,
+    composing: Composing,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
     let vcs = project_vcs();
@@ -422,6 +474,16 @@ pub fn judge(
         history: PinHistory::of(vcs, &dir, &landing.target_tip)?,
     };
     judge_entry_changes(landing, &sides, source_root, &dir, &label, vcs, report)?;
+    judge_merge_in_range(
+        composing,
+        vcs,
+        &dir,
+        &label,
+        &head,
+        &landing.target_tip,
+        &landing.target,
+        report,
+    )?;
     for dependent in crate::merge_upstream::dependents_of(vcs, &dir, landing.feature.as_str())? {
         report.add(
             State::TargetDependents
@@ -486,6 +548,7 @@ pub fn judge(
             accounting: &accounting,
             target_aligner: &target_aligner,
             as_mode,
+            composing,
         };
         judge_member(&judging, &member, &mut plan, report)?;
     }
@@ -801,12 +864,12 @@ fn plan_added_member(
         crate::push_branch::newer_of_branch_and_upstream(vcs, dir, &receiving, home.as_ref())?,
         crate::push_branch::NewerOfBranchAndUpstream::Nowhere
     ) {
-        plan.receiving_refs.insert(
+        plan.receiving.insert(
             path.clone(),
-            ReceivingRef {
-                branch: receiving.as_str().to_owned(),
-                create: true,
-                at: pin,
+            Receiving {
+                branch: receiving,
+                tip: pin,
+                moves: Moves::Enters,
             },
         );
     }
@@ -929,6 +992,7 @@ struct Judging<'a> {
     accounting: &'a crate::alignment::Accounting,
     target_aligner: &'a crate::alignment::Aligner,
     as_mode: Mode,
+    composing: Composing,
 }
 
 /// Judge one `owned` or `fork` member and plan it: its receiving branch
@@ -947,6 +1011,7 @@ fn judge_member(
         accounting,
         target_aligner,
         as_mode,
+        composing,
     } = *judging;
     let Member {
         path,
@@ -1062,35 +1127,38 @@ fn judge_member(
         judge_moved(
             landing, sides, member, &attached, &receiving, &head, &tip, accounting, report,
         )?;
+        judge_merge_in_range(
+            composing,
+            vcs,
+            dir,
+            path.as_str(),
+            &head,
+            &tip,
+            &landing.target,
+            report,
+        )?;
     }
-    let moves_as_ref = created || (declared_changed && !follows);
-    if created {
-        plan.receiving_refs.insert(
-            path.clone(),
-            ReceivingRef {
-                branch: receiving.as_str().to_owned(),
-                create: true,
-                at: tip.clone(),
-            },
-        );
-    } else if moves_as_ref {
-        if judge_unheld_receiving(landing, member, &receiving, report)? {
-            plan.receiving_refs.insert(
-                path.clone(),
-                ReceivingRef {
-                    branch: receiving.as_str().to_owned(),
-                    create: false,
-                    at: tip.clone(),
-                },
-            );
+    let moves = if follows {
+        Moves::Follows
+    } else if created {
+        Moves::AsRef { create: true }
+    } else if declared_changed {
+        if !judge_unheld_receiving(landing, member, &receiving, report)? {
+            return Ok(());
         }
-    } else if !follows {
+        Moves::AsRef { create: false }
+    } else {
         judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?;
-    }
-    if follows {
-        plan.follows.insert(path.clone());
-    }
-    plan.sources.insert(path.clone(), tip);
+        Moves::InCheckout
+    };
+    plan.receiving.insert(
+        path.clone(),
+        Receiving {
+            branch: receiving,
+            tip,
+            moves,
+        },
+    );
     Ok(())
 }
 

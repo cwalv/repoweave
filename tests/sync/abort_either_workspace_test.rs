@@ -254,9 +254,11 @@ fn abort_from_the_workweave_restores_both_workspaces() {
 
 /// The target's project repo is moved, by hand, onto the commit the seat's
 /// replay rebased its own project commit into. That commit is in the seat's
-/// replay journal, but the op never put the target there, so the target's
-/// tip is foreign from either side.
-fn target_at_the_seats_journaled_tip_is_foreign(from: Invoked) {
+/// replay journal, but the op never put the target there: from either side
+/// the seat's journal does not attribute it, so abort does not restore it,
+/// and since the landing never fast-forwarded the target it is left where it
+/// stands rather than refused.
+fn target_at_the_seats_journaled_tip_is_left(from: Invoked) {
     let parked = park(true);
     let pre = pre_op(&parked);
     run_sync_to_into_park(&parked);
@@ -266,31 +268,32 @@ fn target_at_the_seats_journaled_tip_is_foreign(from: Invoked) {
     common::git_in(&parked.primary.project, &["merge", "--ff-only", &journaled]);
 
     let out = parked.abort(from);
-    assert!(!out.status.success(), "{from:?}:\n{}", transcript(&out));
+    assert!(out.status.success(), "{from:?}:\n{}", transcript(&out));
     let target_label = match from {
         Invoked::Target => "",
         Invoked::Workweave => "[target] ",
     };
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let refusal = format!("  {target_label}projects/{PROJECT}: foreign-tip violation");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let left = format!("  {target_label}projects/{PROJECT}: left at ");
     assert!(
-        stderr.lines().any(|l| l.starts_with(&refusal)),
-        "{from:?}: expected {refusal:?}\n{}",
+        stdout.lines().any(|l| l.starts_with(&left)),
+        "{from:?}: expected {left:?}\n{}",
         transcript(&out)
     );
     assert_eq!(
         head(&parked.primary.project),
         journaled,
-        "a refused repo keeps its tip"
+        "a repo the op never moved keeps its tip"
     );
+    assert_eq!(head(&parked.seat.project), pre.seat_project);
 }
 
 #[test]
-fn from_the_target_its_tip_at_the_seats_journaled_tip_is_foreign() {
-    target_at_the_seats_journaled_tip_is_foreign(Invoked::Target);
+fn from_the_target_its_tip_at_the_seats_journaled_tip_is_left() {
+    target_at_the_seats_journaled_tip_is_left(Invoked::Target);
 }
 
 #[test]
-fn from_the_workweave_the_targets_tip_at_its_journaled_tip_is_foreign() {
-    target_at_the_seats_journaled_tip_is_foreign(Invoked::Workweave);
+fn from_the_workweave_the_targets_tip_at_its_journaled_tip_is_left() {
+    target_at_the_seats_journaled_tip_is_left(Invoked::Workweave);
 }

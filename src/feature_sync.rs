@@ -732,7 +732,15 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                 Act::Nothing
             }
             SyncStrategy::Rebase => {
-                judge_merge_in_range(vcs, dir, &label, &head, &source, sync, &mut report)?;
+                judge_merge_in_range(
+                    vcs,
+                    dir,
+                    &label,
+                    &head,
+                    &source,
+                    sync.source_name(),
+                    &mut report,
+                )?;
                 Act::Rebase(source.clone())
             }
         }
@@ -824,14 +832,16 @@ fn judge_reset_site(
 }
 
 /// A range holding a merge is never rebased: the rebase would flatten the
-/// merge's second parent, which is how another lineage's work entered.
-fn judge_merge_in_range(
+/// merge's second parent, which is how another lineage's work entered. The
+/// note names the merge that takes `source`, the branch rebased onto, in
+/// instead; a report holding only such notes refuses `not-fast-forwardable`.
+pub(crate) fn judge_merge_in_range(
     vcs: &dyn Vcs,
     dir: &Path,
     repo: &str,
     tip: &CommitId,
     onto: &CommitId,
-    sync: &Sync<'_>,
+    source: &str,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let base = vcs.merge_bases(dir, tip, onto)?.into_iter().next();
@@ -841,8 +851,8 @@ fn judge_merge_in_range(
             "{repo}: the commits a rebase would replay hold the merge {}, which a rebase would \
              flatten; take {} in by a merge instead: `rwv sync --from {}`",
             merge.id.short(),
-            sync.source_name(),
-            sync.source_name()
+            source,
+            source
         ));
     }
     Ok(())
@@ -1198,7 +1208,15 @@ fn plan_member(
     }
     if let Act::Rebase(onto) = &member.act {
         let onto = onto.clone();
-        judge_merge_in_range(mvcs, &mdir, path.as_str(), &head, &onto, sync, report)?;
+        judge_merge_in_range(
+            mvcs,
+            &mdir,
+            path.as_str(),
+            &head,
+            &onto,
+            sync.source_name(),
+            report,
+        )?;
     }
     judge_push_branch(
         mvcs,

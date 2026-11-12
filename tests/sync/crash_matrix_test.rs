@@ -279,6 +279,8 @@ struct OwnerRecordFixture {
     converged_tips: Vec<(String, String)>,
     /// override strings (e.g. "discard-local-commits", "allow-stale-lock").
     overrides: Vec<&'static str>,
+    /// The target repos a landing journaled as fast-forwarded.
+    fast_forwarded: Vec<repoweave::manifest::RepoKey>,
 }
 
 fn tip_map_json(tips: &[(String, String)]) -> String {
@@ -304,7 +306,12 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
-            common::land_plan_json(workspace, Path::new(&rec.target), "web-app")
+            let mut plan: repoweave::op_state::TakeInRecord = serde_json::from_str(
+                &common::land_plan_json(workspace, Path::new(&rec.target), "web-app"),
+            )
+            .unwrap();
+            plan.fast_forwarded = rec.fast_forwarded.clone();
+            serde_json::to_string(&plan).unwrap()
         } else {
             "null".to_owned()
         },
@@ -1602,6 +1609,9 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
                 (SERVER_PATH.to_owned(), ww_server_tip),
                 ("(project)".to_owned(), ww_project_tip),
             ],
+            fast_forwarded: vec![repoweave::manifest::RepoKey::Member(
+                repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+            )],
             ..Default::default()
         },
     );
@@ -1963,6 +1973,81 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
     );
 }
 
+/// A landing that fast-forwarded the target's `server` and recorded so, then
+/// stopped; someone commits on top of what it landed. Abort is the foreign
+/// tip case for that repo, since the landing did move it; without the
+/// journal entry the same tip is left where it stands.
+fn landed_then_moved_again(journaled: bool) -> (Workspace, Workspace, String, tempfile::TempDir) {
+    let tmp = common::tempdir().unwrap();
+    let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
+    let landed = advance_one(&ww.server_dir, "advance.txt", "advanced\n", "advance");
+    common::git_in(
+        &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    );
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["merge", "--ff-only", &fh]);
+    let op_id = if journaled {
+        "crash-matrix-landed-then-moved-journaled"
+    } else {
+        "crash-matrix-landed-then-moved-unjournaled"
+    };
+    plant_owner_record(
+        &ww.root,
+        &OwnerRecordFixture {
+            id: op_id.to_owned(),
+            verb_str: PlantedVerb::Land.wire(),
+            source: ww.root.display().to_string(),
+            target: primary.root.display().to_string(),
+            phase: "advance-target",
+            converged_tips: vec![(SERVER_PATH.to_owned(), landed)],
+            fast_forwarded: if journaled {
+                vec![repoweave::manifest::RepoKey::Member(
+                    repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+                )]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        },
+    );
+    plant_lease(&primary.root, &ww.root, op_id);
+    plant_savepoint(&ww.project_dir, op_id);
+    plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
+    let target_id = target_op_id(op_id);
+    plant_savepoint(&primary.project_dir, &target_id);
+    plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
+    let moved_again = advance_one(&primary.server_dir, "again.txt", "again\n", "again");
+    (primary, ww, moved_again, tmp)
+}
+
+#[test]
+fn abort_refuses_a_target_repo_the_landing_moved_that_moved_again() {
+    let (primary, ww, moved_again, _tmp) = landed_then_moved_again(true);
+    run_abort_refuses_foreign(&ww.root, "landed then moved again");
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+        moved_again
+    );
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the refused abort keeps the op"
+    );
+}
+
+#[test]
+fn abort_leaves_a_target_repo_the_landing_never_moved() {
+    let (primary, ww, moved_again, _tmp) = landed_then_moved_again(false);
+    run_abort_ok(&ww.root, "moved by someone else only");
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+        moved_again
+    );
+    assert!(!ww.root.join(".rwv-op").exists(), "the abort ends the op");
+}
+
 // ===========================================================================
 // CONTINUE-AFTER-SOURCE-MUTATION (one cell, pins design § 6's re-pin rule)
 // ===========================================================================
@@ -1970,7 +2055,9 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
 /// Crash mid-replay (record=replay), then move the target between crash and
 /// `--continue`. The plan the op recorded no longer describes the landing, so
 /// `--continue` refuses it as `target` moved mid-operation and changes
-/// nothing.
+/// nothing. The route it prints, `rwv abort`, ends the op in both workspaces:
+/// the landing moved nothing in the target, so the commits someone else made
+/// there stay where they are rather than reading as foreign tips.
 #[test]
 fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
     let tmp = common::tempdir().unwrap();
@@ -2021,6 +2108,35 @@ fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_before,
         "the refused resume moved nothing"
+    );
+    let primary_project_moved = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+
+    let abort = common::cli::succeed(&["abort"], &ww.root);
+    let said = String::from_utf8_lossy(&abort.stdout);
+    assert!(
+        said.contains("where something other than this landing moved it"),
+        "{}",
+        common::cli::describe(&abort)
+    );
+    assert!(!ww.root.join(".rwv-op").exists(), "the abort ends the op");
+    assert!(
+        !primary.root.join(".rwv-op-lease").exists(),
+        "the abort ends the op in the target too"
+    );
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+        new_primary_server_tip,
+        "the commit someone else made in the target stays"
+    );
+    assert_eq!(
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
+        primary_project_moved,
+        "the target's project branch stays where someone else moved it"
+    );
+    assert_eq!(
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
+        ww_server_before,
+        "the source is at its savepoint"
     );
 }
 

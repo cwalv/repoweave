@@ -19,14 +19,20 @@ together. Then, under an op record:
    whose work that branch lacks is rebased onto it (`--strategy rebase`, the
    default); a member with nothing to land follows it. The project branch is
    rebased onto the target's tip, again the newer of the target and its
-   upstream. Every rebase happens in this workspace; nothing outside it moves.
+   upstream, unless it already contains that tip. A target or receiving
+   branch behind its upstream is so taken in, fast-forward only. Every
+   rebase happens in this workspace; nothing outside it moves. A range a
+   rebase would replay that holds a merge commit is never rebased: the
+   landing refuses as `not-fast-forwardable`, naming the merge.
 2. **Relock.** The lock is recorded and committed: each member's pin merged
    three ways against the merge base's lock, every composed member at its
    composed tip. A `dependency` or `reference` member takes the pin the merge
    gives it.
 3. **Fast-forward (advance-target).** Where the target is checked out, each
    receiving branch fast-forwards in its checkout, then the target's project
-   branch, to what was composed. Nothing there is ever rebased or merged.
+   branch: each the branch the landing planned, to exactly what was composed
+   and recorded, never a commit made in this workspace since. Nothing there
+   is ever rebased or merged.
 4. **Align.** The workspace with the target checked out aligns its members as
    `rwv update` does, storing the entries without reporting them; then this
    workspace's members follow the target's new pins. A member alignment leaves
@@ -112,10 +118,11 @@ Another weave branch that lands into this one refuses as
 
 **A target that moved.** The fast-forward compares each branch against what
 was composed for it. A target or receiving branch that another verb moved
-after the landing read it stops the landing as `target` `moved mid-operation`,
-with its op record kept and the refs it already moved left as moved. `rwv
-abort` restores every ref the landing moved; then `rwv land` again judges the
-new tips. `rwv land --continue` refuses it, since the plan no longer describes
+after the landing read it, or a checkout there switched to another branch,
+stops the landing as `target` `moved mid-operation`, with its op record kept
+and the refs it already moved left as moved. `rwv abort` restores every ref
+the landing moved and leaves every other repo there where it stands; then
+`rwv land` again judges the new tips. `rwv land --continue` refuses it, since the plan no longer describes
 the landing.
 
 ## Refusals
@@ -145,7 +152,8 @@ the landing.
 | `alignment` | any | a member here, or in the target's workspace, is not where its branch expects it |
 
 `not-fast-forwardable` refuses `--strategy ff` where the feature does not
-already contain the target's tip. `missing-lock-merge-driver` refuses where
+already contain the target's tip, and a rebase of a range holding a merge
+commit, naming `rwv sync --from <T>` to take the target in by a merge. `missing-lock-merge-driver` refuses where
 the project repo's lock merge driver is absent or was set up by an earlier
 release, in this workspace or, under `--strategy rebase`, in the target's;
 run `rwv doctor --fix` where the refusal names. A conflict while composing stops the landing

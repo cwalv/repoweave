@@ -254,7 +254,7 @@ src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	4
-src/sync.rs	(untokened:internal-invariant)	-	14
+src/sync.rs	(untokened:internal-invariant)	-	17
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	checkout in a raw worktree	-	1
 src/sync.rs	checkout in another workspace	-	1
@@ -265,7 +265,7 @@ src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
-src/sync.rs	not-fast-forwardable	-	2
+src/sync.rs	not-fast-forwardable	-	3
 src/sync.rs	op-parked	-	6
 src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
 src/sync.rs	pin none	tests/doctor/benign_staleness_test.rs	1

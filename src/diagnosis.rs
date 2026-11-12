@@ -1531,10 +1531,10 @@ impl State {
                 axis: Axis::Target,
                 name: "moved mid-operation",
                 means: "the target, or a branch the landing fast-forwards, moved after the \
-                        landing read it, so the work composed in the source no longer \
-                        fast-forwards onto it: the repo, the tip it now holds and the tip \
-                        composed for it, listed. The landing stopped with its op record kept \
-                        and the refs it already moved left as moved",
+                        landing read it, or the checkout there is on another branch, so the \
+                        work composed in the source no longer fast-forwards onto it: the repo \
+                        and where it now stands, listed. The landing stopped with its op \
+                        record kept and the refs it already moved left as moved",
                 refused_by: "`rwv land`, at the fast-forward, and its `--continue`, since \
                              the plan no longer describes the landing",
                 offers: &[Form::LostRace],
@@ -1866,7 +1866,7 @@ impl ChoiceId {
                 id: None,
                 phrase: "put back every ref the landing moved, then land again from the new tips",
                 keeps_work: "`rwv abort` moves only what the landing moved, from the tips it \
-                             wrote",
+                             wrote; a branch someone else moved stays where they left it",
             },
             Self::ConvertIndex => &ChoiceRow {
                 id: None,

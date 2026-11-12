@@ -148,16 +148,26 @@ report with the edits, alignment and pin judgments of both workspaces.
 Nothing moves until that report is empty.
 
 The plan is written to the owner record's `take_in`: `sync_from` names `T`,
-`upstream_tips` holds `T`'s tip under `(project)` and each planned member's
-receiving-branch tip under its path, and `source_tip` the source's project
-tip once the op-start relock committed. Replay composes each planned member
-onto its tip and nothing else; relock merges pins three ways against the
-merge base of `source_tip` and `T`'s tip, each planned member at its composed
-tip; advance-target fast-forwards only the planned members and the project
-repo. A `--continue` reads the plan back and, before any phase, refuses when
-a branch the plan fast-forwards no longer fast-forwards to what it holds
-(`target` moved mid-operation): the plan no longer describes the landing.
-Advance-target judges the same, per repo, at the moment it moves each one.
+`receiving` holds, under `(project)`, the branch `T` and its tip, and under
+each planned member's path its receiving branch `U`, that branch's tip and
+how it moves (in its checkout, as a ref and perhaps created, created for a
+member `T` lacks, or followed with nothing moving),
+and `source_tip` the source's project tip once the op-start relock
+committed. Replay composes each planned member onto its tip and nothing
+else; relock merges pins three ways against the merge base of `source_tip`
+and `T`'s tip, each planned member at its composed tip, and records every
+composed tip as the op's converged tips; advance-target fast-forwards only
+the planned members and the project repo, each on exactly the branch the
+plan names and to exactly its converged tip, never to whatever the source
+checkout holds by then. A `--continue` reads the plan back and, before any
+phase, refuses when a checkout the plan fast-forwards is no longer on the
+branch it names, or that branch no longer fast-forwards to what the record
+holds for it (`target` moved mid-operation): the plan no longer describes
+the landing. Advance-target judges the same, per repo, at the moment it
+moves each one, and again when the move itself fails, so a branch moved
+between that judgment and the move is the same state. Each repo of `T`'s
+workspace it moves is added to `take_in.fast_forwarded` once its branch
+has moved.
 
 ## mark
 
@@ -377,6 +387,7 @@ classification of the rest:
 | Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
 | Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
 | Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op canceled; reset to savepoint |
+| Anything else, on the target side of a `land`, in a repo `take_in.fast_forwarded` does not name | `ForeignTip` read as not the op's: printed `left at <tip>, where something other than this landing moved it`; no violation, nothing written, and `--abandon-foreign-tip` does not apply. An unreadable record (header only) has no journal, so this row never applies there |
 | Anything else | `ForeignTip` — restore **refused**; tip left in place; violation reported; op-state retained; nothing written |
 | Anything else, with `--abandon-foreign-tip` naming the repo | `AbandonedForeignTip` — the tip is first kept as a backup marked `abandoned` (`Vcs::create_backup`, which hands back the `BackupWitness` the outcome carries), then reset to savepoint |
 

@@ -2511,9 +2511,11 @@ fn judge_source_relations(
     }
 }
 
-/// Where each checkout of `T`'s workspace stands to `T`'s lock: one beyond
-/// its pin by commits no live lock and no remote reaches refuses (`pin`
-/// unpinned in `T`); one behind or diverged is not where `T`'s lock says.
+/// Where each checkout of `T`'s workspace stands to the lock that workspace
+/// has checked out, never the upstream's, whose moves the landing takes in:
+/// one beyond its pin by commits no live lock and no remote reaches refuses
+/// (`pin` unpinned in `T`); one behind or diverged is not where that lock
+/// says.
 fn judge_target_pins(
     class: &LockClassification,
     root: &Path,
@@ -2684,10 +2686,20 @@ fn run_preconditions_after_acquire(
         &cwd_project.manifest,
         &mut report,
     );
-    if let Some(target_class) = snapshot.source_class.as_ref() {
-        if let Ok(target_manifest) =
-            manifest_at_revision(project_vcs, dest_project_dir, &snapshot.source_project_tip)
-        {
+    let checked_out_target = pin_source_snapshot(
+        project_vcs,
+        dest_project_dir,
+        dest_workspace_dir,
+        cwd_ctx.primary_path(),
+        None,
+        ClassifySource::Relations,
+    )?;
+    if let Some(target_class) = checked_out_target.source_class.as_ref() {
+        if let Ok(target_manifest) = manifest_at_revision(
+            project_vcs,
+            dest_project_dir,
+            &checked_out_target.source_project_tip,
+        ) {
             judge_target_pins(
                 target_class,
                 dest_workspace_dir,
@@ -2721,6 +2733,10 @@ fn run_preconditions_after_acquire(
         landing,
         cwd_workspace_dir,
         cwd_ctx.primary_path(),
+        match strategy {
+            SyncStrategy::Rebase => crate::land::Composing::Rebase,
+            SyncStrategy::Ff => crate::land::Composing::FastForwardOnly,
+        },
         &mut report,
     )?;
     if strategy == SyncStrategy::Ff {
@@ -2744,6 +2760,13 @@ fn run_preconditions_after_acquire(
             return Err(e);
         }
         report.note(format!("{e:#}"));
+    }
+    if report.lines().is_empty() && !report.notes().is_empty() {
+        crate::refuse!(
+            RefusalKind::NotFastForwardable,
+            "{}",
+            report.notes().join("\n")
+        );
     }
     report.into_result()?;
 
@@ -2961,25 +2984,25 @@ fn guard_and_mark<'a>(
             .iter()
             .map(ToString::to_string)
             .collect(),
-        follows: plan
-            .follows
-            .iter()
-            .map(|path| RepoKey::Member(path.clone()))
-            .collect(),
-        receiving_refs: plan
-            .receiving_refs
-            .iter()
-            .map(|(path, receiving)| (RepoKey::Member(path.clone()), receiving.clone()))
-            .collect(),
         ..op_state::TakeInRecord::default()
     };
-    take_in
-        .upstream_tips
-        .insert(RepoKey::Project, landing.target_tip.clone());
-    for (path, tip) in &plan.sources {
-        take_in
-            .upstream_tips
-            .insert(RepoKey::Member(path.clone()), tip.clone());
+    take_in.receiving.insert(
+        RepoKey::Project,
+        op_state::Receiving {
+            branch: landing.target.to_string(),
+            tip: landing.target_tip.clone(),
+            moves: op_state::Moves::InCheckout,
+        },
+    );
+    for (path, receiving) in &plan.receiving {
+        take_in.receiving.insert(
+            RepoKey::Member(path.clone()),
+            op_state::Receiving {
+                branch: receiving.branch.as_str().to_owned(),
+                tip: receiving.tip.clone(),
+                moves: receiving.moves,
+            },
+        );
     }
     if emit_text {
         for left in &plan.left_behind {
@@ -3061,12 +3084,16 @@ fn load_continuing_context<'a>(
             );
         }
     }
-    let take_in = record.take_in.clone().ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "op {op_id} records no landing plan; `rwv abort` rolls it back"
-        )
-    })?;
+    let take_in = record
+        .take_in
+        .clone()
+        .filter(|take_in| take_in.receiving.contains_key(&RepoKey::Project))
+        .ok_or_else(|| {
+            crate::untokened!(
+                InternalInvariant,
+                "op {op_id} records no landing plan; `rwv abort` rolls it back"
+            )
+        })?;
 
     let cwd_ctx = if owner_workspace == *invocation_ctx.active_root() {
         invocation_ctx.clone()
@@ -3096,11 +3123,7 @@ fn load_continuing_context<'a>(
     // longer describes: only `rwv abort` and a fresh landing judge the new
     // tips.
     if !matches!(record.phase, op_state::OpPhase::Retire) {
-        let composed = record
-            .tips
-            .converged()
-            .filter(|tips| !tips.is_empty())
-            .unwrap_or(&take_in.upstream_tips);
+        let composed = record.tips.converged().filter(|tips| !tips.is_empty());
         if let Some(moved) =
             target_moved(&cwd_project_name, &dest_workspace_dir, &take_in, composed)?
         {
@@ -3132,10 +3155,9 @@ fn load_continuing_context<'a>(
     }
 
     let target_tip = take_in
-        .upstream_tips
+        .receiving
         .get(&RepoKey::Project)
-        .cloned()
-        .map(ResolvedRevisionId::from);
+        .map(|r| ResolvedRevisionId::from(r.tip.clone()));
     let snapshot = pin_source_snapshot(
         project_vcs.as_ref(),
         &dest_project_dir,
@@ -3188,25 +3210,30 @@ fn load_continuing_context<'a>(
     })
 }
 
-/// The `target` moved mid-operation line, when a branch the landing
-/// fast-forwards in `T`'s workspace no longer fast-forwards to the tip
-/// `composed` holds for it: `T`, or a planned member's receiving branch.
+/// The `target` moved mid-operation line, when a checkout the landing
+/// fast-forwards in `T`'s workspace is no longer on the branch the plan
+/// names for it, or a branch it moves, in a checkout or as a ref, no longer
+/// fast-forwards to the tip `composed` holds for it (before the landing
+/// composed, to the tip it read), or is gone where the plan does not create
+/// it.
 fn target_moved(
     project: &ProjectName,
     target_workspace: &Path,
     take_in: &op_state::TakeInRecord,
-    composed: &std::collections::BTreeMap<RepoKey, CommitId>,
+    composed: Option<&std::collections::BTreeMap<RepoKey, CommitId>>,
 ) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
     let mut moved: Vec<String> = Vec::new();
     let manifest =
         Manifest::from_path(&project_dir(target_workspace, project).join(Manifest::FILE_NAME)).ok();
-    for key in take_in.upstream_tips.keys() {
-        let Some(to) = composed.get(key) else {
-            continue;
+    for (key, receiving) in &take_in.receiving {
+        let to = match (receiving.moves, composed) {
+            (op_state::Moves::Follows, _) => continue,
+            (op_state::Moves::Enters, _) | (_, None) => &receiving.tip,
+            (_, Some(composed)) => match composed.get(key) {
+                Some(to) => to,
+                None => continue,
+            },
         };
-        if take_in.follows.contains(key) || take_in.receiving_refs.contains_key(key) {
-            continue;
-        }
         let (dir, vcs) = match key {
             RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
             RepoKey::Member(path) => {
@@ -3219,9 +3246,41 @@ fn target_moved(
                 )
             }
         };
+        let create = match receiving.moves {
+            op_state::Moves::AsRef { create } => Some(create),
+            op_state::Moves::Enters => Some(true),
+            op_state::Moves::InCheckout | op_state::Moves::Follows => None,
+        };
+        if let Some(create) = create {
+            if !vcs.is_repo(&dir) {
+                continue;
+            }
+            let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
+            match vcs.resolve_local_branch_tip(&dir, &branch)? {
+                Some(now)
+                    if !vcs.is_ancestor(&dir, &now, &ResolvedRevisionId::from(to.clone()))? =>
+                {
+                    moved.push(format!(
+                        "{key}: '{}' now at {}, which does not fast-forward to {}",
+                        receiving.branch,
+                        now.id().short(),
+                        to.short()
+                    ));
+                }
+                None if !create => {
+                    moved.push(format!("{key}: '{}' is gone", receiving.branch));
+                }
+                _ => {}
+            }
+            continue;
+        }
         let Ok(head) = vcs.head_revision(&dir) else {
             continue;
         };
+        if let Some(off) = off_its_branch(vcs.as_ref(), &dir, &receiving.branch)? {
+            moved.push(format!("{key}: {off}"));
+            continue;
+        }
         if !vcs.is_ancestor(&dir, &head, &ResolvedRevisionId::from(to.clone()))? {
             moved.push(format!(
                 "{key}: now at {}, which does not fast-forward to {}",
@@ -3234,6 +3293,18 @@ fn target_moved(
         return Ok(None);
     }
     Ok(Some(target_moved_line(project, target_workspace, moved)))
+}
+
+/// The other branch a checkout is on when it is not on `branch`, the branch
+/// a landing fast-forwards there. A checkout on no branch is the move's own
+/// refusal, which a switch back to `branch` clears.
+fn off_its_branch(vcs: &dyn Vcs, dir: &Path, branch: &str) -> anyhow::Result<Option<String>> {
+    Ok(match vcs.head_attachment(dir)? {
+        HeadAttachment::Attached(on) if on.to_string() != branch => {
+            Some(format!("on '{on}', not on '{branch}'"))
+        }
+        _ => None,
+    })
 }
 
 fn target_moved_line(
@@ -3297,7 +3368,8 @@ fn refuse_members_that_need_composing(
     plan: &crate::land::Plan,
 ) -> anyhow::Result<()> {
     let mut behind: Vec<String> = Vec::new();
-    for (path, source) in &plan.sources {
+    for (path, receiving) in plan.composed() {
+        let source = &receiving.tip;
         let Some(entry) = manifest.get_entry(path) else {
             continue;
         };
@@ -3863,10 +3935,14 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
-    for (key, source) in &ctx.take_in.upstream_tips {
+    for (key, receiving) in &ctx.take_in.receiving {
         let RepoKey::Member(repo_path) = key else {
             continue;
         };
+        if receiving.moves == op_state::Moves::Enters {
+            continue;
+        }
+        let source = &receiving.tip;
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             if emit_text && !materialize_failures.contains(repo_path) {
@@ -3874,8 +3950,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        let key = RepoKey::Member(repo_path.clone());
-        if ctx.take_in.follows.contains(&key) {
+        if receiving.moves == op_state::Moves::Follows {
             let vcs = replayed
                 .manifest
                 .get_entry(repo_path)
@@ -4411,8 +4486,9 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     })?;
     let target = ctx
         .take_in
-        .upstream_tips
+        .receiving
         .get(&RepoKey::Project)
+        .map(|r| &r.tip)
         .ok_or_else(|| {
             crate::untokened!(
                 InternalInvariant,
@@ -4441,8 +4517,9 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     for (path, entry) in manifest.iter_entries() {
         if !ctx
             .take_in
-            .upstream_tips
-            .contains_key(&RepoKey::Member(path.clone()))
+            .receiving
+            .get(&RepoKey::Member(path.clone()))
+            .is_some_and(|r| r.moves != op_state::Moves::Enters)
         {
             continue;
         }
@@ -4615,16 +4692,32 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             "internal: owner record missing at advance-target"
         )
     })?;
-    if let Some(composed) = owner.tips.converged() {
-        if let Some(moved) = target_moved(
-            &ctx.cwd_project_name,
-            &ctx.dest_workspace_dir,
-            &ctx.take_in,
-            composed,
-        )? {
-            return Err(moved.refused());
-        }
+    let composed = owner.tips.converged().cloned().ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: advance-target reached before the landing recorded its composed tips"
+        )
+    })?;
+    if let Some(moved) = target_moved(
+        &ctx.cwd_project_name,
+        &ctx.dest_workspace_dir,
+        &ctx.take_in,
+        Some(&composed),
+    )? {
+        return Err(moved.refused());
     }
+    let planned = |key: &RepoKey| -> anyhow::Result<(&str, ResolvedRevisionId)> {
+        match (ctx.take_in.receiving.get(key), composed.get(key)) {
+            (Some(receiving), Some(to)) => Ok((
+                receiving.branch.as_str(),
+                ResolvedRevisionId::from(to.clone()),
+            )),
+            _ => Err(crate::untokened!(
+                InternalInvariant,
+                "internal: the landing recorded no composed tip for {key}"
+            )),
+        }
+    };
 
     let target_ctx =
         WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
@@ -4632,19 +4725,23 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     let mut any_ff_failure = false;
     let mut moved = Report::default();
-    for (key, receiving) in &ctx.take_in.receiving_refs {
+    for (key, receiving) in &ctx.take_in.receiving {
         let RepoKey::Member(repo_path) = key else {
             continue;
+        };
+        let create = match receiving.moves {
+            op_state::Moves::AsRef { create } => create,
+            op_state::Moves::Enters => true,
+            op_state::Moves::InCheckout | op_state::Moves::Follows => continue,
         };
         let Some(entry) = cwd_project_final.manifest.get_entry(repo_path) else {
             continue;
         };
         let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        let composed = if ctx.take_in.upstream_tips.contains_key(key) {
-            vcs.head_revision(&cwd_repo)?.id().clone()
-        } else {
-            receiving.at.clone()
+        let composed = match receiving.moves {
+            op_state::Moves::Enters => receiving.tip.clone(),
+            _ => planned(key)?.1.id().clone(),
         };
         if let Err(e) = moved.absorb(advance_receiving_ref(
             ctx,
@@ -4652,6 +4749,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             repo_path,
             &cwd_repo,
             receiving,
+            create,
             &composed,
         )) {
             if emit_text {
@@ -4662,9 +4760,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
         let key = RepoKey::Member(repo_path.clone());
-        if !ctx.take_in.upstream_tips.contains_key(&key)
-            || ctx.take_in.follows.contains(&key)
-            || ctx.take_in.receiving_refs.contains_key(&key)
+        if !ctx
+            .take_in
+            .receiving
+            .get(&key)
+            .is_some_and(|r| r.moves == op_state::Moves::InCheckout)
         {
             continue;
         }
@@ -4674,16 +4774,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if !cwd_repo.exists() {
             continue;
         }
-        let cwd_tip = match vcs.head_revision(&cwd_repo) {
-            Ok(tip) => tip,
-            Err(e) => {
-                if emit_text {
-                    eprintln!("  {}: failed to read CWD tip: {e:#}", repo_path);
-                }
-                any_ff_failure = true;
-                continue;
-            }
-        };
+        let (branch, cwd_tip) = planned(&key)?;
         if !target_repo.exists() {
             match &target_ctx.checkout {
                 Checkout::Workweave {
@@ -4733,13 +4824,20 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        match ff_advance_repo(vcs.as_ref(), repo_path, &target_repo, &cwd_repo, &cwd_tip) {
+        match ff_advance_repo(
+            vcs.as_ref(),
+            repo_path,
+            &target_repo,
+            &cwd_repo,
+            branch,
+            &cwd_tip,
+        ) {
             Ok(advance) => {
                 if emit_text {
                     outln!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
                 }
-                // Record step-3 advance iff the branch pointer actually moved.
                 if advance.onto.is_some() {
+                    journal_fast_forward(ctx, &key)?;
                     ctx.handler.record_step3_advance(
                         &RepoKey::Member(repo_path.clone()),
                         advance.from.id().as_str(),
@@ -4783,16 +4881,14 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    let cwd_project_tip = ctx
-        .project_vcs
-        .head_revision(&ctx.cwd_project_dir)
-        .context("failed to read CWD project HEAD for advance-target")?;
+    let (target_branch, cwd_project_tip) = planned(&RepoKey::Project)?;
 
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
         project_rel_path(&ctx.cwd_project_name),
         &ctx.dest_project_dir,
         &ctx.cwd_project_dir,
+        target_branch,
         &cwd_project_tip,
     ) {
         Ok(advance) => {
@@ -4803,8 +4899,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     ff_advance_line(&advance, &cwd_project_tip)
                 );
             }
-            // Record step-3 advance for the project repo iff it actually moved.
             if advance.onto.is_some() {
+                journal_fast_forward(ctx, &RepoKey::Project)?;
                 ctx.handler.record_step3_advance(
                     &RepoKey::Project,
                     advance.from.id().as_str(),
@@ -4853,7 +4949,8 @@ fn advance_receiving_ref(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
     dir: &Path,
-    receiving: &op_state::ReceivingRef,
+    receiving: &op_state::Receiving,
+    create: bool,
     composed: &CommitId,
 ) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
@@ -4862,12 +4959,12 @@ fn advance_receiving_ref(
     let from = match vcs.resolve_local_branch_tip(dir, &branch)? {
         Some(tip) => tip.id().clone(),
         None => {
-            let upstream = if receiving.create {
+            let upstream = if create {
                 None
             } else {
                 vcs.remote_copies(dir, &branch)?
                     .into_iter()
-                    .find(|copy| copy.tip.id() == &receiving.at)
+                    .find(|copy| copy.tip.id() == &receiving.tip)
                     .map(|copy| crate::vcs::Upstream {
                         remote: copy.remote,
                         branch: branch.clone(),
@@ -4876,7 +4973,7 @@ fn advance_receiving_ref(
             vcs.create_branch(
                 dir,
                 &branch,
-                &ResolvedRevisionId::from(receiving.at.clone()),
+                &ResolvedRevisionId::from(receiving.tip.clone()),
                 upstream.as_ref(),
             )?;
             op_state::journal_created_ref(
@@ -4884,17 +4981,17 @@ fn advance_receiving_ref(
                 op_state::CreatedRef {
                     repo: key.clone(),
                     branch: receiving.branch.clone(),
-                    at: receiving.at.clone(),
+                    at: receiving.tip.clone(),
                 },
             )?;
-            if emit_text && receiving.create {
+            if emit_text && create {
                 outln!(
                     "  {repo_path}: created '{}' at {}",
                     receiving.branch,
-                    receiving.at.short()
+                    receiving.tip.short()
                 );
             }
-            receiving.at.clone()
+            receiving.tip.clone()
         }
     };
     if &from == composed {
@@ -4919,8 +5016,7 @@ fn advance_receiving_ref(
         return Err(target_moved_line_for(
             repo_path,
             dir,
-            &now,
-            &ResolvedRevisionId::from(composed.clone()),
+            does_not_fast_forward(&now, &ResolvedRevisionId::from(composed.clone())),
         )
         .refused());
     }
@@ -4944,6 +5040,24 @@ fn advance_receiving_ref(
         );
     }
     Ok(())
+}
+
+/// Record on the op record that the landing moved `key`'s branch in `T`'s
+/// workspace, so `rwv abort` restores it and leaves every other repo there
+/// where it stands.
+fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
+    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: owner record missing at advance-target"
+        )
+    })?;
+    let take_in = owner.take_in.get_or_insert_with(Default::default);
+    if !take_in.fast_forwarded.contains(key) {
+        take_in.fast_forwarded.push(key.clone());
+    }
+    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+        .context("failed to record a fast-forward of the target")
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.
@@ -5194,6 +5308,9 @@ fn retire_workweave_after_landing(
 ///
 /// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
 ///   a fast-forward via `git merge --ff-only`.
+/// - Either: a CWD tip that already contains `source_tip` is left as it is.
+///   There is nothing to compose, and a forced rebase would flatten any
+///   merge the range holds.
 /// - `Rebase`: native `git rebase` via [`Vcs::rebase`]. On conflict, leaves
 ///   the repo mid-rebase; the operator resolves, `git add`s, then runs
 ///   `rwv sync --continue` (or `rwv land --continue` for land).
@@ -5224,13 +5341,8 @@ fn apply_project_strategy(
     let mid_rebase = matches!(vcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase))
         && strategy == SyncStrategy::Rebase;
 
-    if !mid_rebase && cwd_tip == source_tip {
-        // No-op.
-        return Ok(());
-    }
     if !mid_rebase
-        && strategy == SyncStrategy::Rebase
-        && vcs.is_ancestor(cwd_project_dir, source_tip, cwd_tip)?
+        && (cwd_tip == source_tip || vcs.is_ancestor(cwd_project_dir, source_tip, cwd_tip)?)
     {
         return Ok(());
     }
@@ -5463,6 +5575,16 @@ pub fn run_abort(
     });
     let tips = reading.tips();
     let op_id = header.id.clone();
+    let fast_forwarded: Option<&[RepoKey]> = match &reading {
+        op_state::OwnerReading::Whole(record) => Some(
+            record
+                .take_in
+                .as_ref()
+                .map(|take_in| take_in.fast_forwarded.as_slice())
+                .unwrap_or_default(),
+        ),
+        op_state::OwnerReading::HeaderOnly { .. } => None,
+    };
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
@@ -5499,6 +5621,7 @@ pub fn run_abort(
         "",
         &op_id,
         tips,
+        fast_forwarded,
         abandon,
         &mut tally,
     );
@@ -5550,6 +5673,7 @@ pub fn run_abort(
                             side.label(),
                             &op_id,
                             tips,
+                            fast_forwarded,
                             abandon,
                             &mut tally,
                         );
@@ -5624,6 +5748,12 @@ pub fn run_abort(
 /// and by `RepoKey::Project` for the project repo. The replay journal applies
 /// to the replay side only; converged tips apply to both, because
 /// advance-target lands the target on them.
+///
+/// `fast_forwarded` is the landing's journal of the target repos whose branch
+/// it moved, `None` where the record could not be read. On the target side a
+/// repo the journal does not name, at neither its savepoint nor its converged
+/// tip, was moved by someone else and never by the landing: it is left where
+/// it stands, and is no foreign tip.
 #[allow(clippy::too_many_arguments)]
 fn restore_abort_workspace(
     workspace_dir: &Path,
@@ -5633,6 +5763,7 @@ fn restore_abort_workspace(
     label: &str,
     op_id: &OpId,
     tips: Option<&op_state::PhaseTips>,
+    fast_forwarded: Option<&[RepoKey]>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -5664,8 +5795,10 @@ fn restore_abort_workspace(
     let mut moved_from: std::collections::BTreeMap<PathBuf, ResolvedRevisionId> =
         std::collections::BTreeMap::new();
     for (repo_key, vcs, abs) in repos {
-        let consented = abandon.covers(&repo_key, &project.name);
         let named = RepoOperand::of(&repo_key, &project.name);
+        let unmoved_target = matches!(side, AbortSide::LandTarget)
+            && fast_forwarded.is_some_and(|moved| !moved.contains(&repo_key));
+        let consented = !unmoved_target && abandon.covers(&repo_key, &project.name);
         if let Ok(head) = vcs.head_revision(&abs) {
             moved_from.insert(abs.clone(), head);
         }
@@ -5677,6 +5810,12 @@ fn restore_abort_workspace(
             converged_tips.get(&repo_key),
             consented,
         ) {
+            Ok(VerifiedRestoreOutcome::ForeignTip { observed_tip, .. }) if unmoved_target => {
+                outln!(
+                    "  {label}{named}: left at {}, where something other than this landing moved it",
+                    observed_tip.short()
+                );
+            }
             Ok(outcome) => report_abort_outcome(
                 vcs.as_ref(),
                 &format!("{label}{named}"),
@@ -6052,12 +6191,11 @@ fn ff_advance_line(advance: &FfAdvance, tip: &ResolvedRevisionId) -> String {
 }
 
 /// The `target` moved mid-operation line for one repo the fast-forward found
-/// moved, at `now`, off the tip `composed` it was to receive.
+/// moved off the branch or the tip it was to receive.
 fn target_moved_line_for(
     label: impl std::fmt::Display,
     repo: &Path,
-    now: &ResolvedRevisionId,
-    composed: &ResolvedRevisionId,
+    how: String,
 ) -> crate::diagnosis::Judged {
     State::TargetMovedMidOperation
         .of(label)
@@ -6065,18 +6203,22 @@ fn target_moved_line_for(
             "{} moved after the landing read it",
             repo.display()
         ))
-        .listing([format!(
-            "now at {}, which does not fast-forward to {}",
-            now.id().short(),
-            composed.id().short()
-        )])
+        .listing([how])
         .by_verb("land")
         .judge(project_vcs().as_ref())
 }
 
-/// Fast-forward the branch `target_repo` is on to `cwd_tip`, returning the
-/// witness for that branch. `None` means the target was already at `cwd_tip`
-/// and nothing moved.
+fn does_not_fast_forward(now: &ResolvedRevisionId, composed: &ResolvedRevisionId) -> String {
+    format!(
+        "now at {}, which does not fast-forward to {}",
+        now.id().short(),
+        composed.id().short()
+    )
+}
+
+/// Fast-forward `branch`, which `target_repo` must have checked out, to
+/// `cwd_tip`, returning the witness for that branch. `None` means the target
+/// was already at `cwd_tip` and nothing moved.
 ///
 /// We need the objects to be reachable in `target_repo`. For a worktree
 /// pair (workweave + primary), they share the same object store, so any
@@ -6111,9 +6253,13 @@ fn ff_advance_repo(
     label: impl std::fmt::Display,
     target_repo: &Path,
     cwd_repo: &Path,
+    branch: &str,
     cwd_tip: &ResolvedRevisionId,
 ) -> anyhow::Result<FfAdvance> {
     crate::test_pause::point("advance-target");
+    if let Some(off) = off_its_branch(vcs, target_repo, branch)? {
+        return Err(target_moved_line_for(label, target_repo, off).refused());
+    }
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = vcs
@@ -6199,8 +6345,15 @@ fn ff_advance_repo(
         .unwrap_or(false);
 
     if !is_ancestor {
-        return Err(target_moved_line_for(label, target_repo, &target_tip, cwd_tip).refused());
+        return Err(target_moved_line_for(
+            label,
+            target_repo,
+            does_not_fast_forward(&target_tip, cwd_tip),
+        )
+        .refused());
     }
+
+    crate::test_pause::point("advance-target-move");
 
     // Fast-forward. The witness names both the ref that moves and the repo
     // it moves in; `advance_attached_ref` re-observes before acting, so an
@@ -6225,6 +6378,17 @@ fn ff_advance_repo(
                 repo.display(),
                 paths.join("\n  "),
             );
+        }
+        let now = vcs.head_revision(target_repo).ok();
+        if matches!(e, VcsError::StaleRefWitness { .. }) || now.as_ref() != Some(&target_tip) {
+            let how = match off_its_branch(vcs, target_repo, branch)? {
+                Some(off) => off,
+                None => match &now {
+                    Some(now) => does_not_fast_forward(now, cwd_tip),
+                    None => format!("its HEAD no longer reads: {e:#}"),
+                },
+            };
+            return Err(target_moved_line_for(label, target_repo, how).refused());
         }
         return Err(e).context("fast-forward advance failed in target");
     }
@@ -6675,7 +6839,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
-        let advance = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
+        let advance = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
             .expect("an attached target accepts the landing");
         let landed = advance
             .onto
@@ -6701,7 +6865,7 @@ mod tests {
         git(&target, &["config", "user.name", "T"]);
         commit(&target, "target-only");
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
             .expect_err("a target holding commits CWD's tip does not must refuse");
         let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
         assert_eq!(
@@ -6728,7 +6892,7 @@ mod tests {
         git(&target, &["checkout", "--detach", "HEAD"]);
         let head_before = git(&target, &["rev-parse", "HEAD"]);
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
             .expect_err("a detached target has no branch for the landing to advance");
         let msg = format!("{err:#}");
         assert!(
@@ -6752,6 +6916,32 @@ mod tests {
     }
 
     #[test]
+    fn ff_advance_repo_refuses_a_target_switched_off_the_branch_it_plans() {
+        let tmp = crate::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+        let main_before = git(&target, &["rev-parse", "refs/heads/main"]);
+        git(&target, &["switch", "-c", "hotfix"]);
+
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
+            .expect_err("a checkout on another branch than the plan names must refuse");
+        let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
+        assert_eq!(
+            report.lines()[0].state(),
+            State::TargetMovedMidOperation,
+            "{err:#}"
+        );
+        assert!(
+            format!("{err:#}").contains("on 'hotfix', not on 'main'"),
+            "{err:#}"
+        );
+        assert_eq!(
+            git(&target, &["rev-parse", "refs/heads/hotfix"]),
+            main_before
+        );
+        assert_eq!(git(&target, &["rev-parse", "refs/heads/main"]), main_before);
+    }
+
+    #[test]
     fn ff_advance_repo_short_circuits_a_detached_target_that_is_already_there() {
         // The refusal sits *after* the equal-tip return, deliberately: a
         // checkout we are not going to move needs no destination. Pinned so
@@ -6764,7 +6954,7 @@ mod tests {
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
         git(&target, &["checkout", "--detach", cwd_tip.id().as_str()]);
 
-        let landed = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
+        let landed = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
             .expect("an already-converged target is a no-op, detached or not");
         assert!(
             landed.onto.is_none(),

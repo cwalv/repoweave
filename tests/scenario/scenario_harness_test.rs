@@ -2138,10 +2138,187 @@ holding_rwv! {
 }
 
 holding_rwv! {
-    /// The target's `main` moves while `land` is held before the
-    /// compare-and-swap that advances it, so the compare reads the moved
-    /// tip and the landing refuses rather than dropping the move.
+    /// The target's project branch moves while `land` is held at its first
+    /// fast-forward, so the landing moves `app`'s `main` and then loses on
+    /// the project repo. The route it prints runs as printed: `rwv abort`
+    /// restores the `main` the landing moved and leaves the project branch
+    /// where someone else moved it, and `rwv land` then lands onto it.
     fn a_landing_held_at_its_compare_and_swap_loses_to_a_target_that_moved() {
+        let mut steps = landing_from("held");
+        steps.extend([
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
+            Step::commit(&a(), Repo::Proj, "raced"),
+            Step::release("landing")
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+                .claim(Claim::OutputContains("rwv abort"))
+                .claim(Claim::OutputContains("rwv land"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "raced",
+                }),
+            Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "raced",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                }),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(landed())
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "raced",
+                }),
+        ]);
+        bad_steps("a landing loses its race", steps).assert_fully_decided_green();
+    }
+
+    /// A landing that moved `app`'s `main` and lost on the project repo; a
+    /// commit is then made on that `main`. The landing moved it, so `rwv
+    /// abort` judges the new tip foreign, and the choice it prints restores
+    /// it, keeping the commit in a backup.
+    fn an_abort_refuses_a_branch_the_landing_moved_that_moved_again() {
+        let mut steps = landing_from("held");
+        steps.extend([
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
+            Step::commit(&a(), Repo::Proj, "raced"),
+            Step::release("landing")
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
+            Step::commit(&a(), Repo::App, "after"),
+            Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip")),
+            Step::rwv(
+                &ww("held"),
+                &["abort", "--abandon-foreign-tip", "local/remotes/app"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "after",
+                marked: Some("abandoned"),
+            }),
+        ]);
+        bad_steps("a landed branch moved again", steps).assert_fully_decided_green();
+    }
+
+    /// A target checkout switched to another branch while `land` is held
+    /// refuses: the landing moves only the branch its plan names, never the
+    /// branch the checkout happens to be on. After `rwv abort`, the landing
+    /// run again judges that checkout off its branch, and `rwv update` there
+    /// puts it back, after which it lands.
+    fn a_landing_moves_only_the_branch_its_plan_names() {
+        let mut steps = landing_from("held");
+        steps.extend([
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
+            Step::git(&a(), Repo::App, &["switch", "-c", "hotfix"]),
+            Step::release("landing")
+                .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
+                .claim(Claim::OutputContains("on 'hotfix', not on 'main'"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "hotfix",
+                }),
+            Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App]),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv update")),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "main",
+                }),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(landed()),
+        ]);
+        bad_steps("a target switched mid-landing", steps).assert_fully_decided_green();
+    }
+
+    /// A commit made in the source after the landing composed is not what
+    /// the landing fast-forwards: `T`'s project branch receives the tip the
+    /// landing composed and relocked, not the source's HEAD by then.
+    fn a_landing_fast_forwards_the_tip_it_composed() {
+        let mut steps = landing_from("held");
+        steps.extend([
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
+            Step::commit(&ww("held"), Repo::Proj, "late"),
+            Step::release("landing")
+                .expect(Exit::Succeeds)
+                .claim(landed())
+                .claim(Claim::Lacks {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "late",
+                }),
+        ]);
+        bad_steps("a source commit after composing", steps).assert_fully_decided_green();
+    }
+
+    /// A branch that moves between the fast-forward's ancestry check and the
+    /// move itself is the same `target` moved mid-operation: `--continue`
+    /// refuses it as the plan's own stop does, and the printed route ends it.
+    fn a_branch_moved_inside_the_fast_forward_is_target_moved() {
+        let mut steps = landing_from("held");
+        steps.extend([
+            Step::rwv_paused(&ww("held"), &["land"], "advance-target-move", "landing"),
+            Step::commit(&a(), Repo::App, "raced"),
+            Step::release("landing")
+                .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
+                .claim(Claim::OutputContains("rwv abort")),
+            Step::rwv(&ww("held"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+                .claim(Claim::OutputContains("local/remotes/app: now at")),
+            Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "raced",
+                }),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned)),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                }),
+        ]);
+        bad_steps("a branch moved inside the fast-forward", steps)
+            .assert_fully_decided_green();
+    }
+
+    /// A member's receiving branch moves while `land` is held before
+    /// fast-forwarding it: the landing refuses, and `rwv abort` ends the op,
+    /// leaving that branch where someone else moved it. The landing run
+    /// again judges the commit nothing pins as `pin` unpinned there, whose
+    /// printed choice records it, after which the landing lands.
+    fn a_landing_that_loses_on_a_member_aborts_leaving_the_member_as_moved() {
         let mut steps = landing_from("held");
         steps.extend([
             Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
@@ -2149,30 +2326,39 @@ holding_rwv! {
             Step::release("landing")
                 .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
                 .claim(Claim::Contains {
-                    at: a(),
-                    repo: Repo::App,
-                    rev: "main",
-                    mark: "raced",
-                })
-                .claim(Claim::Contains {
                     at: ww("held"),
                     repo: Repo::App,
                     rev: "HEAD",
                     mark: "landing-app",
                 }),
+            Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "raced",
+                }),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
+                .claim(Claim::OutputContains("rwv lock --commit")),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("held"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app: ff-advanced main to"))
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "raced",
+                }),
         ]);
-        let report = bad_steps("a landing loses its race", steps);
-        report.assert_green();
-        let release = report
-            .ran
-            .iter()
-            .find(|record| record.label == "release landing")
-            .unwrap();
-        assert!(
-            release.output.contains("rwv abort") && release.output.contains("rwv land"),
-            "{report}\n{}",
-            release.output
-        );
+        bad_steps("a landing loses its race on a member", steps).assert_fully_decided_green();
     }
 
     fn a_held_landing_released_unraced_lands() {
@@ -2214,6 +2400,168 @@ holding_rwv! {
         );
         bad_steps("unarmed", steps).assert_green();
     }
+}
+
+/// A seat whose `app` holds a merge, with `main` moved on since: a landing
+/// would have to rebase the range, which flattens the merge.
+fn seat_holding_a_merge_behind_main() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"]).expect(Exit::Succeeds),
+        Step::git(&ww("w"), Repo::App, &["switch", "-c", "side"]),
+        Step::commit(&ww("w"), Repo::App, "side-app"),
+        Step::git(&ww("w"), Repo::App, &["switch", "proj--w"]),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["merge", "--no-ff", "-m", "bump", "side"],
+        ),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A target behind its upstream as last fetched lands: the landing takes
+/// `main` and the receiving branches in from their upstreams, fast-forward
+/// only, and composes onto them, rather than judging the checkouts of
+/// `main`'s workspace against the upstream's lock.
+#[test]
+fn a_landing_into_a_target_behind_its_upstream_takes_the_upstream_in() {
+    bad_steps(
+        "a landing into a target behind its upstream",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::new_machine(Machine::B),
+            Step::commit(&Place::Primary(Machine::B), Repo::App, "b-app"),
+            Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&Place::Primary(Machine::B), &["push"])
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "b-app",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "b-app",
+                }),
+        ],
+    )
+    .assert_fully_decided_green();
+}
+
+/// The run is green but for the landing that follows `rwv sync --from
+/// main`: it fast-forwards `main` in each of `repos` onto the seat's merge,
+/// whose first parent is the seat's, which is what the first-parents check
+/// holds against it. The merge commit with `main` as first parent is the
+/// integration a later landing makes; until then this pins where the printed
+/// route ends.
+fn assert_green_but_the_fast_forward_onto_a_merge_of_main(report: &Report, repos: &[Repo]) {
+    assert!(
+        report.unmet.is_empty() && report.pending.is_none(),
+        "{report}"
+    );
+    let mut broken: Vec<Repo> = report
+        .violations
+        .iter()
+        .map(|(label, violation)| match violation {
+            Violation::FirstParentsBroken { repo, branch, .. }
+                if label == "rwv land" && branch == "main" =>
+            {
+                *repo
+            }
+            _ => panic!("an unexpected violation after `{label}`: {violation}\n{report}"),
+        })
+        .collect();
+    broken.dedup();
+    assert_eq!(broken, repos, "{report}");
+}
+
+/// A landing never rebases a member range holding a merge: it refuses
+/// before anything moves, naming the merge that takes the target in, and
+/// after that merge the landing fast-forwards, the seat's commits landing
+/// as they are.
+#[test]
+fn a_landing_never_rebases_a_member_range_holding_a_merge() {
+    let mut steps = seat_holding_a_merge_behind_main();
+    steps.extend([
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
+            .claim(Claim::OutputContains("rwv sync --from main"))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "side-app",
+            }),
+    ]);
+    let report = bad_steps("a landing over a member merge", steps);
+    assert_green_but_the_fast_forward_onto_a_merge_of_main(&report, &[Repo::Proj, Repo::App]);
+}
+
+/// The project branch's range is judged the same way: a seat that took
+/// `main` in by a merge and then saw `main` move refuses to land rather than
+/// rebasing that merge away, and lands once it merges `main` again.
+#[test]
+fn a_landing_never_rebases_a_project_range_holding_a_merge() {
+    let report = bad_steps(
+        "a landing over a project merge",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::Proj, "w-notes"),
+            Step::commit(&a(), Repo::Proj, "main-notes-1"),
+            Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Proj, "main-notes-2"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
+                .claim(Claim::OutputContains("rwv sync --from main"))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "w-notes",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "main-notes-2",
+                }),
+        ],
+    );
+    assert_green_but_the_fast_forward_onto_a_merge_of_main(&report, &[Repo::Proj]);
 }
 
 /// Every ref the sandbox holds, local and remote, and every lock and record

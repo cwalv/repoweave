@@ -512,27 +512,44 @@ pub struct TakeInRecord {
     /// The repos `land --allow-member-change` names, spelled as an operand.
     #[serde(default)]
     pub allow_member_change: Vec<String>,
-    /// The members a landing moves to their receiving branch's tip, merging
-    /// nothing: each one whose declared branch it changes and that holds no
-    /// new work.
+    /// A landing's plan: for `T`'s project branch and each planned member,
+    /// its receiving branch, that branch's tip as the landing read it, and
+    /// how the landing moves it.
     #[serde(default)]
-    pub follows: Vec<RepoKey>,
-    /// The receiving branches a landing moves as refs, since no checkout
-    /// holds them.
+    pub receiving: BTreeMap<RepoKey, Receiving>,
+    /// Each repo of `T`'s workspace whose checked-out branch a landing has
+    /// fast-forwarded, written once the branch moved.
     #[serde(default)]
-    pub receiving_refs: BTreeMap<RepoKey, ReceivingRef>,
+    pub fast_forwarded: Vec<RepoKey>,
     /// Each branch a landing created, and where.
     #[serde(default)]
     pub created_refs: Vec<CreatedRef>,
 }
 
-/// A receiving branch a landing moves as a ref: created at `at` first where
-/// `create` says it exists nowhere.
+/// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
+/// the landing read it, and how the landing moves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReceivingRef {
+pub struct Receiving {
     pub branch: String,
-    pub create: bool,
-    pub at: CommitId,
+    pub tip: CommitId,
+    pub moves: Moves,
+}
+
+/// How a landing moves a receiving branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Moves {
+    /// The member is composed onto `tip`, then the branch fast-forwards in
+    /// `T`'s workspace's checkout, which must be on it.
+    InCheckout,
+    /// The member is composed onto `tip`, then the branch, which no checkout
+    /// holds, moves as a ref; it is created at `tip` first when `create`.
+    AsRef { create: bool },
+    /// A member `T` lacks enters at `tip`, its pin in the feature: the branch
+    /// is created there, and nothing is composed.
+    Enters,
+    /// The member takes `tip`, merging nothing; the branch does not move.
+    Follows,
 }
 
 /// A branch the op created, checked out nowhere.

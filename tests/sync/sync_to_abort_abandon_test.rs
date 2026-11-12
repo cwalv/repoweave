@@ -143,18 +143,34 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
     (primary, ww)
 }
 
-/// Owner record for a land op crashed mid-replay: both sides savepointed
-/// (the savepoint phase runs before replay and covers the target for
-/// land), converged_tips still empty.
-fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
+/// Owner record for a land op stopped in advance-target after it
+/// fast-forwarded the target's `server` to `landed_server` and its project
+/// repo to `landed_project`: both journaled as fast-forwarded, both tips its
+/// converged tips.
+fn plant_sync_to_owner_record(
+    owner: &Path,
+    target: &Path,
+    op_id: &str,
+    landed_server: &str,
+    landed_project: &str,
+) {
+    let mut plan: repoweave::op_state::TakeInRecord =
+        serde_json::from_str(&common::land_plan_json(owner, target, "web-app")).unwrap();
+    plan.fast_forwarded = vec![
+        repoweave::manifest::RepoKey::Member(
+            repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+        ),
+        repoweave::manifest::RepoKey::Project,
+    ];
     let body = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \
+         \"converged_tips\": {{\"{SERVER_PATH}\": \"{landed_server}\", \"(project)\": \"{landed_project}\"}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
-        plan = common::land_plan_json(owner, target, "web-app"),
+        plan = serde_json::to_string(&plan).unwrap(),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -210,9 +226,12 @@ fn backup_of(repo: &Path, branch: &str, tip: &str) -> Option<String> {
         .map(|(name, _)| name)
 }
 
-/// Plant the full crashed-mid-replay land state: owner record at ww,
-/// lease at primary, savepoints on both sides under their side-specific
-/// restore ids. The two sides' server branches are first advanced to
+/// Plant the state of a land stopped after it fast-forwarded the target:
+/// owner record at ww, lease at primary, savepoints on both sides under
+/// their side-specific restore ids, and one commit on the target's server
+/// and project repo standing for what the landing moved them to, so a
+/// commit on top of either is a tip the landing moved and someone moved
+/// again. The two sides' server branches are first advanced to
 /// DISTINCT commits so their savepoints are distinguishable SHAs — a
 /// restore that lands on the other side's savepoint fails the assertion
 /// rather than passing by coincidence of shared history.
@@ -225,13 +244,21 @@ fn plant_crashed_sync_to(primary: &Workspace, ww: &Workspace, op_id: &str) -> (S
         "target\n",
         "base: target",
     );
-    plant_sync_to_owner_record(&ww.root, &primary.root, op_id);
     plant_lease(&primary.root, &ww.root, op_id);
     let ww_server_sp = plant_savepoint(&ww.server_dir, op_id);
     plant_savepoint(&ww.project_dir, op_id);
     let tid = target_restore_id(op_id);
     let primary_server_sp = plant_savepoint(&primary.server_dir, &tid);
     plant_savepoint(&primary.project_dir, &tid);
+    let landed_server = make_commit(&primary.server_dir, "landed.txt", "landed\n", "landed");
+    let landed_project = make_commit(&primary.project_dir, "landed.txt", "landed\n", "landed");
+    plant_sync_to_owner_record(
+        &ww.root,
+        &primary.root,
+        op_id,
+        &landed_server,
+        &landed_project,
+    );
     assert_ne!(
         ww_server_sp, primary_server_sp,
         "fixture invariant: the two sides' savepoints must be distinct commits"

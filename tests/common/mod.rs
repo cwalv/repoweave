@@ -1623,13 +1623,18 @@ pub fn extract_long_flags_from_help(text: &str) -> Vec<String> {
 
 /// The plan a landing from `source` into the branch `target` has checked out
 /// records on its op record, as JSON, read from the workspaces as they stand:
-/// the target's project tip and each member's tip there, and the source's
-/// project tip. A hand-written op record carries it so `--continue` has the
+/// the branch the target's project repo and each member there has checked
+/// out, with its tip, and the source's project tip. A hand-written op record carries it so `--continue` has the
 /// plan the landing would have recorded.
 pub fn land_plan_json(source: &std::path::Path, target: &std::path::Path, project: &str) -> String {
     let target_project = target.join("projects").join(project);
     let source_project = source.join("projects").join(project);
     let branch = git_in(&target_project, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    let receiving = |dir: &std::path::Path| repoweave::op_state::Receiving {
+        branch: git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        tip: repoweave::vcs::CommitId::parse(&git_in(dir, &["rev-parse", "HEAD"])).unwrap(),
+        moves: repoweave::op_state::Moves::InCheckout,
+    };
     let mut plan = repoweave::op_state::TakeInRecord {
         sync_from: Some(repoweave::op_state::SyncFrom::Target(branch)),
         source_tip: Some(
@@ -1638,9 +1643,9 @@ pub fn land_plan_json(source: &std::path::Path, target: &std::path::Path, projec
         ),
         ..Default::default()
     };
-    plan.upstream_tips.insert(
+    plan.receiving.insert(
         repoweave::manifest::RepoKey::Project,
-        repoweave::vcs::CommitId::parse(&git_in(&target_project, &["rev-parse", "HEAD"])).unwrap(),
+        receiving(&target_project),
     );
     let manifest =
         repoweave::manifest::Manifest::from_path(&target_project.join("rwv.toml")).unwrap();
@@ -1653,10 +1658,9 @@ pub fn land_plan_json(source: &std::path::Path, target: &std::path::Path, projec
         }
         let checkout = target.join(path.as_path());
         if checkout.exists() {
-            plan.upstream_tips.insert(
+            plan.receiving.insert(
                 repoweave::manifest::RepoKey::Member(path.clone()),
-                repoweave::vcs::CommitId::parse(&git_in(&checkout, &["rev-parse", "HEAD"]))
-                    .unwrap(),
+                receiving(&checkout),
             );
         }
     }

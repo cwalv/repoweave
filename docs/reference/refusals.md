@@ -276,7 +276,7 @@ The others follow.
 | `mode changed` | the branch the feature lands into is used another way than when the feature's record was written: its mode then and now, listed. A landing never redirects into it | `rwv land`, before anything moves, until the feature is rebound or the target's mode restored |
 | `member changes` | the landing would change the target's entry for a member, each changed field listed with the target's value and the feature's, remove the member, move a `dependency` or `reference` member's pin backward, or change the target's top-level `history`; a landing changes the target's entries only where they are named. Each live weave branch whose entries match the feature's is listed as a `--target` candidate | `rwv land`, before anything moves, unless `--allow-member-change` names the repo: the member's path, or `projects/<p>` for the top-level `history` |
 | `checked out nowhere` | no workspace of this clone has the branch the feature lands into checked out, so nothing holds the checkouts its receiving branches fast-forward in | `rwv land`, before anything moves |
-| `moved mid-operation` | the target, or a branch the landing fast-forwards, moved after the landing read it, so the work composed in the source no longer fast-forwards onto it: the repo, the tip it now holds and the tip composed for it, listed. The landing stopped with its op record kept and the refs it already moved left as moved | `rwv land`, at the fast-forward, and its `--continue`, since the plan no longer describes the landing |
+| `moved mid-operation` | the target, or a branch the landing fast-forwards, moved after the landing read it, or the checkout there is on another branch, so the work composed in the source no longer fast-forwards onto it: the repo and where it now stands, listed. The landing stopped with its op record kept and the refs it already moved left as moved | `rwv land`, at the fast-forward, and its `--continue`, since the plan no longer describes the landing |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -316,7 +316,7 @@ The others follow.
 | `member changes` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | `rwv land --allow-member-change <m>` | the workspace with that feature | only named entries change; the lineage rule still judges |
 | `checked out nowhere` | open it | `rwv workweave create <ww> --branch <W>` | here | moves only what alignment moves |
-| `moved mid-operation` | put back every ref the landing moved, then land again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the landing moved, from the tips it wrote |
+| `moved mid-operation` | put back every ref the landing moved, then land again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the landing moved, from the tips it wrote; a branch someone else moved stays where they left it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
 
@@ -891,8 +891,8 @@ stopping rather than quietly doing something else.
 
 **Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
 reconcile the repos by hand first. Where the commits a rebase would replay hold
-a merge, `rwv sync` names `rwv sync --from <target>` instead, which takes the
-target in by a merge rather than flattening it. A landing whose target moved
+a merge, `rwv sync` and `rwv land` name `rwv sync --from <target>` instead,
+which takes the target in by a merge rather than flattening it. A landing whose target moved
 after it composed stops as `target` `moved mid-operation` instead.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
