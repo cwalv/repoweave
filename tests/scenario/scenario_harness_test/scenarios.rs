@@ -10073,7 +10073,14 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
         Step::rwv_paused(
             &ww("w"),
-            &["land", "--retire", "--allow-member-change", LIB],
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
             "landed",
             "landing",
         ),
