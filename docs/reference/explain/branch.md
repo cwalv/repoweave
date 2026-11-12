@@ -50,6 +50,13 @@ edits, and the members are aligned.
   `rwv.lock` where `<W>` starts at the checked-out commit. Where it starts
   elsewhere, an uncommitted `rwv.lock` is refused (`edits`, naming `rwv lock
   --commit`) and edits the move would overwrite are refused (`edits`).
+- Each `--set-branch <m>=<b>` declares the existing branch `<b>` for
+  member `<m>`, and each `--set-new-branch` creates `<b>` and declares it, with
+  the steps of `rwv member set-branch [--new]`, in `<W>`'s first commit, so no
+  relock runs between them. The whole remainder after the first `=` is the
+  branch name, and `--pin <m>=<rev>` starts the branch for the same member at
+  `<rev>`; a `--pin` with no flag naming its member, or two for one member, is
+  refused. Every one is judged before anything is written.
 - A create that starts at `<T>`'s tip is refused while `<T>` and its upstream
   have diverged (`push-branch` `diverged`, the unpushed commits listed), naming
   `--at <T>` to start from this clone's `<T>`.
@@ -207,7 +214,7 @@ recording `a/b`.
 ## Invocation
 
 ```
-rwv branch create <W> [--target <T> | --declared] [--at <rev>] [--project <name>]
+rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]
 rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]
 rwv branch list [--json] [--project <name>]
 rwv branch rename <new> [--adopt] [--project <name>]
