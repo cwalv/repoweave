@@ -949,7 +949,11 @@ impl LandingReportOutput {
 
 /// A landing's report of one move, as the handler takes it: printed in
 /// text, recorded under `--json`.
-fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingReport) {
+fn emit_landing_report(
+    handler: &dyn OutputHandler,
+    project: &ProjectName,
+    report: &op_state::LandingReport,
+) {
     if handler.emit_text() {
         match report {
             op_state::LandingReport::Created { repo, branch, at } => {
@@ -1121,12 +1125,18 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                 if let Some(workspace) = workspace {
                     judging = judging.elsewhere(workspace);
                 }
-                ahead.add(
-                    judging
-                        .by_verb("land")
-                        .only_forms(&[crate::diagnosis::Form::C7PushBranch])
-                        .judge(vcs.as_ref()),
-                );
+                let mut judged = judging
+                    .by_verb("land")
+                    .only_forms(&[crate::diagnosis::Form::C7PushBranch])
+                    .judge(vcs.as_ref());
+                if workspace
+                    .as_deref()
+                    .and_then(|ws| crate::shared_members::outgoing(ws, project))
+                    .is_some()
+                {
+                    judged = judged.for_project(project);
+                }
+                ahead.add(judged);
                 eprint!("{}", ahead.render("land"));
             }
         }
@@ -1138,7 +1148,7 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
 /// run of the op reported is reported again when the op resumes, not here.
 fn report_landing(ctx: &OpContext<'_>, report: op_state::LandingReport) -> anyhow::Result<()> {
     if op_state::journal_report(&ctx.owner_workspace_dir, &report)? {
-        emit_landing_report(ctx.handler, &report);
+        emit_landing_report(ctx.handler, &ctx.cwd_project_name, &report);
     }
     Ok(())
 }
@@ -3410,6 +3420,7 @@ fn judge_unreachable_target_pins(
 /// landing aligns `T`'s workspace once it lands, and reports what it leaves.
 fn judge_target_pins(
     class: &LockClassification,
+    project: &ProjectName,
     root: &Path,
     manifest: &Manifest,
     primary: &Path,
@@ -3417,7 +3428,12 @@ fn judge_target_pins(
 ) -> anyhow::Result<()> {
     let live = crate::pins::live_pins(primary)?;
     judge_unreachable_target_pins(class, root, manifest, report);
-    for r in &class.relations {
+    let others = crate::shared_members::held_by_presented(root, project);
+    for r in class
+        .relations
+        .iter()
+        .filter(|r| !others.contains(&r.repo_path))
+    {
         let (Some(head), Some(pin)) = (&r.tip, &r.lock_pin) else {
             continue;
         };
@@ -3557,6 +3573,7 @@ fn run_preconditions_after_acquire(
             ) {
                 judge_target_pins(
                     target_class,
+                    &landing.project,
                     dest_workspace_dir,
                     &target_manifest,
                     primary,
@@ -3595,7 +3612,19 @@ fn run_preconditions_after_acquire(
     match dest {
         Some((dest_project_dir, dest_workspace_dir)) => judge_edits_target_preflight(
             &cwd_project,
-            plan.moving(),
+            {
+                let others =
+                    crate::shared_members::held_by_presented(dest_workspace_dir, &landing.project);
+                plan.moving()
+                    .filter(|path| {
+                        !others.contains(path)
+                            || plan
+                                .receiving
+                                .get(*path)
+                                .is_some_and(|r| r.moves == op_state::Moves::InCheckout)
+                    })
+                    .collect::<Vec<_>>()
+            },
             dest_workspace_dir,
             dest_project_dir,
             &mut report,
@@ -3814,7 +3843,7 @@ fn guard_and_mark<'a>(
                 match refresh_drifted(&drifted, true) {
                     Ok((reports, _)) => {
                         for report in &reports {
-                            emit_landing_report(handler, report);
+                            emit_landing_report(handler, &cwd_project_name, report);
                         }
                     }
                     Err(refresh) => eprintln!("warning: {refresh:#}"),
@@ -3832,7 +3861,7 @@ fn guard_and_mark<'a>(
         }
     };
     for report in &refreshed {
-        emit_landing_report(handler, report);
+        emit_landing_report(handler, &cwd_project_name, report);
     }
     if let Err(e) = left_in_place.into_result() {
         op_state::release_acquired(&acquired);
@@ -4063,7 +4092,7 @@ fn guard_and_mark<'a>(
             commits: commits.clone(),
         });
     for report in beyond_pin.chain(plan.landed_changes.iter().cloned()) {
-        emit_landing_report(handler, &report);
+        emit_landing_report(handler, &cwd_project_name, &report);
         take_in.reports.push(report);
     }
     for (repo, merge) in &plan.merged_ranges {
@@ -4071,7 +4100,7 @@ fn guard_and_mark<'a>(
             repo: repo.clone(),
             merge: merge.clone(),
         };
-        emit_landing_report(handler, &report);
+        emit_landing_report(handler, &cwd_project_name, &report);
         take_in.reports.push(report);
     }
     let mut record = op_state::read_owner(&owner_workspace_dir)?
@@ -4251,7 +4280,7 @@ fn load_continuing_context<'a>(
     }
     report_left_behind(handler, &take_in.left_behind);
     for report in &take_in.reports {
-        emit_landing_report(handler, report);
+        emit_landing_report(handler, &record.project, report);
     }
 
     let target_tip = take_in
@@ -4310,7 +4339,7 @@ fn load_continuing_context<'a>(
         let (reports, left_in_place) = refresh_drifted(&drifted, !edits.is_empty())?;
         for report in reports {
             if op_state::journal_report(&owner_workspace_dir, &report)? {
-                emit_landing_report(handler, &report);
+                emit_landing_report(handler, &record.project, &report);
             }
         }
         if edits.is_empty() {

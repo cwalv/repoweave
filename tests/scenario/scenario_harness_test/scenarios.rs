@@ -716,10 +716,72 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
                 .expect(Exit::Succeeds),
             Step::commit(&side, Repo::Lib, "side-lib"),
-            Step::pending(
-                "land side into proj2's lib while proj is active",
-                MissingVerb::Land,
-            ),
+            Step::rwv(&side, &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Lib])
+                .claim(Claim::OutputContains(
+                    "rwv push --branch main --project proj2",
+                ))
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj,
+                }),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", branch])
+                .claim(Claim::OutputLine("side-lib")),
+        ],
+    }
+}
+
+/// `inactive-project-choices`: `proj2` inactive, `lib` shared with `proj`,
+/// which the primary presents. A landing from `proj2`'s workweave composes
+/// in the source and moves `proj2`'s `dev` as a ref, leaving the primary's
+/// `lib` to `proj`; each choice it prints that must act on `proj2` carries
+/// `--project proj2` or names `activate proj2 --update`, and each, run as
+/// printed in the primary, passes.
+pub fn inactive_project_choices() -> Scenario {
+    let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
+    Scenario {
+        name: "inactive project choices",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
+                .expect(Exit::Succeeds),
+            Step::commit(&side, Repo::Lib, "side-lib"),
+            Step::rwv(&side, &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv push --branch main --project proj2",
+                ))
+                .claim(Claim::OutputContains("rwv activate proj2 --update"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "dev",
+                    mark: "side-lib",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj,
+                }),
+            Step::rwv_printed(&a(), "rwv activate proj2 --update")
+                .expect(Exit::Succeeds)
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "side-lib",
+                }),
+            Step::rwv(&a(), &["push", "--branch", "main", "--project", "proj2"])
+                .expect(Exit::Succeeds)
+                .pushes(Remote::origin(Repo::Proj2), "main")
+                .pushes(Remote::origin(Repo::Proj2), RECORDS_BRANCH)
+                .pushes(Remote::origin(Repo::Lib), "dev"),
+            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
         ],
     }
 }

@@ -2092,7 +2092,9 @@ fn in_place_workspace(
 }
 
 /// `U` fast-forwards where `T`'s workspace has it checked out: that member
-/// must sit on `U` there. Checked out in a third workspace, it fast-forwards
+/// must sit on `U` there, unless the project that workspace presents, not
+/// `T`'s, shares the member: that checkout is the other project's, and `U`
+/// moves as a ref, or in place where a checkout holds it. Checked out in a third workspace, it fast-forwards
 /// in place there. Where `T`'s upstream declares `U` in place of the branch the
 /// member sits on there, aligned for `T`'s own entries, `U` is checked out
 /// nowhere and moves as a ref, and aligning `T`'s workspace takes it.
@@ -2123,6 +2125,10 @@ fn judge_receiving_checkout(
         HeadAttachment::Attached(on) => Some(on.to_string()),
         _ => None,
     };
+    if crate::shared_members::held_by_presented(target_workspace, &landing.project).contains(path) {
+        return Ok(judge_unheld_receiving(landing, member, receiving, report)?
+            .unwrap_or(Moves::InCheckout));
+    }
     let own = crate::path_spelling::CanonicalPath::of(&there);
     let elsewhere: Vec<PathBuf> = vcs
         .checkouts_of_branch(&there, receiving)?

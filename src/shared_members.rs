@@ -39,6 +39,18 @@ pub(crate) fn outgoing(root: &Path, project: &ProjectName) -> Option<ProjectName
         .cloned()
 }
 
+/// The members of `project` that the project the weave root at `root`
+/// presents, when it is not `project`, lists too: their checkouts there are
+/// that project's.
+pub(crate) fn held_by_presented(root: &Path, project: &ProjectName) -> Vec<RepoPath> {
+    let Some(outgoing) = outgoing(root, project) else {
+        return Vec::new();
+    };
+    shared_members(root, project, &outgoing, &|_, _| true)
+        .map(|held| held.into_iter().map(|held| held.path).collect())
+        .unwrap_or_default()
+}
+
 /// Refuse an activation of `project` over a member it shares with the project
 /// the root presents that holds edits or is not aligned for `project`.
 pub(crate) fn refuse_for_activation(root: &Path, project: &ProjectName) -> anyhow::Result<()> {

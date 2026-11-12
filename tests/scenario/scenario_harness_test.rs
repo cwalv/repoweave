@@ -887,6 +887,7 @@ every_scenario!(
     stable_end_to_end,
     main_change_into_stable,
     shared_member_declared_dev,
+    inactive_project_choices,
     shared_member_pinned_behind,
     nested_workweaves,
     nested_workweaves_without_naming,
@@ -1116,11 +1117,20 @@ pending_on!(
     detached_head_in_workweave => Land,
     switch_c_wip_in_workweave => Land,
     worktree_add_force_on_weave_branch => Land,
-    shared_member_declared_dev => Land,
-    shared_member_pinned_behind => Land,
     main_change_into_stable => Land,
     cherry_pick_onto_stable => CherryPick,
 );
+
+#[test]
+fn an_inactive_projects_landing_composes_in_the_source() {
+    runner::run(scenarios::shared_member_declared_dev()).assert_fully_decided_green();
+    runner::run(scenarios::shared_member_pinned_behind()).assert_fully_decided_green();
+}
+
+#[test]
+fn an_inactive_projects_landing_prints_choices_that_run_for_that_project() {
+    runner::run(scenarios::inactive_project_choices()).assert_fully_decided_green();
+}
 
 #[test]
 fn a_cross_repo_pr_publishes_members_record_and_project_and_an_amend_needs_a_named_lease() {

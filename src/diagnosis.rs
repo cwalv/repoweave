@@ -3177,6 +3177,27 @@ fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
         })
 }
 
+/// `line`, an `rwv` command, with `--project <project>` added where its verb
+/// takes the flag and the line does not give it.
+fn spelled_for_project(line: &str, project: &crate::manifest::ProjectName) -> Option<String> {
+    use clap::CommandFactory;
+    let words = line.strip_prefix("rwv ")?;
+    if line.split_whitespace().any(|w| w == "--project") {
+        return None;
+    }
+    let mut command = crate::cli::Cli::command();
+    for word in words.split_whitespace() {
+        match command.find_subcommand(word) {
+            Some(sub) => command = sub.clone(),
+            None => break,
+        }
+    }
+    let takes_project = command
+        .get_arguments()
+        .any(|arg| arg.get_long() == Some("project"));
+    takes_project.then(|| format!("{line} --project {project}"))
+}
+
 /// One repo judged in one state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Judged {
@@ -3213,6 +3234,20 @@ impl Judged {
     /// The line judged in `workspace`, not the one the verb runs in.
     pub fn elsewhere(mut self, workspace: &Path) -> Self {
         self.workspace = Some(workspace.to_path_buf());
+        self
+    }
+
+    /// Each `rwv` choice spelled for `project`, so it runs as printed in a
+    /// workspace that presents another: a verb taking `--project` and not
+    /// given one is given it.
+    pub fn for_project(mut self, project: &crate::manifest::ProjectName) -> Self {
+        for offered in &mut self.choices {
+            for line in &mut offered.run {
+                if let Some(spelled) = spelled_for_project(line, project) {
+                    *line = spelled;
+                }
+            }
+        }
         self
     }
 
@@ -3329,6 +3364,19 @@ impl Report {
     }
 
     /// Add `judged` when there is one.
+    /// Every line's `rwv` choices spelled for `project`
+    /// ([`Judged::for_project`]).
+    pub fn for_project(self, project: &crate::manifest::ProjectName) -> Self {
+        Self {
+            lines: self
+                .lines
+                .into_iter()
+                .map(|line| line.for_project(project))
+                .collect(),
+            notes: self.notes,
+        }
+    }
+
     pub fn extend(&mut self, judged: Option<Judged>) {
         if let Some(judged) = judged {
             self.add(judged);
