@@ -25,10 +25,26 @@ pub fn checkout_ref(repo: &Path, key: &str) -> String {
     }
 }
 
+/// Where a checkout savepoint says the checkout was when it was taken.
+pub enum SavedOn<'a> {
+    Branch(&'a str),
+    Detached,
+}
+
 /// File a savepoint of the checkout `repo` under `key` at `sha`, on the
 /// branch the checkout is on now.
 pub fn plant_at(repo: &Path, key: &str, sha: &str) {
     git_in(repo, &["update-ref", &checkout_ref(repo, key), sha]);
+}
+
+/// File a savepoint of the checkout `repo` under `key` at `sha`, saying the
+/// checkout was `on`, wherever it is now.
+pub fn plant_on(repo: &Path, key: &str, on: SavedOn<'_>, sha: &str) {
+    let name = match on {
+        SavedOn::Branch(branch) => format!("{NAMESPACE}/{key}/checkout/{branch}"),
+        SavedOn::Detached => format!("{NAMESPACE}/{key}/detached"),
+    };
+    git_in(repo, &["update-ref", &name, sha]);
 }
 
 /// File a savepoint of the checkout `repo` under `key` at its `HEAD`.

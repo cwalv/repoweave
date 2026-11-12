@@ -766,6 +766,7 @@ every_scenario!(
     abort_refuses_a_switch_back_over_colliding_edits,
     abort_restores_a_target_fast_forward_killed_after_the_move,
     a_continued_landing_racing_a_commit_on_a_repo_it_moved,
+    vcs_continue_mid_rebase_then_an_own_commit,
     abort_abandons_colliding_edits_keeping_them,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
@@ -2764,6 +2765,14 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
 #[test]
 fn update_remote_abort_over_a_ref_moved_since_prints_the_choice_that_clears_it() {
     runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
+        .assert_fully_decided_green();
+}
+
+/// A commit the operator adds on top of a rebase they finished by hand is
+/// not read as the operation's: abort refuses, then abandons it into a backup.
+#[test]
+fn abort_keeps_an_own_commit_on_a_rebase_finished_by_hand() {
+    runner::run(scenarios::vcs_continue_mid_rebase_then_an_own_commit())
         .assert_fully_decided_green();
 }
 

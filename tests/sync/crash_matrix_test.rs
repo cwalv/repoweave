@@ -2063,6 +2063,59 @@ fn abort_leaves_a_target_repo_stopped_in_someone_elses_merge() {
     assert!(!ww.root.join(".rwv-op").exists(), "the abort ends the op");
 }
 
+/// A target repo the landing never moved, its savepoint taken at a commit
+/// of its own that someone then reset its branch off: abort leaves the
+/// branch, and keeps that commit as a backup before it drops the savepoint,
+/// so it is left on a ref.
+#[test]
+fn abort_keeps_the_savepoint_of_an_unmoved_target_repo_no_branch_reaches() {
+    let (primary, ww, moved_again, _tmp) = landed_then_moved_again(false);
+    let tree = common::git_in(&primary.server_dir, &["rev-parse", "HEAD^{tree}"]);
+    let saved = common::git_in(
+        &primary.server_dir,
+        &["commit-tree", &tree, "-p", "HEAD", "-m", "held before"],
+    );
+    common::savepoint::plant_at(
+        &primary.server_dir,
+        &target_op_id("crash-matrix-landed-then-moved-unjournaled"),
+        &saved,
+    );
+    assert_eq!(
+        common::git_in(
+            &primary.server_dir,
+            &[
+                "for-each-ref",
+                "--contains",
+                &saved,
+                "refs/heads/",
+                "refs/remotes/"
+            ]
+        ),
+        ""
+    );
+    let rewritten = moved_again;
+
+    let out = common::cli::run(&["abort"], &ww.root);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("it held before this operation is kept as backup"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    assert_ne!(
+        common::git_in(
+            &primary.server_dir,
+            &["for-each-ref", "--points-at", &saved, "refs/rwv/backup/"]
+        ),
+        ""
+    );
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+        rewritten
+    );
+}
+
 #[test]
 fn abort_leaves_a_target_repo_the_landing_never_moved() {
     let (primary, ww, moved_again, _tmp) = landed_then_moved_again(false);

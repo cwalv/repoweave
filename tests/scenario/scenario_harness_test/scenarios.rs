@@ -12647,12 +12647,9 @@ pub enum AfterHandContinue {
     Abort,
 }
 
-/// `vcs-continue-mid-rebase`: a `linear` landing stops on a conflict; the
-/// operator resolves it and runs the VCS's own continue to the end. Then
-/// `rwv land --continue` converges with every replayed project commit
-/// pinning the rebased `app`, or `rwv abort` puts the seat back, reading the
-/// tip the hand continue wrote as the operation's own, losing nothing.
-pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scenario {
+/// A `linear` landing stopped on a conflict at `stop`, which the operator
+/// resolves and finishes with the VCS's own continue; the repo it stopped in.
+fn landing_finished_mid_rebase_by_hand(stop: MidRebase) -> (Vec<Step>, Repo) {
     let (conflicted, file) = match stop {
         MidRebase::Member => (Repo::App, "README"),
         MidRebase::Project => (Repo::Proj, "shared.txt"),
@@ -12702,6 +12699,16 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
         .may_strand(&[conflicted])
         .may_rewind(&[Repo::App]),
     ]);
+    (steps, conflicted)
+}
+
+/// `vcs-continue-mid-rebase`: a `linear` landing stops on a conflict; the
+/// operator resolves it and runs the VCS's own continue to the end. Then
+/// `rwv land --continue` converges with every replayed project commit
+/// pinning the rebased `app`, or `rwv abort` puts the seat back, reading the
+/// tip the hand continue wrote as the operation's own, losing nothing.
+pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scenario {
+    let (mut steps, conflicted) = landing_finished_mid_rebase_by_hand(stop);
     match (stop, then) {
         (MidRebase::Member, AfterHandContinue::Continue) => steps.push(
             Step::rwv(&ww("w"), &["land", "--continue"])
@@ -12777,6 +12784,44 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
     }
     scenario(
         "a landing stopped mid-rebase, finished by the VCS's own continue",
+        steps,
+    )
+}
+
+/// A landing stopped in `app`'s rebase, finished by the VCS's own continue,
+/// and then the operator commits on top: abort cannot read that commit as a
+/// replay of the operation's, so it refuses rather than resetting it onto no
+/// ref, and the printed `--abandon-foreign-tip` keeps it as a backup.
+pub fn vcs_continue_mid_rebase_then_an_own_commit() -> Scenario {
+    let (mut steps, conflicted) = landing_finished_mid_rebase_by_hand(MidRebase::Member);
+    steps.extend([
+        Step::commit(&ww("w"), conflicted, "operator-own"),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::Proj])
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: conflicted,
+                rev: "HEAD",
+                mark: "operator-own",
+            }),
+        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("abandoned foreign tip")),
+        Step::git(&ww("w"), conflicted, &["log", "--all", "--format=kept %s"])
+            .claim(Claim::OutputContains("kept operator-own")),
+        Step::git(
+            &ww("w"),
+            conflicted,
+            &["log", "--format=%s", "-1", "proj--w"],
+        )
+        .claim(Claim::OutputLine("w-app-3")),
+    ]);
+    scenario(
+        "a landing finished mid-rebase by hand, then an own commit, aborted",
         steps,
     )
 }

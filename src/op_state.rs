@@ -1124,12 +1124,14 @@ impl OwnerRecord {
 
     /// The repos of the workspace the op runs in where its own step can
     /// stop in a VCS operation (a rebase, merge or cherry-pick): those its
-    /// plan integrates, and each it journaled starting a merge in. A repo
-    /// stopped in one anywhere else is someone else's.
+    /// plan integrates, and each it journaled starting a merge, a rebase or a
+    /// carry in. A repo stopped in one anywhere else is someone else's.
     pub fn operates_in(&self) -> Option<std::collections::BTreeSet<RepoKey>> {
         let mut repos = std::collections::BTreeSet::new();
         if let Some(take_in) = &self.take_in {
             repos.extend(take_in.integrating.iter().cloned());
+            repos.extend(take_in.rebases.iter().map(|r| r.repo.clone()));
+            repos.extend(take_in.carries.iter().map(|c| c.repo.clone()));
         }
         if matches!(self.verb, OpVerb::Pull | OpVerb::UpdateRemote) {
             return Some(repos);

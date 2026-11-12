@@ -308,6 +308,97 @@ fn abort_untouched_is_a_noop_and_writes_no_ref() {
     assert!(!ws.root.join(".rwv-op").exists());
 }
 
+/// A savepoint taken with the checkout detached, which is now on `main` at
+/// that same tip: abort switches it back to a detached HEAD at the savepoint
+/// and leaves `main` where it is.
+#[test]
+fn abort_switches_back_to_a_detached_savepoint_leaving_the_branch() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+    let op_id = "20991231T000011Z";
+    let server_pre = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let project_pre = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+    common::savepoint::plant_on(
+        &ws.server_dir,
+        op_id,
+        common::savepoint::SavedOn::Detached,
+        &server_pre,
+    );
+    plant_savepoint(&ws.project_dir, op_id, &project_pre);
+    plant_owner_record(&ws.root, op_id, "replay", &[]);
+
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("switched back off 'main'"));
+
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["branch", "--show-current"]),
+        ""
+    );
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_pre
+    );
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "main"]),
+        server_pre
+    );
+    assert!(savepoint_sha(&ws.server_dir, op_id).is_none());
+    assert!(!ws.root.join(".rwv-op").exists());
+}
+
+/// A savepoint taken on `main`, the checkout now on `topic` at a commit of
+/// someone else's: abort refuses and leaves it there; named on
+/// `--abandon-foreign-tip`, it switches back to `main`, `topic` keeping the
+/// commit.
+#[test]
+fn abort_switches_back_to_the_branch_its_savepoint_names() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+    let op_id = "20991231T000012Z";
+    let server_pre = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let project_pre = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+    common::savepoint::plant_on(
+        &ws.server_dir,
+        op_id,
+        common::savepoint::SavedOn::Branch("main"),
+        &server_pre,
+    );
+    plant_savepoint(&ws.project_dir, op_id, &project_pre);
+    plant_owner_record(&ws.root, op_id, "replay", &[]);
+    common::git_in(&ws.server_dir, &["switch", "-q", "-c", "topic"]);
+    let theirs = make_commit(&ws.server_dir, "theirs.txt", "theirs\n", "theirs");
+
+    let refusal = common::cli::run(&["abort"], &ws.root);
+    common::cli::refused(&refusal, repoweave::refusal::RefusalKind::ForeignTip);
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["branch", "--show-current"]),
+        "topic"
+    );
+
+    rwv()
+        .args(["abort", "--abandon-foreign-tip", SERVER_PATH])
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("switched back off 'topic'"));
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["branch", "--show-current"]),
+        "main"
+    );
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_pre
+    );
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "topic"]),
+        theirs
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Case 2: Converged — repo tip == recorded converged tip
 // ---------------------------------------------------------------------------
