@@ -13557,6 +13557,7 @@ pub fn stack_remote_dependent() -> Scenario {
             .claim(Claim::OutputLacks("carried")),
     ]);
     scenario("stack: a dependent published from another machine", steps)
+}
 
 /// A member's branch moved under its seat, the seat refreshed by hand with a
 /// git command that writes no reflog entry, then a staged return of every
