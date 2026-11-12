@@ -520,6 +520,11 @@ fn update_for_project(
             first_pins: lock::FirstPins::Taken,
             unaligned: lock::Unaligned::Left,
             whole: lock::WholeFile::default(),
+            op: if settled.op.is_some() {
+                lock::OpHeld::ByThisRun
+            } else {
+                lock::OpHeld::None
+            },
         },
         commit,
     )

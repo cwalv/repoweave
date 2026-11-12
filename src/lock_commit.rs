@@ -94,6 +94,7 @@ fn relocking_for<'a>(relocking: &Relocking<'a>, whole: WholeFile<'a>) -> Relocki
         first_pins: relocking.first_pins,
         unaligned: relocking.unaligned,
         whole,
+        op: relocking.op,
     }
 }
 

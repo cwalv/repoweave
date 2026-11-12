@@ -2166,8 +2166,9 @@ pub fn records_unpushed_stay_local() -> Scenario {
 
 /// waiver-per-merge: a raw merge that keeps this side's lock leaves the other
 /// side's `app` commit unjoined, which `push` refuses naming the merge; a
-/// later backward re-pin by name abandons that commit, and the push then
-/// passes listing the one merge it waived.
+/// later backward re-pin by name, which its lock commit records, abandons
+/// that commit, and the push then passes listing the one merge it waived and
+/// the verb that waived it.
 pub fn waiver_per_merge() -> Scenario {
     let app = Repo::App.rel_path();
     let mut steps = feature_branch_in_primary();
@@ -2194,7 +2195,8 @@ pub fn waiver_per_merge() -> Scenario {
         publishes_records(Step::rwv(&a(), &["push"]))
             .pushes(Remote::origin(Repo::Proj), "main")
             .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains("local/remotes/app: pin waived")),
+            .claim(Claim::OutputContains("local/remotes/app: pin waived"))
+            .claim(Claim::OutputContains("by `rwv member pin`")),
     ]);
     scenario("waiver per merge", steps)
 }

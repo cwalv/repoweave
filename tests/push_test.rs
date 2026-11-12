@@ -1521,13 +1521,45 @@ fn a_project_overwrite_keeps_the_replaced_remote_tip_as_a_backup() {
     assert_eq!(tips, vec![replaced.as_str()], "{doc}");
 }
 
-/// A raw merge whose lock conflict was settled by hand, by either side, is
-/// `pin unmerged` at the push: a merge made outside rwv records no re-pin by
-/// name, so it waives nothing.
-fn merge_settled_by(side: &str) -> std::process::Output {
+/// The pins of one member around a raw merge of two project branches that
+/// each moved it: the commit both started from, and each side's.
+struct RawMerge {
+    ws: common::PushWorkspace,
+    base: String,
+    ours: String,
+    theirs: String,
+}
+
+impl RawMerge {
+    fn project_dir(&self) -> std::path::PathBuf {
+        self.ws.workspace.join("projects").join(&self.ws.project_name)
+    }
+
+    fn push_project(&self) -> std::process::Output {
+        rwv()
+            .args(["push", "--repo", "projects/alpha"])
+            .current_dir(&self.ws.workspace)
+            .output()
+            .unwrap()
+    }
+
+    /// Commit, with git and `message`, a lock pinning the member at `pin`.
+    fn commit_lock_by_hand(&self, pin: &str, message: &str) {
+        let (_, bare) = &self.ws.manifest_bares[0];
+        common::fixture_lock(
+            &self.project_dir(),
+            &[("local/org/a", &common::file_url(bare), pin)],
+        );
+        common::git_in(self.project_dir(), &["commit", "-qam", message]);
+    }
+}
+
+/// A raw merge whose lock conflict was settled by hand with `side`'s lock.
+fn raw_merge_settled_by(side: &str) -> RawMerge {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let member = ws.workspace.join("local/org/a");
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let base = common::git_in(&member, &["rev-parse", "HEAD"]);
     common::git_in(&member, &["branch", "side"]);
     let ours = advance(&member, "ours.txt");
     common::git_in(&member, &["switch", "-q", "side"]);
@@ -1548,25 +1580,125 @@ fn merge_settled_by(side: &str) -> std::process::Output {
     common::git_in(&project_dir, &["checkout", side, "--", "rwv.lock"]);
     common::git_in(&project_dir, &["add", "rwv.lock"]);
     common::git_in(&project_dir, &["commit", "-q", "--no-edit"]);
-
-    rwv()
-        .args(["push", "--repo", "projects/alpha"])
-        .current_dir(&ws.workspace)
-        .output()
-        .unwrap()
+    RawMerge {
+        ws,
+        base,
+        ours,
+        theirs,
+    }
 }
 
+/// A raw merge whose lock conflict was settled by hand, by either side, is
+/// `pin unmerged` at the push: a merge made outside rwv records no re-pin by
+/// name, so it waives nothing.
 #[test]
 fn a_raw_merge_settled_with_this_sides_lock_is_pin_unmerged() {
-    let out = merge_settled_by("--ours");
+    let out = raw_merge_settled_by("--ours").push_project();
     common::cli::refused(&out, State::PinUnmerged);
 }
 
 #[test]
 fn a_raw_merge_settled_with_the_other_sides_lock_is_pin_unmerged() {
-    let out = merge_settled_by("--theirs");
+    let out = raw_merge_settled_by("--theirs").push_project();
     let stderr = common::cli::refused(&out, State::PinUnmerged);
     assert!(!stderr.contains("pin waived"), "{stderr}");
+}
+
+/// `pin unmerged` prints `member pin` as a choice; run as printed, at a
+/// commit reaching neither side, the re-pin it records waives the merge.
+#[test]
+fn the_printed_member_pin_choice_waives_a_raw_merge() {
+    let merge = raw_merge_settled_by("--ours");
+    let stderr = common::cli::refused(&merge.push_project(), State::PinUnmerged);
+    let printed = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv member pin "))
+        .unwrap_or_else(|| panic!("no member pin choice printed:\n{stderr}"));
+    assert_eq!(printed, "rwv member pin local/org/a <rev> --commit");
+    let words: Vec<String> = printed
+        .replace("<rev>", &merge.base)
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_owned)
+        .collect();
+    rwv()
+        .args(&words)
+        .current_dir(&merge.ws.workspace)
+        .assert()
+        .success();
+
+    let out = merge.push_project();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("pin waived"), "{stderr}");
+    assert!(stderr.contains("by `rwv member pin`"), "{stderr}");
+}
+
+/// The same backward re-pin committed with git records nothing, so it
+/// waives nothing.
+#[test]
+fn a_backward_lock_committed_by_hand_does_not_waive() {
+    let merge = raw_merge_settled_by("--ours");
+    merge.commit_lock_by_hand(&merge.base, "lock: back to the base");
+
+    let stderr = common::cli::refused(&merge.push_project(), State::PinUnmerged);
+    assert!(!stderr.contains("pin waived"), "{stderr}");
+}
+
+/// A record whose old pin is not the one the commit's parent held waives
+/// nothing, and is listed.
+#[test]
+fn a_record_that_disagrees_with_its_lock_change_waives_nothing_and_is_listed() {
+    let merge = raw_merge_settled_by("--ours");
+    let forged = format!(
+        "lock: back to the base\n\nRwv-Repin: \"local/org/a\" {} {} member pin",
+        merge.theirs, merge.base
+    );
+    merge.commit_lock_by_hand(&merge.base, &forged);
+
+    let stderr = common::cli::refused(&merge.push_project(), State::PinUnmerged);
+    assert!(!stderr.contains("pin waived"), "{stderr}");
+    assert!(
+        stderr.contains("records re-pinning it by name to pins its lock does not hold"),
+        "{stderr}"
+    );
+}
+
+/// The merge's own commit waives when it carries a record that matches the
+/// change its lock made against its first parent.
+#[test]
+fn a_merge_whose_own_commit_records_the_re_pin_waives_itself() {
+    let merge = raw_merge_settled_by("--ours");
+    let project_dir = merge.project_dir();
+    common::git_in(&project_dir, &["reset", "-q", "--soft", "HEAD~1"]);
+    let (_, bare) = &merge.ws.manifest_bares[0];
+    common::fixture_lock(
+        &project_dir,
+        &[("local/org/a", &common::file_url(bare), &merge.base)],
+    );
+    common::git_in(&project_dir, &["add", "rwv.lock"]);
+    let message = format!(
+        "merge other\n\nRwv-Repin: \"local/org/a\" {} {} sync",
+        merge.ours, merge.base
+    );
+    let tree = common::git_in(&project_dir, &["write-tree"]);
+    let commit = common::git_in(
+        &project_dir,
+        &[
+            "commit-tree", &tree, "-p", "HEAD", "-p", "other", "-m", &message,
+        ],
+    );
+    common::git_in(&project_dir, &["reset", "-q", "--hard", &commit]);
+
+    let out = merge.push_project();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("pin waived"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("in {}, by `rwv sync`", &commit[..12])),
+        "{stderr}"
+    );
 }
 
 /// A feature, its member branch holding work, on a project whose `main` has
