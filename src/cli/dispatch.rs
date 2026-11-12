@@ -575,6 +575,43 @@ fn invocation() -> (String, OutputMode) {
     (path.join(" "), OutputMode::from_flag(json))
 }
 
+/// Whether the verb reads or writes a repository, and so needs the VCS tools
+/// its backends drive. One that does not still runs where no usable tool is
+/// installed, which is where an operator reads why the others refuse.
+fn drives_repositories(command: Option<&Commands>) -> bool {
+    match command {
+        Some(Commands::Explain { .. } | Commands::Completions { .. } | Commands::Setup { .. }) => {
+            false
+        }
+        None
+        | Some(
+            Commands::Activate { .. }
+            | Commands::Materialize { .. }
+            | Commands::Prime { .. }
+            | Commands::Resolve
+            | Commands::Clone { .. }
+            | Commands::Init { .. }
+            | Commands::Member { .. }
+            | Commands::Branch { .. }
+            | Commands::Switch { .. }
+            | Commands::Workweave { .. }
+            | Commands::Doctor { .. }
+            | Commands::Lock { .. }
+            | Commands::Status { .. }
+            | Commands::Log { .. }
+            | Commands::Abort { .. }
+            | Commands::Backup { .. }
+            | Commands::Sync { .. }
+            | Commands::SyncTo { .. }
+            | Commands::Fetch { .. }
+            | Commands::Pull { .. }
+            | Commands::Update { .. }
+            | Commands::Push { .. }
+            | Commands::External(_),
+        ) => true,
+    }
+}
+
 /// Whether clap refused the parse over a `--force` that the verb does not
 /// declare.
 fn rejects_force(err: &clap::Error) -> bool {
@@ -659,6 +696,10 @@ pub fn run() -> anyhow::Result<()> {
             err.exit();
         }
     };
+
+    if drives_repositories(cli.command.as_ref()) {
+        crate::vcs::refuse_unready_tools()?;
+    }
 
     if let Some(Commands::Lock {
         merge_driver: Some(files),

@@ -14,8 +14,8 @@ use crate::vcs::{
     RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
     RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
     Replace, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth,
-    SubmoduleCheckout, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream,
-    UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
+    Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -1804,6 +1804,15 @@ fn is_release_shape_tag(tag: &str) -> bool {
 impl Vcs for GitVcs {
     fn name(&self) -> &str {
         "git"
+    }
+
+    fn minimum_release(&self) -> String {
+        let (major, minor) = MINIMUM_RELEASE;
+        format!("{major}.{minor}")
+    }
+
+    fn tool_readiness(&self) -> ToolReadiness {
+        readiness_of(git_reading())
     }
 
     fn init_repo(&self, dest: &Path) -> Result<(), VcsError> {
@@ -4360,7 +4369,7 @@ impl Vcs for GitVcs {
     }
 
     fn population(&self) -> Option<&dyn WorkspacePopulation> {
-        git_answers_population().then_some(self as &dyn WorkspacePopulation)
+        Some(self)
     }
 
     fn tree_merges(&self) -> Option<&dyn TreeMerges> {
@@ -4633,32 +4642,76 @@ enum WorktreeFiles {
     Unwritten,
 }
 
-/// `git hook run`, which finishing a populated workspace needs to run the
-/// `post-checkout` hook `worktree add` would have, arrived in 2.36.
-const FIRST_RELEASE_ANSWERING_POPULATION: (u32, u32) = (2, 36);
+/// The oldest release every operation of this backend runs on, outside the
+/// capabilities it detects. `git hook run`, which finishing a populated
+/// workspace needs, arrived in 2.36.
+const MINIMUM_RELEASE: (u32, u32) = (2, 36);
 
 /// `merge-tree --write-tree`, which computes a merge as a tree, arrived in 2.38.
 const FIRST_RELEASE_MERGING_TREES: (u32, u32) = (2, 38);
 
-fn git_release() -> Option<(u32, u32)> {
-    static RELEASE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
-    *RELEASE.get_or_init(|| {
-        git_command()
-            .args(["version"])
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .and_then(|version| release_of(&version))
+/// What `git version` answered, read once per process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitReading {
+    Release {
+        release: (u32, u32),
+        version: String,
+    },
+    Unreadable {
+        reported: String,
+    },
+    Unrunnable {
+        cause: String,
+    },
+}
+
+fn git_reading() -> &'static GitReading {
+    static READING: std::sync::OnceLock<GitReading> = std::sync::OnceLock::new();
+    READING.get_or_init(|| match git_command().args(["version"]).output() {
+        Err(e) => GitReading::Unrunnable {
+            cause: e.to_string(),
+        },
+        Ok(out) => reading_of(
+            out.status.success(),
+            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&out.stderr),
+        ),
     })
 }
 
-fn git_answers_population() -> bool {
-    git_release().is_some_and(|release| release >= FIRST_RELEASE_ANSWERING_POPULATION)
+fn reading_of(succeeded: bool, stdout: &str, stderr: &str) -> GitReading {
+    match release_of(stdout).filter(|_| succeeded) {
+        Some(release) => GitReading::Release {
+            release,
+            version: stdout.trim().trim_start_matches("git version ").to_owned(),
+        },
+        None => GitReading::Unreadable {
+            reported: [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        },
+    }
+}
+
+fn readiness_of(reading: &GitReading) -> ToolReadiness {
+    match reading {
+        GitReading::Release { release, .. } if *release >= MINIMUM_RELEASE => ToolReadiness::Ready,
+        GitReading::Release { version, .. } => ToolReadiness::TooOld {
+            installed: version.clone(),
+        },
+        GitReading::Unreadable { reported } => ToolReadiness::Unreadable {
+            reported: reported.clone(),
+        },
+        GitReading::Unrunnable { cause } => ToolReadiness::Unrunnable {
+            cause: cause.clone(),
+        },
+    }
 }
 
 fn git_merges_trees() -> bool {
-    git_release().is_some_and(|release| release >= FIRST_RELEASE_MERGING_TREES)
+    matches!(git_reading(), GitReading::Release { release, .. } if *release >= FIRST_RELEASE_MERGING_TREES)
 }
 
 /// `(major, minor)` from `git version`, whose tail vendors extend freely
@@ -7209,17 +7262,8 @@ mod population_tests {
     }
 
     #[test]
-    fn this_git_answers_population_and_a_release_before_hook_run_would_not() {
+    fn this_git_answers_population() {
         assert!(GIT.population().is_some());
-        assert_eq!(release_of("git version 2.43.0\n"), Some((2, 43)));
-        assert_eq!(
-            release_of("git version 2.39.5 (Apple Git-154)"),
-            Some((2, 39))
-        );
-        assert_eq!(release_of("git version 2.47.1.windows.1"), Some((2, 47)));
-        assert_eq!(release_of("not git"), None);
-        assert!(release_of("git version 2.35.8").unwrap() < FIRST_RELEASE_ANSWERING_POPULATION);
-        assert!(release_of("git version 2.36.0").unwrap() >= FIRST_RELEASE_ANSWERING_POPULATION);
     }
 
     #[test]
@@ -9260,4 +9304,198 @@ mod wording_tests {
         an_add_that_leaves_its_own_registration_is_not_repeated,
         the_wait_turns_on_the_registrations_not_on_what_git_said,
     );
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+
+    fn readiness(stdout: &str) -> ToolReadiness {
+        readiness_of(&reading_of(true, stdout, ""))
+    }
+
+    #[test]
+    fn a_release_is_read_from_what_vendors_append_to_it() {
+        assert_eq!(release_of("git version 2.43.0\n"), Some((2, 43)));
+        assert_eq!(
+            release_of("git version 2.39.5 (Apple Git-154)"),
+            Some((2, 39))
+        );
+        assert_eq!(release_of("git version 2.47.1.windows.1"), Some((2, 47)));
+        assert_eq!(release_of("not git"), None);
+    }
+
+    #[test]
+    fn a_release_below_the_floor_is_too_old_and_names_what_was_found() {
+        assert_eq!(
+            readiness("git version 2.35.8\n"),
+            ToolReadiness::TooOld {
+                installed: "2.35.8".to_owned()
+            }
+        );
+        assert_eq!(
+            readiness("git version 1.99.0\n"),
+            ToolReadiness::TooOld {
+                installed: "1.99.0".to_owned()
+            }
+        );
+        assert_eq!(readiness("git version 2.36.0\n"), ToolReadiness::Ready);
+        assert_eq!(
+            readiness("git version 2.39.5 (Apple Git-154)\n"),
+            ToolReadiness::Ready
+        );
+        assert_eq!(readiness("git version 3.0.0\n"), ToolReadiness::Ready);
+    }
+
+    #[test]
+    fn a_version_naming_no_release_or_a_failed_answer_is_unreadable() {
+        assert_eq!(
+            readiness("hub version 2.14.2\n"),
+            ToolReadiness::Unreadable {
+                reported: "hub version 2.14.2".to_owned()
+            }
+        );
+        assert_eq!(
+            readiness_of(&reading_of(false, "git version 2.40.0\n", "broken")),
+            ToolReadiness::Unreadable {
+                reported: "git version 2.40.0\nbroken".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn the_git_under_test_is_at_or_above_the_floor() {
+        assert_eq!(GitVcs.tool_readiness(), ToolReadiness::Ready);
+    }
+
+    fn floor() -> String {
+        GitVcs.minimum_release()
+    }
+
+    fn page(path: &str) -> String {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+    }
+
+    #[test]
+    fn the_pages_stating_the_floor_state_this_one() {
+        let prerequisite = format!("**Prerequisites:** git {} or newer on `$PATH`", floor());
+        for path in ["README.md", "docs/introduction.md"] {
+            assert!(
+                page(path).contains(&prerequisite),
+                "{path} does not state {prerequisite:?}"
+            );
+        }
+        assert!(
+            page("docs/reference/cli.md").contains(&format!("Below git {} it refuses", floor()))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_floor_stage_builds_this_floor() {
+        let out = std::process::Command::new("bash")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/git-floor.sh"))
+            .arg("--print-release")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            format!("{}.0", floor())
+        );
+    }
+}
+
+#[cfg(test)]
+mod name_reading_tests {
+    //! Paths git would quote without `-z` — a space, a tab, a quote, a
+    //! non-ASCII letter — read back as the paths they are.
+    use super::*;
+
+    const AWKWARD: &str = "dir with space/tab\there \"quoted\" é.txt";
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = git_command_in_test()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn commit(repo: &Path, content: &str, message: &str) {
+        std::fs::write(repo.join(AWKWARD), content).unwrap();
+        git(repo, &["add", "--", AWKWARD]);
+        git(repo, &["commit", "-q", "-m", message]);
+    }
+
+    /// A repo on `main` whose one file has an awkward name, and a branch
+    /// `other` that changes it differently.
+    fn diverged() -> (tempfile::TempDir, PathBuf) {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join("dir with space")).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.email", "t@t"]);
+        git(&repo, &["config", "user.name", "T"]);
+        git(&repo, &["config", "core.quotePath", "true"]);
+        commit(&repo, "base\n", "base");
+        git(&repo, &["checkout", "-q", "-b", "other"]);
+        commit(&repo, "theirs\n", "theirs");
+        git(&repo, &["checkout", "-q", "main"]);
+        commit(&repo, "ours\n", "ours");
+        (tmp, repo)
+    }
+
+    fn tip(repo: &Path, rev: &str) -> CommitId {
+        CommitId::parse(&GitVcs::run_trimmed(["rev-parse", rev], repo).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_conflicted_awkward_path_is_named_as_it_is() {
+        let (_tmp, repo) = diverged();
+        let other = tip(&repo, "other");
+
+        let unmerged = GitVcs::begin_checkout_merge(&repo, &other).unwrap();
+
+        assert_eq!(unmerged, vec![AWKWARD.to_owned()]);
+    }
+
+    #[test]
+    fn an_awkward_path_is_found_in_a_tree() {
+        let (_tmp, repo) = diverged();
+        let tree = crate::vcs::TreeId::from_object_name(
+            GitVcs::run_trimmed(["rev-parse", "HEAD^{tree}"], &repo)
+                .unwrap()
+                .as_str(),
+        );
+
+        let content = GitVcs.file_in_tree(&repo, &tree, AWKWARD).unwrap();
+
+        assert_eq!(content.as_deref(), Some("ours\n"));
+    }
+
+    #[test]
+    fn an_awkward_path_differing_from_head_is_named_as_it_is() {
+        let (_tmp, repo) = diverged();
+        std::fs::write(repo.join(AWKWARD), "edited\n").unwrap();
+
+        assert_eq!(
+            paths_differing_from_head(&repo).unwrap(),
+            vec![AWKWARD.to_owned()]
+        );
+        std::fs::remove_file(repo.join(AWKWARD)).unwrap();
+        assert!(matches!(
+            working_tree_state(&repo),
+            WorkingTreeState::RestorableFromHead(paths) if paths == [AWKWARD]
+        ));
+    }
 }

@@ -210,6 +210,11 @@ pub enum RefusalKind {
     RepairTargetChanged,
     /// The weave's recorded health floor is below this binary's requirement.
     HealthFloorTooLow,
+    /// The installed VCS tool is older than its backend's minimum release, or
+    /// names no release.
+    UnsupportedVcsTool,
+    /// The VCS tool a backend drives cannot be started.
+    MissingVcsTool,
     /// The settings file `rwv setup claude` edits is absent.
     ClaudeSettingsMissing,
     /// Something rwv did not create sits where a link belongs.

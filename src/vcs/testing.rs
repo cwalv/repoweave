@@ -228,6 +228,14 @@ impl Vcs for FakeVcs {
         "fake"
     }
 
+    fn minimum_release(&self) -> String {
+        "0".to_owned()
+    }
+
+    fn tool_readiness(&self) -> crate::vcs::ToolReadiness {
+        crate::vcs::ToolReadiness::Ready
+    }
+
     fn is_ancestor(
         &self,
         _repo: &Path,

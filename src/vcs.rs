@@ -577,6 +577,61 @@ impl JsonSchema for MidOperation {
     }
 }
 
+/// Whether the tool a backend drives can carry rwv's operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolReadiness {
+    Ready,
+    /// The tool runs, and its release is below [`Vcs::minimum_release`].
+    TooOld {
+        installed: String,
+    },
+    /// The tool runs, and what it answered names no release.
+    Unreadable {
+        reported: String,
+    },
+    /// The tool could not be started: `cause` is what the OS said.
+    Unrunnable {
+        cause: String,
+    },
+}
+
+/// Refuse unless every backend this binary can resolve has a tool it runs on.
+///
+/// Every backend, not only the ones a weave's manifests name: the project
+/// repo has no manifest entry, and the check runs before anything is read.
+pub(crate) fn refuse_unready_tools() -> anyhow::Result<()> {
+    for vcs in [vcs_for(crate::manifest::VcsType::Git)] {
+        refuse_unready(vcs.as_ref())?;
+    }
+    Ok(())
+}
+
+fn refuse_unready(vcs: &dyn Vcs) -> anyhow::Result<()> {
+    use crate::refusal::RefusalKind;
+    let tool = vcs.name();
+    let minimum = vcs.minimum_release();
+    match vcs.tool_readiness() {
+        ToolReadiness::Ready => Ok(()),
+        ToolReadiness::TooOld { installed } => crate::refuse!(
+            RefusalKind::UnsupportedVcsTool,
+            "rwv needs {tool} {minimum} or newer, the oldest release with every command it \
+             runs, and the `{tool}` on PATH is {installed}: install {tool} {minimum} or newer \
+             and put it first on PATH"
+        ),
+        ToolReadiness::Unreadable { reported } => crate::refuse!(
+            RefusalKind::UnsupportedVcsTool,
+            "rwv needs {tool} {minimum} or newer, and the `{tool}` on PATH names no release \
+             when asked its version (it answered {reported:?}): install {tool} {minimum} or \
+             newer and put it first on PATH"
+        ),
+        ToolReadiness::Unrunnable { cause } => crate::refuse!(
+            RefusalKind::MissingVcsTool,
+            "rwv runs `{tool}`, and none could be started from PATH ({cause}): install {tool} \
+             {minimum} or newer and put it on PATH"
+        ),
+    }
+}
+
 /// Resolve a VCS implementation from a [`crate::manifest::VcsType`].
 pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
     match vcs_type {
@@ -2572,6 +2627,19 @@ impl ContentIdentity {
 pub trait Vcs: Send + Sync {
     /// Human-readable name (e.g., `"git"`, `"jj"`).
     fn name(&self) -> &str;
+
+    /// The oldest release of the tool this backend drives that it runs on,
+    /// spelled as the tool numbers its releases.
+    ///
+    /// For git: 2.36.
+    fn minimum_release(&self) -> String;
+
+    /// Whether the installed tool is one this backend runs on. Asked once per
+    /// invocation; the answer is cached for the life of the process.
+    ///
+    /// For git: reads `git version`, the same reading every detected
+    /// capability answers from.
+    fn tool_readiness(&self) -> ToolReadiness;
 
     /// Create an empty repository at `dest`, creating the directory and any
     /// missing parents first.

@@ -4,12 +4,15 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine]
+# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
 #
 # With no --stages, runs all stages in the order above but the last — this is
 # what CI, the release gate and the pre-push hook invoke. windows-wine runs
 # only when named: it is scripts/windows-wine.sh, which downloads several GB
 # on first use and reports reds that belong to Wine rather than to the code.
+# git-floor runs only when named too: it runs the suite against the oldest git
+# release rwv runs on, which scripts/git-floor.sh downloads and builds into a
+# cache outside the repository on first use.
 # --stages selects a subset, in that same fixed order, regardless of the order
 # named on the command line; re-gating an integration tip between landings
 # wants --stages=drift alone, without paying for a full build first. A subset
@@ -43,7 +46,7 @@
 set -euo pipefail
 
 ALL_STAGES=(check windows test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
-OPT_IN_STAGES=(windows-wine)
+OPT_IN_STAGES=(windows-wine git-floor)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 
 join_by_comma() {
@@ -215,6 +218,19 @@ fi
 if run_stage windows-wine; then
     header "test suite under Wine as x86_64-pc-windows-gnu binaries"
     "$(dirname "$0")/windows-wine.sh"
+fi
+
+if run_stage git-floor; then
+    header "cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)"
+    floor_bin="$("$(dirname "$0")/git-floor.sh")"
+    floor_release="$("$(dirname "$0")/git-floor.sh" --print-release)"
+    found="$(PATH="$floor_bin:$PATH" git version)"
+    if [ "$found" != "git version $floor_release" ]; then
+        printf 'git-floor: PATH resolves %s, not git %s\n' "$found" "$floor_release" >&2
+        exit 1
+    fi
+    printf '%s from %s\n' "$found" "$floor_bin"
+    with_symlinked_tmpdir env PATH="$floor_bin:$PATH" cargo test --release --no-fail-fast --features test-pause
 fi
 
 ran_stages=()

@@ -683,6 +683,24 @@ operator did not ask for.
 — the same declared surface `rwv explain member`'s creation-parameter table
 renders, so the two cannot disagree.
 
+### `missing-vcs-tool`
+
+**Condition.** A verb that reads or writes a repository could not start the
+version-control tool its backend drives (`git`): no executable of that name is
+on `PATH`, or the system refused to run it. The message carries what the system
+said.
+
+**Why.** Every repository operation goes through that tool, so a verb that
+started anyway would stop at its first repository read, after it may already
+have written something else. The check runs before the verb does anything.
+`rwv explain`, `rwv completions`, `rwv setup claude`, `--help` and `--version`
+touch no repository and run without the tool.
+
+**Exits.** Install git at the release the message names, or newer, and put it
+on `PATH`.
+
+**Where this sits.** [Install](../introduction.md#install).
+
 ### `nested-project-name`
 
 **Condition.** The name would place a project inside another project.
@@ -1325,6 +1343,26 @@ then run `rwv member add --adopt` with the clone's new path. Nothing was written
 there is nothing to undo.
 
 **Where this sits.** [Formats](./formats.md) states the path grammar.
+
+### `unsupported-vcs-tool`
+
+**Condition.** The version-control tool a backend drives (`git`) is older than
+the oldest release that backend runs on, or names no release when asked its
+version. The message names the release found and the release required.
+
+**Why.** rwv runs commands and options that older releases lack. Started on
+one, a verb would fail partway through, with the tool's own error about an
+unknown option, after it had already changed some repositories and not others.
+The check runs once, before the verb reads or writes anything. Commands newer
+than the required release are detected rather than required: rwv uses another
+way to do the same work where the installed tool lacks them. `rwv explain`,
+`rwv completions`, `rwv setup claude`, `--help` and `--version` touch no
+repository and run with any release.
+
+**Exits.** Install the required release or newer and put it first on `PATH`;
+`git --version` shows which one `PATH` finds.
+
+**Where this sits.** [Install](../introduction.md#install).
 
 ### `untracked-collision`
 

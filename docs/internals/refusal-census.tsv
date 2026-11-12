@@ -265,6 +265,8 @@ src/update_remote.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/update_remote.rs	partial-run-aborted	tests/refusal_arrival_test.rs	2
 src/update_remote.rs	push-branch diverged	tests/push_test.rs	1
 src/url_remote.rs	name taken	-	1
+src/vcs.rs	missing-vcs-tool	tests/vcs_tool_floor_test.rs	1
+src/vcs.rs	unsupported-vcs-tool	tests/vcs_tool_floor_test.rs	2
 src/workspace.rs	(untokened:owed)	-	2
 src/workspace.rs	cwd-in-inactive-project	tests/project_and_source_spelling_test.rs	1
 src/workspace.rs	dangling-active-project	-	1

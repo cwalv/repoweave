@@ -28,7 +28,7 @@ repoweave is in **active alpha** (`0.x`): core workflows are heavily tested, and
 
 ### Install
 
-**Prerequisites:** `git` on `$PATH`. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
+**Prerequisites:** git 2.36 or newer on `$PATH`; `rwv` refuses to run a repository verb with an older one. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
 
 Every channel below installs `rwv` and, beside it, `rwv-each` — the plugin behind [`rwv each`](docs/reference/rwv-each.md).
 

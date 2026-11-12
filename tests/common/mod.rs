@@ -962,18 +962,25 @@ pub fn write_local_crate_source(
 ///
 /// Not a `TempDir`: one held in a `static` never drops, so it would leave a
 /// directory behind on every run. The directory is reused across runs, which
-/// is why the link is tested for rather than created unconditionally.
+/// is why the link is tested for rather than created unconditionally, and why
+/// the directory is named for the tool the lookup found: a run with another
+/// `git` first on `PATH` (the git-floor stage's) must not reuse a link to the
+/// last run's.
 ///
 /// Two callers can also race that test on a cold target: both see the link
 /// absent, one create fails on the winner's identical, already-usable link.
 /// A failed create is therefore only a failure while the link is still
 /// absent.
 pub fn tool_only_bin(name: &str) -> PathBuf {
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("only-bin-{name}"));
-    std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
-
+    use std::hash::{Hash, Hasher};
     let tool = which::which(name)
         .unwrap_or_else(|e| panic!("{name} must be resolvable to run these tests: {e}"));
+    let mut found = std::collections::hash_map::DefaultHasher::new();
+    tool.hash(&mut found);
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("only-bin-{name}-{:016x}", found.finish()));
+    std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
+
     // The shim must carry the name a child's lookup resolves: Windows appends
     // `.exe`, so a link named bare `git` is invisible there.
     let link = dir.join(if cfg!(windows) {
