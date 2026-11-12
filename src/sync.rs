@@ -8249,9 +8249,10 @@ fn abort_op(
     }
     if let op_state::OwnerReading::Whole(record) = &reading {
         let moved = judge_carried(record, &owner_workspace);
-        if !moved.is_empty()
-            && !moved
+        if moved.iter().any(MovedCarry::blocks)
+            || !moved
                 .iter()
+                .filter(|m| m.moved())
                 .all(|m| abandon.covers(&m.carry.repo, &op_project_name))
         {
             return refuse_moved_carried(record, &moved);
@@ -9300,13 +9301,26 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
 /// than the tip the carry wrote.
 struct MovedCarry<'a> {
     carry: &'a op_state::Carrying,
+    dir: PathBuf,
     to: &'a CommitId,
     now: Option<CommitId>,
     built_on: bool,
+    held_at: Vec<PathBuf>,
 }
 
-/// Each dependent's branch the op moved by a carry that has moved since:
-/// read in the source's store, where the carry moved it.
+impl MovedCarry<'_> {
+    fn moved(&self) -> bool {
+        self.now.as_ref() != Some(self.to)
+    }
+
+    fn blocks(&self) -> bool {
+        self.now.is_none() || !self.held_at.is_empty()
+    }
+}
+
+/// Each dependent's branch the op moved by a carry that has moved since, is
+/// gone, or is checked out outside the op's workspaces, where abort could
+/// not put it back: read in the source's store, where the carry moved it.
 fn judge_carried<'a>(
     record: &'a op_state::OwnerRecord,
     source: &CanonicalPath,
@@ -9315,6 +9329,9 @@ fn judge_carried<'a>(
         return Vec::new();
     };
     let vcs = crate::vcs::probe_vcs();
+    let ours: Vec<&CanonicalPath> = std::iter::once(source)
+        .chain(record.target.as_ref())
+        .collect();
     take_in
         .carries
         .iter()
@@ -9328,12 +9345,22 @@ fn judge_carried<'a>(
                 RepoKey::Project => project_dir(source.as_path(), &record.project),
                 RepoKey::Member(path) => source.as_path().join(path.as_path()),
             };
+            let branch = crate::vcs::RawRefName::new(carry.branch.clone());
             let now = vcs
-                .resolve_local_branch_tip(&dir, &crate::vcs::RawRefName::new(carry.branch.clone()))
+                .resolve_local_branch_tip(&dir, &branch)
                 .ok()
                 .flatten()
                 .map(|tip| tip.id().clone());
-            if now.as_ref() == Some(to) {
+            let held_at: Vec<PathBuf> = vcs
+                .checkouts_of_branch(&dir, &branch)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|held| {
+                    let held = CanonicalPath::of(held);
+                    !ours.iter().any(|ws| ws.contains(&held))
+                })
+                .collect();
+            if now.as_ref() == Some(to) && held_at.is_empty() {
                 return None;
             }
             let built_on = now.as_ref().is_some_and(|now| {
@@ -9346,9 +9373,11 @@ fn judge_carried<'a>(
             });
             Some(MovedCarry {
                 carry,
+                dir,
                 to,
                 now,
                 built_on,
+                held_at,
             })
         })
         .collect()
@@ -9362,25 +9391,60 @@ fn refuse_moved_carried(
     moved: &[MovedCarry<'_>],
 ) -> anyhow::Result<()> {
     let project = &record.project;
+    let vcs = crate::vcs::probe_vcs();
+    let mut lines = Vec::new();
     for one in moved {
         let named = RepoOperand::of(&one.carry.repo, project);
+        let branch = &one.carry.branch;
         match &one.now {
-            Some(now) => eprintln!(
-                "  {named}: '{}' is at {}, not at {}, where this operation carried it",
-                one.carry.branch,
+            Some(now) if one.moved() => eprintln!(
+                "  {named}: '{branch}' is at {}, not at {}, where this operation carried it",
                 now.short(),
                 one.to.short()
             ),
-            None => eprintln!(
-                "  {named}: '{}' is gone, where this operation carried it to {}",
-                one.carry.branch,
-                one.to.short()
-            ),
+            Some(_) => {}
+            None => {
+                eprintln!(
+                    "  {named}: '{branch}' is gone, where this operation carried it to {}",
+                    one.to.short()
+                );
+                lines.push(format!(
+                    "  {named}: put '{branch}' back where this operation carried it:\n\t{}\n\
+                     then rerun:\n\trwv abort",
+                    vcs.hint(crate::vcs::VcsAction::BranchAt)
+                        .replace("<checkout>", &one.dir.display().to_string())
+                        .replace("<name>", branch)
+                        .replace("<sha>", one.to.as_str())
+                ));
+            }
+        }
+        if !one.held_at.is_empty() {
+            let at = one
+                .held_at
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("  {named}: '{branch}' is checked out at {at}, so abort cannot move it");
+            lines.push(format!(
+                "  {named}: free the checkout at {at} of '{branch}' (switch it to another \
+                 branch, or detach it), as this shows:\n\t{}\nthen rerun:\n\trwv abort",
+                vcs.hint(crate::vcs::VcsAction::Status)
+                    .replace("<checkout>", &at)
+            ));
         }
     }
     eprintln!("\nnothing is restored: abort puts back a carried stack whole or not at all");
+    if !lines.is_empty() {
+        eprintln!("\nrecovery options:\n{}", lines.join("\n"));
+        crate::refuse!(
+            RefusalKind::ForeignTip,
+            "abort refused: a dependent this operation carried cannot be put back"
+        );
+    }
     let abandons = moved
         .iter()
+        .filter(|m| m.moved())
         .map(|m| RepoOperand::of(&m.carry.repo, project))
         .collect::<std::collections::BTreeSet<_>>()
         .iter()
@@ -9392,9 +9456,10 @@ fn refuse_moved_carried(
          branch, each moved tip kept as an `abandoned` backup that `rwv backup list` shows and \
          `rwv backup drop` drops:\n\trwv abort {abandons}"
     )];
-    if moved.iter().all(|m| m.built_on) {
+    if moved.iter().filter(|m| m.moved()).all(|m| m.built_on) {
         let dependents = moved
             .iter()
+            .filter(|m| m.moved())
             .map(|m| format!("'{}'", m.carry.branch))
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()

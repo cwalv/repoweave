@@ -727,6 +727,8 @@ every_scenario!(
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::SyncRelocked),
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Abandon),
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
+    abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOut),
+    abort_a_carried_stack_blocked(scenarios::CarriedBlocked::Gone),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgain),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::AbortThenSync),
     a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgainLanding),
@@ -5158,6 +5160,22 @@ fn an_abort_of_a_carried_stack_built_on_abandons_as_printed() {
 fn an_abort_of_a_carried_stack_built_on_continues_as_printed() {
     runner::run(scenarios::abort_a_carried_stack_built_on(
         scenarios::BuiltOnChoice::Continue,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_of_a_carried_stack_checked_out_elsewhere_refuses_whole() {
+    runner::run(scenarios::abort_a_carried_stack_blocked(
+        scenarios::CarriedBlocked::CheckedOut,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_of_a_carried_stack_whose_dependent_is_gone_refuses_whole() {
+    runner::run(scenarios::abort_a_carried_stack_blocked(
+        scenarios::CarriedBlocked::Gone,
     ))
     .assert_fully_decided_green();
 }

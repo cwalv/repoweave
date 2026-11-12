@@ -15685,6 +15685,73 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
     scenario("stack: an abort meets a carried dependent built on", steps)
 }
 
+/// What stands in the way of an abort putting a carried dependent back.
+#[derive(Debug, Clone, Copy)]
+pub enum CarriedBlocked {
+    /// `w2` checked out in a worktree outside the op's workspaces.
+    CheckedOut,
+    /// `w2` renamed away.
+    Gone,
+}
+
+/// `stack-carried-by-a-landing` killed after its carry moved `w2`, then
+/// `w2` checked out elsewhere or gone: `rwv abort` puts nothing back and
+/// names what to do first; once done, `rwv abort` puts everything back.
+pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
+            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::kill("landing"),
+    ]);
+    let (block, needs, clear) = match blocked {
+        CarriedBlocked::CheckedOut => (
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["worktree", "add", "-q", "../../../../w2-held", "w2"],
+            ),
+            "is checked out at",
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["-C", "../../../../w2-held", "switch", "-q", "--detach"],
+            ),
+        ),
+        CarriedBlocked::Gone => (
+            Step::git(&ww("w1"), Repo::App, &["branch", "-m", "w2", "w2-away"]),
+            "put 'w2' back where this operation carried it",
+            Step::git(&ww("w1"), Repo::App, &["branch", "-m", "w2-away", "w2"]),
+        ),
+    };
+    steps.extend([
+        block,
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(needs))
+            .claim(Claim::OutputContains("then rerun"))
+            .claim(Claim::OutputLacks("--abandon-foreign-tip"))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        clear,
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("foreign")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+    ]);
+    scenario(
+        "stack: an abort meets a carried dependent it cannot move",
+        steps,
+    )
+}
+
 /// How a dependent that moved as its carry was moving it is taken up.
 #[derive(Debug, Clone, Copy)]
 pub enum MovedAsCarried {
