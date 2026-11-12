@@ -6917,10 +6917,11 @@ impl CheckViolation {
                 started_at,
             } => format!(
                 "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
-                     resume with `{resume}` or roll back with `rwv abort`. \
+                     resume with `{resume}`; or {abort}. \
                      Never auto-fixed — another terminal may be mid-conflict-resolution.",
                 workspace_dir.display(),
                 resume = crate::op_state::resume_command(verb),
+                abort = crate::op_state::ABORT_ROLLS_BACK,
             ),
             CheckViolation::DeadOpLease {
                 workspace_dir,

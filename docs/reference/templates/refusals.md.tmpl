@@ -654,8 +654,9 @@ auto-expiry, because a stale record and a live one are indistinguishable from
 outside.
 
 **Exits.** Two, and the message names both: resume with `--continue` from the
-owning workspace once the cause is resolved, or `rwv abort` to roll the whole
-operation back. Waiting is only an exit if the operation is genuinely still
+owning workspace once the cause is resolved, or `rwv abort`, which rolls the
+whole operation back or, where it cannot, refuses before anything moves, naming
+what is in the way and the command that ends the operation. Waiting is only an exit if the operation is genuinely still
 running.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).

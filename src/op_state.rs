@@ -1977,14 +1977,18 @@ enum InFlight {
     DeadLease(String),
 }
 
+/// What `rwv abort` does to a stopped op, as every surface naming it says.
+pub const ABORT_ROLLS_BACK: &str = "`rwv abort` rolls it back whole, or refuses before \
+     anything moves, naming what is in the way and the command that ends it";
+
 fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<InFlight>> {
     // Owner record: full detail is right here.
     if let Some(record) = read_owner(dir)? {
         let elapsed = elapsed_since(&record.started_at);
         return Ok(Some(InFlight::Op(format!(
             "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
-             Rerun with `{resume}` from that workspace after resolving, \
-             or `rwv abort` to discard.",
+             Rerun with `{resume}` from that workspace after resolving; or \
+             {ABORT_ROLLS_BACK}.",
             verb = record.verb,
             phase = record.phase,
             dir = dir.display(),
@@ -2001,7 +2005,7 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<InFlight>> {
                     "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
                      Rerun with `{resume}` from the owner workspace after \
-                     resolving, or `rwv abort` to discard.",
+                     resolving; or {ABORT_ROLLS_BACK}.",
                     verb = record.verb,
                     phase = record.phase,
                     dir = dir.display(),

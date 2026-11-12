@@ -12222,7 +12222,10 @@ pub fn abort_typed_in_the_target_names_the_landing(two: bool) -> Scenario {
         Step::kill("w1-landing"),
         Step::hand_edit(&ww("w1"), Repo::Docs, "README", "docs", "w1 dirt"),
         Step::rwv(&ww("w1"), &["land", "--continue"])
-            .expect(Exit::refuses(Repo::Docs, State::EditsDirty)),
+            .expect(Exit::refuses(Repo::Docs, State::EditsDirty))
+            .claim(Claim::OutputContains(
+                "rolls it back whole, or refuses before anything moves",
+            )),
     ];
     if two {
         steps.extend([
@@ -12381,6 +12384,21 @@ pub fn a_switch_refuses_to_align_a_member_onto_a_claimed_branch() -> Scenario {
         Step::commit(&ww("w"), Repo::App, "w-app"),
         Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
         Step::kill("landing"),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "rolls it back whole, or refuses before anything moves",
+            )),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpInProgress))
+            .claim(Claim::OutputContains(
+                "rolls it back whole, or refuses before anything moves",
+            )),
+        Step::rwv(&ww("w"), &["doctor"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "rolls it back whole, or refuses before anything moves",
+            )),
         Step::rwv(&a(), &["switch", "rel"])
             .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
             .claim(Claim::OutputContains("landing into 'main' holds it"))

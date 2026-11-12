@@ -842,8 +842,9 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
         owner = op.owner_workspace.as_path().display(),
     );
     outln!(
-        "  resume with `{resume}`, or `rwv abort` to discard",
+        "  resume with `{resume}`; or {abort}",
         resume = op_state::resume_command(op.record.verb),
+        abort = op_state::ABORT_ROLLS_BACK,
     );
 }
 

@@ -7886,7 +7886,8 @@ fn retire_workweave_after_landing(
     );
     dirty.note(format!(
         "--retire: the landing is done and the workweave was not deleted; once these \
-         are clean, `{resume}` re-runs the retire check, or `rwv abort` rolls the whole op back"
+         are clean, `{resume}` re-runs the retire check; or {abort}",
+        abort = op_state::ABORT_ROLLS_BACK,
     ));
     dirty.into_result()?;
 
