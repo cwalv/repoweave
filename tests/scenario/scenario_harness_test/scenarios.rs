@@ -10501,43 +10501,65 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
 /// landing then built on it. `rwv abort` of the first takes the claim and
 /// the lease back and finds the target at a tip it did not write: a foreign
 /// tip, refused with the target left as the second landing put it.
-pub fn abort_after_another_landing_built_on_the_target() -> Scenario {
-    scenario(
-        "abort after another landing built on the target",
-        vec![
-            create("w1"),
-            create("w2"),
-            Step::commit(&ww("w1"), Repo::App, "w1-app"),
-            Step::commit(&ww("w2"), Repo::App, "w2-app"),
-            Step::rwv_paused(
-                &ww("w1"),
-                &["land", "--history", "linear", "--retire"],
-                "retire",
-                "landing",
-            ),
-            Step::kill("landing"),
-            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::WorkweaveGone(ww("w2"))),
-            Step::rwv(&ww("w1"), &["abort"])
+pub fn abort_after_another_landing_built_on_the_target(target: TargetSide) -> Scenario {
+    let mut steps = vec![create("w1"), create("w2")];
+    if target == TargetSide::AsRefs {
+        steps.extend(main_checked_out_nowhere());
+    }
+    let app_main = |at: Place| match target {
+        TargetSide::AsRefs => Step::git(&at, Repo::App, &["log", "-1", "--format=%s", "main"]),
+        TargetSide::InCheckout => Step::git(&at, Repo::App, &["log", "-1", "--format=%s", "HEAD"]),
+    };
+    steps.extend([
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w2"), Repo::App, "w2-app"),
+        Step::rwv_paused(&ww("w1"), &["land", "--retire"], "retire", "landing"),
+        Step::kill("landing"),
+        Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w2"))),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::Proj])
+            .claim(Claim::OutputContains("local/remotes/app"))
+            .claim(Claim::OutputContains("--abandon-foreign-tip")),
+        app_main(a()).claim(Claim::OutputLine("w2-app")),
+    ]);
+    match target {
+        TargetSide::AsRefs => steps.extend([
+            Step::rwv_printed_holding(&ww("w1"), "rwv abort --leave-foreign-tip", "proj")
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::Proj])
-                .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: foreign-tip violation",
-                ))
-                .claim(Claim::OutputContains("--abandon-foreign-tip")),
-            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main"])
-                .claim(Claim::OutputLine("w2-app")),
+                .may_restore(&[Repo::Proj]),
+            Step::rwv_printed_holding(&ww("w1"), "rwv abort --leave-foreign-tip", "app")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::Proj]),
+            app_main(a()).claim(Claim::OutputLine("w2-app")),
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ]),
+        TargetSide::InCheckout => steps.push(
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::Defect(Defect::ForeignTipHasNoChoiceThatLeavesIt))
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj]),
-            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main"])
-                .claim(Claim::OutputLine("w2-app")),
-        ],
-    )
+        ),
+    }
+    scenario("abort after another landing built on the target", steps)
+}
+
+/// Where the target of a scenario's landings is: checked out in the primary,
+/// or checked out nowhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetSide {
+    InCheckout,
+    AsRefs,
 }
 
 /// A landing stopped in its retire released its target, and a second

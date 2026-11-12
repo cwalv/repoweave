@@ -785,7 +785,8 @@ every_scenario!(
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
-    abort_after_another_landing_built_on_the_target,
+    abort_after_another_landing_built_on_the_target(scenarios::TargetSide::InCheckout),
+    abort_after_another_landing_built_on_the_target(scenarios::TargetSide::AsRefs),
     abort_at_retire_waits_for_the_target_back,
     a_landing_meets_a_landing_stopped_as_refs,
     a_landing_meets_a_stopped_landing_in_a_checkout,
@@ -2749,7 +2750,14 @@ holding_rwv! {
     /// A ref another landing built on after the first released it is a
     /// foreign tip to the first's abort.
     fn abort_after_another_landing_built_on_the_target_refuses_it_as_foreign() {
-        runner::run(scenarios::abort_after_another_landing_built_on_the_target()).assert_green();
+        runner::run(scenarios::abort_after_another_landing_built_on_the_target(
+            scenarios::TargetSide::AsRefs,
+        ))
+        .assert_fully_decided_green();
+        runner::run(scenarios::abort_after_another_landing_built_on_the_target(
+            scenarios::TargetSide::InCheckout,
+        ))
+        .assert_green();
     }
 
     /// Abort at retire takes the target back first, so it refuses while
