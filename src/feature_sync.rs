@@ -169,6 +169,16 @@ fn fresh(
 ) -> anyhow::Result<()> {
     let name = crate::branch::named(vcs.as_ref(), &project, &dir, &branch)?;
     let record = crate::branch::recorded_value(vcs.as_ref(), &project, &dir, &name)?;
+    if let Some(line) = crate::alignment::unseen_record_change(
+        vcs.as_ref(),
+        &project,
+        &dir,
+        &name,
+        &record,
+        "sync",
+    )? {
+        return Err(line.refused());
+    }
     let from = match (&args.from, &record, &args.target) {
         (Some(from), _, None) => SyncFrom::From(from.clone()),
         (Some(_), _, Some(_)) => crate::refuse!(

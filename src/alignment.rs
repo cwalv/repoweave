@@ -69,9 +69,53 @@ pub struct WorkspaceState {
     pub aligned: Option<Aligned>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub stored: BTreeMap<String, Stored>,
+    /// The record this workspace last saw each branch hold, beside what it
+    /// stored for the branches it aligned: one is stored for a branch it never
+    /// aligned too.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub records: BTreeMap<String, SeenRecord>,
     /// A `branch rename` begun here and not finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renaming: Option<Renaming>,
+}
+
+/// A branch's record as a workspace stored it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeenRecord {
+    pub mode: crate::records::Mode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(rename = "as", default, skip_serializing_if = "Option::is_none")]
+    pub as_mode: Option<crate::records::Mode>,
+}
+
+impl From<&Record> for SeenRecord {
+    fn from(record: &Record) -> Self {
+        match record {
+            Record::Declared => Self {
+                mode: crate::records::Mode::Declared,
+                target: None,
+                as_mode: None,
+            },
+            Record::Feature { target, as_mode } => Self {
+                mode: crate::records::Mode::Feature,
+                target: Some(target.to_string()),
+                as_mode: Some(*as_mode),
+            },
+        }
+    }
+}
+
+impl std::fmt::Display for SeenRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.target, self.as_mode) {
+            (Some(target), Some(as_mode)) => {
+                write!(f, "feature onto {target} (as {})", as_mode.token())
+            }
+            _ => f.write_str(self.mode.token()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,8 +259,111 @@ pub fn rename_branch(
     if let Some(stored) = state.stored.remove(from) {
         state.stored.insert(to.to_owned(), stored);
     }
+    if let Some(record) = state.records.remove(from) {
+        state.records.insert(to.to_owned(), record);
+    }
     store_state(vcs, project_dir, &state)?;
     Ok(None)
+}
+
+/// Store `record` as the one the workspace at `project_dir` saw `branch`
+/// hold, as a verb that writes the record does: this workspace's own change
+/// is never reported to it. A state file that does not read is left for the
+/// next aligning verb to write whole.
+pub(crate) fn store_record(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    branch: &BranchName,
+    record: &Record,
+) -> anyhow::Result<()> {
+    let StateReading { mut state, corrupt } = read_state(vcs, project_dir)?;
+    if corrupt.is_some() {
+        return Ok(());
+    }
+    state
+        .records
+        .insert(branch.to_string(), SeenRecord::from(record));
+    store_state(vcs, project_dir, &state)?;
+    Ok(())
+}
+
+/// Print the `record changed` line for the project `ctx` is bound to, for
+/// `verb`, as a report: nothing is refused.
+pub(crate) fn report_record_change_in(
+    ctx: &crate::workspace::WorkspaceContext,
+    verb: &'static str,
+) -> anyhow::Result<()> {
+    let project = ctx.require_active_project_on_disk()?.clone();
+    Aligner::open(ctx.active_path(), &project, Accounting::default())?.report_record_change(verb)
+}
+
+/// The `record changed` line for `branch`, read as recorded by `record`,
+/// against the record `state` stored for it: `None` when they agree or
+/// nothing is stored. The choices accept the new record or restore the old.
+pub(crate) fn record_change_line(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    project_dir: &Path,
+    state: &WorkspaceState,
+    branch: &BranchName,
+    record: &Record,
+    verb: &'static str,
+) -> anyhow::Result<Option<Judged>> {
+    let now = SeenRecord::from(record);
+    let Some(was) = state.records.get(branch.as_str()) else {
+        return Ok(None);
+    };
+    if *was == now {
+        return Ok(None);
+    }
+    let store = Store::open(vcs, project_dir)?;
+    let view = store.view()?;
+    let arrival = if store.published_names(&view)?.contains(branch.as_str()) {
+        "arrived by fetch"
+    } else {
+        "written in another workspace of this clone"
+    };
+    let restore = match &was.target {
+        Some(_) => crate::diagnosis::Form::C12Feature,
+        None => crate::diagnosis::Form::C12Declared,
+    };
+    let mut judging = State::TargetRecordChanged
+        .of(crate::workspace::project_rel_path(project))
+        .project_repo()
+        .subject(branch)
+        .listing([
+            format!("was: {was}"),
+            format!("now: {now}"),
+            arrival.to_owned(),
+        ])
+        .bind("<W>", branch)
+        .checkout(project_dir)
+        .by_verb(verb)
+        .only_forms(&[crate::diagnosis::Form::C6, restore]);
+    if let Some(target) = &was.target {
+        judging = judging.bind("<T>", target);
+    }
+    Ok(Some(judging.judge(vcs)))
+}
+
+/// The gate of a verb that moves work by `branch`'s record: the
+/// `record changed` line when the record read differs from the one the
+/// workspace at `project_dir` stored for it, else `None`. With nothing stored
+/// the record is stored, silently, so losing workspace state loses no record.
+pub(crate) fn unseen_record_change(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    project_dir: &Path,
+    branch: &BranchName,
+    record: &Record,
+    verb: &'static str,
+) -> anyhow::Result<Option<Judged>> {
+    let StateReading { state, corrupt } = read_state(vcs, project_dir)?;
+    if corrupt.is_none() && !state.records.contains_key(branch.as_str()) {
+        store_record(vcs, project_dir, branch, record)?;
+        return Ok(None);
+    }
+    record_change_line(vcs, project, project_dir, &state, branch, record, verb)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -558,6 +705,7 @@ pub struct Aligner {
     pub state: WorkspaceState,
     pub corrupt: Option<String>,
     pub accounting: Accounting,
+    pub record: Option<(BranchName, Record)>,
     checked_out: Option<String>,
     outgoing: Option<Box<Aligner>>,
     carry_edits: bool,
@@ -586,6 +734,7 @@ impl Aligner {
             Some(HeadAttachment::Unborn(u)) => Some(u.name().as_str().to_owned()),
             _ => None,
         };
+        let mut record = None;
         let mode = match (&head, &checked_out) {
             (None, _) => Mode::Declared,
             (Some(_), Some(branch)) => {
@@ -596,12 +745,17 @@ impl Aligner {
                     )
                 })?;
                 let store = Store::open(vcs.as_ref(), &project_dir)?;
-                match store.view()?.lookup(&name) {
+                let lookup = store.view()?.lookup(&name);
+                let mode = match &lookup {
                     Lookup::Value(Record::Feature { .. }) => Mode::Feature {
                         branch: branch.clone(),
                     },
                     _ => Mode::Declared,
+                };
+                if let Lookup::Value(value) = lookup {
+                    record = Some((name, value));
                 }
+                mode
             }
             (Some(_), None) => Mode::Detached,
         };
@@ -634,6 +788,7 @@ impl Aligner {
             state: reading.state,
             corrupt: reading.corrupt,
             accounting,
+            record,
             checked_out,
             outgoing: None,
             carry_edits: false,
@@ -670,6 +825,7 @@ impl Aligner {
             state: reading.state,
             corrupt: reading.corrupt,
             accounting,
+            record: branch.map(|(name, record)| (name.clone(), record.clone())),
             checked_out,
             outgoing: None,
             carry_edits: true,
@@ -1355,6 +1511,34 @@ impl Aligner {
         Ok(lines)
     }
 
+    /// The `record changed` line for the checked-out branch, judged against
+    /// the record this workspace stored for it.
+    pub fn record_change_line(&self, verb: &'static str) -> anyhow::Result<Option<Judged>> {
+        let Some((branch, record)) = &self.record else {
+            return Ok(None);
+        };
+        record_change_line(
+            project_vcs().as_ref(),
+            &self.project,
+            &self.project_dir,
+            &self.state,
+            branch,
+            record,
+            verb,
+        )
+    }
+
+    /// Print the `record changed` line for the checked-out branch, for `verb`,
+    /// as a report: nothing is refused.
+    pub fn report_record_change(&self, verb: &'static str) -> anyhow::Result<()> {
+        if let Some(line) = self.record_change_line(verb)? {
+            let mut report = crate::diagnosis::Report::default();
+            report.add(line);
+            eprint!("{}", report.render(verb));
+        }
+        Ok(())
+    }
+
     /// The pointer state after members were aligned for the checked-out
     /// branch.
     pub fn next_state(&self, manifest: &Manifest) -> WorkspaceState {
@@ -1382,6 +1566,10 @@ impl Aligner {
             return next;
         };
         next.aligned = Some(Aligned::Branch(branch.clone()));
+        if let Some((name, record)) = &self.record {
+            next.records
+                .insert(name.to_string(), SeenRecord::from(record));
+        }
         let current: BTreeMap<String, RepoEntry> = manifest
             .iter_entries()
             .map(|(path, entry)| (path.to_string(), entry.clone()))

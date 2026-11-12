@@ -494,6 +494,7 @@ pub enum State {
     TargetCycle,
     TargetGone,
     TargetDependents,
+    TargetRecordChanged,
     AlignmentAligned,
     AlignmentOnBranch,
     AlignmentOnBranchWithStrayCommits,
@@ -536,7 +537,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 62] = [
+    pub const ALL: [State; 64] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -591,6 +592,7 @@ impl State {
         Self::HistoryContradicted,
         Self::HistoryNotFastForward,
         Self::HistoryDisagreement,
+        Self::TargetRecordChanged,
         Self::AlignmentAligned,
         Self::AlignmentOnBranch,
         Self::AlignmentOnBranchWithStrayCommits,
@@ -1353,6 +1355,19 @@ impl State {
                 offers: &[Form::C11SetHistory],
                 verb_offers: &[],
             },
+            Self::TargetRecordChanged => &StateRow {
+                axis: Axis::Target,
+                name: "record changed",
+                means: "the checked-out branch's record differs from the one this workspace \
+                        last saw it hold, and this workspace did not write the change: the \
+                        old and the new value, listed, and whether the change arrived by \
+                        fetch or was written in another workspace of this clone",
+                refused_by: "`rwv sync`, before anything is fetched or moved, until the change \
+                             is accepted or the old value restored; `rwv status`, `rwv update`, \
+                             `rwv pull`, `rwv switch`, `rwv push` and `rwv sync-to` report it",
+                offers: &[Form::C6, Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
             Self::TargetGone => &StateRow {
                 axis: Axis::Target,
                 name: "gone",
@@ -1377,6 +1392,7 @@ impl State {
             workspace: None,
             verb: None,
             only: None,
+            only_forms: None,
             bindings: BTreeMap::new(),
             places: BTreeMap::new(),
         }
@@ -2457,6 +2473,7 @@ pub struct Judging {
     workspace: Option<PathBuf>,
     verb: Option<&'static str>,
     only: Option<Vec<ChoiceId>>,
+    only_forms: Option<Vec<Form>>,
     bindings: BTreeMap<&'static str, String>,
     places: BTreeMap<&'static str, PathBuf>,
 }
@@ -2493,6 +2510,13 @@ impl Judging {
     /// offer; this narrows it where the judging knows which of them hold.
     pub fn only(mut self, choices: &[ChoiceId]) -> Self {
         self.only = Some(choices.to_vec());
+        self
+    }
+
+    /// Print only these forms, where a choice's spellings differ in which of
+    /// them holds.
+    pub fn only_forms(mut self, forms: &[Form]) -> Self {
+        self.only_forms = Some(forms.to_vec());
         self
     }
 
@@ -2572,6 +2596,11 @@ impl Judging {
                 self.only
                     .as_ref()
                     .is_none_or(|only| only.contains(&form.row().choice))
+            })
+            .filter(|form| {
+                self.only_forms
+                    .as_ref()
+                    .is_none_or(|only| only.iter().any(|f| f.for_verb(self.verb) == **form))
             })
             .filter(|form| match (self.scope, form.scope()) {
                 (Some(want), Some(have)) => want == have,

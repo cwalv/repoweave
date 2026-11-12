@@ -445,6 +445,7 @@ fn update_members_for(
                 .push(PlacementOutput::new(rp, dir, *files));
         }
     }
+    aligner.report_record_change(flavor.verb)?;
     if aligned.failures.is_empty() && created.is_ok() && selection.names_every_member() {
         let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
         let standing =

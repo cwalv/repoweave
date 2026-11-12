@@ -287,6 +287,7 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
             &pushed.manifest,
             false,
         );
+        project_aligner.report_record_change("push")?;
     }
 
     let members = members_of(ctx, &request, &pushed);

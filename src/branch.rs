@@ -453,6 +453,7 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
     let Lookup::Value(record) = written.view.lookup(&branch) else {
         unreachable!("the record just written reads as one value");
     };
+    crate::alignment::store_record(vcs.as_ref(), &dir, &branch, &record)?;
     outln!("rwv branch set-mode: {branch} is {record}");
     if let Record::Feature { target, as_mode } = &record {
         for line in target_recorded_lines(vcs.as_ref(), &dir, &branch, target, *as_mode)? {

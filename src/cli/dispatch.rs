@@ -1406,6 +1406,10 @@ pub fn run() -> anyhow::Result<()> {
                     jobs,
                 }
             };
+            if matches!(request, sync::SyncRequest::Fresh { .. }) {
+                crate::branch::require_recorded(&ctx)?;
+                crate::alignment::report_record_change_in(&ctx, "sync-to")?;
+            }
             sync::run_sync_to(&ctx, request, OutputMode::from_flag(json))?;
         }
         Some(Commands::Push {

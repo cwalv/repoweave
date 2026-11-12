@@ -380,6 +380,12 @@ pub fn run_status(
             if let Some(line) = project_line(&pname, &project_dir, aligner) {
                 judged.add(line);
             }
+            match aligner.record_change_line("status") {
+                Ok(line) => judged.extend(line),
+                Err(e) => eprintln!(
+                    "rwv status: could not compare the branch record of project {pname}: {e:#}"
+                ),
+            }
         }
         let aligned_lock = project.lock.clone();
         // Resolve lock entries against their on-disk repos so equality with

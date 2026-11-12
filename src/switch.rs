@@ -621,7 +621,11 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     };
     report.into_result()?;
 
-    if let Some(line) = write_created_record(vcs, &project, &dir, &new, &record)? {
+    let replaced = write_created_record(vcs, &project, &dir, &new, &record)?;
+    if let Lookup::Value(written) = Store::open(vcs, &dir)?.view()?.lookup(&new) {
+        crate::alignment::store_record(vcs, &dir, &new, &written)?;
+    }
+    if let Some(line) = replaced {
         outln!("{line}");
     }
     let departure = Departure::of_project_move(vcs, &dir, &start)?;
