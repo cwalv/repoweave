@@ -264,6 +264,7 @@ The others follow.
 | `cycle` | the branch's target chain returns to it, listed from the branch | `rwv branch set-mode`, for a `--target` that would close one, and every verb that reads the record of a branch a merge of records put on one |
 | `gone` | the branch the record lands into exists nowhere: not as a local branch, nor on a remote as last fetched | `rwv branch list` reports it |
 | `dependents` | another branch's record names this branch as the one it lands into, one line for each such branch; deleting this one would leave that record with no target | `rwv branch delete`, `rwv workweave delete` and `rwv sync-to --retire` |
+| `record changed` | the checked-out branch's record differs from the one this workspace last saw it hold, and this workspace did not write the change: the old and the new value, listed, and whether the change arrived by fetch or was written in another workspace of this clone | `rwv sync`, before anything is fetched or moved, until the change is accepted or the old value restored; `rwv status`, `rwv update`, `rwv pull`, `rwv switch`, `rwv push` and `rwv sync-to` report it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -283,6 +284,9 @@ The others follow.
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `gone` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `dependents` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `record changed` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `record changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `record changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
 

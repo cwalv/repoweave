@@ -226,6 +226,7 @@ All durable rwv state is files. There is no database and no cache directory.
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
 | `.rwv-owned-digests.lock` | `StateFile::OwnedDigestsClaim`, `src/owned_state.rs` | beside the ledger | The claim every edit of the ledger holds. |
+| `rwv-workspace-state` | `StateFile::WorkspaceState`, `src/state_file.rs` | the project checkout's private dir (`Vcs::private_dir`) | `WorkspaceState` (`src/alignment.rs`): the aligned branch, and per branch the member entries and the record (`SeenRecord`) the workspace last aligned by. A change to the checked-out branch's record that this workspace did not write is `target` `record changed` (`record_change_line`); `unseen_record_change` is the refusing gate. Written only when it changes; unparseable reads as absent. |
 
 Two ownership rules are structural rather than conventional:
 

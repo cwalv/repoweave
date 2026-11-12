@@ -15,6 +15,14 @@ now-merged manifest tips and commits it. Per-repo
 conflicts are reported with non-zero exit; already-converged repos are
 no-ops, so re-runs are cheap.
 
+Before anything is fetched or moved, `rwv sync` reads the checked-out branch's
+record, with the records remotes' as last fetched merged in. A record that
+differs from the one this workspace last saw, and that this workspace did not
+write, refuses as `target` `record changed`, with the old and the new value,
+until `rwv update` accepts it or `rwv branch set-mode` restores the old value.
+A workspace that has stored no record for the branch stores the one it reads,
+without a report.
+
 When the source is a **workweave** (not the primary weave) and one or more of
 its repos have new commits since the source's last lock (`LockRelation::Ahead`
 — lock is behind HEAD), `rwv sync` treats those repos as **tips-as-truth**: it

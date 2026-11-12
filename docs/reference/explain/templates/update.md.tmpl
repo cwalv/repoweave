@@ -113,7 +113,11 @@ these, and prints no failure for a clone it merely reports. A clone whose
 branch takes in from a branch of another name is a failure of that repo.
 
 After an update that aligned every member, the workspace records the branch it
-aligned for and the entries it aligned it by. It is the workspace's own state,
+aligned for, the entries it aligned it by and the branch's record. A record
+that differs from the one the workspace last saw, and that this workspace did
+not write, is reported first as `target` `record changed`, with the old and the
+new value; storing the new one accepts it, so `rwv sync`, which refuses on such
+a change, then takes in the new target. It is the workspace's own state,
 kept beside the project repo's other private state and written only when it
 changes. A file that cannot be read or does not parse reads as though it were
 absent, is said so, and is written again by the next full update. A run narrowed
