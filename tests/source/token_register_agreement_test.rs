@@ -388,7 +388,7 @@ fn the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout() {
 /// that stopped reading the declaration would assert disjointness over nothing,
 /// and the schema is generated from the type, so it is a second reading the
 /// walk must agree with. `Display` is not read: it is the serialized token by
-/// construction, and `tests/display_is_wire_token_test.rs` holds it there.
+/// construction, and `tests/source/display_is_wire_token_test.rs` holds it there.
 #[test]
 fn an_op_name_is_not_also_a_condition_name() {
     let ops = conflict_op_tokens();

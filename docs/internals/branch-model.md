@@ -433,7 +433,7 @@ the test is what keeps it from coming back.
   `sync.rs:5659 ff_advance_repo_refuses_to_land_onto_a_detached_target`,
   `:5635 ff_advance_repo_lands_on_the_branch_the_target_is_attached_to`, and
   the compile-fail probe
-  `tests/branch_model_compile_fail_test.rs:551 a_witness_cannot_point_a_move_at_a_different_repo`.
+  `tests/source/branch_model_compile_fail_test.rs:551 a_witness_cannot_point_a_move_at_a_different_repo`.
 
 - **The ephemeral name was derived three incompatible ways.**
   `workweave.rs` used the *fork source's* `current_ref` (recursive when
@@ -504,7 +504,7 @@ was the point of this section: the invariants were written down and audited,
 and **the audit was of a claim, not of a check**.
 
 **Both sites are now deleted, and the entry says so.** The `-D` entry
-(`tests/destructive_ops_audit_test.rs:171-197`) records `count: 1` and
+(`tests/source/destructive_ops_audit_test.rs:171-197`) records `count: 1` and
 justifies `destroy_local_ref` and nothing else — naming, in its own text, that
 `create_worktree`'s force-delete-and-retry (whose "deletes a STALE branch"
 claim was measured FALSE) and `delete_branch` were both deleted, and that "the
@@ -703,7 +703,7 @@ check at create**, and it shipped: `workweave create` now consults
 `workweave_index::lookup_raw` before the directory-existence check and bails
 naming the ref both workweaves would mint (`workweave.rs:1215-1243`, lookup at
 `:1225`; the existence check follows at `:1245`) `[V]`. Pinned by
-`tests/branch_model_lifecycle_test.rs:359
+`tests/vcs/branch_model_lifecycle_test.rs:359
 create_refuses_a_name_the_index_already_records`. (The residual
 `--`-in-a-name ambiguity **is closed** — `ProjectName` and `WorkweaveName`
 now reject `--` at construction; see §9, Q12.)
@@ -997,9 +997,9 @@ the type level**: `advance_attached_ref(&AttachedRef, &ResolvedRevisionId)`
 `head_attachment(witness.repo())` (`:2640`), and `ff_advance_repo` now
 *obtains* the witness from the target rather than being handed one
 (`sync.rs:5477-5506`) `[V]`. The dodge is a compile error, pinned by
-`tests/branch_model_compile_fail_test.rs:551
+`tests/source/branch_model_compile_fail_test.rs:551
 a_witness_cannot_point_a_move_at_a_different_repo` and by
-`tests/branch_model_test.rs:310
+`tests/vcs/branch_model_test.rs:310
 advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached`.
 (The witness's validity *window* — what happens when the repo's state changes
 between production and consumption — is Q15, §9, still open.)
@@ -1016,7 +1016,7 @@ record. Two rows have since closed:
 | `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv member add`'s three `branch` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv member add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
 | `branch_has_remote_counterpart` (`vcs.rs:2298`) | still `&RefName` `[V]` | `&RawRefName` — the prune predicate inspects observed names |
 | `count_commits_ahead_of_remote` (`vcs.rs:2318`) | still `&RefName` `[V]` | `&RawRefName` — same predicate |
-| `list_local_branches` | **deleted from `GitVcs` and from the trait** `[V]` | `Vec<RawRefName>` — resolved the same way as `default_branch`: not by retyping the qualified listing but by removing it, so a caller cannot reach a qualified name to hand-strip. `list_local_branch_names` (`vcs.rs:3205`, impl `git.rs:2259-2275`) is now the only local-branch listing, and its production caller, `prune_dropped_repo` (`sync.rs:1425`), takes the `RawRefName`s it returns and wraps each bare into a `RefName` — no `refs/heads/` prefix left to strip. Pinned by `tests/refs_heads_hand_strip_test.rs`, which fails if any file outside `git.rs` hand-strips that prefix |
+| `list_local_branches` | **deleted from `GitVcs` and from the trait** `[V]` | `Vec<RawRefName>` — resolved the same way as `default_branch`: not by retyping the qualified listing but by removing it, so a caller cannot reach a qualified name to hand-strip. `list_local_branch_names` (`vcs.rs:3205`, impl `git.rs:2259-2275`) is now the only local-branch listing, and its production caller, `prune_dropped_repo` (`sync.rs:1425`), takes the `RawRefName`s it returns and wraps each bare into a `RefName` — no `refs/heads/` prefix left to strip. Pinned by `tests/source/refs_heads_hand_strip_test.rs`, which fails if any file outside `git.rs` hand-strips that prefix |
 
 **`RemoteDefaultBranch`** is the remote's own declaration of its primary
 branch — the target of `refs/remotes/origin/HEAD`. It is none of §2's four
@@ -1276,7 +1276,7 @@ without it, a token no module can construct satisfies A and C by failing B.
 The literal seal is identical in both shapes — the codes differ only by
 vantage. An in-crate sibling writing the tuple literal gets `E0603` (the
 constructor is private); the four out-of-crate probes in
-`tests/branch_model_compile_fail_test.rs` get `E0423` for the same seal, since
+`tests/source/branch_model_compile_fail_test.rs` get `E0423` for the same seal, since
 from outside the crate the constructor is not in scope to be named at all.
 **The entire difference between the shipped design and a domain-level home is
 one compile error: `E0624` becomes a silent success.** That is the whole
@@ -1285,7 +1285,7 @@ until dispatch began resolving a `--continue`'s op record itself, which let the
 token move into `cli::consent` (see the paragraph below).
 
 **The compile-fail suite cannot see that regression.**
-`tests/branch_model_compile_fail_test.rs` probes from an *external* crate,
+`tests/source/branch_model_compile_fail_test.rs` probes from an *external* crate,
 where `pub(crate)` and `pub(in crate::cli)` are indistinguishable — both are
 simply "not `pub`". The four tuple-literal probes and
 `the_flag_mint_is_not_reachable_from_outside_the_cli_module` all stay green
@@ -1322,7 +1322,7 @@ day it becomes right is recognizable.
   Sealing the trait needs a private supertrait in the domain, which the CLI
   then cannot implement — the same wall as above. So this exit refuses forgery
   at neither the literal nor the mint, and substitutes a reviewable `impl`
-  plus a source scan in the style of `tests/destructive_ops_audit_test.rs`.
+  plus a source scan in the style of `tests/source/destructive_ops_audit_test.rs`.
 
 `tests/consent_minting_audit_test.rs`, the static call-site allowlist that
 stood in for the compiler, **no longer exists** — deleted, on the grounds
@@ -1330,7 +1330,7 @@ that an invariant checked by construction should not also carry a tripwire.
 What it pinned is now either a compile error or documented where a reader
 will meet it. The "not `pub`" half is pinned by error code like the rest, by
 `the_flag_mint_is_not_reachable_from_outside_the_cli_module`
-(`tests/branch_model_compile_fail_test.rs:437`) `[V]`; the in-crate half of
+(`tests/source/branch_model_compile_fail_test.rs:437`) `[V]`; the in-crate half of
 `pub(in crate::cli)` is not observable from an out-of-crate probe, and the
 harness does not claim it is. `granted()` — the unconditional mint, which
 checks nothing — is `#[cfg(test)]` on three of this section's four tokens
@@ -1473,7 +1473,7 @@ The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
   `refs/rwv/backup/<branch>/<id>`, `<branch>` being `HEAD` when detached, the id
   the abbreviated tip behind the mark (`src/git/backup.rs`). The namespace is
   declared once, as `BACKUP_NAMESPACE` in `src/git.rs`, and
-  `tests/savepoint_refs_have_one_owner_test.rs` holds that nothing else spells
+  `tests/source/savepoint_refs_have_one_owner_test.rs` holds that nothing else spells
   it.
 - `Vcs::create_backup` is *provided* and is the only producer of a
   `BackupWitness`: it calls `write_backup`, then mints the witness in `vcs.rs`,
@@ -1620,13 +1620,13 @@ MOVE.
 So the dodge this paragraph named — obtain a witness from the *cwd* repo,
 always attached inside a workweave, and use it while operating on the target
 — is a compile error, not a review finding:
-`tests/branch_model_compile_fail_test.rs:551
+`tests/source/branch_model_compile_fail_test.rs:551
 a_witness_cannot_point_a_move_at_a_different_repo` asserts `E0061` on
 `advance_attached_ref(cwd_witness, target_repo, to)` `[V]`. The runtime
 refusals are pinned by `sync.rs:5659
 ff_advance_repo_refuses_to_land_onto_a_detached_target` and `:5635
 ff_advance_repo_lands_on_the_branch_the_target_is_attached_to`, and the
-end-to-end behavior by `tests/sync_to_test.rs:775
+end-to-end behavior by `tests/sync/sync_to_test.rs:775
 sync_to_advances_the_target_branch_not_just_head`.
 
 This is Q4's answer, obtained for free: **land advances the ref the target
@@ -1782,7 +1782,7 @@ threading a `DetachConsent` up to a named CLI flag. R1 holds by construction.
 `advance_attached_ref` for a fast-forward of the tracking counterpart, or a
 refusal naming `--detach-checkouts` — which routes to `detach_head` with a
 real `DetachConsent`. `Unborn` is its own refusal `[V]`. The compile-fail
-probe `tests/branch_model_compile_fail_test.rs:417` holds the
+probe `tests/source/branch_model_compile_fail_test.rs:417` holds the
 consent-required detach shut.
 
 **(6) Minting an ephemeral name from something observed.** All three
@@ -1827,7 +1827,7 @@ sit on the *name* types `mint` consumes — `manifest.rs`, holding that
 those arrived with Q12's answer (§9) and are the reason `mint`'s totality is now
 a property rather than an assertion.
 
-Above them sits a dedicated harness, `tests/branch_model_compile_fail_test.rs`,
+Above them sits a dedicated harness, `tests/source/branch_model_compile_fail_test.rs`,
 which shells out to `rustc` against the built rlib and asserts the *specific*
 error code, with one sanity check that a legal snippet still compiles — the
 check that keeps the others from passing vacuously `[V]`. The probes cover
@@ -2129,8 +2129,8 @@ half of the third, a later fix the rest.
   `DiscardUnmergedConsent`, and its `WorktreeCreate` arm passes no
   `ReplaceExistingConsent` and `DirtySource::Refuse`. It can pass nothing
   else: a consent is minted only inside `cli::dispatch::run`, from argv,
-  which `tests/consent_minted_from_argv_test.rs` holds. Test:
-  `tests/branch_model_lifecycle_test.rs`
+  which `tests/source/consent_minted_from_argv_test.rs` holds. Test:
+  `tests/vcs/branch_model_lifecycle_test.rs`
   `claude_worktree_remove_hook_does_not_destroy_uncommitted_work`. The name
   is the one the registry recorded for the path (`workweave_name_for_path`),
   and a marker with no registry entry refuses with `unregistered-workweave`
@@ -2700,7 +2700,7 @@ deletion rule decides from the refs and the branch records themselves.
 §4.2 binds `AttachedRef` to its repo, which closes the cross-repo pass, and
 that shipped: `advance_attached_ref` re-observes via
 `head_attachment(witness.repo())` (`vcs.rs:2640`) and errors on a stale
-witness, pinned by `tests/branch_model_test.rs:310
+witness, pinned by `tests/vcs/branch_model_test.rs:310
 advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached` `[V]`.
 So a witness is re-verified at the moment of consumption. Not settled: whether
 a witness is valid across phases within one verb (an earlier phase can detach
@@ -2812,7 +2812,7 @@ inventory) that turns each violation into a compile error — the same move that
 made raw-versus-resolved revision confusion "a compile-time impossibility"
 (`check.rs:5423-5428`) `[V]`. The enforcement is 7 `compile_fail` doctests on
 the ref types, 2 more on the name types `mint` consumes, and 23 probes in
-`tests/branch_model_compile_fail_test.rs` (§4.7).
+`tests/source/branch_model_compile_fail_test.rs` (§4.7).
 
 ---
 

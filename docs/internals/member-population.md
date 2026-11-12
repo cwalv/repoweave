@@ -274,7 +274,7 @@ the content nor the permissions of a file in another workspace**: the backend
 must replace a file rather than write into it, and must not change a shared
 file's permissions while removing its own name for it.
 
-`tests/shared_file_conformance_test.rs` proves it per platform. It hardlinks a
+`tests/vcs/shared_file_conformance_test.rs` proves it per platform. It hardlinks a
 tracked file into two worktrees and runs, in one of them, each update rwv runs
 on a member — a detached and a branch checkout, `reset --hard`, a fast-forward,
 a rebase with nothing to replay, the single-path checkout, the working-tree

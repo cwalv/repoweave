@@ -335,7 +335,7 @@ recorded honestly raises nothing here, however unwise it was.
 
 The full calibration, including how to judge a new concern against it, is
 [`docs/internals/concurrency.md`](docs/internals/concurrency.md); the boundaries
-above are pinned by `tests/concurrency_boundaries_test.rs`.
+above are pinned by `tests/process/concurrency_boundaries_test.rs`.
 
 ## 5. The sync phase machine
 
@@ -564,7 +564,7 @@ operator can search for. No decision rests on git's wording, which is
 translated and changes between releases: the backend tells outcomes apart by
 exit status, by formats git documents for machines (`push --porcelain`,
 `rev-parse --verify --quiet`), or by the repository's state, and
-`tests/git_backend_reads_no_wording_test.rs` fails on any stderr text it
+`tests/source/git_backend_reads_no_wording_test.rs` fails on any stderr text it
 matches. A `#[cfg(test)]` fixture that spawns git outside
 that constructor inherits `GIT_DIR` when the suite runs under the pre-push
 hook; `git_command_in_test` builds the same command for one. A remote is held the same way — it crosses
@@ -573,7 +573,7 @@ displays but does not give its name back, and no trait method accepts text for
 one — so core can neither spell a remote nor be handed a parameter to spell it
 into. It reaches one by the role that resolves to it: `Vcs::url_remote`,
 `project_url_remote`, `push_target`, `home_remote` and `upstream`
-(`tests/clone_url_compile_fail_test.rs` pins the absence of a way in). Inside
+(`tests/source/clone_url_compile_fail_test.rs` pins the absence of a way in). Inside
 `git.rs`, a path reaches argv only as a `GitArg`: `git_command` returns a
 `GitCommand` (`src/git/argv.rs`) that keeps its `Command` private and takes
 arguments as an `Argv`, whose text slot refuses a `&Path` and whose path slot

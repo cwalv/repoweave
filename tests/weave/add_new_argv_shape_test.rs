@@ -4,7 +4,7 @@
 //! Fork 2's ruling kept the three-segment path as a creation shorthand read
 //! through the existing `--new` flag rather than growing a value of its own.
 //! 26 `["member", "add", "<path>", "--new"]` invocations and one
-//! `["member", "add", "--new", "<path>"]` in `tests/refusal_arrival_test.rs`
+//! `["member", "add", "--new", "<path>"]` in `tests/docs/refusal_arrival_test.rs`
 //! only both parse because
 //! `--new` takes no value — a future refactor reaching for `Option<String>`
 //! or a value-taking `--new` would leave a green build and a wall of red

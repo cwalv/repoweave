@@ -684,7 +684,7 @@ fn doctor_command_is_recognized() {
 
 /// A project directory that loses its `.git` while `rwv.toml` and the rest
 /// of the checkout stay in place — the same damage
-/// `push_refuses_when_project_repo_is_not_a_repo` (tests/push_test.rs)
+/// `push_refuses_when_project_repo_is_not_a_repo` (tests/sync/push_test.rs)
 /// drives against `rwv push` — must reach the operator as a warning naming
 /// the actual state, not as a raw git-config failure with a non-zero exit.
 ///

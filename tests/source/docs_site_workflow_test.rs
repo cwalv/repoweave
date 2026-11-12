@@ -4,7 +4,7 @@
 //! The site is release tags only, and two prohibitions keep it that way: no
 //! deploy runs for an untagged commit, and what is deployed is the tag
 //! assembler's output and never the checked-out tree's book. The assembler's
-//! own half is driven in `tests/docs_site_assembly_test.rs`. This half is
+//! own half is driven in `tests/source/docs_site_assembly_test.rs`. This half is
 //! structural, because no test here can make GitHub fire a trigger or
 //! evaluate a job condition: it parses the workflow YAML, and evaluates the
 //! build job's `if:` with a reader of GitHub's expression syntax that knows

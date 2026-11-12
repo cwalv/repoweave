@@ -13,7 +13,7 @@
 //!
 //! Documents here are built by serializing the production envelope types. What
 //! a verb writes to stdout is a separate question with a separate answer in
-//! `tests/schema_conformance_wire_test.rs`: an envelope this file blesses can
+//! `tests/docs/schema_conformance_wire_test.rs`: an envelope this file blesses can
 //! still reach nobody if the print path mints its own bytes.
 //!
 //! The validator, and the draft-07 subset it implements, is
@@ -56,7 +56,7 @@
 //!
 //!   - `doctor` is registered here for envelope conformance and for
 //!     `ViolationOutput` variant width, taken from `tests/common/doctor_corpus.rs`.
-//!     `tests/doctor_schema_conformance_test.rs` is the doctor-specific
+//!     `tests/docs/doctor_schema_conformance_test.rs` is the doctor-specific
 //!     instrument and holds the seeded-divergence corpus for that envelope.
 //!   - Enum-member coverage is a floor, not a proof of variant completeness:
 //!     it reads members the artifact declares under a property name, so a

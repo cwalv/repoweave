@@ -9,8 +9,8 @@
 //!     (private), and Rust resolves field privacy against the *declaring
 //!     module*, not the call site — so `DiscardUnlandedConsent(())` cannot be written
 //!     from any other module, in this crate or any other. Pinned per token, by
-//!     error code, in `tests/branch_model_compile_fail_test.rs` and
-//!     `tests/workweave_consent_compile_fail_test.rs`.
+//!     error code, in `tests/source/branch_model_compile_fail_test.rs` and
+//!     `tests/source/workweave_consent_compile_fail_test.rs`.
 //!
 //!  2. The minting function. `from_flag` is `pub(in crate::cli)`: visible to
 //!     this module tree and nowhere else. The only other member of the tree
@@ -20,7 +20,7 @@
 //!     `associated function is private`. Within dispatch every mint sits in
 //!     `run`, which reads argv and takes no arguments, so no caller of the
 //!     library picks the flag a token is minted from. No visibility rule can
-//!     say that; `tests/consent_minted_from_argv_test.rs` holds it.
+//!     say that; `tests/source/consent_minted_from_argv_test.rs` holds it.
 //!
 //! Seal 2 is why dispatch lives in `cli::dispatch` rather than in `main.rs`.
 //! A `[[bin]]` target is a *separate crate* from this `[lib]`, so a minting

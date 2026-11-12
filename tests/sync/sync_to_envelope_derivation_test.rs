@@ -4,7 +4,7 @@
 //! `resumed` — are built from what the machine reported alone, by a type: the
 //! outcome the envelope is built from lives in `src/sync/land_envelope.rs`,
 //! where only the handler sets its fields. The resumed-op tests in
-//! `tests/sync_to_json_test.rs` separate the machine's answer from the
+//! `tests/sync/sync_to_json_test.rs` separate the machine's answer from the
 //! invocation's behaviorally.
 //!
 //! A `step3_advance` record is another matter. It reports the tip the

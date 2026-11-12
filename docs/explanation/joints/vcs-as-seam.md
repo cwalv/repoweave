@@ -344,7 +344,7 @@ carries git's vocabulary across the seam:
   It is also why enforcement here can be a scan. A matcher over `origin`
   that reported correct sites would get turned off; with a population of
   one, one exemption naming one file is a scan someone will keep.
-  `tests/core_remote_name_literal_test.rs` is that scan; it reads
+  `tests/source/core_remote_name_literal_test.rs` is that scan; it reads
   non-comment lines of `src/` outside the backend module, matching the
   standalone word only, so rwv's own `origin_dir` concept is invisible
   to it by construction.
@@ -407,7 +407,7 @@ with a reason a consumer can read. Paying it now buys a better name for
 a backend nobody has.
 
 **How this is enforced.** The exception is not prose alone.
-`tests/core_remote_name_literal_test.rs` reports the site and exempts it
+`tests/source/core_remote_name_literal_test.rs` reports the site and exempts it
 by file, with this reasoning at the entry, and the exemption is checked
 in both directions: if the site stops existing, the standing entry fails
 the test rather than sitting there. So the day someone does rename the

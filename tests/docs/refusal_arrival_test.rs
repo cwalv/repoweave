@@ -675,7 +675,7 @@ fn a_dirty_workweave_at_sync_to_time_routes_to_its_token() {
 /// a fixture makes both halves non-empty at once, which is what this one is
 /// for: with only one half present, either ordering yields the same token.
 ///
-/// UNIX ONLY, and for the same reason `tests/doctor_unreadable_projects_dir_test.rs`
+/// UNIX ONLY, and for the same reason `tests/doctor/doctor_unreadable_projects_dir_test.rs`
 /// is: mode `0o000` denies the read on Unix, where the Windows read-only
 /// attribute does not deny one at all and the repo would simply scan clean.
 #[test]

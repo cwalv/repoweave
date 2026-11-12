@@ -27,7 +27,7 @@
 //!
 //! Residue: this reads the call graph's shape, not its behavior. A gate that
 //! kept both arities and computed the wrong answer is not a shape this sees —
-//! `tests/arrived_drift_consent_scope_test.rs` is where the answer is checked.
+//! `tests/sync/arrived_drift_consent_scope_test.rs` is where the answer is checked.
 //!
 //! A second, by-construction reason per-integration scoping cannot arrive
 //! silently: the gate's own input carries no integration to scope by.

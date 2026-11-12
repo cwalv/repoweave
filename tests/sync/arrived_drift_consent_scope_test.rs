@@ -521,7 +521,7 @@ fn materialize_with_a_consent_still_reaches_the_generator() {
 
 /// The scope claim itself: with a second, non-cargo hook-bearing integration
 /// enabled on the same project, drift confined to `Cargo.lock` alone must
-/// still withhold npm's hook. `tests/hook_withhold_scope_test.rs` pins that
+/// still withhold npm's hook. `tests/integrations/hook_withhold_scope_test.rs` pins that
 /// the call graph asks the question once and guards the run with it; this is
 /// where the answer that guard computes is checked.
 ///

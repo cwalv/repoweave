@@ -13,7 +13,7 @@
 //!     The outcome's own `kind` is `failed` in that case.
 //!
 //! This test is deliberately CLI-only: the lower-level wire-shape
-//! invariants are already pinned in `tests/sync_json_test.rs` via direct
+//! invariants are already pinned in `tests/sync/sync_json_test.rs` via direct
 //! serde round-trips. Here we anchor the user-facing contract.
 
 use assert_cmd::Command;

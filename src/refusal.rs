@@ -28,7 +28,7 @@ use serde::Serialize;
 /// it appears and a refusal that reports the state a finding reports is that
 /// same state. Renaming one half of such a pair splits a condition in two
 /// under the reader's feet — the spellings move together or not at all.
-/// `tests/token_register_agreement_test.rs` asserts which variants they are.
+/// `tests/source/token_register_agreement_test.rs` asserts which variants they are.
 ///
 /// The derived schema is the register's enumeration: it lists every variant
 /// under the token serde writes for it.

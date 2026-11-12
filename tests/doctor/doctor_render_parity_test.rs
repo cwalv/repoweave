@@ -24,7 +24,7 @@
 //!      What the walk cannot see, a report renderer handed findings some other
 //!      collection produced, does not compile: both take only
 //!      `DoctorFindings`, which that pipeline alone builds
-//!      (`tests/doctor_findings_seal_test.rs`).
+//!      (`tests/source/doctor_findings_seal_test.rs`).
 //!   3. The reported bug, end to end, over the binary.
 //!   4. Kind 1 on the `Issue` channel: every [`IssueKind`] must arrive on the
 //!      wire under the tag `IssueKind::tag` mints.

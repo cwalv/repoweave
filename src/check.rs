@@ -7222,7 +7222,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// unreachable there, because [`crate::manifest::LockFile::resolve_versions`]
 /// drops it and [`find_violations`] has no disk to re-read. Where both surfaces
 /// do see an entry they must name the same two revisions in the same spelling —
-/// pinned in `tests/lock_totality_agreement_test.rs`, which is also the only
+/// pinned in `tests/doctor/lock_totality_agreement_test.rs`, which is also the only
 /// coverage of the divergence.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
@@ -7339,7 +7339,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
 /// run resolve context at all.
 ///
 /// The `[fixed]` announcement each arm prints is a checked surface, not
-/// chatter: tests/doctor_fix_authority_test.rs binds every announcement in
+/// chatter: tests/doctor/doctor_fix_authority_test.rs binds every announcement in
 /// this file to a finding [`CheckViolation::fix_disposition`] marks Auto or
 /// Consented. An arm added here for a report-only finding fails there
 /// instead of running unsanctioned.
@@ -7370,7 +7370,7 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
 /// This pass runs before collection and names no [`CheckViolation`], so the
 /// runtime disposition gate in [`apply_finding_repairs`] never sees it. What
 /// holds it to the register instead is the `[fixed]` announcement each arm
-/// prints: tests/doctor_fix_authority_test.rs binds every announcement to a
+/// prints: tests/doctor/doctor_fix_authority_test.rs binds every announcement to a
 /// finding the register marks Auto or Consented, so an arm added here for a
 /// report-only finding is a red test rather than dead code.
 fn apply_workspace_repairs(

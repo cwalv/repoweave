@@ -800,7 +800,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
 /// workspace's member manifests while materialize regenerates from them. The
 /// refusal is advice — the window between this check and the work is accepted,
 /// and `an_op_landing_after_the_check_does_not_stop_the_verb` in
-/// `tests/advisory_op_check_test.rs` pins that it stays advice.
+/// `tests/sync/advisory_op_check_test.rs` pins that it stays advice.
 #[test]
 fn mid_op_materialize_refuses_and_clears_with_the_record() {
     let tmp = common::tempdir().unwrap();

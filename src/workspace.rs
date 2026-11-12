@@ -4070,7 +4070,7 @@ mod tests {
     // ActiveFile / WorkweaveFlag) across primary and workweave checkouts,
     // both single-project and multi-project workspaces, and the None case
     // (no chain step fires). The WorkweaveFlag variant is constructed via
-    // `with_workweave_flag_provenance` — see `tests/workweave_flag_test.rs`
+    // `with_workweave_flag_provenance` — see `tests/weave/workweave_flag_test.rs`
     // for the end-to-end -w flag tests.
     // ========================================================================
 

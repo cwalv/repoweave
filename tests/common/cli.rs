@@ -1,7 +1,7 @@
 //! Running `rwv` and judging what it printed.
 //!
 //! [`refused`] is the one assertion of a refusal: the census in
-//! `tests/refusal_census_test.rs` credits a site as read only where a test
+//! `tests/source/refusal_census_test.rs` credits a site as read only where a test
 //! names the site's state or token as this function's second argument,
 //! spelled `State::<Variant>` or `RefusalKind::<Variant>`.
 

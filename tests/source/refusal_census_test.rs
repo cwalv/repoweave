@@ -58,12 +58,12 @@ fn the_census_walks_see_the_tree() {
     };
     assert_eq!(
         row("src/branch.rs", "target cycle").as_deref(),
-        Some("tests/branch_create_switch_test.rs"),
+        Some("tests/weave/branch_create_switch_test.rs"),
         "a judged site and the test that refuses with its state"
     );
     assert_eq!(
         row("src/add_remove.rs", "no-remote-url").as_deref(),
-        Some("tests/refusal_arrival_test.rs"),
+        Some("tests/docs/refusal_arrival_test.rs"),
         "a token site and the test that routes to it"
     );
     assert_eq!(

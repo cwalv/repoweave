@@ -6,8 +6,8 @@
 //! serializer would not emit — and a lock that fails to parse is read as
 //! absent by most of what consumes one, so the drift arrives as a test that
 //! still passes while testing less. It had already landed when this census
-//! was written: fixtures in `tests/derived_content_adoption_test.rs` and
-//! `tests/doc_claims_lock_test.rs` each wrote a TOML-shaped body into a file
+//! was written: fixtures in `tests/sync/derived_content_adoption_test.rs` and
+//! `tests/docs/doc_claims_lock_test.rs` each wrote a TOML-shaped body into a file
 //! the code parses as JSON, and the second was the previous lock a test named
 //! for overwriting one was overwriting.
 //!

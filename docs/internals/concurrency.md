@@ -107,7 +107,7 @@ ledger, a file of `projects/<p>/`, is such a writer; the workweave index is not,
 since it lives in the project clone's shared directory and needs no ignore line.
 An external whole-file rewrite remains detect-don't-prevent: the next publish of
 a record re-appends its lost line. Driven and pinned by
-`tests/ignore_surface_concurrency_test.rs`.
+`tests/process/ignore_surface_concurrency_test.rs`.
 
 ## The attestation invariant
 

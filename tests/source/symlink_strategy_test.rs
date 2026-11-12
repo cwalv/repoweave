@@ -42,7 +42,7 @@ const OWNER: &str = "symlink.rs";
 /// survives it. Sharing links a `reference` member's read-only tracked file
 /// into another workspace, and that second name survives on purpose: it is
 /// made only where the backend declares that an update replaces a file rather
-/// than writing into it (tests/shared_file_conformance_test.rs proves it), so
+/// than writing into it (tests/vcs/shared_file_conformance_test.rs proves it), so
 /// neither workspace's update reaches the other's copy.
 const HARDLINK_OWNERS: &[&str] = &["durable_file.rs", "share.rs"];
 

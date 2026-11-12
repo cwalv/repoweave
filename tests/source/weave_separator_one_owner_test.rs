@@ -5,7 +5,7 @@
 //! `resolve_flat_address`.
 //!
 //! The `+` half of the same grammar is pinned by
-//! `tests/segment_escape_one_owner_test.rs`. Both metacharacters have the
+//! `tests/source/segment_escape_one_owner_test.rs`. Both metacharacters have the
 //! same owner, and the flat address is a bijection only while both hold.
 //!
 //! The needles are the two shapes that spell the separator directly: a

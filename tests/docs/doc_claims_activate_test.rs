@@ -582,7 +582,7 @@ fn make_npm_workspace(ws_root: &Path, repo: &str) {
 /// PATH and executes itself. On Windows an extensionless `#!` script is not a
 /// candidate — lookup selects on `PATHEXT` — so porting needs a Windows
 /// spelling for the shim, which is the same condition holding
-/// `write_exit_code_shim` in `tests/integrations_test.rs` to unix.
+/// `write_exit_code_shim` in `tests/integrations/integrations_test.rs` to unix.
 #[cfg(unix)]
 fn write_recording_npm(bin_dir: &Path, log: &Path) {
     use std::os::unix::fs::PermissionsExt;

@@ -4,7 +4,7 @@ Every rwv call that can destroy user work — git history rewrites,
 working-tree clobbers, branch force-deletes, file or directory deletion
 — is held to one policy. This page states the policy for contributors
 and operators; the enforcement mechanism is in
-`tests/destructive_ops_audit_test.rs`, which inventories every call
+`tests/source/destructive_ops_audit_test.rs`, which inventories every call
 site and fails the build when one is added without an audit.
 
 ## The policy
@@ -152,7 +152,7 @@ savepoint is a defect, not a tradeoff.
 
 ## How the policy is enforced
 
-`tests/destructive_ops_audit_test.rs` scans `src/` for a fixed list of
+`tests/source/destructive_ops_audit_test.rs` scans `src/` for a fixed list of
 destructive patterns:
 
 - `"--hard"` (git reset)
@@ -175,7 +175,7 @@ recoverable (rule 3). The test fails the build when:
   `"checkout", "-f"`, `"reflog"` — destruction vectors rwv has no
   audited use for).
 
-The test header in `tests/destructive_ops_audit_test.rs` keeps the
+The test header in `tests/source/destructive_ops_audit_test.rs` keeps the
 operational summary — what the patterns are, what the allowlist
 contract is, and how to update it when a call site moves. This
 contributing page owns the *policy*; the test header owns the
@@ -202,7 +202,7 @@ When a PR introduces a destructive call:
    (`DestroyProof::backed_up`) runs the backup itself, so a discard
    without one does not build.
 4. **Update the allowlist.** Add an entry to `ALLOWLIST` in
-   `tests/destructive_ops_audit_test.rs` with the file name, pattern,
+   `tests/source/destructive_ops_audit_test.rs` with the file name, pattern,
    count, and a one-paragraph justification that names the
    precondition (rule 1), the override behavior (rule 2), and the
    recovery path (rule 3).
@@ -243,7 +243,7 @@ call sites*.
 
 ## Related
 
-- `tests/destructive_ops_audit_test.rs` — the enforcement mechanism
+- `tests/source/destructive_ops_audit_test.rs` — the enforcement mechanism
   and the audited allowlist of current call sites.
 - [shared-refs-drift](./joints/shared-refs-drift.md) —
   the safe-class / live-class classifier that gates several of the

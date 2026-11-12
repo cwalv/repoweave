@@ -14,7 +14,7 @@
 //! this scan's non-vacuity check goes with it.
 //!
 //! The `--` half of the same grammar is pinned by
-//! `tests/weave_separator_one_owner_test.rs`. Both metacharacters have the
+//! `tests/source/weave_separator_one_owner_test.rs`. Both metacharacters have the
 //! same owner, and that is the point: the flat address round-trips only
 //! because the renderer writes `+` for `/` and the validators refuse a name
 //! that already spells one. A module that invents its own handling of either

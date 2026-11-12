@@ -51,7 +51,7 @@
 #   exit status rwv reports for one has nothing to observe there.
 #
 #   hook, permission and rename fixtures. The settled ones are pinned by
-#   tests/hook_fixture_portability_test.rs; the rest are gated on an ACL deny
+#   tests/source/hook_fixture_portability_test.rs; the rest are gated on an ACL deny
 #   entry, a PATH shim Windows will not spawn, or an inode instrument NTFS may
 #   not honor.
 #
@@ -125,7 +125,7 @@
 #
 # Match on the crate name each line carries, not on a raw count and not on the
 # target name, because three lines in a complete log are not cargo's.
-# tests/e2e_cargo_test.rs assembles a two-crate fixture workspace and drives
+# tests/integrations/e2e_cargo_test.rs assembles a two-crate fixture workspace and drives
 # `cargo test --workspace` over it as a child process, which writes to the
 # harness's real stdout instead of being captured by it, so that workspace's
 # lib, bin and doctest results interleave with ours. The target name does not

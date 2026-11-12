@@ -27,7 +27,7 @@
 //! the marker path from a literal any more, `workspace.rs` included:
 //! `WorkweaveMarker::path_in` is the one construction site, and the constant
 //! it joins is module-private. The stronger pin that replaced it —
-//! `tests/weave_root_dotfiles_have_one_spelling_test.rs` — holds the literal
+//! `tests/source/weave_root_dotfiles_have_one_spelling_test.rs` — holds the literal
 //! to exactly one production site in the whole crate, the constant's own
 //! declaration, so it catches a re-inlined join wherever it lands rather than
 //! only outside this one file. Keeping the needle here would have left this

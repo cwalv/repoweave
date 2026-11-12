@@ -2560,7 +2560,7 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
 /// operating on it — an audit justification quoting a document by name reads
 /// exactly like a fixture writing that name to disk. That is a wider hole
 /// than `src_code_doc_filenames`'s, and it is not hypothetical:
-/// `tests/destructive_ops_audit_test.rs` used to carry a bare mention of
+/// `tests/source/destructive_ops_audit_test.rs` used to carry a bare mention of
 /// `docs/internals/branch-model.md`'s filename inside `justification` string
 /// literals. Cleared by rewriting those strings rather than by narrowing this
 /// function, because the narrower fix (matching only arguments to a known

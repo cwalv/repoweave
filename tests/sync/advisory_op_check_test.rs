@@ -11,7 +11,7 @@
 //!
 //! What this file pins is that both halves stay true: the check refuses the
 //! common case, and it does NOT become exclusion. The refusal half lives with
-//! the rest of the family in `tests/e2e_op_state_test.rs`; what is here is the
+//! the rest of the family in `tests/sync/e2e_op_state_test.rs`; what is here is the
 //! half a later reader is likely to "fix".
 //!
 //! Also here: the callers that inherit the check without naming it. `activate`

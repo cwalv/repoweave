@@ -5362,7 +5362,7 @@ impl WorkspacePopulation for GitVcs {
     }
 
     fn updates_replace_files(&self) -> bool {
-        // Declared where tests/shared_file_conformance_test.rs holds the
+        // Declared where tests/vcs/shared_file_conformance_test.rs holds the
         // property; a platform joins when its CI leg shows it green.
         cfg!(target_os = "linux")
     }
@@ -5665,7 +5665,7 @@ mod branch_model_tests {
     //! integration test *cannot* forge them, which is the invariant.
     //!
     //! Everything reachable from outside the crate is in
-    //! `tests/branch_model_test.rs`.
+    //! `tests/vcs/branch_model_test.rs`.
 
     use super::*;
     use crate::cli::consent::{DiscardUnlandedConsent, OverwriteConsent};
@@ -6722,7 +6722,7 @@ mod branch_model_tests {
     // Publish: the ref is a parameter
     // -----------------------------------------------------------------------
     //
-    // These moved here from `tests/vcs_test.rs`, where they exercised
+    // These moved here from `tests/vcs/vcs_test.rs`, where they exercised
     // `push_with_role` — deleted with the rest of the old surface. They could
     // not follow `push_ref` out of the crate: a `PublishRef` is minted only
     // by `PublishRef::from_attached`, which is `pub(crate)`, so an
@@ -6734,7 +6734,7 @@ mod branch_model_tests {
     // longer a `current_ref` read inside `push_ref` to fail on a detached
     // HEAD, because a detached checkout yields no `AttachedRef` and therefore
     // no `PublishRef`. The refusal is now the publish gate's, and it is
-    // pinned end-to-end at `tests/push_test.rs`
+    // pinned end-to-end at `tests/sync/push_test.rs`
     // (`push_refuses_detached_head`, and `NotARepo` at :528).
 
     /// Read a ref out of a BARE repo.
@@ -6940,7 +6940,7 @@ mod derived_content_tests {
     //! translation is a match on it, and only code inside the crate can name
     //! the arms it has to cover. The behavior the translated arguments buy —
     //! a declared path resolving mechanically through a real replay — is in
-    //! `tests/derived_content_policy_test.rs`.
+    //! `tests/sync/derived_content_policy_test.rs`.
 
     use super::*;
 

@@ -371,7 +371,7 @@ defect looks like when someone is already looking for it:
   standing, to be found by the widened gate afterwards. A one-spelling matcher
   was used to clear the ground for the change about one-spelling matchers.
 - **The replacement check passed a corrupted input on its first run.** The new
-  half of `tests/doc_claims_cli_md_test.rs` reads documented flag values out of
+  half of `tests/docs/doc_claims_cli_md_test.rs` reads documented flag values out of
   a markdown section and asserts clap accepts them. Its section slicer cut at
   the wrong offset; the odd backtick in a heading like ``### `rwv sync
   <source>` `` inverted backtick-span parity for the rest of the section; the

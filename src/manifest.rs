@@ -554,7 +554,7 @@ impl Role {
     ///
     /// `--role` parsing and its error text are both derived from this slice,
     /// so a variant missing here is a variant the CLI cannot name. Nothing in
-    /// the type system enforces completeness; `tests/role_single_mint_test.rs`
+    /// the type system enforces completeness; `tests/source/role_single_mint_test.rs`
     /// does, by matching exhaustively.
     pub const ALL: &'static [Role] = &[Role::Owned, Role::Fork, Role::Dependency, Role::Reference];
 

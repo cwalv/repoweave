@@ -51,7 +51,7 @@ variant in `src/refusal.rs`, one per bullet above (integration failures, which
 an operator reads as that integration's report, and malformed hook input from
 the harness that invoked it, are classes of their own). `Owed` is the one
 inside the class: rwv declined and the refusal has no token yet, and giving it
-one is the fix. `tests/refusal_census_test.rs` refuses a bare `bail!`,
+one is the fix. `tests/source/refusal_census_test.rs` refuses a bare `bail!`,
 `anyhow!`, `ensure!` or `Error::msg` in production `src/`, so no site arrives
 without the judgment.
 
@@ -115,7 +115,7 @@ be a second way to refuse it.
 not; a form whose `shipped` is false, or that runs after one that is, prints on
 no surface. Shipping a verb is flipping `shipped` on the forms that spell it;
 a form's spelling is the CLI's as it stands, so renaming a verb renames its
-forms. `tests/diagnosis_table_test.rs` parses every line a state prints, and
+forms. `tests/docs/diagnosis_table_test.rs` parses every line a state prints, and
 every shipped form, through the clap tree, refusing the plugin fallback that
 would otherwise accept any verb.
 
@@ -203,7 +203,7 @@ rwv explain <kind>
    generate-explain` renders [Refusals](../reference/refusals.md); a shared one
    already has an entry on [Doctor findings](../reference/doctor-findings.md)
    and must not get a second.
-4. `tests/refusal_entry_test.rs` checks both directions — a token with no entry,
+4. `tests/docs/refusal_entry_test.rs` checks both directions — a token with no entry,
    and an entry naming no token — and derives both populations rather than
    listing them.
 
@@ -227,7 +227,7 @@ rwv explain <kind>
    check covers has been judged.
 4. Regenerate. The kind's entry — on the refusals page, or on the findings page
    for a kind doctor also reports — is the table's output;
-   `tests/refusal_entry_test.rs` holds the page to it, and the gate's drift
+   `tests/docs/refusal_entry_test.rs` holds the page to it, and the gate's drift
    stage to what was committed.
 
 An entry is a junction, not a gloss: the condition, why the rule exists, the

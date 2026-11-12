@@ -1,7 +1,7 @@
 //! What each `--json` verb writes to stdout must satisfy the artifact its own
 //! bytes name.
 //!
-//! `tests/schema_conformance_test.rs` validates serialized envelope types over
+//! `tests/docs/schema_conformance_test.rs` validates serialized envelope types over
 //! a wide corpus. That is the wrong instrument for one failure: a print path
 //! that mints its own bytes. Serializing the envelope type and validating the
 //! result is green whether or not any verb ever hands that type to
@@ -20,7 +20,7 @@
 //! A verb's `--json` bytes are minted at more than one call site: the
 //! success arm and each failure arm serialize and print independently, so a
 //! fixture that samples only the shape of one outcome exercises only the
-//! print site that outcome takes. `tests/schema_conformance_test.rs`
+//! print site that outcome takes. `tests/docs/schema_conformance_test.rs`
 //! constructs envelope values directly and validates their serialization —
 //! it never runs the binary, so it cannot tell whether any of those sites
 //! still hands its envelope to `serde_json` rather than minting its own

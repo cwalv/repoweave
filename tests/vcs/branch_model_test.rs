@@ -20,7 +20,7 @@
 //! Type-level invariants (no cross-type comparison, no `as_str()`
 //! laundering, no forged witness) are enforced by `compile_fail` doctests
 //! on the types and pinned by error code in
-//! `tests/branch_model_compile_fail_test.rs`.
+//! `tests/source/branch_model_compile_fail_test.rs`.
 
 use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};

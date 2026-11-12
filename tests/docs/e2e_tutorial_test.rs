@@ -42,7 +42,7 @@ use std::process;
 use crate::common;
 
 // ---------------------------------------------------------------------------
-// Helpers (mirrors tests/parallel_test.rs / tests/doc_claims_update_remote_test.rs)
+// Helpers (mirrors tests/process/parallel_test.rs / tests/docs/doc_claims_update_remote_test.rs)
 // ---------------------------------------------------------------------------
 
 fn rwv() -> Command {

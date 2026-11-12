@@ -9,7 +9,7 @@
 //!
 //! What this does not reach: the real mdbook, and how the selector renders in a
 //! page. The stand-ins are sh scripts, hence `cfg(unix)`; the assembler runs in
-//! the Pages job on Linux. `tests/docs_site_workflow_test.rs` holds the
+//! the Pages job on Linux. `tests/source/docs_site_workflow_test.rs` holds the
 //! workflow half.
 #![cfg(unix)]
 

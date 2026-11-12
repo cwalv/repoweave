@@ -49,7 +49,7 @@ a trailer appended in a paragraph of its own, and reads them back with
 ## One writer
 
 `src/repin.rs` is the only caller of either commit operation outside the seam
-(`tests/repin_writers_test.rs` pins it). `repin::commit` and
+(`tests/source/repin_writers_test.rs` pins it). `repin::commit` and
 `repin::commit_merge` take the lock being committed and a `Naming`:
 
 - `Naming::Unnamed` for every relock, rwv's own merges, first pins, and the
@@ -67,7 +67,7 @@ whose by-name re-pin is a step inside its own merge passes its naming to
 `repin::commit_merge`.
 
 Every file that calls `lock::report_backward_repin` also builds a by-name
-commit (`tests/repin_writers_test.rs`): a verb that reports a pin moved
+commit (`tests/source/repin_writers_test.rs`): a verb that reports a pin moved
 backward by name names the member in its commit.
 
 ## The reader

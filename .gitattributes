@@ -33,7 +33,7 @@ docs/reference/*/templates/**  !merge
 # bytes are read as well as compiled: the tests scan them, include_str! embeds
 # the docs in the binary, and a POSIX shell reads a CR after a shebang as part
 # of the interpreter's name. A path that must hold CRLF is named below with
-# -text, and tests/repo_line_endings_test.rs holds the rule and that list.
+# -text, and tests/source/repo_line_endings_test.rs holds the rule and that list.
 * text=auto eol=lf
 
 # gita writes its CSVs with CRLF line endings, Python's csv default, and these

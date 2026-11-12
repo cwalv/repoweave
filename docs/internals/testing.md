@@ -102,10 +102,10 @@ situations, and the license is stated in the test's own doc comment:
 - **No behavioral assertion can distinguish** correct from broken on any
   platform or fixture the suite reaches. The shipped precedent is a
   single-read chokepoint whose divergence window is too small to drive
-  (`tests/source_classification_single_read_test.rs`).
+  (`tests/source/source_classification_single_read_test.rs`).
 - **The property is a prohibition over an enumerable population** — a seam
   census, a destructive-call inventory
-  (`tests/destructive_ops_audit_test.rs`).
+  (`tests/source/destructive_ops_audit_test.rs`).
 
 Expense is not a license: a behavioral drive that would merely be slow is
 still the required form. Only impossibility on every reachable platform and
@@ -348,14 +348,14 @@ together.
 
 ## The scenario harness
 
-`tests/scenario_harness_test.rs` runs branching scenarios step by step in a
+`tests/scenario/scenario_harness_test.rs` runs branching scenarios step by step in a
 hermetic sandbox and holds every step to a set of invariants. A scenario is
-data: a [`Seed`](../../tests/scenario_harness_test/sandbox.rs) saying what the
+data: a [`Seed`](../../tests/scenario/scenario_harness_test/sandbox.rs) saying what the
 sandbox holds beyond its fixed shape, and a list of steps, each carrying its
 expected outcome and what it may do that an invariant would otherwise report.
 Three modules carry it, and each has one job:
 
-- **`tests/scenario_harness_test/sandbox.rs`** builds the world: bare remotes,
+- **`tests/scenario/scenario_harness_test/sandbox.rs`** builds the world: bare remotes,
   the machines that clone them, and the forge's own clone of each origin. Every
   git and rwv it runs sees a `HOME` inside the sandbox. A seed can add, per
   member, a fork remote and two mirrors of the origin (one keeping branches the
@@ -370,14 +370,14 @@ Three modules carry it, and each has one job:
   outage still leaves the remote where its URL points. The key a member entry
   declares its branch under and the `.gitattributes` line for the lock are one
   constant each, which the seed and every hand edit of an entry spell from.
-- **`tests/scenario_harness_test/runner.rs`** performs steps and checks their
+- **`tests/scenario/scenario_harness_test/runner.rs`** performs steps and checks their
   outcomes. A forge event that a push can express (a force-push, a branch
   rename, a rebase-merge) is a sequence of plain `Action::Git` steps in the
   forge's clone; one no push can express (moving a remote's default branch,
   syncing a mirror) runs in the bare remote itself. A step may also commit by
   hand with git's plumbing, which is how a fixture lands a records entry or a
   lock on a branch nothing has checked out.
-- **`tests/scenario_harness_test/invariants.rs`** snapshots the sandbox before
+- **`tests/scenario/scenario_harness_test/invariants.rs`** snapshots the sandbox before
   and after each step and compares the two. Its module comment is the one
   statement of what each check holds, what it reads, and what it cannot see;
   keep it that way rather than restating checks elsewhere.
@@ -438,7 +438,7 @@ One instrument is one `Violation` variant, its `Invariant`, and one function
 that `check` calls, all in `invariants.rs`, plus a paragraph in that module's
 comment. Whatever it needs to read goes into `Snapshot`, so every check reads
 the same state. It lands with a seeded-failure test in
-`tests/scenario_harness_test.rs` that drives the violation through real steps
+`tests/scenario/scenario_harness_test.rs` that drives the violation through real steps
 and asserts on the violation itself, not only on a red report; where the
 instrument derives the set of refs it watches, add a test showing it watches
 nothing it should not.
@@ -473,7 +473,7 @@ build without it.
 
 `debug_assertions` would not do: the gate runs the suite in release. That a
 build without the feature carries no pause is held by
-`tests/test_pause_build_test.rs`: the gate's `no-test-pause` stage builds it
+`tests/test_pause_build/test_pause_build_test.rs`: the gate's `no-test-pause` stage builds it
 with no feature flags, as releases build, and asserts the spawned binary
 holds no byte of the arming variable's name, whatever the feature defaults
 are. In the test stages the same file asserts the binary does hold it, so

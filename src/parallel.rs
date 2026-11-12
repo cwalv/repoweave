@@ -303,7 +303,7 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    /// Silent serialization is invisible to `tests/parallel_test.rs`: with
+    /// Silent serialization is invisible to `tests/process/parallel_test.rs`: with
     /// the pool clamped to one worker every `-j` acceptance test there still
     /// passes, because the prefix, the lock and the aggregation depend on
     /// `jobs > 1`, not on the workers existing. Wall time is the only

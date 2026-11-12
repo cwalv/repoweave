@@ -20,7 +20,7 @@
 //! visible.
 //!
 //! The acceptance verb set is `repoweave::explain::known_verbs()` — the same
-//! registry `tests/explain_test.rs` and the runtime dispatch read.
+//! registry `tests/docs/explain_test.rs` and the runtime dispatch read.
 
 use assert_cmd::Command as AssertCommand;
 use repoweave::explain::known_verbs;

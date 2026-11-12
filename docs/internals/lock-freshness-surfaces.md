@@ -99,7 +99,7 @@ claim the reference pages make is true, and this is its size.
 
 ## What keeps them from drifting
 
-`tests/lock_totality_agreement_test.rs`. Two properties, deliberately split:
+`tests/doctor/lock_totality_agreement_test.rs`. Two properties, deliberately split:
 
 - Where both surfaces enumerate the same entry, they must report the same two
   revisions in the same spelling. The fixture pins a **tag**, because

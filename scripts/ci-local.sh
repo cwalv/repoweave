@@ -46,7 +46,7 @@
 # clones, links, or neither — so the stage runs on every host rather than on
 # one. This repository's own files are not re-checked out for it:
 # .gitattributes keeps them LF under any config, and
-# tests/repo_line_endings_test.rs holds that.
+# tests/source/repo_line_endings_test.rs holds that.
 #
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile

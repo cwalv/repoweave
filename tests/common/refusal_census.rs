@@ -1,6 +1,6 @@
 //! Every refusal site in `src/`, and the test that reads the token it prints.
 //!
-//! Shared by `tests/refusal_census_test.rs`, which holds its prohibitions,
+//! Shared by `tests/source/refusal_census_test.rs`, which holds its prohibitions,
 //! and by `cargo run --example generate-explain`, which writes what it derives
 //! to `docs/internals/refusal-census.tsv`.
 //!

@@ -9,7 +9,7 @@
 //! of being skipped.
 //!
 //! The behavioral half lives where the binary is driven with the tool off
-//! `PATH`: `tests/integrations_test/*` raise `tool-missing` per integration
+//! `PATH`: `tests/integrations/integrations_test/*` raise `tool-missing` per integration
 //! and clear it with the tool present, which fails the day a probe reads a
 //! different spelling than the one the table names.
 

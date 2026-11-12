@@ -18,8 +18,8 @@
 //!
 //!   - The corpus here samples the envelope's neighbors rather than every
 //!     `ViolationOutput` variant. Every-variant coverage is
-//!     `tests/schema_conformance_test.rs`, which drives the same envelope from
-//!     `tests/common/doctor_corpus.rs`; `tests/doctor_render_parity_test.rs`
+//!     `tests/docs/schema_conformance_test.rs`, which drives the same envelope from
+//!     `tests/common/doctor_corpus.rs`; `tests/doctor/doctor_render_parity_test.rs`
 //!     is what pins every variant reaching `--json` at all.
 //!   - Coverage of the `issues` array is two entries: one fieldless kind and
 //!     the one carrying an observation, which is what exercises both `kind`

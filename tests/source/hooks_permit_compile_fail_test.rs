@@ -3,7 +3,7 @@
 //! external crate, where every visibility narrower than `pub` looks alike.
 //!
 //! Residue: privacy stops at `activate.rs`, where the tuple literal is
-//! writable; `tests/hook_withhold_scope_test.rs` holds it to the mint.
+//! writable; `tests/integrations/hook_withhold_scope_test.rs` holds it to the mint.
 
 use crate::common;
 

@@ -70,7 +70,7 @@ const RAW_CONSTRUCTORS: &[&str] = &["tempfile::tempdir()", "TempDir::new()"];
 /// reaches the resolved root through `TempDir::new_in`, so none trips the
 /// scan today — and a rewrite that reached for a raw constructor instead
 /// would defeat the whole fix, which is precisely when this should fire.
-const EXEMPT: &str = "tests/canonical_temp_root_test.rs";
+const EXEMPT: &str = "tests/source/canonical_temp_root_test.rs";
 
 /// The trees read, each with the one qualifier a `tempdir()` call there may
 /// carry.

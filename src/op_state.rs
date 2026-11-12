@@ -1174,7 +1174,7 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// nothing afterwards; a caller that needs the exclusion itself takes it
 /// through [`acquire_op`] instead, which is `sync` and `land` alone. Which
 /// verbs sit on each side is enumerated where a new one reddens the
-/// enumeration, in `tests/concurrency_boundaries_test.rs`, rather than in this
+/// enumeration, in `tests/process/concurrency_boundaries_test.rs`, rather than in this
 /// sentence, where the last enumeration went false without anything noticing.
 ///
 /// Returns an error if any workspace carries an owner record or a lease. Both

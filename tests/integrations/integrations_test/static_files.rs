@@ -456,7 +456,7 @@ fn check_no_collision_when_workweave_absent() {
 /// migrating a name between the two holds for one activation — would be
 /// unlinked out from under the operator by a name-only predicate.
 ///
-/// `tests/integration_framework_test.rs::owner_scoped_removal_preserves_unowned_symlinks`
+/// `tests/integrations/integration_framework_test.rs::owner_scoped_removal_preserves_unowned_symlinks`
 /// drives the other leg (an owner-shaped target at a name no integration
 /// claims) and is blind to this one.
 #[test]

@@ -5,7 +5,7 @@
 //! wrong: "present clones are untouched" holds in two of the three lock
 //! states, "present clones are realigned" in the third.
 //!
-//! `tests/update_test.rs` pins the lock-HAS-an-entry arm — the realignment
+//! `tests/sync/update_test.rs` pins the lock-HAS-an-entry arm — the realignment
 //! itself (a fast-forward of the tracking branch's local counterpart), the
 //! refusals when it would not be one, and the no-op when HEAD is already at the
 //! pin.
@@ -13,7 +13,7 @@
 //! that no lock state makes update write the lock.
 //!
 //! `rwv clone <source>` onto an existing `projects/<name>/` is pinned by
-//! `tests/doc_claims_clone_test.rs`.
+//! `tests/docs/doc_claims_clone_test.rs`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

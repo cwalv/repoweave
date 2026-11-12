@@ -10,7 +10,7 @@
 //! earlier rwv would have written it, and read back by code holding the
 //! `real/` spelling — or the reverse. Abort's savepoint namespace under a
 //! symlinked op record is pinned beside the rest of abort's cells, in
-//! `tests/crash_matrix_test.rs`.
+//! `tests/sync/crash_matrix_test.rs`.
 
 use crate::common;
 

@@ -21,7 +21,7 @@
 //! Scope: this drives manifest-declared branch resolution through
 //! `workweave create` and `member pin`. It says nothing about a repo whose *remote*
 //! default diverges — `add_url_resolves_a_non_main_remote_default_branch` in
-//! `tests/add_remove_test.rs` covers that direction.
+//! `tests/weave/add_remove_test.rs` covers that direction.
 
 use std::path::{Path, PathBuf};
 

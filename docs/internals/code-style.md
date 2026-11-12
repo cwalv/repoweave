@@ -43,7 +43,7 @@ Render an error value as `{e:#}` — `{:#}` positionally, `format!("{e:#}")`
 where `.to_string()` would go. On an `anyhow::Error`, `{e}` prints only the
 outermost context and drops every cause under it; `{e:#}` prints the chain.
 Every other error type here renders the same either way, so the rule does not
-ask which type it is holding. `tests/error_alternate_flag_test.rs` holds it
+ask which type it is holding. `tests/source/error_alternate_flag_test.rs` holds it
 for bindings named `e`, `err` and `error`, and states what it cannot see.
 
 ## Origin

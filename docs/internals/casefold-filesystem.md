@@ -97,7 +97,7 @@ macOS symlinked-temp-root geometry, applied to a different host property:
 TMPDIR=/mnt/casefold/fixtures cargo test --release --no-fail-fast
 ```
 
-The case-equivalence suite (`tests/case_equivalence_test.rs`) asks the
+The case-equivalence suite (`tests/weave/case_equivalence_test.rs`) asks the
 fixture directory itself whether it folds (`filesystem_folds_case`) rather
 than branching on the host, so every folding-arm assertion in that file
 activates automatically once `TMPDIR` points at the mount — no `#[ignore]`,
@@ -107,7 +107,7 @@ no feature flag, no environment variable the tests themselves read.
 
 **Target 1 — the identity match itself.** No test in the tree isolates this
 by itself; the folding-arm assertions in
-`tests/case_equivalence_test.rs::a_confusable_sibling_warns_at_mint_and_is_still_created`
+`tests/weave/case_equivalence_test.rs::a_confusable_sibling_warns_at_mint_and_is_still_created`
 reach it (via `listed_occupant`, which calls `same_directory`) but would also
 pass under a canonicalize-based comparison that happened to resolve
 correctly — which on this filesystem it would not, and that is the
@@ -139,7 +139,7 @@ a Linux-native confirmation of the same pin; nothing new to check beyond the
 suite passing.
 
 **Target 3 — the workweave reuse guard.** Pinned by
-`tests/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`.
+`tests/weave/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`.
 Its folding arm has not been executed anywhere before this document was
 written — run the suite against the mount and confirm it passes, folding
 arm, with output containing `different workweave, not this one` and `lists
@@ -162,12 +162,12 @@ The second clone must refuse, and the refusal must name the occupant as the
 parent lists it (`describe_existing`'s "lists it as" clause) rather than
 silently cloning into a directory the filesystem is about to fold onto the
 first. A permanent test would mirror
-`tests/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`
-against `tests/clone_test.rs::fetch_existing_workspace_handles_gracefully`'s
+`tests/weave/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`
+against `tests/weave/clone_test.rs::fetch_existing_workspace_handles_gracefully`'s
 fixture shape — probe the projects directory for folding, clone a case-twin
 source, and assert the refusal arm only where the probe says it folds. That
 test does not exist yet; writing it needs no privilege at all, only the same
-`filesystem_folds_case` idiom `tests/case_equivalence_test.rs` already uses
+`filesystem_folds_case` idiom `tests/weave/case_equivalence_test.rs` already uses
 (currently private to that file — a clone test reusing it would move the
 probe to `tests/common` first, or duplicate the dozen lines). That is what
 makes it runnable on ordinary CI the same way target 3's test now is.

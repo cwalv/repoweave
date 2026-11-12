@@ -4,7 +4,7 @@
 //! active project, the workweave when there is one, and the count of repos the
 //! active project's manifest names.
 //!
-//! `tests/context_display_test.rs` drives the same no-subcommand surface from
+//! `tests/weave/context_display_test.rs` drives the same no-subcommand surface from
 //! an earlier generation, and the overlap is narrower than it looks. Its
 //! fixtures write a manifest with no entries, so the `Repos:` line is one no
 //! fixture there ever produces; it reaches `Project:` only from a workweave
