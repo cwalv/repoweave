@@ -248,9 +248,22 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   uncomposed project carry's `checkout_on`, else the journaled project
   rebase's branch), and a landing's `--continue` leaves its own entries as
   judged once any carry is journaled. A rerun of the carry reads a
-  dependent the journal shows it already moved at the tip it was carried
-  from, so the walk judges the stack as it first did, and reuses a composed
-  tip only while its `base` and `onto` still match the target's.
+  dependent the journal shows it already moved, at its composed tip or on
+  a commit built on it, at the tip it was carried from, so the walk judges
+  the stack as it first did, and reuses a composed tip only while its
+  `base` and `onto` still match the target's and, for a project carry,
+  none of the dependent's member carries was composed again. Every move is
+  judged before the first: a dependent's branch neither at the tip the
+  carry read nor at or beyond the tip it wrote refuses as `target`
+  dependent moved mid-operation, nothing moved, and `--continue` composes
+  it again from where it stands.
+- **Abort of a carry** (`judge_carried`, before `mark_abort_begun`): each
+  dependent's branch a carry moved is read where it moved it. One built on,
+  moved elsewhere, gone, or checked out outside the op's workspaces refuses
+  the whole abort with nothing put back: a gone or held branch names what to
+  do first; a moved one offers `--abandon-foreign-tip` for every such repo
+  and, where each was only built on, the op's own continue, which keeps
+  those commits.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, rebased or merged as the
