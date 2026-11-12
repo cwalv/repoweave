@@ -1,8 +1,7 @@
-//! Tests for `rwv sync --json`, and for `rwv sync-to --json` where it shares
-//! the multi-repo fixture.
+//! Tests for `rwv sync-to --json`.
 //!
 //! Two layers:
-//! 1. End-to-end: drive `rwv sync --json` through the binary, parse stdout
+//! 1. End-to-end: drive `rwv sync-to --json` through the binary, parse stdout
 //!    as JSON, assert envelope + per-repo shape and exit code.
 //! 2. Library-level snapshot tests of `VcsError` / `SyncFailure` /
 //!    `RepoSyncOutcome` -> wire-output serialization, so kebab-case tags
@@ -142,7 +141,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: drive `rwv sync --json` through the binary
+// End-to-end: drive `rwv sync-to --json` through the binary
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -162,7 +161,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json"])
+        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -173,7 +172,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     let obj = parsed.as_object().expect("top level should be object");
     assert_eq!(
         obj.get("$schema").and_then(Value::as_str),
-        Some(SYNC_JSON_SCHEMA_URL),
+        Some(SYNC_TO_JSON_SCHEMA_URL),
         "envelope must include $schema URL"
     );
     let outcomes = obj
@@ -224,8 +223,10 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     // Phase 2 ff still fails.
     let assert = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
+            "--strategy",
+            "ff",
             "--json",
             "--discard-local-commits",
         ])
@@ -257,12 +258,10 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
 fn sync_json_no_op_when_already_at_lock() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-    let _ = ww; // unused
-
-    // Primary already at C1 (the lock SHA): running sync ff from primary
-    // (using primary as source) should produce no-op for the server repo.
+    // The workweave is at C1 (the lock SHA) like the primary: landing it
+    // should produce no-op for the server repo.
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--json"])
+        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -763,14 +762,14 @@ fn manifest_order() -> Vec<&'static str> {
     paths
 }
 
-/// Run `verb` from the fixture's primary against its workweave, which is ahead
-/// in every repo, so each repo moves forward in the primary in its own worker:
-/// `sync` fast-forwards it, `sync-to`'s first step rebases it, which for a repo
-/// with nothing of its own is a fast-forward too.
-fn sync_from_primary(primary: &Workspace, ww: &Workspace, verb: &str, jobs: &str) -> Vec<u8> {
+/// Run `sync-to` from the fixture's primary against its workweave, which is
+/// ahead in every repo, so each repo moves forward in the primary in its own
+/// worker: the first step rebases it, which for a repo with nothing of its own
+/// is a fast-forward.
+fn sync_from_primary(primary: &Workspace, ww: &Workspace, jobs: &str) -> Vec<u8> {
     let target = ww.root.to_string_lossy();
     rwv()
-        .args([verb, &target, "--json", "-j", jobs])
+        .args(["sync-to", &target, "--json", "-j", jobs])
         .current_dir(&primary.root)
         .assert()
         .success()
@@ -791,31 +790,23 @@ fn install_hook(repo: &Path, name: &str, body: &str) {
     }
 }
 
-/// The hook that fires in a repo as `verb` moves it forward.
-fn landing_hook(verb: &str) -> &'static str {
-    match verb {
-        "sync" => "post-merge",
-        _ => "post-checkout",
-    }
-}
-
 /// Hold the first repo's landing until the second repo's has landed, and then
 /// a second longer, so a parallel run's workers finish out of repo-path order.
 /// Each hook appends its repo to `log` the first time it fires. The wait is
 /// bounded: a git that runs no hooks leaves an empty log, not a hang.
-fn land_first_repo_last(primary: &Workspace, verb: &str, log: &Path) {
+fn land_first_repo_last(primary: &Workspace, log: &Path) {
     let order = manifest_order();
     let (first, second) = (order[0], order[1]);
     let log = log.to_string_lossy().replace('\\', "/");
     let once = |repo: &str| format!("#!/bin/sh\ngrep -q '{repo}' '{log}' 2>/dev/null && exit 0\n");
     install_hook(
         &primary.root.join(second),
-        landing_hook(verb),
+        "post-checkout",
         &format!("{}echo {second} >> '{log}'\n", once(second)),
     );
     install_hook(
         &primary.root.join(first),
-        landing_hook(verb),
+        "post-checkout",
         &format!(
             "{}i=0\n\
              while ! grep -q '{second}' '{log}' 2>/dev/null && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done\n\
@@ -835,24 +826,11 @@ fn assert_landed_first_repo_last(log: &Path) {
 }
 
 #[test]
-fn sync_json_is_one_envelope_whatever_the_worker_count() {
-    let tmp = common::tempdir().unwrap();
-    let shape_under = |jobs: &str| {
-        let (primary, ww, _shas) = make_multi_repo_workspaces(&tmp.path().join(jobs));
-        let stdout = sync_from_primary(&primary, &ww, "sync", jobs);
-        common::envelope_shape(&stdout, SYNC_JSON_SCHEMA_URL, "outcomes")
-    };
-    let serial = shape_under("1");
-    assert_eq!(serial.1, manifest_order(), "outcomes follow the manifest");
-    assert_eq!(shape_under("4"), serial);
-}
-
-#[test]
 fn sync_to_json_is_one_envelope_whatever_the_worker_count() {
     let tmp = common::tempdir().unwrap();
     let shape_under = |jobs: &str| {
         let (primary, ww, _shas) = make_multi_repo_workspaces(&tmp.path().join(jobs));
-        let stdout = sync_from_primary(&primary, &ww, "sync-to", jobs);
+        let stdout = sync_from_primary(&primary, &ww, jobs);
         common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes")
     };
     let serial = shape_under("1");
@@ -861,27 +839,13 @@ fn sync_to_json_is_one_envelope_whatever_the_worker_count() {
 }
 
 #[test]
-fn sync_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
-    let log = tmp.path().join("landed");
-    land_first_repo_last(&primary, "sync", &log);
-
-    let stdout = sync_from_primary(&primary, &ww, "sync", "4");
-
-    assert_landed_first_repo_last(&log);
-    let (_, paths) = common::envelope_shape(&stdout, SYNC_JSON_SCHEMA_URL, "outcomes");
-    assert_eq!(paths, manifest_order());
-}
-
-#[test]
 fn sync_to_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
     let log = tmp.path().join("landed");
-    land_first_repo_last(&primary, "sync-to", &log);
+    land_first_repo_last(&primary, &log);
 
-    let stdout = sync_from_primary(&primary, &ww, "sync-to", "4");
+    let stdout = sync_from_primary(&primary, &ww, "4");
 
     assert_landed_first_repo_last(&log);
     let (_, paths) = common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes");
@@ -1111,7 +1075,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json"])
+        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -1159,8 +1123,10 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
 
     let assert = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
+            "--strategy",
+            "ff",
             "--json",
             "--discard-local-commits",
         ])
