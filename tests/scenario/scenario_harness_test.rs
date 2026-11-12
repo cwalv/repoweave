@@ -920,6 +920,13 @@ every_scenario!(
     a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Retire),
     a_refused_continue_of_a_released_landing_leaves_the_target_free,
     a_continued_retire_releases_the_target_first,
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Switch),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::SwitchDetached),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Rename),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::SetMode),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::SetBranch),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Delete),
+    a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Push),
     abort_typed_in_the_target_names_the_landing(false),
     abort_typed_in_the_target_names_the_landing(true),
     a_landing_killed_while_it_waits(scenarios::KilledWaiter::Continued),
@@ -3098,6 +3105,15 @@ holding_rwv! {
         }
         runner::run(scenarios::a_refused_continue_of_a_released_landing_leaves_the_target_free())
             .assert_fully_decided_green();
+    }
+
+    /// Each rwv verb that would move, delete, rename, re-point or publish a
+    /// branch a stopped landing claims refuses, naming the abort that ends it.
+    fn a_verb_refuses_a_branch_a_stopped_landing_claims() {
+        for verb in scenarios::ClaimedMove::ALL {
+            runner::run(scenarios::a_verb_refuses_a_branch_a_stopped_landing_claims(verb))
+                .assert_fully_decided_green();
+        }
     }
 
     /// Abort typed in the target's workspace names the one landing it takes

@@ -1101,6 +1101,35 @@ impl OwnerRecord {
             .is_some_and(|take_in| take_in.receiving.contains_key(&RepoKey::Project))
     }
 
+    /// Each branch the op's landing claims hold besides the target they are
+    /// held on: what a landing lands into and what a carry carries.
+    pub fn claimed_branches(&self) -> Vec<(RepoKey, String)> {
+        let Some(take_in) = &self.take_in else {
+            return Vec::new();
+        };
+        let target = match (&self.verb, &take_in.sync_from) {
+            (OpVerb::Land, Some(SyncFrom::Target(target))) => {
+                Some((RepoKey::Project, target.clone()))
+            }
+            _ => None,
+        };
+        target
+            .into_iter()
+            .chain(
+                take_in
+                    .receiving
+                    .iter()
+                    .map(|(repo, receiving)| (repo.clone(), receiving.branch.clone())),
+            )
+            .chain(
+                take_in
+                    .carries
+                    .iter()
+                    .map(|carry| (carry.repo.clone(), carry.branch.clone())),
+            )
+            .collect()
+    }
+
     /// Build a new [`OwnerRecord`] for a `rwv land` invocation.
     ///
     /// Initial phase is `Replay` — the first phase the driver will enter.

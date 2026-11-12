@@ -448,6 +448,13 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
         .as_deref()
         .map(|t| named(vcs.as_ref(), &project, &dir, t))
         .transpose()?;
+    crate::landing_claim::refuse_moving_claimed(
+        vcs.as_ref(),
+        &dir,
+        &project,
+        &[(crate::manifest::RepoKey::Project, branch.to_string())],
+        None,
+    )?;
     let known = vcs.named_branches(&dir)?;
     let Some(known) = known.iter().find(|b| b.name == branch.as_str()) else {
         return Err(State::NameNoSuchBranch
@@ -831,6 +838,14 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             .judge(vcs.as_ref())
             .refused());
     }
+    crate::landing_claim::refuse_moving_claimed(
+        vcs.as_ref(),
+        &dir,
+        &project,
+        &[old.as_str(), new.as_str()]
+            .map(|name| (crate::manifest::RepoKey::Project, name.to_owned())),
+        None,
+    )?;
     let store = Store::open(vcs.as_ref(), &dir)?;
     let view = store
         .settle()

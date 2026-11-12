@@ -254,6 +254,16 @@ impl<'a> Rule<'a> {
         let project_path = project_dir(request.primary, request.project);
         let project_label = project_rel_path(request.project);
         let branch_name = RawRefName::new(request.branch.as_str());
+        crate::landing_claim::refuse_moving_claimed(
+            project_vcs.as_ref(),
+            &project_path,
+            request.project,
+            &[(
+                crate::manifest::RepoKey::Project,
+                request.branch.to_string(),
+            )],
+            None,
+        )?;
         let store = Store::open(project_vcs.as_ref(), &project_path)?;
         let view = store.view()?;
 

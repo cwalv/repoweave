@@ -11,7 +11,7 @@ use crate::branch::{
     write_refusal, Moving,
 };
 use crate::diagnosis::{ChoiceId, Judged, Report, State};
-use crate::manifest::{LockFile, Manifest, ProjectName};
+use crate::manifest::{LockFile, Manifest, ProjectName, RepoKey};
 use crate::names::{judge_feature_names, NameScan};
 use crate::records::{BranchName, Entry, Lookup, NameError, Record, Store, View, Write};
 use crate::refusal::{refusal, RefusalKind};
@@ -872,6 +872,14 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     };
     let current = checked_out(vcs, &dir)?;
     let detached = current.is_none();
+    if current.as_deref() != Some(text.as_str()) {
+        let moved: Vec<_> = current
+            .iter()
+            .chain([text])
+            .map(|name| (RepoKey::Project, name.clone()))
+            .collect();
+        crate::landing_claim::refuse_moving_claimed(vcs, &dir, &project, &moved, None)?;
+    }
     let mut report = Report::default();
     let already = current.as_deref() == Some(text.as_str());
     let opening = judge_opening(
@@ -1008,7 +1016,13 @@ fn switch_detached(
     rev: &str,
 ) -> anyhow::Result<()> {
     let mut report = Report::default();
-    let detached = checked_out(vcs, dir)?.is_none();
+    let current = checked_out(vcs, dir)?;
+    let detached = current.is_none();
+    let left: Vec<_> = current
+        .into_iter()
+        .map(|name| (RepoKey::Project, name))
+        .collect();
+    crate::landing_claim::refuse_moving_claimed(vcs, dir, project, &left, None)?;
     let destination = match vcs.resolve_revision(dir, rev) {
         Ok(destination) => destination,
         Err(VcsError::RevisionNotFound { .. }) => {

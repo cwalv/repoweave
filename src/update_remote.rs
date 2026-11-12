@@ -1499,6 +1499,26 @@ fn settle_diverged(
         settling.push((e, reset));
     }
     report.into_result()?;
+    let moved: Vec<_> = acting
+        .iter()
+        .map(|(d, _)| {
+            let item = &items[d.idx];
+            (item.repo_path.clone(), item.expected.as_str().to_owned())
+        })
+        .chain(
+            settling
+                .iter()
+                .map(|(e, _)| (items[e.idx].repo_path.clone(), e.branch.as_str().to_owned())),
+        )
+        .map(|(path, branch)| (crate::manifest::RepoKey::Member(path), branch))
+        .collect();
+    crate::landing_claim::refuse_moving_claimed(
+        project_vcs.as_ref(),
+        &project_dir,
+        project,
+        &moved,
+        None,
+    )?;
     if acting.is_empty() && settling.is_empty() && state.resumed.is_none() {
         return Ok(settled);
     }

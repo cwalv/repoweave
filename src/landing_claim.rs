@@ -16,7 +16,7 @@
 //! and `rwv doctor --fix` releases it.
 
 use crate::durable_file::CreateNewError;
-use crate::manifest::ProjectName;
+use crate::manifest::{ProjectName, RepoKey};
 use crate::op_state::OpId;
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
@@ -160,24 +160,124 @@ impl LandingClaim {
     /// whatever target it is on: what `rwv abort` does, whether or not the
     /// op's record names its target.
     pub fn release_held_by(vcs: &dyn Vcs, project_dir: &Path, op: &OpId) -> anyhow::Result<()> {
-        let dir = claims_dir(vcs, project_dir)?;
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => {
-                return Err(anyhow::Error::new(e).context(format!(
-                    "failed to read the landing claims in {}",
-                    dir.display()
-                )))
-            }
-        };
-        for entry in entries {
-            let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
-            release_takeovers_held_by(&entry.path(), op)?;
-            release_if_held(&StateFile::LandingClaim.in_dir(&entry.path()), op)?;
+        for claim in claim_dirs(&claims_dir(vcs, project_dir)?)? {
+            release_takeovers_held_by(&claim, op)?;
+            release_if_held(&StateFile::LandingClaim.in_dir(&claim), op)?;
         }
         Ok(())
     }
+}
+
+/// Refuse moving, deleting, renaming or re-pointing any of `branches` of
+/// `project` while a claim another op holds names it: the target branch the
+/// claim is on, or a branch its op's record lands into or carries. `own` is the
+/// op making the move, whose own claims never refuse it.
+pub fn refuse_moving_claimed(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    project: &ProjectName,
+    branches: &[(RepoKey, String)],
+    own: Option<&OpId>,
+) -> anyhow::Result<()> {
+    if branches.is_empty() {
+        return Ok(());
+    }
+    refuse_claimed_in(&claims_dir(vcs, project_dir)?, project, branches, own)
+}
+
+fn refuse_claimed_in(
+    dir: &Path,
+    project: &ProjectName,
+    branches: &[(RepoKey, String)],
+    own: Option<&OpId>,
+) -> anyhow::Result<()> {
+    for claim in claim_dirs(dir)? {
+        let path = StateFile::LandingClaim.in_dir(&claim);
+        let seen = match path.read() {
+            Ok(seen) => seen,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(
+                    anyhow::Error::new(e).context(format!("failed to read the claim {path}"))
+                )
+            }
+        };
+        let spelled = claim
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        let on_target = branches.iter().find(|(repo, branch)| {
+            *repo == RepoKey::Project
+                && spelled.as_deref()
+                    == Some(&digest(
+                        format!("{}\n{branch}", project.as_str()).as_bytes(),
+                    ))
+        });
+        let holder = match standing(&seen) {
+            Standing::Dead(_) => continue,
+            Standing::Live(holder) | Standing::Unreachable(holder) => {
+                if Some(&holder.op) == own {
+                    continue;
+                }
+                holder
+            }
+            Standing::Unread(text) => match on_target {
+                None => continue,
+                Some((_, branch)) => crate::refuse!(
+                    RefusalKind::StateClaimHeld,
+                    "a landing into '{branch}' holds it, and {path} names it in a form this rwv \
+                     does not read ({text}): an rwv of another release took it. End that landing \
+                     with the release that started it, resuming or aborting it, then rerun."
+                ),
+            },
+        };
+        let recorded = crate::op_state::read_owner(holder.owner.as_path())
+            .ok()
+            .flatten()
+            .filter(|record| record.id == holder.op);
+        let named = recorded
+            .as_ref()
+            .map(crate::op_state::OwnerRecord::claimed_branches)
+            .unwrap_or_default();
+        let Some((_, branch)) =
+            on_target.or_else(|| branches.iter().find(|wanted| named.contains(wanted)))
+        else {
+            continue;
+        };
+        crate::refuse!(
+            RefusalKind::StateClaimHeld,
+            "an operation landing into '{branch}' holds it: op {op}, recorded in {owner}. If it \
+             is running, rerun once it ends. If it stopped, either of these, run in {owner}, \
+             ends it, and then this runs:\n  {resume}\n  rwv abort",
+            op = holder.op,
+            owner = holder.owner.as_path().display(),
+            resume = crate::op_state::resume_command(
+                recorded.map_or(crate::op_state::OpVerb::Land, |record| record.verb)
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// The directory of each claim in `dir`, passing over anything else there.
+fn claim_dirs(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!(
+                "failed to read the landing claims in {}",
+                dir.display()
+            )))
+        }
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry.with_context(|| format!("failed to read {}", dir.display()))?;
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            dirs.push(entry.path());
+        }
+    }
+    Ok(dirs)
 }
 
 /// A claim whose owner workspace is not here to read, as `rwv doctor` reports
@@ -602,6 +702,107 @@ mod tests {
         );
         first.release().unwrap();
         assert!(!path.exists());
+    }
+
+    fn claims_on(tmp: &Path, target: &str) -> (std::path::PathBuf, StatePath) {
+        let dir = tmp.join("claims");
+        let path =
+            StateFile::LandingClaim.in_dir(&dir.join(digest(format!("p\n{target}").as_bytes())));
+        (dir, path)
+    }
+
+    fn landing_into(workspace: &Path, id: &OpId, target: &str, member_branch: &str) {
+        std::fs::create_dir_all(workspace.join("projects")).unwrap();
+        let mut record = crate::op_state::OwnerRecord::new_land(
+            id,
+            None,
+            ProjectName::new("p").unwrap(),
+            workspace,
+            None,
+            false,
+        );
+        let mut take_in = crate::op_state::TakeInRecord {
+            sync_from: Some(crate::op_state::SyncFrom::Target(target.to_owned())),
+            ..Default::default()
+        };
+        take_in.receiving.insert(
+            RepoKey::Member(crate::manifest::RepoPath::new("app").unwrap()),
+            crate::op_state::Receiving {
+                branch: member_branch.to_owned(),
+                tip: crate::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+                moves: crate::op_state::Moves::AsRef { create: false },
+            },
+        );
+        record.take_in = Some(take_in);
+        crate::op_state::write_owner(workspace, &record).unwrap();
+    }
+
+    fn refused(result: anyhow::Result<()>) -> bool {
+        match result {
+            Ok(()) => false,
+            Err(e) => {
+                assert_eq!(
+                    crate::refusal::kind_of(&e),
+                    Some(RefusalKind::StateClaimHeld),
+                    "{e:#}"
+                );
+                true
+            }
+        }
+    }
+
+    #[test]
+    fn a_move_of_a_branch_a_live_claim_names_is_refused_but_not_to_its_holder() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        landing_into(&owner, &op(1), "main", "trunk");
+        let (dir, path) = claims_on(tmp.path(), "main");
+        take_within(path, "main", &op(1), &owner, Duration::ZERO).unwrap();
+        let p = ProjectName::new("p").unwrap();
+        let app = RepoKey::Member(crate::manifest::RepoPath::new("app").unwrap());
+        let check = |repo: &RepoKey, branch: &str, own: Option<&OpId>| {
+            refuse_claimed_in(&dir, &p, &[(repo.clone(), branch.to_owned())], own)
+        };
+        assert!(refused(check(&RepoKey::Project, "main", None)));
+        assert!(refused(check(&app, "trunk", None)));
+        assert!(!refused(check(&RepoKey::Project, "other", None)));
+        assert!(!refused(check(&app, "main", None)));
+        assert!(!refused(check(&RepoKey::Project, "main", Some(&op(1)))));
+        assert!(!refused(check(&app, "trunk", Some(&op(1)))));
+    }
+
+    #[test]
+    fn a_claim_whose_op_is_no_longer_recorded_names_nothing_to_move() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        landing_into(&owner, &op(1), "main", "trunk");
+        let (dir, path) = claims_on(tmp.path(), "main");
+        take_within(path, "main", &op(1), &owner, Duration::ZERO).unwrap();
+        crate::op_state::clear_all_at(&owner);
+        let p = ProjectName::new("p").unwrap();
+        assert!(!refused(refuse_claimed_in(
+            &dir,
+            &p,
+            &[(RepoKey::Project, "main".to_owned())],
+            None
+        )));
+    }
+
+    #[test]
+    fn a_stray_file_among_the_claims_is_passed_over() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        landing_into(&owner, &op(1), "main", "trunk");
+        let (dir, path) = claims_on(tmp.path(), "main");
+        take_within(path.clone(), "main", &op(1), &owner, Duration::ZERO).unwrap();
+        std::fs::write(dir.join("stray"), b"x").unwrap();
+        assert_eq!(claim_dirs(&dir).unwrap(), vec![path.dir().to_path_buf()]);
+        assert!(refused(refuse_claimed_in(
+            &dir,
+            &ProjectName::new("p").unwrap(),
+            &[(RepoKey::Project, "main".to_owned())],
+            None
+        )));
     }
 
     #[test]

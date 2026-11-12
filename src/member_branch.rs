@@ -942,6 +942,22 @@ pub fn run_set_branch(
         },
     };
     let member = entry_request.member.clone();
+    let project_vcs = crate::vcs::project_vcs();
+    let moved: Vec<_> = crate::branch::checked_out(project_vcs.as_ref(), &loaded.project_dir)?
+        .map(|on| (crate::manifest::RepoKey::Project, on))
+        .into_iter()
+        .chain([(
+            crate::manifest::RepoKey::Member(member.clone()),
+            request.branch.to_owned(),
+        )])
+        .collect();
+    crate::landing_claim::refuse_moving_claimed(
+        project_vcs.as_ref(),
+        &loaded.project_dir,
+        &loaded.project,
+        &moved,
+        None,
+    )?;
     let new_url: Option<crate::manifest::RepoUrl> = request.url.map(str::parse).transpose()?;
     let mut refusals = Report::default();
     let step = judge_entry(ctx, &loaded, VERB, &entry_request, &mut refusals)?;

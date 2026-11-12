@@ -11942,6 +11942,71 @@ pub fn abort_typed_in_the_target_names_the_landing(two: bool) -> Scenario {
     scenario("abort typed in the target names the landing", steps)
 }
 
+/// An rwv verb that moves, deletes, renames, re-points or publishes `main`
+/// or a branch a landing into it lands into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimedMove {
+    Switch,
+    SwitchDetached,
+    Rename,
+    SetMode,
+    SetBranch,
+    Delete,
+    Push,
+}
+
+impl ClaimedMove {
+    pub const ALL: [ClaimedMove; 7] = [
+        ClaimedMove::Switch,
+        ClaimedMove::SwitchDetached,
+        ClaimedMove::Rename,
+        ClaimedMove::SetMode,
+        ClaimedMove::SetBranch,
+        ClaimedMove::Delete,
+        ClaimedMove::Push,
+    ];
+
+    fn args(self) -> &'static [&'static str] {
+        match self {
+            ClaimedMove::Switch => &["switch", "proj--w2"],
+            ClaimedMove::SwitchDetached => &["switch", "--detach", "HEAD"],
+            ClaimedMove::Rename => &["branch", "rename", "trunk"],
+            ClaimedMove::SetMode => &["branch", "set-mode", "main", "declared"],
+            ClaimedMove::SetBranch => &["member", "set-branch", "local/remotes/lib", "main"],
+            ClaimedMove::Delete => &["branch", "delete", "main", "--target", "proj--w2"],
+            ClaimedMove::Push => &["push"],
+        }
+    }
+}
+
+/// A landing into `main` stopped holding its claim: an rwv verb that would
+/// move `main`, or a branch the landing moves, refuses before it touches
+/// anything, naming the landing and the abort that ends it; that abort runs.
+pub fn a_verb_refuses_a_branch_a_stopped_landing_claims(verb: ClaimedMove) -> Scenario {
+    scenario(
+        "a verb refuses a branch a stopped landing claims",
+        vec![
+            create("w"),
+            create("w2"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(&ww("w"), &["land"], "landed", "landing"),
+            Step::kill("landing"),
+            Step::rwv(&a(), verb.args())
+                .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+                .claim(Claim::OutputContains("landing into 'main' holds it"))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w2"))),
+            Step::rwv_printed(&ww("w"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-app")),
+        ],
+    )
+}
+
 /// How a landing killed while it waited on its target's claim is ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KilledWaiter {

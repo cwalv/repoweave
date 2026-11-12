@@ -296,6 +296,25 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     let members = members_of(ctx, &request, &pushed);
     let acting_roles = request.filter.is_empty();
     let push_project = acting_roles || request.filter.names_text(&project_label(&pushed.project));
+    let published: Vec<_> = push_project
+        .then_some(crate::manifest::RepoKey::Project)
+        .into_iter()
+        .chain(
+            members
+                .iter()
+                .filter(|member| member.acting)
+                .map(|member| crate::manifest::RepoKey::Member(member.path.clone())),
+        )
+        .map(|repo| (repo, pushed.branch.to_string()))
+        .collect();
+    crate::landing_claim::refuse_moving_claimed(
+        pvcs.as_ref(),
+        &pushed.project_dir,
+        &pushed.project,
+        &published,
+        None,
+    )
+    .map_err(|e| json_refusal(&nothing_reported, e))?;
     validate_overwrites(ctx, &request, &pushed, &members, push_project)
         .map_err(|e| json_refusal(&nothing_reported, e))?;
 
