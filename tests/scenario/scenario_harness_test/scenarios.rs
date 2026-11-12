@@ -7927,6 +7927,33 @@ pub fn raw_merge_member_change_into_main() -> Scenario {
     )
 }
 
+/// A `dependency`'s pin the feature changed is judged against its receiving
+/// branch, and a receiving branch diverged from its upstream refuses rather
+/// than passing unjudged.
+pub fn a_carried_pin_against_a_diverged_receiving_branch_is_refused() -> Scenario {
+    Scenario {
+        name: "a carried pin against a diverged receiving branch is refused",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up",
+            }),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "lib-local"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    }
+}
+
 /// A `dependency` checkout moved off its pin in a feature's workspace is
 /// refused by alignment before its pin is judged, so the op-start relock
 /// never records a carried pin the guard did not see.

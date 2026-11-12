@@ -202,6 +202,12 @@ fn a_raw_merge_into_main_changing_an_entry_is_reported_pin_before_restore() {
 }
 
 #[test]
+fn a_carried_pin_against_a_diverged_receiving_branch_is_refused_before_anything_moves() {
+    runner::run(scenarios::a_carried_pin_against_a_diverged_receiving_branch_is_refused())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -665,6 +671,7 @@ every_scenario!(
     an_unplannable_member_is_refused_before_it_is_planned,
     member_change_race_listing_until_ported,
     raw_merge_member_change_into_main,
+    a_carried_pin_against_a_diverged_receiving_branch_is_refused,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,
