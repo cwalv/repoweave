@@ -756,6 +756,8 @@ every_scenario!(
     history_member_override_lands,
     rebased_backup_lifetime,
     history_published_rebase,
+    history_sync_contradicted_where_it_fast_forwards,
+    sync_continue_replays_what_the_stopped_run_reported,
     history_land_merge_resolves_derived_to_the_receiving_side,
     history_land_merge_still_stops_on_an_undeclared_path,
     history_sync_merge_resolves_derived_to_the_receiving_side,
@@ -5165,6 +5167,18 @@ fn history_sync_merge_resolves_derived_to_the_receiving_side_is_green() {
 #[test]
 fn history_sync_merge_still_stops_on_an_undeclared_path_is_green() {
     runner::run(scenarios::history_sync_merge_still_stops_on_an_undeclared_path())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn history_sync_contradicted_where_it_fast_forwards_is_green() {
+    runner::run(scenarios::history_sync_contradicted_where_it_fast_forwards())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_replays_what_the_stopped_run_reported_is_green() {
+    runner::run(scenarios::sync_continue_replays_what_the_stopped_run_reported())
         .assert_fully_decided_green();
 }
 

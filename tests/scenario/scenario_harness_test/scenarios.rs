@@ -13418,6 +13418,60 @@ pub fn history_sync_merge_still_stops_on_an_undeclared_path() -> Scenario {
     derived_both_sides("sync", true)
 }
 
+/// `sync --history` against a recorded value is refused for the project repo
+/// and each member alike, though the target's move is only taken in by
+/// fast-forward and no setting is read.
+pub fn history_sync_contradicted_where_it_fast_forwards() -> Scenario {
+    scenario(
+        "history: sync refuses a contradicting one-run value where it fast-forwards",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                .expect(Exit::refuses(Repo::App, State::HistoryContradicted))
+                .claim(Claim::Judged(Repo::Proj, State::HistoryContradicted))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
+/// A `sync` that integrated a range holding a merge by a merge commit and
+/// stopped on a conflict reports it again when `--continue` finishes.
+pub fn sync_continue_replays_what_the_stopped_run_reported() -> Scenario {
+    scenario(
+        "sync --continue replays the merged report of the stopped run",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::git(&ww("w"), Repo::App, &["switch", "-c", "side"]),
+            Step::commit(&ww("w"), Repo::App, "side-app"),
+            Step::git(&ww("w"), Repo::App, &["switch", "proj--w"]),
+            Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["merge", "--no-ff", "-m", "bump", "side"],
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+            Step::git(&ww("w"), Repo::App, &["add", "README"]),
+            Step::rwv(&ww("w"), &["sync", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: merged: the commits a rebase would replay hold the merge",
+                )),
+        ],
+    )
+}
+
 /// A target recording `history` that moved in `app` and `lib`, and a seat whose `app`
 /// edit conflicts with `main`'s: `sync` stops on `app`'s merge before `lib`,
 /// planned a fast-forward, is reached. The operator resolves `app` and
