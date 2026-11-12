@@ -3019,9 +3019,17 @@ fn run_machine(
                 history,
                 retire,
                 jobs,
+                resumes: None,
             },
             handler,
         )?,
+        SyncRequest::Continue {
+            op,
+            project_override,
+            allow_member_change,
+        } if op.record.verb == op_state::OpVerb::Land && !op.record.records_a_plan() => {
+            resume_before_the_plan(cwd_ctx, *op, project_override, allow_member_change, handler)?
+        }
         SyncRequest::Continue {
             op,
             project_override,
@@ -3801,12 +3809,93 @@ fn target_side_name(
         })
 }
 
+/// `rwv land --continue` of a landing stopped before it recorded its plan:
+/// killed or interrupted while it waited on its target's claim, or before it
+/// read its target. It did nothing a restore must undo, so it starts again
+/// under its own id from what its record says it was asked to land, waiting
+/// on the claim again if another landing still holds it.
+fn resume_before_the_plan<'a>(
+    invocation_ctx: &WorkspaceContext,
+    op: op_state::ResolvedOwner,
+    project_override: Option<ProjectName>,
+    added: Vec<RepoOperand>,
+    handler: &'a dyn OutputHandler,
+) -> anyhow::Result<OpContext<'a>> {
+    let op_state::ResolvedOwner {
+        record,
+        owner_workspace,
+    } = op;
+    if let Some(flag) = project_override.filter(|flag| *flag != record.project) {
+        crate::refuse!(
+            RefusalKind::ResumeContradictsRecord,
+            "op was started for project `{recorded}`; `--project {flag}` contradicts the record. \
+             Re-run `{resume}` without `--project`, or `rwv abort` to discard the op.",
+            recorded = record.project,
+            resume = op_state::resume_command(record.verb),
+        );
+    }
+    let Some(op_state::SyncFrom::Target(target)) = record
+        .take_in
+        .as_ref()
+        .and_then(|take_in| take_in.sync_from.clone())
+    else {
+        crate::refuse!(
+            RefusalKind::ResumeContradictsRecord,
+            "op {id} records neither a landing plan nor the branch it lands into, so it cannot \
+             be continued; `rwv abort` ends it",
+            id = record.id,
+        );
+    };
+    let mut allow_member_change: Vec<RepoOperand> = record
+        .take_in
+        .iter()
+        .flat_map(|take_in| take_in.allow_member_change.iter())
+        .map(|named| named.parse())
+        .collect::<Result<_, _>>()?;
+    for named in added {
+        if !allow_member_change.contains(&named) {
+            allow_member_change.push(named);
+        }
+    }
+    let owner_ctx = if owner_workspace == *invocation_ctx.active_root() {
+        invocation_ctx.clone()
+    } else {
+        WorkspaceContext::resolve_for_project(owner_workspace.as_path(), &record.project)?
+    };
+    let landing = crate::land::resolve_resumed(
+        &owner_ctx,
+        Some(target.as_str()),
+        allow_member_change,
+        record.retire,
+    )?;
+    if handler.emit_text() {
+        eprintln!(
+            "continuing land (op {id}): it stopped before it read '{target}', so it starts again",
+            id = record.id
+        );
+    }
+    guard_and_mark(
+        &owner_ctx,
+        FreshOp {
+            landing,
+            history: record.history,
+            retire: record.retire,
+            jobs: 1,
+            resumes: Some(record),
+        },
+        handler,
+    )
+}
+
 /// A [`SyncRequest::Fresh`] as [`guard_and_mark`] consumes it.
 struct FreshOp {
     landing: crate::land::Request,
     history: Option<crate::manifest::History>,
     retire: bool,
     jobs: usize,
+    /// The op a `--continue` takes up whose record holds no plan yet: it was
+    /// stopped before it read its target, so it starts over under its own id.
+    resumes: Option<OwnerRecord>,
 }
 
 /// Guard (preconditions), mark (write owner record + leases), savepoint
@@ -3822,6 +3911,7 @@ fn guard_and_mark<'a>(
         history,
         retire,
         jobs,
+        resumes,
     } = op;
 
     let emit_text = handler.emit_text();
@@ -3836,8 +3926,10 @@ fn guard_and_mark<'a>(
     // checkout are read and before the target's workspace is leased: a second
     // landing into the target waits on the claim rather than meeting the
     // first one's lease.
-    let op_id = OpId::new_now();
     let owner_workspace_dir = cwd_workspace_dir.clone();
+    let op_id = resumes
+        .as_ref()
+        .map_or_else(OpId::new_now, |record| record.id.clone());
     let mut initial_record = OwnerRecord::new_land(
         &op_id,
         history,
@@ -3846,9 +3938,34 @@ fn guard_and_mark<'a>(
         None,
         retire,
     );
-    let owner_only =
-        op_state::TouchedWorkspaces::of(initial_record.verb, &owner_workspace_dir, None);
-    let owned = op_state::acquire_op(&owner_only, &initial_record)?;
+    initial_record.take_in = Some(op_state::TakeInRecord {
+        sync_from: Some(op_state::SyncFrom::Target(request.target.to_string())),
+        allow_member_change: request
+            .allow_member_change()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        ..op_state::TakeInRecord::default()
+    });
+    let owned = match &resumes {
+        None => op_state::acquire_op(
+            &op_state::TouchedWorkspaces::of(initial_record.verb, &owner_workspace_dir, None),
+            &initial_record,
+        )?,
+        Some(resumed) => {
+            let recorded_target = resumed.target.as_ref().map(|t| t.as_path().to_path_buf());
+            let owned = op_state::AcquiredOp::of(op_state::TouchedWorkspaces::of(
+                initial_record.verb,
+                &owner_workspace_dir,
+                recorded_target.as_deref(),
+            ));
+            if let Err(e) = op_state::write_owner(&owner_workspace_dir, &initial_record) {
+                op_state::release_acquired(&owned);
+                return Err(e);
+            }
+            owned
+        }
+    };
     let claim = match crate::landing_claim::LandingClaim::take(
         project_vcs().as_ref(),
         &cwd_project_dir,

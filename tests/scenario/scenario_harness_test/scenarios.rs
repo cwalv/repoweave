@@ -11379,6 +11379,107 @@ pub fn a_continued_retire_releases_the_target_first() -> Scenario {
     )
 }
 
+/// How a landing killed while it waited on its target's claim is ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KilledWaiter {
+    Continued,
+    Aborted,
+}
+
+/// A landing waits on the claim another landing holds, saying whom it waits
+/// for and what ends the wait, and is killed while it waits. It leaves a
+/// record `rwv status` shows with two choices, and each runs as printed:
+/// `rwv land --continue` waits again and lands once the claim is free;
+/// `rwv abort` leaves nothing, and the landing run again lands.
+pub fn a_landing_killed_while_it_waits(how: KilledWaiter) -> Scenario {
+    let mut steps = vec![
+        create("w1"),
+        create("w2"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear", "--retire"],
+            "claimed",
+            "first",
+        ),
+        Step::rwv_paused(
+            &ww("w2"),
+            &["land", "--history", "linear", "--retire"],
+            "landing-claim-held",
+            "waiter",
+        ),
+        Step::kill("waiter"),
+        Step::rwv(&ww("w2"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rwv land --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+    ];
+    match how {
+        KilledWaiter::Continued => steps.extend([
+            Step::rwv(&ww("w2"), &["land", "--continue"])
+                .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+                .claim(Claim::OutputContains("waiting on 'main'"))
+                .claim(Claim::OutputContains("rwv abort")),
+            Step::rwv(&ww("w2"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+            Step::release("first").expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ]),
+        KilledWaiter::Aborted => steps.extend([
+            Step::rwv(&ww("w2"), &["abort"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+            Step::release("first").expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ]),
+    }
+    scenario("a landing killed while it waits", steps)
+}
+
+/// A landing killed while it waits, continued once the claim is free: it
+/// lands under its own op.
+pub fn a_landing_killed_while_it_waits_continues_once_free() -> Scenario {
+    scenario(
+        "a landing killed while it waits continues once free",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "claimed",
+                "first",
+            ),
+            Step::rwv_paused(
+                &ww("w2"),
+                &["land", "--history", "linear", "--retire"],
+                "landing-claim-held",
+                "waiter",
+            ),
+            Step::kill("waiter"),
+            Step::release("first").expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w2-lib",
+                }),
+        ],
+    )
+}
+
 /// A landing with no retire killed once it released its target, after
 /// another landing built on it: its `rwv land --continue` takes the claim
 /// back, and when it is refused it leaves the target released, so a third

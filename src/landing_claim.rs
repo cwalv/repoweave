@@ -253,6 +253,7 @@ fn take_within(
     let bytes = mine.bytes()?;
     let mut last_seen: Option<(Vec<u8>, Option<Vec<u8>>)> = None;
     let mut deadline = Instant::now() + wait;
+    let mut announced: Option<String> = None;
     loop {
         match path.create(&bytes) {
             Ok(()) => {
@@ -298,6 +299,14 @@ fn take_within(
             }
             other => other,
         };
+        let whom = waiting_on(&blocking);
+        if announced.as_ref() != Some(&whom) {
+            eprintln!(
+                "waiting on '{target}': {whom} This refuses once it shows no progress for {}s.",
+                wait.as_secs()
+            );
+            announced = Some(whom);
+        }
         let progress = match &blocking {
             Standing::Live(holder) | Standing::Dead(holder) => {
                 crate::op_state::OwnerRecord::path_in(holder.owner.as_path())
@@ -348,6 +357,40 @@ fn take_within(
         crate::test_pause::point("landing-claim-held");
         std::thread::sleep(crate::durable_file::CLAIM_POLL);
     }
+}
+
+/// What a waiting command prints of whom it waits on, and what ends the
+/// wait.
+fn waiting_on(blocking: &Standing) -> String {
+    match blocking {
+        Standing::Live(holder) | Standing::Dead(holder) => format!(
+            "op {op} holds it, recorded in {owner}. The wait ends when that operation ends, \
+             or when `{resume}` or `rwv abort`, run in {owner}, ends it.",
+            op = holder.op,
+            owner = holder.owner.as_path().display(),
+            resume = resume_of(holder),
+        ),
+        Standing::Unreachable(holder) => format!(
+            "op {op} holds it, recorded in {owner}, which is not here to read. The wait ends \
+             when that operation ends where {owner} is.",
+            op = holder.op,
+            owner = holder.owner.as_path().display(),
+        ),
+        Standing::Unread(text) => format!(
+            "an operation of another rwv release holds it ({text}). The wait ends when that \
+             operation ends."
+        ),
+    }
+}
+
+fn resume_of(holder: &Holder) -> String {
+    crate::op_state::resume_command(
+        crate::op_state::read_owner(holder.owner.as_path())
+            .ok()
+            .flatten()
+            .map_or(crate::op_state::OpVerb::Land, |record| record.verb),
+    )
+    .to_string()
 }
 
 /// Remove `path`, which read `seen` when it was judged to name the dead op

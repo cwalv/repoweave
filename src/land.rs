@@ -145,6 +145,19 @@ pub fn resolve(
     allow_member_change: Vec<RepoOperand>,
     retire: bool,
 ) -> anyhow::Result<Request> {
+    let request = resolve_resumed(ctx, target_flag, allow_member_change, retire)?;
+    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    Ok(request)
+}
+
+/// [`resolve`] for a landing whose own op record stands in the workspace
+/// already: one taken up by `--continue` before it recorded its plan.
+pub fn resolve_resumed(
+    ctx: &WorkspaceContext,
+    target_flag: Option<&str>,
+    allow_member_change: Vec<RepoOperand>,
+    retire: bool,
+) -> anyhow::Result<Request> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
@@ -253,7 +266,6 @@ pub fn resolve(
             ));
         }
     }
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     Ok(Request {
         project,
         feature,
@@ -262,6 +274,12 @@ pub fn resolve(
         judged,
         allow_member_change,
     })
+}
+
+impl Request {
+    pub fn allow_member_change(&self) -> &[RepoOperand] {
+        &self.allow_member_change
+    }
 }
 
 /// Read what the landing `request` lands onto: the newer of `T` and its

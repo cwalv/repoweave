@@ -878,6 +878,9 @@ every_scenario!(
     a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Retire),
     a_refused_continue_of_a_released_landing_leaves_the_target_free,
     a_continued_retire_releases_the_target_first,
+    a_landing_killed_while_it_waits(scenarios::KilledWaiter::Continued),
+    a_landing_killed_while_it_waits(scenarios::KilledWaiter::Aborted),
+    a_landing_killed_while_it_waits_continues_once_free,
     landing_as_refs,
     landing_as_refs_unpinned,
     lost_race_abort,
@@ -3015,6 +3018,18 @@ holding_rwv! {
                 .assert_fully_decided_green();
         }
         runner::run(scenarios::a_refused_continue_of_a_released_landing_leaves_the_target_free())
+            .assert_fully_decided_green();
+    }
+
+    /// A landing killed while it waits on the claim leaves a record whose
+    /// two printed choices both run: `--continue` waits again, `rwv abort`
+    /// leaves nothing.
+    fn a_landing_killed_while_it_waits_has_two_working_exits() {
+        for how in [scenarios::KilledWaiter::Continued, scenarios::KilledWaiter::Aborted] {
+            runner::run(scenarios::a_landing_killed_while_it_waits(how))
+                .assert_fully_decided_green();
+        }
+        runner::run(scenarios::a_landing_killed_while_it_waits_continues_once_free())
             .assert_fully_decided_green();
     }
 

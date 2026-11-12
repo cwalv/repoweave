@@ -109,7 +109,14 @@ and records no op with its id, or no record at all, is dead, and the next
 from here a deleted workweave and one this process cannot see look alike. A
 landing waits on such a claim and refuses `claim-owner-unreachable`;
 `rwv doctor` reports it and `--fix` releases it (`unreachable_claims`,
-`release_unreachable`). Removal is serialized by a
+`release_unreachable`). One residual: the guard `rwv doctor --fix` removes
+an unreachable claim under names the workspace it runs in, which records no
+op, so a second `rwv doctor --fix` racing the first reads that guard as dead
+and goes ahead too; if a landing creates its claim between the first's
+removal and the second's, the second's re-read finds the new bytes and leaves
+them, but a second whose re-read came before that create removes the new
+claim. Only two concurrent fixes of the same claim reach it. Removal is
+serialized by a
 takeover lock beside the claim, `<claim>.takeover.<dead op>`, created
 exclusively and naming its holder as the claim does: only that holder
 removes the claim, and only after re-reading the bytes it judged dead. While
@@ -134,6 +141,17 @@ rwv does not read is never judged dead. Taking it is a hard-link publish of a
 fully written temp (`durable_file::create_new`), which fails on an occupied
 path, as the op record's is. The compare-and-swap of each move stays the
 guard against every writer that takes no claim.
+
+**A landing waits on the claim holding only its record.** The record is
+written before the wait, with the branch the landing goes into and the
+consent it was given (`TakeInRecord::sync_from`, `allow_member_change`), and
+no plan. While it waits it prints whom it waits for and what ends the wait.
+A landing killed while it waits leaves that record: `rwv abort` clears it,
+and `rwv land --continue` takes it up as a landing that did nothing yet
+(`resume_before_the_plan`): it starts again under its own op id, waiting on
+the claim again, and a refusal there clears the record as a fresh landing's
+does. A landing killed after it took the claim and before it recorded its
+plan is taken up the same way, finding the claim its own.
 
 **The workspace state takes no claim.** `rwv-workspace-state` lives in one
 checkout's private directory and only a verb acting on that workspace writes it,

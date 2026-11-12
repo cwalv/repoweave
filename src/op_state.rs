@@ -1088,6 +1088,14 @@ impl OwnerRecord {
         }
     }
 
+    /// Whether the op recorded its plan: for a landing, the branch it lands
+    /// into and that branch's tip as it read them under its claim.
+    pub fn records_a_plan(&self) -> bool {
+        self.take_in
+            .as_ref()
+            .is_some_and(|take_in| take_in.receiving.contains_key(&RepoKey::Project))
+    }
+
     /// Build a new [`OwnerRecord`] for a `rwv land` invocation.
     ///
     /// Initial phase is `Replay` — the first phase the driver will enter.
