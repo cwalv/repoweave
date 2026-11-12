@@ -695,4 +695,90 @@ mod tests {
         assert!(vcs.upstream_of(&repo, &feat).unwrap().is_none());
         assert!(published(vcs.as_ref(), &repo, &feat));
     }
+
+    fn init(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.email", "t@t"]);
+        git(dir, &["config", "user.name", "T"]);
+    }
+
+    fn lock_pinning(proj: &std::path::Path, commit: &CommitId) {
+        std::fs::write(
+            proj.join("rwv.lock"),
+            format!(
+                r#"{{"repositories":{{"app":{{"type":"git","url":"file:///app","version":"{commit}"}}}}}}"#
+            ),
+        )
+        .unwrap();
+        git(proj, &["add", "rwv.lock"]);
+        git(proj, &["commit", "-q", "-m", "lock"]);
+    }
+
+    fn rebased_backups(vcs: &dyn Vcs, app: &std::path::Path) -> Vec<String> {
+        vcs.list_backups(app, RemoteTracking::Counted)
+            .unwrap()
+            .into_iter()
+            .filter(|l| l.backup.mark == Some(BackupMark::Rebased))
+            .map(|l| l.backup.name.as_str().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_rebased_backup_holding_the_only_way_to_a_live_pin_is_kept_by_both_drops() {
+        let tmp = crate::tempdir().unwrap();
+        let root = tmp.path();
+        let (app, proj) = (root.join("app"), root.join("projects").join("proj"));
+        init(&app);
+        git(&app, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&app, &["checkout", "-q", "-b", "feat"]);
+        git(&app, &["commit", "-q", "--allow-empty", "-m", "old"]);
+        let vcs = crate::git::git_vcs();
+        let feat = crate::vcs::RawRefName::new("feat");
+        let old = vcs.head_revision(&app).unwrap();
+        let backup_old = || {
+            vcs.create_backup(
+                &app,
+                &crate::vcs::BackupSource::Branch(feat.clone()),
+                &old,
+                Some(BackupMark::Rebased),
+            )
+            .unwrap()
+            .backup()
+            .name
+            .as_str()
+            .to_owned()
+        };
+        let name = backup_old();
+        git(&app, &["commit", "-q", "--amend", "--allow-empty", "-m", "new"]);
+        let new = vcs.head_revision(&app).unwrap();
+        init(&proj);
+        std::fs::write(proj.join("rwv.toml"), "").unwrap();
+        git(&proj, &["add", "rwv.toml"]);
+        lock_pinning(&proj, old.id());
+        let project = ProjectName::new("proj").unwrap();
+        let kept = crate::op_state::KeptBackup {
+            repo: crate::manifest::RepoKey::Member(RepoPath::new("app").unwrap()),
+            name: name.clone(),
+            published: false,
+        };
+        let app_pins = |root: &std::path::Path| {
+            live_pins(root)
+                .unwrap()
+                .remove(&RepoPath::new("app").unwrap())
+                .unwrap_or_default()
+        };
+
+        drop_rebased(root, root, &project, std::iter::once(&kept));
+        assert_eq!(rebased_backups(vcs.as_ref(), &app), vec![name.clone()]);
+        drop_rebased_of_branch(vcs.as_ref(), &app, &feat, &app_pins(root));
+        assert_eq!(rebased_backups(vcs.as_ref(), &app), vec![name.clone()]);
+
+        lock_pinning(&proj, new.id());
+        drop_rebased(root, root, &project, std::iter::once(&kept));
+        assert!(rebased_backups(vcs.as_ref(), &app).is_empty());
+        backup_old();
+        drop_rebased_of_branch(vcs.as_ref(), &app, &feat, &app_pins(root));
+        assert!(rebased_backups(vcs.as_ref(), &app).is_empty());
+    }
 }

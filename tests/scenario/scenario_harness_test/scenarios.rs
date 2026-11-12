@@ -15697,10 +15697,26 @@ pub fn stack_transitive() -> Scenario {
     scenario("stack: carried whole or not at all, parents first", steps)
 }
 
-/// `stack-merge-setting`: the same stack under a `merge` target; `w1`'s
-/// landing rewrites nothing, so `w2` never blocks and is not moved.
+/// `stack-merge-setting`: the same stack under a `merge` target, `w2` open
+/// in a workweave of its own, which would block a rebase; `w1`'s landing
+/// rewrites nothing, so `w2` never blocks and is not moved.
 pub fn stack_merge_setting() -> Scenario {
     let mut steps = stack_on_a_seat_under("merge");
+    steps.push(
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2s",
+                "--branch",
+                "w2",
+            ],
+        )
+        .expect(Exit::Succeeds),
+    );
     steps.extend(main_moves_app("main-app"));
     steps.extend([Step::rwv(&ww("w1"), &["land"])
         .expect(Exit::Succeeds)
