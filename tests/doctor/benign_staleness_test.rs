@@ -1156,9 +1156,9 @@ fn stray_commits_with_the_expected_branch_checked_out_nowhere_are_kept_and_the_b
 
 /// Where the expected branch is checked out in another checkout, the copy
 /// runs there, and running it as printed puts the commits on that branch.
-/// Where the branch has moved on, the copies are new commits, so the checkout
-/// still holds commits no other branch reaches and the landing refuses as
-/// before: a known limit of the copy as the state's choice.
+/// Where the branch has moved on, the copies are new commits; each records
+/// the commit it copies, so the stray set empties and the landing refuses
+/// the checkout on its own branch instead, naming `rwv update`.
 #[test]
 fn stray_commits_are_copied_where_the_expected_branch_is_checked_out() {
     let f = fixture();
@@ -1182,7 +1182,8 @@ fn stray_commits_are_copied_where_the_expected_branch_is_checked_out() {
         "ww: wip work"
     );
     let again = land_refused(&f);
-    common::cli::refused(&again, State::AlignmentOnBranchWithStrayCommits);
+    let stderr = common::cli::refused(&again, State::AlignmentOnBranch);
+    assert!(stderr.contains("rwv update"), "{stderr}");
 }
 
 /// A source member detached at work diverged from its branch: no copy is
