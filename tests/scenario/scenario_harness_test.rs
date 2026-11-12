@@ -644,6 +644,7 @@ macro_rules! every_scenario {
                 "three_way_pins_on_old_git",
                 scenarios::three_way_pins_on_old_git().into_steps(),
             ));
+            #[cfg(unix)]
             every.push((
                 "git_below_2_38",
                 scenarios::git_below_2_38().into_steps(),

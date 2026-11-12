@@ -12579,6 +12579,7 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
 /// source's checkout and carries `w2` along per dependent, `app` replayed
 /// and `w2`'s project branch re-pinned in place, and nothing refuses for the
 /// git release.
+#[cfg(unix)]
 pub fn git_below_2_38() -> Scenario {
     let mut steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
