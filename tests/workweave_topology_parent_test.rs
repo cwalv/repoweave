@@ -585,13 +585,6 @@ fn listed(main: &MainWorkspace, ww: &Workweave) -> bool {
         .is_some_and(|index| index.entry_at(&ww.root).is_some())
 }
 
-fn routes(stderr: &str) -> Vec<&str> {
-    stderr
-        .lines()
-        .filter_map(|l| l.strip_prefix("rwv explain "))
-        .collect()
-}
-
 /// A parked retire resumed with `--continue` is still a retire: records that
 /// came to disagree while it was parked are refused, not repaired and then
 /// deleted.
@@ -616,9 +609,7 @@ fn continuing_a_parked_retire_refuses_records_that_disagree() {
         .current_dir(&ww.root)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert_eq!(routes(&stderr), vec!["stale-registry-entry"], "{stderr}");
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::StaleRegistryEntry);
     assert!(
         !listed(&main, &ww),
         "a resumed retire lists nothing again; it said:\n{stderr}"
@@ -646,9 +637,7 @@ fn a_retire_whose_records_come_to_disagree_mid_op_deletes_nothing() {
     unlist(&main, &ww);
     let out = held.release();
 
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert_eq!(routes(&stderr), vec!["stale-registry-entry"], "{stderr}");
+    common::cli::refused(&out, repoweave::refusal::RefusalKind::StaleRegistryEntry);
     assert!(ww.root.exists(), "the retire deleted nothing");
 }
 
