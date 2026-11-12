@@ -540,6 +540,21 @@ A commit carries key/value **annotations** beside its message:
 `VcsError` carries a `kind()` of stable kebab-case tags and a
 serializable mirror, `VcsErrorOutput`, for `--json`.
 
+**The tool a backend drives, and what it can do.** A backend states the
+oldest release of its tool it runs on (`Vcs::minimum_release`) and whether the
+installed one meets it (`Vcs::tool_readiness`). `cli::dispatch::run` asks
+every backend `vcs_for` can resolve, through `vcs::refuse_unready_tools`, once
+per invocation and before any verb that touches a repository reads anything,
+and refuses with `unsupported-vcs-tool` or `missing-vcs-tool`; `explain`,
+`completions` and `setup` are exempt by an exhaustive match, so a new verb is
+classified when it is added. For git the floor is `MINIMUM_RELEASE`
+(`src/git.rs`), the oldest release every command it runs outside a detected
+capability exists in, and it is read from one `git version` that every
+capability also answers from. A command newer than the floor is a capability
+the trait exposes as an `Option` (`Vcs::tree_merges`), which a caller takes
+its fallback on when it is `None`; the list is in
+[`docs/internals/git-floor.md`](docs/internals/git-floor.md).
+
 **What the seam holds by compiler, and what it does not.** No production frame
 outside `git.rs` spawns git or assembles its argv: `git_command` is private to
 the module, and every git a production frame spawns is built by

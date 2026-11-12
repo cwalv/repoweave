@@ -1012,3 +1012,115 @@ fn a_host_that_makes_no_symlink_runs_the_suite_under_the_handed_tmpdir_and_says_
         entries(handed.path())
     );
 }
+
+const FLOOR_HEADER: &str =
+    "==> cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)";
+
+/// `scripts/ci-local.sh` copied beside a stub `git-floor.sh` whose "built"
+/// git answers `git version $CI_LOCAL_TEST_FLOOR_GIT`, and which names
+/// release 2.36.0, so the stage's wiring is observed without a download or a
+/// build.
+fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
+    let dir = common::tempdir().expect("tempdir");
+    let scripts = dir.path().join("scripts");
+    let bin = dir.path().join("floor-bin");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let ci_local = scripts.join("ci-local.sh");
+    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    for (path, body) in [
+        (
+            scripts.join("git-floor.sh"),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --print-release ]; then echo 2.36.0; else echo '{}'; fi\n",
+                bin.display()
+            ),
+        ),
+        (
+            bin.join("git"),
+            "#!/bin/sh\necho \"git version ${CI_LOCAL_TEST_FLOOR_GIT:-2.36.0}\"\n".to_owned(),
+        ),
+    ] {
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (dir, ci_local)
+}
+
+#[test]
+fn default_run_never_runs_the_git_floor_stage() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(&ci_local, fixture.path(), stub.path(), &[], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(
+        !stdout_of(&out).contains(FLOOR_HEADER),
+        "the default run reached the opt-in git-floor stage:\n{}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+fn the_git_floor_stage_runs_the_suite_with_the_floor_git_first_on_path() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=git-floor"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(FLOOR_HEADER), "{stdout}");
+    assert!(stdout.contains("git version 2.36.0 from "), "{stdout}");
+    assert_eq!(
+        stdout
+            .matches("STUB_CARGO: test --release --no-fail-fast --features test-pause")
+            .count(),
+        1,
+        "{stdout}"
+    );
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: git-floor)."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_git_floor_stage_whose_git_is_not_the_floor_runs_nothing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=git-floor"],
+        &[("CI_LOCAL_TEST_FLOOR_GIT", "2.53.0")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(!stdout_of(&out).contains("STUB_CARGO:"), "{}", stdout_of(&out));
+    assert!(
+        stderr_of(&out).contains("PATH resolves git version 2.53.0, not git 2.36.0"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+/// CI runs the git-floor stage: the release it tests is the one the stage
+/// derives, never a second copy in the workflow.
+#[test]
+fn ci_runs_the_git_floor_stage() {
+    let workflow =
+        std::fs::read_to_string(repo_root().join(".github/workflows/ci-checks.yml")).unwrap();
+    assert!(
+        workflow.contains("run: ./scripts/ci-local.sh --stages=git-floor"),
+        "ci-checks.yml runs no git-floor stage"
+    );
+}

@@ -60,6 +60,52 @@ jobs:
         shell: bash
         run: ./scripts/ci-local.sh
 
+  git-floor:
+    # The suite against the oldest git rwv runs on (MINIMUM_RELEASE in
+    # src/git.rs), built from its release tarball by scripts/git-floor.sh. The
+    # checks job runs the runner's own, much newer git; a command or option
+    # newer than the floor that is used without a fallback is red only here.
+    name: CI (oldest supported git)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        run: rustup show
+
+      - name: Install uv (required by uv-workspace e2e tests)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Go (required by go-work e2e tests)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install Node.js (required by npm-workspace e2e tests; ships npm 10+)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Install what building git needs
+        run: sudo apt-get install -y --no-install-recommends zlib1g-dev
+
+      - name: Cache the built git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/rwv/git-floor
+          key: git-floor-${{ runner.os }}-${{ hashFiles('scripts/git-floor.sh', 'src/git.rs') }}
+          restore-keys: git-floor-${{ runner.os }}-
+
+      - name: Configure git identity (required by sync merge/rebase tests)
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Run the suite against the oldest supported git
+        shell: bash
+        run: ./scripts/ci-local.sh --stages=git-floor
+
   windows-check:
     # Release artifacts include windows-msvc. This job establishes that
     # everything in the crate COMPILES there — production and test code

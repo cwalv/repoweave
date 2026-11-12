@@ -81,6 +81,10 @@ backstop unnecessary.
   questions, reflink and hardlink placement with byte-exact verification,
   settle and read-only `reference` members, the per-platform hardlink
   declaration, role changes, and the migration from symlinked members.
+- [git-floor](./git-floor.md) — the oldest git rwv runs on, why it is that
+  release, the one check that refuses below it, the commands newer than it
+  and the capability detection that holds them, and the git-floor stage that
+  runs the suite at it.
 
 ## Where else to look
 

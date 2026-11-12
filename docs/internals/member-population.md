@@ -120,8 +120,8 @@ repository can be asked without naming git's mechanism.
    `update-index -q --refresh`, then the `post-checkout` hook with the arguments
    `worktree add` gives it (a null previous HEAD, the new HEAD, `1`), because
    `--no-checkout` skips that hook. A failing hook is `VcsError::HookRejected`.
-   Running a hook on request needs `git hook run` (git 2.36), so the git backend
-   answers no population questions on an older git.
+   Running a hook on request needs `git hook run` (git 2.36), the oldest git
+   rwv runs on, so the git backend answers every population question.
 5. **`check_out_paths`**: check named paths out again from what the workspace
    records, replacing what is there. This is the repair. Git:
    `checkout-index -f -u`, which unlinks and creates rather than writing into
