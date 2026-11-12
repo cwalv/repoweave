@@ -264,6 +264,7 @@ struct NotPorted {
     rev: Option<String>,
     here: Option<String>,
     form: Option<(Form, &'static str)>,
+    role: Option<String>,
 }
 
 impl NotPorted {
@@ -296,6 +297,9 @@ impl NotPorted {
             }
             if let Some(value) = &self.rev {
                 bindings.insert(key, value.clone());
+            }
+            if let Some(role) = &self.role {
+                bindings.insert("<role>", role.clone());
             }
             text.push_str(&crate::diagnosis::choices_text(vcs, &[form], &bindings));
         }
@@ -346,6 +350,7 @@ fn not_ported(
                         rev: Some(field.now.clone()),
                         here: here_value,
                         form: Some(setter_of(field.name, now.history.is_none())),
+                        role: None,
                     });
                 }
             }
@@ -356,6 +361,7 @@ fn not_ported(
                 rev: Some(now.url.to_string()),
                 here: here.map(|h| h.url.to_string()),
                 form: Some((Form::C11MemberAdd, "<url>")),
+                role: Some(now.role.to_string()),
             }),
             (Some(was), None) => out.push(NotPorted {
                 repo: path.to_string(),
@@ -364,6 +370,7 @@ fn not_ported(
                 rev: None,
                 here: here.map(|h| h.url.to_string()),
                 form: here.map(|_| (Form::C11MemberRemove, "<m>")),
+                role: None,
             }),
             (None, None) => {}
         }
@@ -381,6 +388,7 @@ fn not_ported(
             } else {
                 (Form::C11SetTopHistory, "<h>")
             }),
+            role: None,
         });
     }
     out
@@ -689,17 +697,16 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
             continue;
         }
         let Some(entry) = entry else {
-            let url = theirs
-                .get_entry(path)
-                .or_else(|| base.get_entry(path))
-                .map(|e| e.url.to_string());
+            let listed = theirs.get_entry(path).or_else(|| base.get_entry(path));
             let mut judging = State::PortNotListed
                 .of(path)
                 .member()
                 .subject(format!("{} moves its pin", commit.short()))
                 .bind("<m>", path);
-            if let Some(url) = url {
-                judging = judging.bind("<url>", url);
+            if let Some(listed) = listed {
+                judging = judging
+                    .bind("<url>", &listed.url)
+                    .bind("<role>", listed.role);
             }
             report.add(judging.judge(vcs));
             continue;

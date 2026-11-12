@@ -2459,7 +2459,7 @@ impl Form {
             },
             Self::C11MemberAdd => &FormRow {
                 choice: C::C11,
-                steps: &[Rwv("rwv member add <url>")],
+                steps: &[Rwv("rwv member add <url> --role <role>")],
                 at: W::WithBranch,
                 shipped: true,
             },

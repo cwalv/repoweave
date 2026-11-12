@@ -1382,7 +1382,7 @@ fn judge_change(
         forms.push(Form::C12Feature);
     }
     if let Some(entry) = &change.removed {
-        judging = judging.bind("<url>", &entry.url);
+        judging = judging.bind("<url>", &entry.url).bind("<role>", entry.role);
         forms.push(Form::C11MemberAdd);
     }
     for field in &change.fields {

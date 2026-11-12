@@ -12097,6 +12097,37 @@ pub fn cherry_pick_runs_the_printed_add_of_a_member_not_listed() -> Scenario {
     )
 }
 
+/// [`cherry_pick_runs_the_printed_add_of_a_member_not_listed`] for a
+/// `dependency`: the printed add restores the member with its role, so the
+/// pick then carries its pin by name.
+pub fn cherry_pick_runs_the_printed_add_of_a_dependency_not_listed() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Docs, "docs-up"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Docs, State::PortNotListed))
+            .claim(Claim::OutputContains("--role dependency")),
+        Step::rwv_printed(&ww("p"), "rwv member add ").expect(Exit::Succeeds),
+        Step::git(&ww("p"), Repo::Proj, &["diff", "HEAD", "--", "rwv.toml"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("p"), Repo::Proj, "proj--p".to_owned()),
+                member: Repo::Docs,
+                mark: "docs-up",
+            }),
+    ]);
+    Scenario {
+        name: "cherry-pick runs the printed add of a dependency not listed",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
 /// `--except` records a member's checked-out tip as `lock` would, so a
 /// member checked out off its branch is refused for its alignment before
 /// anything is recorded.

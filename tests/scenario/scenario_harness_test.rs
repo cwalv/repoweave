@@ -845,6 +845,7 @@ every_scenario!(
     cherry_pick_runs_the_printed_merge,
     cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward,
     cherry_pick_runs_the_printed_add_of_a_member_not_listed,
+    cherry_pick_runs_the_printed_add_of_a_dependency_not_listed,
     cherry_pick_except_judges_the_member_for_alignment,
     cherry_pick_runs_the_printed_relock_of_an_unpinned_member,
     cherry_pick_refuses_a_pin_this_clone_lacks,
@@ -4679,6 +4680,12 @@ fn cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward_scenario() {
 #[test]
 fn cherry_pick_runs_the_printed_add_of_a_member_not_listed_scenario() {
     runner::run(scenarios::cherry_pick_runs_the_printed_add_of_a_member_not_listed())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_runs_the_printed_add_of_a_dependency_not_listed_scenario() {
+    runner::run(scenarios::cherry_pick_runs_the_printed_add_of_a_dependency_not_listed())
         .assert_fully_decided_green();
 }
 

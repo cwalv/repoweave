@@ -328,7 +328,7 @@ The others follow.
 | `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv branch set-history --unset --repo <m>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv branch set-history <h>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv branch set-history --unset` | a workspace with the branch checked out | re-pins by name, backup kept |
-| `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url> --role <role>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `member changes` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | `rwv land --allow-member-change <changed>` | the workspace with that feature | only named entries change; the lineage rule still judges |
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | rerun with `--allow-member-change <m>` | the workspace with that feature | only named entries change; the lineage rule still judges |
@@ -412,7 +412,7 @@ The others follow.
 | `merge in range` | C26: merge `<pin>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <pin>`); then rerun with `--except <m>` | the checkout | a merge adds only |
 | `backward` | C39: undo these commits on `<b>` by new commits | VCS action (git: `git -C <checkout> revert <ids>`); then rerun with `--except <m>` | where `<b>` is checked out | a revert adds only |
 | `backward` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit`; then rerun with `--except <m>` | here | re-pins by name; backup for a detached HEAD |
-| `not listed` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `not listed` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url> --role <role>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `not listed` | C40: leave `<m>` out of the pick, recording it as it stands | rerun with `--except <m>` | here | records its tip forward only |
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
