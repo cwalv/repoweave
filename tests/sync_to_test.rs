@@ -1065,13 +1065,32 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
     );
     let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
+    let remote = tmp.path().join("server-remote.git");
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            &primary.server_dir.to_string_lossy(),
+            &remote.to_string_lossy(),
+        ],
+    );
+    common::git_in(
+        &primary.server_dir,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", remote.display()),
+            SERVER_URL,
+        ],
+    );
+
     // Flip primary's .rwv-active to a different project.
     std::fs::write(primary.root.join(".rwv-active"), "other-project\n").unwrap();
 
     // rwv sync from the workweave should pick up primary's project commit,
     // not bail with "active project mismatch".
     rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["sync", "--strategy=ff"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1097,7 +1116,7 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
          after sync; primary's commit was not incorporated"
     );
 
-    // §4.7, applied to `sync`. §5 classifies sync as a MOVE — it advances the
+    // A sync is a MOVE — it advances the
     // ref the CWD checkout is already on — so "did the work arrive" is only
     // half the question; "is the checkout still on the ref that received it"
     // is the other half, and it is the half a tip/ancestry assertion cannot
@@ -1496,33 +1515,6 @@ fn elsewhere(tmp: &Path) -> PathBuf {
 }
 
 #[test]
-fn sync_reads_a_relative_source_from_the_invocation_directory() {
-    let tmp = common::tempdir().unwrap();
-    let parent = tmp.path().join("deep");
-    let (primary, ww_root, ww_project, _ww_server, _initial_sha) = make_marker_ww(&parent);
-
-    let c2 = make_commit(&primary.server_dir, "p.txt", "p\n", "primary: advance");
-    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "lock: primary advance"],
-    );
-    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
-
-    rwv()
-        .args(["sync", "../../primary", "--strategy=ff"])
-        .current_dir(&ww_root)
-        .assert()
-        .success();
-
-    common::git_in(
-        &ww_project,
-        &["merge-base", "--is-ancestor", &primary_tip, "HEAD"],
-    );
-}
-
-#[test]
 fn sync_to_reads_a_relative_target_from_the_c_directory() {
     let tmp = common::tempdir().unwrap();
     let parent = tmp.path().join("deep");
@@ -1545,34 +1537,5 @@ fn sync_to_reads_a_relative_target_from_the_c_directory() {
     assert_eq!(
         common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         ww_tip
-    );
-}
-
-#[test]
-fn sync_reads_a_relative_source_from_the_c_directory() {
-    let tmp = common::tempdir().unwrap();
-    let parent = tmp.path().join("deep");
-    let (primary, ww_root, ww_project, _ww_server, _initial_sha) = make_marker_ww(&parent);
-
-    let c2 = make_commit(&primary.server_dir, "p.txt", "p\n", "primary: advance");
-    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "lock: primary advance"],
-    );
-    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
-
-    rwv()
-        .arg("-C")
-        .arg(&ww_root)
-        .args(["sync", "../../primary", "--strategy=ff"])
-        .current_dir(elsewhere(tmp.path()))
-        .assert()
-        .success();
-
-    common::git_in(
-        &ww_project,
-        &["merge-base", "--is-ancestor", &primary_tip, "HEAD"],
     );
 }
