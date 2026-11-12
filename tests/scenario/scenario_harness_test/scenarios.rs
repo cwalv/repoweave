@@ -6536,6 +6536,9 @@ pub fn continue_rejudges_the_resolved_manifest() -> Scenario {
         .expect(Exit::Succeeds)
         .may_strand(&[Repo::Proj])
         .claim(Claim::OutputContains(
+            "local/remotes/lib: removed (the target's entry, named by --allow-member-change)",
+        ))
+        .claim(Claim::OutputContains(
             "local/remotes/docs: removed (the target's entry, named by \
              --allow-member-change)",
         ))
