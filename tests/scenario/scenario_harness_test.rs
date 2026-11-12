@@ -2608,7 +2608,6 @@ holding_rwv! {
 
     /// A receiving branch the landing moved as a ref, deleted before `rwv
     /// abort`: abort refuses, printing a choice that clears it when run.
-    #[ignore = "the foreign-tip recovery's second choice, ending the operation with the ref left as it is, is the landing-as-refs slice's"]
     fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
         runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it())
             .assert_fully_decided_green();

@@ -322,6 +322,9 @@ pub enum Commands {
         /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `projects/<name>` for the project repo); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits are first kept as an `abandoned` backup, which `rwv backup list` shows and `rwv backup drop` drops.
         #[arg(long = "abandon-foreign-tip", value_name = "REPO")]
         abandon_foreign_tip: Vec<crate::manifest::RepoOperand>,
+        /// End the operation leaving THIS repo's branches that abort cannot put back (moved on since the operation wrote them, gone, or checked out) as they are, rather than refusing: every other repo is restored, this repo's savepoints are dropped, and a commit only a dropped savepoint reached is first kept as a backup. Name the repo as abort's own output does; repeat the flag per repo.
+        #[arg(long = "leave-foreign-tip", value_name = "REPO")]
+        leave_foreign_tip: Vec<crate::manifest::RepoOperand>,
     },
     /// List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
     #[command(arg_required_else_help = true)]

@@ -7731,6 +7731,9 @@ struct AbortTally {
     any_failure: bool,
     /// The repos left at a tip `--abandon-foreign-tip` restores over.
     abandonable: Vec<RepoOperand>,
+    /// The repos with a branch abort cannot put back, which
+    /// `--leave-foreign-tip` leaves as it stands.
+    leavable: Vec<RepoOperand>,
     /// The repos left stopped in an operation abort may not cancel unasked,
     /// with the VCS action that shows how to end it there.
     stopped: Vec<(RepoOperand, ConflictOp, String)>,
@@ -8641,6 +8644,27 @@ fn restore_landing_refs(
                     let at = observed
                         .as_ref()
                         .map_or(String::new(), |o| format!(" at {}", o.short()));
+                    if abandon.leaves(&repo_key, &record.project) {
+                        match keep_unreached(
+                            vcs.as_ref(),
+                            &dir,
+                            &crate::vcs::BackupSource::Branch(branch.clone()),
+                            &saved.at,
+                            &named,
+                        )
+                        .and_then(|()| Ok(vcs.drop_ref_savepoint(&dir, &key, branch)?))
+                        {
+                            Ok(()) => outln!(
+                                "  {named}: '{branch}'{at} is left as it is, as \
+                                 --leave-foreign-tip names it: {why}"
+                            ),
+                            Err(e) => {
+                                eprintln!("  {named}: '{branch}': {e:#}");
+                                tally.any_failure = true;
+                            }
+                        }
+                        continue;
+                    }
                     eprintln!(
                         "  {named}: '{branch}'{at} is left where it is, not restored to {}: {why}",
                         saved.at.short()
@@ -8666,6 +8690,7 @@ fn restore_landing_refs(
                     } else if observed.is_some() && !tally.abandonable.contains(&named) {
                         tally.abandonable.push(named.clone());
                     }
+                    tally.leavable.push(named.clone());
                 }
                 Err(e) => {
                     eprintln!("  {named}: '{branch}' could not be restored: {e:#}");
@@ -8689,11 +8714,17 @@ fn restore_landing_refs(
         created,
         wrote,
     ) {
-        eprintln!(
-            "  {}: '{branch}', which the op created, is left where it is: {why}",
-            RepoOperand::of(&repo, &record.project)
-        );
+        let named = RepoOperand::of(&repo, &record.project);
+        if abandon.leaves(&repo, &record.project) {
+            outln!(
+                "  {named}: '{branch}', which the op created, is left as it is, as \
+                 --leave-foreign-tip names it: {why}"
+            );
+            continue;
+        }
+        eprintln!("  {named}: '{branch}', which the op created, is left where it is: {why}");
         tally.any_foreign = true;
+        tally.leavable.push(named);
     }
 }
 
@@ -8982,6 +9013,17 @@ fn print_abort_recovery_options(tally: &AbortTally) {
     }
     for (named, choice) in &tally.blocked {
         lines.push(format!("  {named}: {choice}"));
+    }
+    for named in tally
+        .leavable
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        lines.push(format!(
+            "  {named}: end the operation leaving that branch as it is, every other repo \
+             restored, a commit only its savepoint reached kept as a backup first:\n\
+             \trwv abort --leave-foreign-tip {named}"
+        ));
     }
     for named in &tally.abandonable {
         lines.push(format!(

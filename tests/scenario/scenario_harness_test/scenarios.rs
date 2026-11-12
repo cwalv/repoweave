@@ -10074,7 +10074,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
         Step::rwv_paused(
             &ww("w"),
             &["land", "--retire", "--allow-member-change", LIB],
-            "retire",
+            "landed",
             "landing",
         ),
         Step::kill("landing"),
@@ -10085,7 +10085,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
             .may_strand(&[Repo::Lib, Repo::Proj])
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib]),
-        Step::rwv_printed(&ww("w"), "rwv abort ")
+        Step::rwv_printed_holding(&ww("w"), "rwv abort ", "--leave-foreign-tip")
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Lib, Repo::Proj])
             .may_restore(&[Repo::Proj, Repo::Lib]),
