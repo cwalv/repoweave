@@ -422,6 +422,7 @@ pub enum VcsAction {
     SwitchDetached,
     CherryPick,
     CherryPickOntoCheckedOut,
+    CherryPickMainline,
     Revert,
     MergeNoFastForward,
     PushCommitAs,
@@ -434,7 +435,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 18] = [
+    pub const ALL: [VcsAction; 19] = [
         Self::Commit,
         Self::Stash,
         Self::Status,
@@ -444,6 +445,7 @@ impl VcsAction {
         Self::SwitchDetached,
         Self::CherryPick,
         Self::CherryPickOntoCheckedOut,
+        Self::CherryPickMainline,
         Self::Revert,
         Self::MergeNoFastForward,
         Self::PushCommitAs,

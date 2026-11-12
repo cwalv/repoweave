@@ -2530,6 +2530,7 @@ impl Vcs for GitVcs {
             VcsAction::SwitchDetached => "git -C <checkout> switch --detach <r>/<b>",
             VcsAction::CherryPick => "git -C <checkout> cherry-pick <ids>",
             VcsAction::CherryPickOntoCheckedOut => "git -C <b-checkout> cherry-pick <ids>",
+            VcsAction::CherryPickMainline => "git -C <checkout> cherry-pick -m 1 <ids>",
             VcsAction::Revert => "git -C <checkout> revert <ids>",
             VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <pin>",
             VcsAction::PushCommitAs => "git -C <checkout> push <r> <sha>:refs/heads/<name>",

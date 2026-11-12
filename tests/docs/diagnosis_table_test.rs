@@ -294,13 +294,23 @@ fn an_unshipped_spelling_is_reported() {
     assert!(parse_failure("rwv push --repo <m>").is_none());
     assert!(parse_failure("rwv push --branch <W>").is_none());
     assert!(parse_failure("rwv workweave delete <ww>").is_none());
-    assert!(!Form::C38.printable());
+    assert!(parse_failure("rwv cherry-pick <rev> -m <n>").is_none());
+    assert!(parse_failure("rwv cherry-pick <rev> --except <m> --keep").is_some());
+}
+
+/// A form marked unshipped spells a command clap rejects: a flag left unset
+/// after its verb shipped would hide a choice that runs.
+#[test]
+fn every_unshipped_form_spells_a_command_that_does_not_parse() {
+    let stale: Vec<String> = Form::ALL
+        .into_iter()
+        .filter(|f| !f.row().shipped && !f.rwv_commands().is_empty())
+        .filter(|f| f.rwv_commands().iter().all(|c| parse_failure(c).is_none()))
+        .map(|f| format!("{f:?}"))
+        .collect();
     assert!(
-        Form::C38
-            .rwv_commands()
-            .iter()
-            .any(|c| parse_failure(c).is_some()),
-        "the fixture form must really be unshipped, or the walks above prove nothing about it"
+        stale.is_empty(),
+        "marked unshipped, yet every command parses: {stale:?}"
     );
 }
 

@@ -15,6 +15,7 @@ rwv explain <verb>
 - **doctor** — convention-violation checks (orphans, drift, stale locks) (`--json` available)
 - **sync** — bring another workspace's committed state into this one (`--json` available)
 - **land** — land this feature into its record's target: compose here, then fast-forward the target (`--json` available)
+- **cherry-pick** — port one project commit onto this feature: copy member ranges, carry dependency pins, commit the relock (`--json` available)
 - **push** — publish member repos then the project repo to shared remotes (`--json` available)
 - **clone** — clone a project and each member at the commit rwv.lock pins; exit status 3 when a member is left unpinned (`--json` available)
 - **fetch** — the pruning fetch of every remote of every repo; moves no branch, checkout or lock (`--json` available)

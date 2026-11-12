@@ -319,6 +319,13 @@ Schema:
           "enum": [
             "missing-lock-merge-driver"
           ]
+        },
+        {
+          "description": "A project commit `rwv cherry-pick` cannot port as it stands.",
+          "type": "string",
+          "enum": [
+            "port"
+          ]
         }
       ]
     },

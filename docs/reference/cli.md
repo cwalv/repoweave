@@ -488,6 +488,31 @@ Land the checked-out feature into the branch its record lands into (its target),
 
 **Exit codes:** `0` when the landing completes; `1` when it refuses or stops (op record kept; `--continue` or `rwv abort`); `3` for a retire that left a branch of the workweave.
 
+### `rwv cherry-pick <project-rev> [-m <n>] [--except <repo>]... [--json] [--project <name>]`
+
+Port one project commit onto the checked-out feature: what `<project-rev>` introduced, applied as new commits in each repo it moves. To port a fix into a line, run it in a feature whose target is that line, then land the feature. `<project-rev>` is any revision the project repo resolves as last fetched; one naming nothing refuses as `name` `no-such-branch`. A declared branch refuses as `target` `no target`, naming `rwv branch create <W>` and `rwv workweave create <ww>`.
+
+The commit's `rwv.lock` is read against its parent's; for a merge commit, against the parent `-m <n>` names (from 1). A merge commit without `-m`, an `-m` naming a parent the commit lacks, and an `-m` on a commit that is no merge refuse as `port` `mainline`, the parents listed.
+
+- **`owned` and `fork` members.** For each member whose pin the commit moves, the commits the new pin reaches and the old one does not, less those this branch already holds, are copied onto the member's branch here oldest first, each recording the commit it copies (git: `cherry-pick -x`). A copy that comes out empty, its change already here, is dropped and reported. Where the new pin is a merge whose parent `-m` names is the old pin, that merge is copied against the same parent instead, so a landing made by merge ports whole. Any other merge in the commits to copy refuses (`port` `merge in range`). The member must sit at this branch's pin (`pin` `ahead` or `unpinned` refuse, naming `rwv lock --commit`).
+- **`dependency` and `reference` members** are never copied: the new pin is carried by name, as `rwv member pin` would set it, and must be on the member's declared branch or its upstream (`pin` `not on declared branch`). A pin here that already reaches it is kept. The project commit records each carried pin in its `Rwv-Repin` annotation, verb `cherry-pick`.
+- **Refused per member:** a pin the commit moves backward, a diverged change included (`port` `backward`, listing the commits it drops), a member this branch does not list (`port` `not listed`), and a pin this clone lacks (`pin` `unreachable`). A member the commit adds or removes, or one its parent does not pin, has no range: its pin here stays, reported.
+- **Entries are never ported.** Each change the commit made to a member entry (`branch`, `url`, `role`, `history`, `recurse-submodules`; the member added or removed) or to the top-level `history` is reported `not-ported`, with the parent's value, the commit's and this branch's, and the setter that would port it. This branch's entries and `history` stay as they are. The other top-level tables (`[integrations]`, `[workweave]`) port as content.
+
+**The project commit**, last, applies the commit's other project files, writes the relock (each copied member's new tip, each carried pin, each `--except` member's tip; the commit's own `rwv.lock` is never picked), and keeps the commit's message and author, recording the commit it mirrors in its `Rwv-Picked-From` annotation. A commit leaving nothing to port makes no commit and says so, so running it again after a completed port changes nothing.
+
+Every refusal is reported before anything moves. The copies run under an op record: a conflict in a member's copy or a project file stops the port with the backend's hint up to staging; resolve and stage, then `rwv cherry-pick --continue`, or `rwv abort` to put every repo back. A member a refusal names can be ported by hand from the commits the refusal lists, then left out of the rerun with `--except`, which records it as it stands.
+
+| Flag | Effect |
+|---|---|
+| `-m <n>` / `--mainline <n>` | Pick a merge commit against its parent `n` (from 1) |
+| `--except <repo>` | Leave this member out of the port, lifting its refusals: its checked-out tip is recorded as `rwv lock` records it, forward only (`pin` `backwards` otherwise); a member this branch does not list records nothing. Repeat per member. One the commit does not move refuses (`inapplicable-flag`) |
+| `--continue` | Resume after resolving a conflict. Every parameter is read from the op record |
+| `--json` | One JSON envelope: per member the commits copied (old and new ids), dropped and left out; the pins carried; each `--except` member's recorded tip; each `not-ported` change; the project commit |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+**Exit codes:** `0` when the port completes or there is nothing to port; `1` when it refuses or stops on a conflict (op record kept; `--continue` or `rwv abort`).
+
 ### `rwv push [...]`
 
 Publish a weave branch from any workspace: its members' branches, then its record, then the project branch. Default scope: `owned` and `fork` repos (the roles the operator controls), the branch's record and the project branch. `dependency` and `reference` repos are pushed only when `--role` or `--repo` names them, and a selector narrows the push to the repos it names: the project branch and the record go only when `--repo projects/<name>` names the project repo. `push` never writes `rwv.lock`.

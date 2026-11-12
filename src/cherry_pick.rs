@@ -108,7 +108,7 @@ pub struct ExceptedOutput {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct NotPortedOutput {
     /// The member's path, or `projects/<p>` for the top-level `history`.
-    pub repo: String,
+    pub entry: String,
     /// The field, or `added` / `removed` for the member itself.
     pub field: String,
     pub parent: Option<String>,
@@ -173,11 +173,12 @@ fn listed(vcs: &dyn Vcs, dir: &Path, commits: &[CommitId]) -> Vec<String> {
     let subjects: BTreeMap<CommitId, String> = commits
         .iter()
         .filter_map(|c| {
+            let parents = vcs.parents(dir, c).ok()?;
             let summary = vcs
-                .commits_in_range(dir, c, c, 1)
-                .0
+                .commits_excluding(dir, &rev(c), &parents, false)
+                .ok()?
                 .into_iter()
-                .next()
+                .find(|s| &s.id == c)
                 .map(|s| s.subject);
             Some((c.clone(), summary?))
         })
@@ -263,7 +264,7 @@ struct NotPorted {
 impl NotPorted {
     fn output(&self) -> NotPortedOutput {
         NotPortedOutput {
-            repo: self.repo.clone(),
+            entry: self.repo.clone(),
             field: self.field.clone(),
             parent: self.parent.clone(),
             rev: self.rev.clone(),

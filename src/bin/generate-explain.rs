@@ -315,6 +315,11 @@ fn schema_land() -> String {
     serde_json::to_string_pretty(&schema).expect("land schema serializes")
 }
 
+fn schema_cherry_pick() -> String {
+    let schema = schema_for!(repoweave::cherry_pick::CherryPickJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("cherry-pick schema serializes")
+}
+
 fn schema_fetch() -> String {
     let schema = schema_for!(FetchJsonOutput);
     serde_json::to_string_pretty(&schema).expect("fetch schema serializes")
@@ -465,6 +470,11 @@ fn verbs() -> Vec<Verb> {
             name: "land",
             summary: "land this feature into its record's target: compose here, then fast-forward the target",
             schema: Some(schema_land),
+        },
+        Verb {
+            name: "cherry-pick",
+            summary: "port one project commit onto this feature: copy member ranges, carry dependency pins, commit the relock",
+            schema: Some(schema_cherry_pick),
         },
         Verb {
             name: "push",

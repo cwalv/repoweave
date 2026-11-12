@@ -53,6 +53,7 @@ fn op_verb_displays_as_the_token_it_serializes_to() {
         OpVerb::Land,
         OpVerb::Pull,
         OpVerb::UpdateRemote,
+        OpVerb::CherryPick,
     ]);
 }
 

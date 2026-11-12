@@ -354,6 +354,13 @@ Schema:
           "enum": [
             "missing-lock-merge-driver"
           ]
+        },
+        {
+          "description": "A project commit `rwv cherry-pick` cannot port as it stands.",
+          "type": "string",
+          "enum": [
+            "port"
+          ]
         }
       ]
     },
@@ -837,6 +844,13 @@ Schema:
           "type": "string",
           "enum": [
             "update-remote"
+          ]
+        },
+        {
+          "description": "`rwv cherry-pick`: copy each member's range of a project commit, then the project commit with the relock.",
+          "type": "string",
+          "enum": [
+            "cherry-pick"
           ]
         }
       ]

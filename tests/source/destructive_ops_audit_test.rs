@@ -479,6 +479,18 @@ const ALLOWLIST: &[Allowed] = &[
             real index and working tree are never opened for writing.",
     },
     Allowed {
+        file: "git/pick.rs",
+        pattern: "\"update-ref\"",
+        count: 1,
+        callers: &[],
+        justification: "copy_without_commit: writes CHERRY_PICK_HEAD, the \
+            pseudo-ref naming the commit a copy in progress copies, after \
+            `cherry-pick --no-commit` applied it to the index. It moves no \
+            branch and no HEAD: it marks the checkout as stopped in a \
+            cherry-pick, which `cherry-pick --abort` undoes and the next \
+            commit ends.",
+    },
+    Allowed {
         file: "git/merge.rs",
         pattern: "\"update-ref\"",
         count: 2,

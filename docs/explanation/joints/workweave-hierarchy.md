@@ -129,15 +129,18 @@ operator-managed. Worth being explicit:
 | `rwv land` lands into the record's target | Yes | — |
 | `rwv land --retire` lands and deletes on success | Yes | — |
 | Sibling-to-sibling coordination | No | Land into the shared target |
-| Cross-picking commits across branches | No | Use `git cherry-pick` directly |
+| Porting a project commit onto a feature | Yes (`rwv cherry-pick`) | — |
 | Promotion between branches in the project repo | No | Ordinary git workflow |
 | Detecting unusual flow (skip-rebase, sibling sync) | Limited | Operator awareness |
 
 The boundary is consistent with the principle in
 [verb-vs-composition](./verb-vs-composition.md): rwv encodes
 coordination the manifest knows and the VCS doesn't. The parent edge is
-manifest-adjacent (recorded in workspace marker state); siblings and
-cherry-picks are pure git operations on branches the operator can name.
+manifest-adjacent (recorded in workspace marker state); siblings are pure
+git operations on branches the operator can name. Porting one project
+commit is not: it reads the commit's lock against its parent's to find each
+member's range, copies those ranges before the project relock, and carries a
+dependency's pin rather than copying it, so `rwv cherry-pick` is a verb.
 
 ## Naming and paths
 

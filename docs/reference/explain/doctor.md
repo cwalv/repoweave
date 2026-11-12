@@ -873,6 +873,13 @@ Schema:
           "enum": [
             "update-remote"
           ]
+        },
+        {
+          "description": "`rwv cherry-pick`: copy each member's range of a project commit, then the project commit with the relock.",
+          "type": "string",
+          "enum": [
+            "cherry-pick"
+          ]
         }
       ]
     },

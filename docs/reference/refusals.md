@@ -181,7 +181,7 @@ The others follow.
 | `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's, or holds a workweave that is not clean, was made from another parent, or holds something other than what this spelling would make; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
 | `exists` | a repo already has a branch of the name the verb would give its checkout, standing at a revision other than the one the verb would start it at, which the line lists; it holds commits the verb did not put there. For a rename, the new name is a local branch of the project repo or of a member the rename would move, or a branch a remote has, as last fetched; `--adopt` takes up the remote's | `rwv workweave create`, for the branch it mints in the project repo and in each owned or fork member; `rwv branch rename`; `rwv member set-branch --new`, for a branch the member's repo already has; `rwv branch create`, for a name any repo of the workspace has, locally or on a remote as last fetched |
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on; `rwv member set-branch` |
-| `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv member set-branch`, for a branch the member's repo has neither locally nor on a remote as last fetched; `rwv lock --commit` and `rwv update --remote`, for a declared branch a hand edit named that exists nowhere; `rwv switch`, for a branch the project repo lacks, and `rwv branch create`, for a `--target` or `--at` that names nothing here |
+| `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv member set-branch`, for a branch the member's repo has neither locally nor on a remote as last fetched; `rwv lock --commit` and `rwv update --remote`, for a declared branch a hand edit named that exists nowhere; `rwv switch`, for a branch the project repo lacks, and `rwv branch create`, for a `--target` or `--at` that names nothing here; `rwv cherry-pick`, for a `<rev>` the project repo cannot resolve |
 | `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv branch create`, `rwv switch`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name; `rwv member set-branch` |
 | `minted` | the project branch is the name `rwv workweave create` gave a workweave that was not given one, `<project>--<workweave>`, which is never published, and neither is its record | `rwv push` |
 | `declared` | a feature would take a name that a live weave branch declares as a member's branch, the member and the declaring branches listed: the member's branch of that name is the declared branch, and a feature's own member branch cannot be it | the verbs that write, open, align or publish a feature |
@@ -265,7 +265,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target` |
+| `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target`; `rwv cherry-pick`, which ports into a feature onto the branch |
 | `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv land` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch create` with no spelling, for the branch it starts at, and `--target`, for a target that has no record; `rwv switch` and `rwv workweave create --branch`, for a branch with no record; `rwv branch set-mode`, for a `--target` that has no record |
 | `conflict` | two writers recorded the branch differently and a merge kept both values, listed; the conflict stays on the machine whose merge met it | every verb that reads the branch's record on this machine |
 | `differs` | the record a verb would give the branch differs from the one it holds, both listed: a record is replaced only by `rwv branch set-mode`; nothing on the records branch is conflicted | `rwv branch rename --adopt` onto a name recorded otherwise |
@@ -284,6 +284,8 @@ The others follow.
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `no target` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `no target`, for `rwv cherry-pick` | C37: port it in a feature onto this branch | `rwv branch create <W>` | here | creates only |
+| `no target`, for `rwv cherry-pick` | C37: port it in a feature onto this branch | `rwv workweave create <ww>` | here | creates only |
 | `unrecorded` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 | `unrecorded` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `unrecorded` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
@@ -366,6 +368,36 @@ The others follow.
 | `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Destructive operations](../explanation/destructive-operations.md).
+
+### `port`
+
+**Condition.** `rwv cherry-pick` cannot port the commit it was given as it stands: the commit is a merge and no parent was named to pick it against, or a member's change in it cannot be copied or carried, because it moves the member's pin backward, the commits it would copy hold a merge, or this branch does not list the member.
+
+**Why.** A port applies what one project commit introduced, in every repo it moves, as new commits on this branch, and it ports the commit whole or not at all. Picking a merge against a parent nobody named would be a guess; copying a range that holds a merge commit by commit would flatten it; a pin moved backward is work undone, which only a revert ports; and a member this branch does not list has nowhere to go. Each line lists what the member's change holds and its port by hand, then the rerun that leaves the member out of the pick and records it as it stands.
+
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: port <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `mainline` | the commit is a merge and no `-m` names the parent to pick it against, or `-m` names a parent it does not have, or names one for a commit that is no merge; its parents are listed, numbered from 1 | `rwv cherry-pick`, before anything moves |
+| `merge in range` | the commits the member's copy would make hold a merge commit, listed with the whole range: copied commit by commit it would be flattened. A member whose new pin is a merge on the parent's pin, picked against the parent `-m` names, ports as that one merge and is not refused | `rwv cherry-pick`, before anything moves, unless `--except` names the member |
+| `backward` | the commit moves the member's pin backward: the parent's pin is not an ancestor of the commit's, a diverged change included, and the commits it drops are listed | `rwv cherry-pick`, before anything moves, unless `--except` names the member |
+| `not listed` | the commit moves the pin of a member this branch does not list | `rwv cherry-pick`, before anything moves, unless `--except` names the member |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `mainline` | C38: pick it against the parent you name, or with no `-m` where it is no merge | `rwv cherry-pick <rev> -m <n>` | here | ports only |
+| `mainline` | C38: pick it against the parent you name, or with no `-m` where it is no merge | `rwv cherry-pick <rev>` | here | ports only |
+| `merge in range` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick -m 1 <ids>`); then rerun with `--except <m>` | where `<b>` is checked out | a copy adds only |
+| `merge in range` | C26: merge `<pin>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <pin>`); then rerun with `--except <m>` | the checkout | a merge adds only |
+| `backward` | C39: undo these commits on `<b>` by new commits | VCS action (git: `git -C <checkout> revert <ids>`); then rerun with `--except <m>` | where `<b>` is checked out | a revert adds only |
+| `backward` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit`; then rerun with `--except <m>` | here | re-pins by name; backup for a detached HEAD |
+| `not listed` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `not listed` | C40: leave `<m>` out of the pick, recording it as it stands | rerun with `--except <m>` | here | records its tip forward only |
+
+**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ## Tokens
 

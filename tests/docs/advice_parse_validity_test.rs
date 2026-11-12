@@ -295,10 +295,15 @@ fn all_op_verbs() -> Vec<OpVerb> {
         OpVerb::Land,
         OpVerb::Pull,
         OpVerb::UpdateRemote,
+        OpVerb::CherryPick,
     ];
     for verb in &all {
         match verb {
-            OpVerb::Sync | OpVerb::Land | OpVerb::Pull | OpVerb::UpdateRemote => {}
+            OpVerb::Sync
+            | OpVerb::Land
+            | OpVerb::Pull
+            | OpVerb::UpdateRemote
+            | OpVerb::CherryPick => {}
         }
     }
     all

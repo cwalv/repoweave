@@ -207,6 +207,11 @@ fn cases() -> Vec<VerbCase> {
             corpus: sync_to_corpus,
         },
         VerbCase {
+            verb: "cherry-pick",
+            schema_url: repoweave::cherry_pick::CHERRY_PICK_JSON_SCHEMA_URL,
+            corpus: cherry_pick_corpus,
+        },
+        VerbCase {
             verb: "update",
             schema_url: UPDATE_SCHEMA_URL,
             corpus: update_corpus,
@@ -500,14 +505,19 @@ fn branch_corpus() -> Vec<(&'static str, Value)> {
 /// closed-vocabulary field takes a single value there. Nothing else produces
 /// these, so they are supplied here rather than left unvalidated.
 fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
-    let mut violations: Vec<CheckViolation> = [OpVerb::Sync, OpVerb::Pull, OpVerb::UpdateRemote]
-        .into_iter()
-        .map(|verb| CheckViolation::StaleOpState {
-            workspace_dir: common::doctor_corpus::path("/ws"),
-            verb,
-            started_at: "2026-01-01T00:00:00Z".to_owned(),
-        })
-        .collect();
+    let mut violations: Vec<CheckViolation> = [
+        OpVerb::Sync,
+        OpVerb::Pull,
+        OpVerb::UpdateRemote,
+        OpVerb::CherryPick,
+    ]
+    .into_iter()
+    .map(|verb| CheckViolation::StaleOpState {
+        workspace_dir: common::doctor_corpus::path("/ws"),
+        verb,
+        started_at: "2026-01-01T00:00:00Z".to_owned(),
+    })
+    .collect();
     violations.push(CheckViolation::Provenance {
         project: common::doctor_corpus::project(),
         repo: common::doctor_corpus::repo(),
@@ -1301,6 +1311,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
         ),
         ("op-land-retire", OpVerb::Land, OpPhase::Retire),
         ("op-pull-replay", OpVerb::Pull, OpPhase::Replay),
+        ("op-cherry-pick-replay", OpVerb::CherryPick, OpPhase::Replay),
         (
             "op-update-remote-relock",
             OpVerb::UpdateRemote,
@@ -1619,6 +1630,59 @@ fn members() -> Vec<MemberOutput> {
             refusal: Some("unresolvable-repo-source".to_owned()),
             message: "cannot resolve '/srv/repos/x.git'".to_owned(),
         },
+    ]
+}
+
+fn cherry_pick_corpus() -> Vec<(&'static str, Value)> {
+    use repoweave::cherry_pick::{
+        CarriedOutput, CherryPickJsonOutput, CopiedOutput, ExceptedOutput, MemberPickOutput,
+        NotPortedOutput, CHERRY_PICK_JSON_SCHEMA_URL,
+    };
+    let id = |fill: char| fill.to_string().repeat(40);
+    vec![
+        (
+            "ported",
+            value(CherryPickJsonOutput {
+                schema: CHERRY_PICK_JSON_SCHEMA_URL.to_owned(),
+                rev: Some(id('a')),
+                members: vec![MemberPickOutput {
+                    path: REPO.to_owned(),
+                    copied: vec![CopiedOutput {
+                        from: id('b'),
+                        to: id('c'),
+                    }],
+                    dropped: vec![id('d')],
+                    left_out: vec![id('e')],
+                }],
+                carried: vec![CarriedOutput {
+                    path: "github/acme/dep".to_owned(),
+                    from: Some(id('f')),
+                    to: id('1'),
+                }],
+                excepted: vec![ExceptedOutput {
+                    path: "github/acme/other".to_owned(),
+                    tip: id('2'),
+                }],
+                not_ported: vec![NotPortedOutput {
+                    entry: REPO.to_owned(),
+                    field: "branch".to_owned(),
+                    parent: Some("main".to_owned()),
+                    rev: Some("next".to_owned()),
+                    here: Some("stable".to_owned()),
+                }],
+                commit: Some(id('3')),
+                complete: true,
+                refused: Vec::new(),
+            }),
+        ),
+        (
+            "refused",
+            value(CherryPickJsonOutput {
+                schema: CHERRY_PICK_JSON_SCHEMA_URL.to_owned(),
+                refused: judged_on_every_axis(),
+                ..CherryPickJsonOutput::default()
+            }),
+        ),
     ]
 }
 
@@ -2234,6 +2298,7 @@ fn records_key(verb: &str) -> &'static str {
         "backup" => "repos",
         "branch" => "branches",
         "branch-delete" | "workweave" => "deleted",
+        "cherry-pick" => "members",
         _ => "outcomes",
     }
 }

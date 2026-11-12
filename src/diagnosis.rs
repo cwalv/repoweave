@@ -878,7 +878,8 @@ impl State {
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
                         is on the declared branch at the tip of the remote's branch",
                 refused_by: "`rwv push`; `rwv clone`, which does not refuse: it completes, \
-                             lists the member and exits with status 3; `rwv status` reports it",
+                             lists the member and exits with status 3; `rwv cherry-pick`, for a \
+                             pin the ported commit or its parent holds; `rwv status` reports it",
                 offers: &[Form::C17, Form::C25, Form::C19],
                 verb_offers: &[],
             },
@@ -955,7 +956,8 @@ impl State {
                              update --remote`, for a declared branch a hand edit named that \
                              exists nowhere; `rwv switch`, \
                              for a branch the project repo lacks, and `rwv branch create`, for a \
-                             `--target` or `--at` that names nothing here",
+                             `--target` or `--at` that names nothing here; `rwv cherry-pick`, \
+                             for a `<rev>` the project repo cannot resolve",
                 offers: &[Form::C33, Form::C11SetBranchNew, Form::C18],
                 verb_offers: &[
                     ("switch", Form::C24),
@@ -1141,9 +1143,13 @@ impl State {
                 means: "the branch's record is `declared`, so it names no branch the branch \
                         lands into",
                 refused_by: "`rwv branch delete`, which needs the branch whose commits \
-                             should have landed, named with `--target`",
+                             should have landed, named with `--target`; `rwv cherry-pick`, \
+                             which ports into a feature onto the branch",
                 offers: &[Form::C12Feature],
-                verb_offers: &[],
+                verb_offers: &[
+                    ("cherry-pick", Form::C37BranchCreate),
+                    ("cherry-pick", Form::C37WorkweaveCreate),
+                ],
             },
             Self::TargetUnrecorded => &StateRow {
                 axis: Axis::Target,
@@ -1306,10 +1312,11 @@ impl State {
                 name: "not on declared branch",
                 means: "the lock pins a commit that neither the member's declared branch nor \
                         its upstream reaches, so the checkout sits detached at the pin",
-                refused_by: "`rwv member pin`, for a commit that neither reaches; `rwv update` \
-                             and `rwv status` report it",
+                refused_by: "`rwv member pin`, for a commit that neither reaches; `rwv \
+                             cherry-pick`, for a `dependency` or `reference` member's pin it \
+                             would carry; `rwv update` and `rwv status` report it",
                 offers: &[Form::C19, Form::C15, Form::C25, Form::C11SetBranch],
-                verb_offers: &[],
+                verb_offers: &[("cherry-pick", Form::C25AtCherryPick)],
             },
             Self::PinBehind => &StateRow {
                 axis: Axis::Pin,
@@ -1326,7 +1333,8 @@ impl State {
                 means: "the checkout holds commits beyond the commit the lock pins, and each is \
                         pushed or pinned by another live lock, which the facts name; the \
                         commits are published with `rwv push` only where none is pushed yet",
-                refused_by: "`rwv status` reports it; `rwv push` reports it and goes on",
+                refused_by: "`rwv status` reports it; `rwv push` reports it and goes on; `rwv \
+                             cherry-pick` refuses it for a member it would copy onto",
                 offers: &[Form::C5Lock, Form::C7PushRepo],
                 verb_offers: &[],
             },
@@ -1335,7 +1343,8 @@ impl State {
                 name: "unpinned",
                 means: "the checkout holds the commits listed beyond the commit the lock pins, \
                         which no remote-tracking branch and no live lock reaches",
-                refused_by: "`rwv push`; `rwv status` reports it",
+                refused_by: "`rwv push`; `rwv cherry-pick`, for a member it would copy onto; \
+                             `rwv status` reports it",
                 offers: &[Form::C5Lock, Form::C3UpdateRemote],
                 verb_offers: &[],
             },
@@ -1449,7 +1458,8 @@ impl State {
                 means: "recording the commit the checkout is at would move the pin to one that \
                         does not descend from the pinned commit: it is behind the pin or has \
                         diverged from it, or the pinned commit is in no ref here",
-                refused_by: "`rwv lock`, with or without `--repo`; `rwv update --remote`. \
+                refused_by: "`rwv lock`, with or without `--repo`; `rwv update --remote`; \
+                             `rwv cherry-pick`, for a member `--except` names. \
                              A pin moves backward only by name: `rwv member pin`, a setter, \
                              or a hand edit of the member's entry that `rwv lock --commit` \
                              commits",
@@ -2445,7 +2455,7 @@ impl Form {
             },
             Self::C15AtCherryPick => &FormRow {
                 choice: C::C15,
-                steps: &[Vcs(A::CherryPick), Then(Self::C40)],
+                steps: &[Vcs(A::CherryPickMainline), Then(Self::C40)],
                 at: W::WhereBranchCheckedOut,
                 shipped: true,
             },
@@ -3725,10 +3735,18 @@ mod tests {
 
     #[test]
     fn a_form_runs_after_another_only_once_that_one_prints() {
-        assert!(Form::C15AtCherryPick.row().shipped);
-        assert!(!Form::C40.printable());
-        assert!(!Form::C15AtCherryPick.printable());
-        assert!(Form::C15.printable());
+        for form in Form::ALL {
+            let after_unprintable = form.row().steps.iter().any(|step| match step {
+                Step::Then(next) => !next.printable(),
+                _ => false,
+            });
+            assert_eq!(
+                form.printable(),
+                form.row().shipped && !after_unprintable,
+                "{form:?}"
+            );
+        }
+        assert!(Form::C15AtCherryPick.printable());
         assert!(Form::C14Keep.printable());
     }
 

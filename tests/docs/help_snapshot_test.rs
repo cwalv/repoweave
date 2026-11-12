@@ -47,6 +47,7 @@ Commands:
   backup       List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
   sync         Take the target's new work into this feature, or merge another weave branch in
   land         Land this feature into the branch its record lands into
+  cherry-pick  Port one project commit onto this feature: copy each member's change, carry each dependency's pin, and commit the project change with the relock
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
   pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. A diverged branch is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream
   update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`)

@@ -7447,8 +7447,9 @@ pub fn cherry_pick_port() -> Scenario {
 }
 
 /// `cherry-pick-port` under a `merge` setting: a landing into `main` made by
-/// merge ports whole with `-m 1`, each landed member's merge copied against
-/// its first parent, and the port lands.
+/// merge, each member's merge and the project's made by hand as such a
+/// landing makes them, ports whole with `-m 1`, each landed member's merge
+/// copied against its first parent, and the port lands.
 pub fn cherry_pick_port_landing_merge() -> Scenario {
     let mut steps =
         vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
@@ -7460,7 +7461,24 @@ pub fn cherry_pick_port_landing_merge() -> Scenario {
         Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "main-moved"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["merge", "--no-ff", "-m", "land-app", "proj--w"],
+        ),
+        Step::git(
+            &a(),
+            Repo::Lib,
+            &["merge", "--no-ff", "-m", "land-lib", "proj--w"],
+        ),
+        Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["merge", "--no-ff", "--no-commit", "-s", "ours", "proj--w"],
+        ),
+        Step::git(&a(), Repo::Proj, &["add", "rwv.lock"]),
+        Step::git(&a(), Repo::Proj, &["commit", "-qm", "land w"]),
         Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main^2"]),
     ]);
     steps.extend(feature_onto_stable());
@@ -7597,7 +7615,9 @@ pub fn cherry_pick_refusals() -> Scenario {
         ),
         Step::commit(&a(), Repo::Lib, "lib-fix"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&a(), &["member", "pin", LIB, "HEAD~1", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "pin", LIB, "HEAD~1", "--commit"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
         Step::git(&a(), Repo::Proj, &["branch", "proj-side"]),
         Step::hand_commit(&a(), Repo::Proj, "proj-side", &[("side.txt", "side\n")]),
         Step::git(
@@ -7656,6 +7676,18 @@ pub fn cherry_pick_refusals() -> Scenario {
             }),
         Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLine("lib-fix")),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1"])
+            .expect(Exit::refuses(Repo::Lib, State::PortBackward))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::git(&ww("p"), Repo::Lib, &["revert", "--no-edit", "HEAD"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1", "--except", LIB])
+            .expect(Exit::Succeeds)
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            }),
+        Step::git(&ww("p"), Repo::Proj, &["log", "-1", "--format=%B"])
+            .claim(Claim::OutputContains("Rwv-Picked-From: ")),
     ]);
     scenario("cherry-pick refusals", steps)
 }
