@@ -9337,6 +9337,11 @@ fn abort_leaving_target(
             .map(|t| t.rebased_backups.clone())
             .unwrap_or_default();
         crate::backup::drop_rebased(ctx.primary_path(), owner.as_path(), project, kept.iter());
+        for dir in std::iter::once(source_dir.as_path())
+            .chain(record.target.as_ref().map(CanonicalPath::as_path))
+        {
+            forget_replays_in(dir, project);
+        }
         op_state::clear_all_at(owner.as_path());
     } else if tally.any_foreign {
         eprintln!(
