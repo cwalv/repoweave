@@ -7495,7 +7495,7 @@ fn apply_workspace_repairs(
 
     for project in &world.input.projects {
         let project_repo = project_dir(&world.workspace_dir, &project.name);
-        if !project_repo.is_dir() || !vcs.is_repo(&project_repo) {
+        if !project_repo.is_dir() || vcs.lock_driver_setup(&project_repo).is_err() {
             continue;
         }
         match crate::lock_driver::migrate(vcs, &project_repo) {

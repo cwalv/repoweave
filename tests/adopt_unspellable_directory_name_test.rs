@@ -16,6 +16,7 @@ fn weave(tmp: &Path) -> PathBuf {
     std::fs::create_dir_all(&project).unwrap();
     common::git_in(&project, &["init", "--initial-branch=main"]);
     common::set_up_lock_driver(&project);
+    common::git_in(&project, &["commit", "-qm", "lock merge driver"]);
     std::fs::write(project.join("rwv.toml"), "[repositories]\n").unwrap();
     std::fs::write(ws.join(".rwv-active"), "test-project\n").unwrap();
     ws

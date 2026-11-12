@@ -73,6 +73,7 @@ fn weave(root: &Path) -> PathBuf {
     manifest.push_str("[integrations.cargo-workspace]\nworkspace-package = true\n");
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     git_init_with_commit(&project_dir);
+    common::set_up_lock_driver_committed(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
     ws
 }

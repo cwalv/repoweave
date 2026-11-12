@@ -136,6 +136,7 @@ fn weave(root: &Path) -> PathBuf {
     .unwrap();
     common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
+    common::set_up_lock_driver_committed(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
@@ -186,6 +187,7 @@ fn weave_with_nothing_to_generate(root: &Path) -> PathBuf {
     .unwrap();
     common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
+    common::set_up_lock_driver_committed(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
@@ -426,6 +428,7 @@ fn two_project_weave(root: &Path) -> PathBuf {
         std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
         common::fixture_lock(&project_dir, &[]);
         git_init_with_commit(&project_dir);
+        common::set_up_lock_driver_committed(&project_dir);
     }
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 

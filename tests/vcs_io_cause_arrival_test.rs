@@ -22,8 +22,8 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-/// Workspace whose one project has an unreadable `.gitattributes`, so
-/// `replay_exclusion_state` returns `VcsError::Io`.
+/// Workspace whose one project, on an unborn branch, has an unreadable
+/// `.gitattributes`, so `lock_driver_setup` returns `VcsError::Io`.
 fn workspace_with_unreadable_gitattributes(root: &Path) {
     let repo_path = "github/acme/server";
     let repo = root.join(repo_path);
@@ -44,9 +44,6 @@ fn workspace_with_unreadable_gitattributes(root: &Path) {
     )
     .unwrap();
     common::git_in(&project_dir, &["init", "-b", "main"]);
-    common::set_up_lock_driver(&project_dir);
-    common::git_in(&project_dir, &["add", "."]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
     std::fs::create_dir(project_dir.join(".gitattributes")).unwrap();
 }
 
@@ -79,7 +76,7 @@ fn doctor_surfaces_the_io_cause_in_both_renders() {
         .as_array()
         .expect("violations must be an array")
         .iter()
-        .find(|v| v["kind"] == "replay-exclusion-unreadable")
+        .find(|v| v["kind"] == "lock-merge-driver-unreadable")
         .unwrap_or_else(|| {
             panic!(
                 "fixture did not produce an unreadable .gitattributes; without it this \
@@ -104,7 +101,7 @@ fn doctor_surfaces_the_io_cause_in_both_renders() {
     )
     .unwrap();
     assert!(
-        human.contains("failed to read .gitattributes for replay-exclusion check"),
+        human.contains("failed to read the lock merge driver setup"),
         "human render lost the finding entirely:\n{human}"
     );
     assert!(
@@ -145,11 +142,11 @@ fn doctor_fix_defers_to_the_same_report_only_finding_as_plain_doctor() {
         "doctor --fix must not exit non-zero over a finding it cannot act on:\n{fix_stdout}"
     );
     assert!(
-        !fix_stdout.contains("failed to write replay-exclusion"),
+        !fix_stdout.contains("failed to set up the lock merge driver"),
         "doctor --fix attempted a write it could not ground in a read:\n{fix_stdout}"
     );
     assert!(
-        fix_stdout.contains("failed to read .gitattributes for replay-exclusion check"),
+        fix_stdout.contains("failed to read the lock merge driver setup"),
         "doctor --fix dropped the report-only finding plain doctor raises:\n{fix_stdout}"
     );
 }

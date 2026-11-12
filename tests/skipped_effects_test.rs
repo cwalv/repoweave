@@ -113,6 +113,7 @@ impl Weave {
         )
         .unwrap();
         git_init_with_commit(&ws.join("projects/app"));
+        common::set_up_lock_driver_committed(ws.join("projects/app"));
         common::record_trunk(&ws.join("projects/app"));
         std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -297,6 +298,7 @@ fn an_authoring_verb_on_a_project_the_root_does_not_present_names_activate() {
     )
     .unwrap();
     git_init_with_commit(&other);
+    common::set_up_lock_driver_committed(&other);
 
     let run = weave.ok_in(
         &weave.ws,
