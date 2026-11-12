@@ -380,7 +380,8 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
 /// here: a wrong gate answer removes the symlink, a wrong kind changes what
 /// the integration set declares.
 ///
-/// Pushes a real commit to the upstream and checks it landed in the
+/// Commits on the upstream's copy of the workweave's feature branch, which
+/// `update --remote` advances the member from, and checks it landed in the
 /// workweave's checkout: a self-referential `origin` would let `rwv update`
 /// exit 0 on a fetch that resolved nothing new, which would pass this test
 /// even if the run never advanced anything at all.
@@ -391,6 +392,7 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
 
     let ww = create_workweave(&ws, "demo", "w1");
 
+    common::git_in(&upstream, &["switch", "-q", "-c", "demo--w1"]);
     std::fs::write(upstream.join("NEW"), "new content\n").unwrap();
     common::git_in(&upstream, &["add", "NEW"]);
     common::git_in(&upstream, &["commit", "-m", "new upstream commit"]);
@@ -409,8 +411,8 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
     assert_eq!(
         common::git_in(&clone, &["rev-parse", "HEAD"]),
         upstream_head,
-        "`rwv update` must fast-forward the workweave's checkout to the \
-         upstream tip"
+        "`rwv update` must fast-forward the workweave's checkout to its \
+         feature branch's upstream tip"
     );
     assert!(
         clone.join("NEW").exists(),
