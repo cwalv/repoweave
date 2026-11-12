@@ -257,7 +257,8 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   carry read nor at or beyond the tip it wrote refuses as `target`
   dependent moved mid-operation, nothing moved, and `--continue` composes
   it again from where it stands.
-- **Abort of a carry** (`judge_carried`, before `mark_abort_begun`): each
+- **Abort of a carry** (the `AbortStep::Carried` step `plan_carried` plans,
+  judged before `retake_target` and again before `mark_abort_begun`): each
   dependent's branch a carry moved is read where it moved it. One built on,
   moved elsewhere, gone, or checked out outside the op's workspaces refuses
   the whole abort with nothing put back: a gone or held branch names what to
