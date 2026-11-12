@@ -600,10 +600,9 @@ pub enum ToolReadiness {
 /// Every backend, not only the ones a weave's manifests name: the project
 /// repo has no manifest entry, and the check runs before anything is read.
 pub(crate) fn refuse_unready_tools() -> anyhow::Result<()> {
-    for vcs in [vcs_for(crate::manifest::VcsType::Git)] {
-        refuse_unready(vcs.as_ref())?;
+    match crate::manifest::VcsType::Git {
+        vcs_type @ crate::manifest::VcsType::Git => refuse_unready(vcs_for(vcs_type).as_ref()),
     }
-    Ok(())
 }
 
 fn refuse_unready(vcs: &dyn Vcs) -> anyhow::Result<()> {
