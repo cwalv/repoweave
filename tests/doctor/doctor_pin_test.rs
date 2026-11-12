@@ -309,26 +309,3 @@ fn the_retired_doctor_tokens_are_not_findings_and_name_no_entry_there() {
     assert!(!repoweave::check::KindFilter::valid_kinds().contains(&"stale-lock".to_owned()));
     assert!(repoweave::check::KindFilter::valid_kinds().contains(&"pin".to_owned()));
 }
-
-#[test]
-fn the_landing_refusals_that_named_a_stale_lock_are_retired_for_pin_states() {
-    let refusals = page("refusals.md");
-    for token in [
-        "stale-lock",
-        "unresolvable-lock-entry",
-        "target-lock-behind",
-    ] {
-        assert!(
-            !refusals.contains(&format!("### `{token}`")),
-            "the refusals page holds no entry for `{token}`"
-        );
-        let out = common::rwv()
-            .args(["explain", token])
-            .output()
-            .expect("rwv runs");
-        assert!(
-            !out.status.success(),
-            "`{token}` names no condition any more"
-        );
-    }
-}

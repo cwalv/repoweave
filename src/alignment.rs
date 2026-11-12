@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::diagnosis::{Fact, FactKind, Judged, Judging, State};
+use crate::diagnosis::{Fact, FactKind, Form, Judged, Judging, State};
 use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath, Role};
 use crate::records::{BranchName, Lookup, Record, Store};
 use crate::state_file::StateFile;
@@ -1461,9 +1461,20 @@ impl Aligner {
                 .unwrap_or_default()
                 .into_iter()
                 .next();
+            let on_a_branch = matches!(off, Off::OnBranch { .. });
+            let switchable = || {
+                m.vcs
+                    .resolve_local_branch_tip(m.dir, &wanted)
+                    .is_ok_and(|tip| tip.is_some())
+            };
             judging = match onto {
-                Some(onto) => judging.bind_place("<b-checkout>", &onto),
-                None => judging.only(&[crate::diagnosis::ChoiceId::C14]),
+                Some(onto) => judging
+                    .bind_place("<b-checkout>", &onto)
+                    .only_forms(&[Form::C15OntoCheckedOut, Form::C14Keep]),
+                None if on_a_branch && switchable() => judging
+                    .bind("<E>", &wanted)
+                    .only_forms(&[Form::C15SwitchFirst, Form::C14Keep]),
+                None => judging.only_forms(&[Form::C14Keep]),
             };
         }
         if let Some(subject) = subject {

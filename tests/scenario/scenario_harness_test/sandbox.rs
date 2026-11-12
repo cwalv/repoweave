@@ -208,6 +208,8 @@ pub struct Seed {
     /// Members seeded with a role other than `owned`.
     pub roles: Vec<(Repo, Role)>,
     pub forks: bool,
+    /// The project `proj` has a fork too, beside the members' forks.
+    pub project_fork: bool,
     pub mirrors: bool,
     /// Remotes whose `update` hook refuses `refs/heads/rwv-records`.
     pub refusing_records: Vec<Remote>,
@@ -242,6 +244,11 @@ impl Seed {
 
     pub fn forks(mut self) -> Seed {
         self.forks = true;
+        self
+    }
+
+    pub fn project_fork(mut self) -> Seed {
+        self.project_fork = true;
         self
     }
 
@@ -282,8 +289,9 @@ fn refuse_records_hook() -> String {
 /// of the host reaches a commit, and the identity comes from [`IDENTITY`].
 /// `lib` carries a second commit on `main` and a `dev` branch, so a project
 /// can be pinned behind or declared elsewhere; nothing else differs between
-/// members. Forks and mirrors, when seeded, exist for members only, and every
-/// `url` the seed writes names an origin.
+/// members. Forks and mirrors, when seeded, exist for members only, except a
+/// fork of `proj` a seed asks for by itself, and every `url` the seed writes
+/// names an origin.
 pub struct Sandbox {
     _tmp: tempfile::TempDir,
     pub root: PathBuf,
@@ -332,6 +340,9 @@ impl Sandbox {
                 sandbox.copy_origin(Remote::keeping_mirror(member));
                 sandbox.copy_origin(Remote::pruning_mirror(member));
             }
+        }
+        if seed.project_fork {
+            sandbox.copy_origin(Remote::fork(Repo::Proj));
         }
         for remote in &seed.refusing_records {
             sandbox.refuse_records(*remote);

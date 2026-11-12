@@ -5416,7 +5416,7 @@ pub fn land_never_resolves_a_published_record_to_an_unrelated_branch() -> Scenar
         Step::rwv(&b_ww("r"), &["land"])
             .expect(Exit::refuses(Repo::Proj, State::TargetGone))
             .claim(Claim::Judged(Repo::App, State::EditsDirty))
-            .claim(Claim::OutputContains("does not take in"))
+            .claim(Claim::OutputContains("neither takes in"))
             .claim(Claim::LocalStateUnchanged(b())),
     ]);
     scenario(
@@ -7093,4 +7093,40 @@ pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {
                 }),
         ],
     )
+}
+
+/// A project whose `main` takes in from `origin` and publishes to another
+/// remote: a feature this machine published there names `main` as published
+/// there, and the landing resolves it to this machine's own `main`.
+pub fn land_resolves_a_target_that_publishes_where_its_record_is() -> Scenario {
+    let publishing = Remote::fork(Repo::Proj);
+    Scenario {
+        name: "land resolves a target that publishes where its record is",
+        seed: Seed::default().project_fork(),
+        steps: vec![
+            Step::add_remote(&a(), Repo::Proj, "pub", publishing),
+            Step::git(&a(), Repo::Proj, &["config", "remote.pushDefault", "pub"]),
+            Step::rwv(&a(), &["push", "--branch", "main"])
+                .pushes(publishing, "main")
+                .pushes(publishing, RECORDS_BRANCH)
+                .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "rename", "feat"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["push"])
+                .pushes(publishing, "feat")
+                .pushes(publishing, RECORDS_BRANCH)
+                .pushes(Remote::origin(Repo::App), "feat")
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    }
 }

@@ -1032,3 +1032,180 @@ fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
         ),
     );
 }
+
+/// The landing refusals that once named a stale lock, an unresolvable lock
+/// entry and a target lock behind its checkouts are each judged as the `pin`
+/// state that replaced them: the source behind its pin as `pin` backwards, a
+/// target lock pin no clone holds as `pin` unreachable, and target commits no
+/// lock records as `pin` unpinned. No retired token is printed, has a page, or
+/// is explained.
+#[test]
+fn the_landing_refusals_that_named_a_stale_lock_are_judged_as_pin_states() {
+    let refusals = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/refusals.md"),
+    )
+    .unwrap();
+    let retired = |token: &str, out: &std::process::Output| {
+        assert!(
+            !String::from_utf8_lossy(&out.stderr).contains(token)
+                && !refusals.contains(&format!("### `{token}`")),
+            "`{token}` is neither printed nor listed"
+        );
+        let explained = common::cli::run(&["explain", token], Path::new("."));
+        assert!(!explained.status.success(), "`{token}` names no condition");
+    };
+
+    let f = fixture();
+    let c1 = head(&f.ww.manifest_repo);
+    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
+    let out = common::cli::run(&["land"], &f.ww.root);
+    common::cli::refused(&out, State::PinBackwards);
+    retired("stale-lock", &out);
+
+    let f = fixture();
+    common::fixture_lock(
+        &f.main.project_dir,
+        &[(
+            MANIFEST_REPO_PATH,
+            &common::file_url(&f.main.manifest_repo),
+            "v9.9.9-nope",
+        )],
+    );
+    common::git_in(&f.main.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&f.main.project_dir, &["commit", "-m", "lock: no such tag"]);
+    let out = common::cli::run(&["land"], &f.ww.root);
+    common::cli::refused(&out, State::PinUnreachable);
+    retired("unresolvable-lock-entry", &out);
+
+    let f = fixture();
+    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: d1");
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+    let out = common::cli::run(&["land"], &f.ww.root);
+    common::cli::refused(&out, State::PinUnpinned);
+    retired("target-lock-behind", &out);
+}
+
+/// The lines of the printed choice whose phrase starts with `phrase`, and
+/// where it says they run.
+fn printed_choice(stderr: &str, phrase: &str) -> (Option<PathBuf>, Vec<String>) {
+    let mut lines = stderr
+        .lines()
+        .skip_while(|l| !l.starts_with(&format!("  {phrase}")));
+    let head = lines
+        .next()
+        .unwrap_or_else(|| panic!("no choice `{phrase}` in:\n{stderr}"));
+    let at = head.split_once(", in ").map(|(_, at)| PathBuf::from(at));
+    let run = lines
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim().to_owned())
+        .collect();
+    (at, run)
+}
+
+/// Runs one printed line as the operator would, in `dir`.
+fn run_printed(line: &str, dir: &Path) {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let out = match words[0] {
+        "rwv" => common::cli::run(&words[1..], dir),
+        program => std::process::Command::new(program)
+            .args(&words[1..])
+            .current_dir(dir)
+            .output()
+            .unwrap(),
+    };
+    assert!(
+        out.status.success(),
+        "{line}: {}",
+        common::cli::describe(&out)
+    );
+}
+
+/// Commits on another branch that no other branch holds are copied onto the
+/// expected branch by the printed choice, run line by line in the checkout:
+/// it switches there first, leaving the other branch holding them, and the
+/// landing then carries them.
+#[test]
+fn stray_commits_copied_onto_the_expected_branch_as_printed_land() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    common::git_in(&f.ww.manifest_repo, &["switch", "-q", "-c", "wip"]);
+    let work = commit_file(&f.ww.manifest_repo, "w.txt", "w\n", "ww: wip work");
+    let out = land_refused(&f);
+    let stderr = common::cli::refused(&out, State::AlignmentOnBranchWithStrayCommits);
+    let (at, run) = printed_choice(&stderr, "copy these commits onto");
+    assert_eq!(at, None, "{stderr}");
+    assert_eq!(run.len(), 3, "{stderr}");
+    assert!(run[0].contains(&format!("switch {branch}")), "{stderr}");
+    for line in &run {
+        run_printed(line, &f.ww.root);
+    }
+    assert_eq!(ephemeral_branch(&f), branch);
+    common::git_in(
+        &f.ww.manifest_repo,
+        &["merge-base", "--is-ancestor", &work, "wip"],
+    );
+    lands(&f, &[]);
+    let landed = common::git_in(&f.main.manifest_repo, &["log", "--format=%s", "-1"]);
+    assert_eq!(landed, "ww: wip work");
+}
+
+/// Where the expected branch is checked out in another checkout, the copy
+/// runs there, and running it as printed puts the commits on that branch.
+#[test]
+fn stray_commits_are_copied_where_the_expected_branch_is_checked_out() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    common::git_in(&f.ww.manifest_repo, &["switch", "-q", "-c", "wip"]);
+    commit_file(&f.ww.manifest_repo, "w.txt", "w\n", "ww: wip work");
+    let other = f._tmp.path().join("other");
+    common::git_in(
+        &f.ww.manifest_repo,
+        &["worktree", "add", "-q", other.to_str().unwrap(), &branch],
+    );
+    let out = land_refused(&f);
+    let stderr = common::cli::refused(&out, State::AlignmentOnBranchWithStrayCommits);
+    let (at, run) = printed_choice(&stderr, "copy these commits onto");
+    assert_eq!(at.as_deref(), Some(other.as_path()), "{stderr}");
+    assert!(!stderr.contains(&format!("switch {branch}")), "{stderr}");
+    run_printed(&run[0], &f.ww.root);
+    assert_eq!(
+        common::git_in(&other, &["log", "--format=%s", "-1"]),
+        "ww: wip work"
+    );
+}
+
+/// A source member detached at work diverged from its branch: no copy is
+/// printed, since none could run where its branch is checked out without
+/// leaving the work on no branch; keeping the work on a branch, as printed,
+/// and aligning lands the branch and leaves the work kept, ending on the
+/// branch.
+#[test]
+fn detached_source_diverged_from_its_branch_keeps_its_work_and_lands_its_branch() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    let on_branch = commit_file(&f.ww.manifest_repo, "c.txt", "c\n", "ww: on branch");
+    common::git_in(
+        &f.ww.manifest_repo,
+        &["checkout", "-q", "--detach", "HEAD~1"],
+    );
+    let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
+    let out = land_refused(&f);
+    let stderr = common::cli::refused(&out, State::AlignmentDetachedUnpushed);
+    assert!(!stderr.contains("cherry-pick"), "{stderr}");
+    let (_, run) = printed_choice(&stderr, "keep this work on a branch");
+    let keep = run[0].replace("<name>", "kept").replace("<sha>", &work);
+    run_printed(&keep, &f.ww.root);
+    run_printed(&run[1], &f.ww.root);
+    lands(&f, &[&on_branch]);
+    assert_eq!(ephemeral_branch(&f), branch);
+    assert_eq!(
+        common::git_in(&f.ww.manifest_repo, &["rev-parse", "kept"]),
+        work
+    );
+}

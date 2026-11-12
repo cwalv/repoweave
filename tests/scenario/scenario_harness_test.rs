@@ -569,6 +569,7 @@ every_scenario!(
     land_refuses_a_moved_member_whose_branch_lacks_the_pin,
     land_reports_what_it_pins_beyond_the_target,
     land_reports_the_target_ahead_of_its_push_branch,
+    land_resolves_a_target_that_publishes_where_its_record_is,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
@@ -3422,5 +3423,11 @@ fn land_reports_what_it_pins_beyond_the_target_scenario() {
 #[test]
 fn land_reports_the_target_ahead_of_its_push_branch_scenario() {
     runner::run(scenarios::land_reports_the_target_ahead_of_its_push_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_resolves_a_target_that_publishes_where_its_record_is() {
+    runner::run(scenarios::land_resolves_a_target_that_publishes_where_its_record_is())
         .assert_fully_decided_green();
 }

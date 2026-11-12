@@ -371,10 +371,11 @@ fn refusal(report: Report) -> anyhow::Error {
     }
 }
 
-/// A record another machine published names a target this machine resolves
-/// only through that remote: its branch published there, and a local branch
-/// of that name taking in from it. Anything else is that target gone here,
-/// never an unrelated branch that happens to share its name.
+/// A record published on a remote names a target this machine resolves only
+/// through that remote: its branch published there, and a local branch of
+/// that name taking in from it or configured to publish to it. Anything else is that
+/// target gone here, never an unrelated branch that happens to share its
+/// name.
 fn judge_unrelated_target(
     vcs: &dyn Vcs,
     project: &ProjectName,
@@ -395,13 +396,19 @@ fn judge_unrelated_target(
         .filter(|copy| holding.contains(&copy.remote))
         .collect();
     let local = vcs.resolve_local_branch_tip(dir, &target_ref)?;
-    let takes_in_from_there = match &local {
+    let same_branch_there = match &local {
         None => true,
-        Some(_) => vcs.upstream_of(dir, &target_ref)?.is_some_and(|up| {
-            holding.contains(&up.remote) && up.branch.as_str() == target.as_str()
-        }),
+        Some(_) => {
+            let takes_in = vcs.upstream_of(dir, &target_ref)?.is_some_and(|up| {
+                holding.contains(&up.remote) && up.branch.as_str() == target.as_str()
+            });
+            takes_in
+                || vcs
+                    .push_target_of(dir, &target_ref, None)?
+                    .is_some_and(|remote| holding.contains(&remote))
+        }
     };
-    if !published.is_empty() && takes_in_from_there {
+    if !published.is_empty() && same_branch_there {
         return Ok(None);
     }
     let remotes = holding
@@ -415,8 +422,8 @@ fn judge_unrelated_target(
         )
     } else {
         format!(
-            "'{feature}''s record was published on {remotes}; the local '{target}' does not take in \
-             from there, so it is another branch of that name"
+            "'{feature}''s record was published on {remotes}; the local '{target}' neither takes in \
+             from there nor publishes there, so it is another branch of that name"
         )
     };
     Ok(Some(
