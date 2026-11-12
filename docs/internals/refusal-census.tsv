@@ -185,7 +185,7 @@ src/pins.rs	pin diverged	-	1
 src/pins.rs	pin off remote	-	1
 src/pins.rs	pin unpinned	-	1
 src/plugins.rs	(untokened:environment-passthrough)	-	1
-src/plugins.rs	unknown-verb	-	1
+src/plugins.rs	unknown-verb	tests/vcs_tool_floor_test.rs	1
 src/project_merge.rs	(untokened:internal-invariant)	-	1
 src/project_merge.rs	(untokened:owed)	-	1
 src/project_merge.rs	op-parked	-	1
