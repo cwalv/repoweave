@@ -354,7 +354,7 @@ fn an_old_setup_refuses_every_lock_writing_verb_before_anything_is_written() {
         &["lock", "--commit"],
         &["member", "pin", APP, "HEAD", "--commit"],
         &["branch", "create", "feat-x"],
-        &["sync", "main"],
+        &["sync"],
         &["pull"],
         &["update", "--remote"],
     ] {

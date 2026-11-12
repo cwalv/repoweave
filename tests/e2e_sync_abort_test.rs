@@ -22,8 +22,30 @@ fn init_repo(path: &Path) -> String {
     common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
     common::git_in(path, &["add", "."]);
-    common::git_in(path, &["commit", "-m", "initial"]);
+    commit_at_a_fixed_date(path, "initial");
     common::git_in(path, &["rev-parse", "HEAD"])
+}
+
+/// Commit what is staged at a fixed date, so two workspaces this file builds
+/// from the same content hold the same commits however long building them
+/// takes.
+fn commit_at_a_fixed_date(path: &Path, message: &str) {
+    let out = common::git()
+        .args(["commit", "-m", message])
+        .current_dir(path)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Write a file, stage, commit. Returns new HEAD SHA.
@@ -93,7 +115,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    commit_at_a_fixed_date(&project_dir, "lock: initial");
     common::record_trunk(&project_dir);
 
     // Action verbs require `.rwv-active` (or --project). Set it here so
