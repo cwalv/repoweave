@@ -10473,3 +10473,63 @@ pub fn dc04_conflict_setter() -> Scenario {
         ],
     )
 }
+
+/// Another machine moved `lib`'s pin on `main`, and this machine's `lib`
+/// holds an untracked file at a path that move writes. The landing takes the
+/// upstream in and lands; aligning the target's `lib` stops on the file with
+/// no judged state, so the landing names the `rwv update` that finishes it,
+/// which does once the file is moved aside.
+pub fn land_names_the_update_that_finishes_an_alignment_it_could_not_judge() -> Scenario {
+    scenario(
+        "land names the update that finishes an alignment it could not judge",
+        vec![
+            create("w"),
+            Step::new_machine(Machine::B),
+            Step::commit(&b(), Repo::Lib, "b-lib"),
+            Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Lib, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Lib), "main"),
+            Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["checkout", "origin/main", "--", "b-lib.txt"],
+            ),
+            Step::hand_edit(&a(), Repo::Lib, "b-lib.txt", "b-lib", "a-lib"),
+            Step::git(&a(), Repo::Lib, &["reset", "-q"]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::OutputContains(
+                    "did not finish aligning; `rwv update --project proj` there finishes it:",
+                ))
+                .claim(Claim::Lacks {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "b-lib",
+                }),
+            Step::git(&a(), Repo::Lib, &["clean", "-q", "-f", "--", "b-lib.txt"]),
+            Step::rwv(&a(), &["update", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "b-lib",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                }),
+        ],
+    )
+}
