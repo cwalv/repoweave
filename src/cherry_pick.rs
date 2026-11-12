@@ -10,7 +10,7 @@
 //! moves, and the copies run under the op record.
 
 use crate::alignment::{Accounting, Aligner, Member};
-use crate::diagnosis::{ChoiceId, Form, Judged, Report, State};
+use crate::diagnosis::{ChoiceId, Form, Report, State};
 use crate::entry_report::fields_between;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
@@ -505,7 +505,7 @@ fn judge_mainline(
     args: &Args,
     commit: &CommitId,
     parents: &[CommitId],
-) -> Result<Option<CommitId>, Judged> {
+) -> anyhow::Result<Option<CommitId>> {
     let vcs = here.vcs.as_ref();
     let listing: Vec<String> = parents
         .iter()
@@ -528,6 +528,7 @@ fn judge_mainline(
             .checkout(&here.dir)
             .only_forms(&[form])
             .judge(vcs)
+            .refused()
     };
     match (args.mainline, parents.len()) {
         (None, 0 | 1) => Ok(parents.first().cloned()),
@@ -570,10 +571,7 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     };
     let commit = resolved.id().clone();
     let parents = vcs.parents(dir, &commit)?;
-    let parent = match judge_mainline(here, args, &commit, &parents) {
-        Ok(parent) => parent,
-        Err(line) => return Err(line.refused()),
-    };
+    let parent = judge_mainline(here, args, &commit, &parents)?;
 
     let empty = Manifest::from_toml_str("[repositories]\n")?;
     let theirs = manifest_at(vcs, dir, &commit).unwrap_or_else(|| empty.clone());
@@ -1286,10 +1284,7 @@ fn copy_members(
         let dir = here.member_dir(&path);
         let vcs = vcs_for(entry.vcs_type);
         let vcs = vcs.as_ref();
-        loop {
-            let Some(next) = record.members[i].remaining().first().cloned() else {
-                break;
-            };
+        while let Some(next) = record.members[i].remaining().first().cloned() {
             let expected = record.members[i]
                 .copied
                 .last()
