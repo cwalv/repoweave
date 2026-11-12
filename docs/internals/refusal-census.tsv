@@ -126,7 +126,7 @@ src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
 src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	2
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
-src/feature_sync.rs	target dependents	-	2
+src/feature_sync.rs	target dependents	-	1
 src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
