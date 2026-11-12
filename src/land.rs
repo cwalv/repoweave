@@ -266,7 +266,8 @@ fn judge_source(
 }
 
 /// The members of the source refused for their alignment, each judged into
-/// `report`, after the weave branches that land into `feature`.
+/// `report`, after the weave branches that land into `feature` where it lands
+/// into `target`: a branch with no target lands nothing, so carries nothing.
 fn judge_source_members(
     source_root: &Path,
     project: &ProjectName,
@@ -278,19 +279,21 @@ fn judge_source_members(
     let vcs = vcs.as_ref();
     let dir = project_dir(source_root, project);
     let label = project_rel_path(project);
-    for dependent in crate::merge_upstream::dependents_of(vcs, &dir, feature.as_str())? {
-        let mut judging = State::TargetDependents
-            .of(&label)
-            .project_repo()
-            .subject(format!("{dependent} lands into {feature}"))
-            .bind("<dep>", &dependent)
-            .bind("<W>", &dependent)
-            .checkout(&dir)
-            .by_verb("land");
-        if let Some(target) = target {
-            judging = judging.bind("<T>", target);
+    if let Some(target) = target {
+        for dependent in crate::merge_upstream::dependents_of(vcs, &dir, feature.as_str())? {
+            report.add(
+                State::TargetDependents
+                    .of(&label)
+                    .project_repo()
+                    .subject(format!("{dependent} lands into {feature}"))
+                    .bind("<dep>", &dependent)
+                    .bind("<W>", &dependent)
+                    .bind("<T>", target)
+                    .checkout(&dir)
+                    .by_verb("land")
+                    .judge(vcs),
+            );
         }
-        report.add(judging.judge(vcs));
     }
     let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
     let head = vcs.head_revision(&dir)?.id().clone();

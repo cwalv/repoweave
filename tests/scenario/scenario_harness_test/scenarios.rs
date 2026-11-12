@@ -5519,7 +5519,8 @@ pub fn land_refuses_work_built_on_another_lineage() -> Scenario {
 
 /// A landing lands a feature only: a declared-mode project branch is never
 /// rebased onto another, `--target` or not; the workspace's own refusals come
-/// in the same report.
+/// in the same report, and the features landing into the branch, which such
+/// a landing never moves, are no refusal of it.
 pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
     scenario(
         "land never rewrites a declared-mode branch",
@@ -5527,10 +5528,12 @@ pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
             Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::App, "stable-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("s"),
             Step::hand_edit(&a(), Repo::Lib, "README", "lib", "lib edited"),
             Step::rwv(&a(), &["land", "--history", "linear", "--target", "main"])
                 .expect(Exit::refuses(Repo::Proj, State::TargetNoTarget))
                 .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
+                .claim(Claim::OutputLacks("target dependents"))
                 .claim(Claim::LocalStateUnchanged(a())),
         ],
     )
