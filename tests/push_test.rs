@@ -1817,3 +1817,70 @@ fn a_pin_of_a_member_not_materialized_here_withholds_the_project_branch() {
     assert!(stderr.contains("local/org/c: pin unreachable"), "{stderr}");
     assert_eq!(bare_main_sha(&ws.project_bare), before);
 }
+
+// ----------------------------------------------------------------------------
+// A push branch gone from its remote: the choices by what the branch is.
+// ----------------------------------------------------------------------------
+
+/// Publish `branch` of the member with an upstream, remove it from the
+/// remote, prune, and commit on it: its push branch is gone with work on it.
+fn gone_with_work(ws: &common::PushWorkspace, branch: &str) -> String {
+    let member = ws.workspace.join("local/org/a");
+    common::git_in(&member, &["push", "-q", "-u", "origin", branch]);
+    common::git_in(&ws.manifest_bares[0].1, &["branch", "-D", branch]);
+    common::git_in(&member, &["fetch", "-q", "--prune", "origin"]);
+    advance(&member, "after-gone.txt");
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let out = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+#[test]
+fn a_declared_branch_whose_push_branch_is_gone_offers_declaring_another() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let member = ws.workspace.join("local/org/a");
+    common::git_in(&member, &["switch", "-qc", "dev"]);
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "branch = \"dev\""),
+    )
+    .unwrap();
+    common::git_in(&project_dir, &["commit", "-qam", "declare dev"]);
+
+    let stderr = gone_with_work(&ws, "dev");
+
+    assert!(stderr.contains("local/org/a: push-branch gone"), "{stderr}");
+    assert!(
+        stderr.contains("rwv member set-branch local/org/a"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("rwv push --repo local/org/a"), "{stderr}");
+    assert!(!stderr.contains("cherry-pick"), "{stderr}");
+}
+
+#[test]
+fn a_features_member_branch_whose_push_branch_is_gone_offers_its_deletion() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    feature_with_work(&ws, "x");
+
+    let stderr = gone_with_work(&ws, "x");
+
+    assert!(stderr.contains("local/org/a: push-branch gone"), "{stderr}");
+    assert!(
+        stderr.contains("rwv branch delete x --discard-unlanded"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("rwv push --repo local/org/a"), "{stderr}");
+    assert!(!stderr.contains("cherry-pick"), "{stderr}");
+    assert!(!stderr.contains("rwv member set-branch"), "{stderr}");
+}

@@ -147,9 +147,10 @@ The others follow.
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
 | `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `gone` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
-| `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `gone` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
+| `gone` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `gone` | C9: delete what is landed | `rwv branch delete <W> --discard-unlanded` | a workspace where `<W>` is not checked out | deletes only what is landed elsewhere; local only |
+| `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `foreign upstream` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no push target` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `unconfirmed` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
@@ -195,8 +196,8 @@ The others follow.
 | `exists`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `a revision` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `no-such-branch` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
-| `no-such-branch`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b> --new` | a workspace with the branch checked out | re-pins by name, backup kept |
-| `no-such-branch`, for `rwv lock` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b> --new` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `no-such-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b> --new` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `no-such-branch` | C18: start `<m>`'s `<b>` at a commit you choose | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | creates only |
 | `no-such-branch`, for `rwv switch` | C24: look at it without a weave branch | VCS action (git: `git -C <checkout> switch --detach <r>/<b>`) | any workspace | the left HEAD holds nothing unpreserved |
 | `no-such-branch`, for `rwv switch` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
 | `reserved` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |

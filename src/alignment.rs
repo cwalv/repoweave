@@ -1053,6 +1053,9 @@ impl Aligner {
                 .of(repo)
                 .member()
                 .subject(branch)
+                .checkout(m.dir)
+                .bind("<m>", m.path)
+                .bind("<b>", branch)
                 .judge(m.vcs)];
         }
         match &plan.target {

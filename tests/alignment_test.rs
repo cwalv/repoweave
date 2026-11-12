@@ -290,3 +290,35 @@ fn a_declared_branch_that_exists_nowhere_is_not_created_and_is_reported() {
     assert_eq!(common::git_in(&owned, &["rev-parse", "HEAD"]), head);
     assert_eq!(common::checkout_ref(&owned).as_deref(), Some("main"));
 }
+
+/// A declared branch that exists nowhere offers what D13 lists for it: a
+/// fetch, the setter creating it, and starting it by hand.
+#[test]
+fn a_declared_branch_existing_nowhere_offers_its_creation_at_update() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "branch = \"nosuch\""),
+    )
+    .unwrap();
+    common::git_in(&project_dir, &["commit", "-qam", "declare nosuch"]);
+
+    let out = common::rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("name no-such-branch"), "{text}");
+    assert!(text.contains("rwv fetch"), "{text}");
+    assert!(
+        text.contains("rwv member set-branch local/org/a nosuch --new"),
+        "{text}"
+    );
+}

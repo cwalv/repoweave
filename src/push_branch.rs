@@ -2,7 +2,7 @@
 //! the `push-branch` axis, read from the seam's roles.
 
 use crate::branch_ref::BranchRef;
-use crate::diagnosis::{Judged, State};
+use crate::diagnosis::{ChoiceId, Judged, State};
 use crate::vcs::{
     short_revision, AttachedRef, CommitSummary, RawRefName, Relation, RemoteHandle,
     ResolvedRevisionId, TrackingRef, Vcs, VcsError,
@@ -162,7 +162,20 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
         Standing::NoPushTarget => judging.subject(subject.branch),
         _ => judging,
     };
-    if let Some(declared) = subject.declared {
+    if let Standing::Gone { .. } = standing {
+        let on_declared = subject
+            .declared
+            .is_some_and(|declared| declared.local_counterpart().as_str() == subject.branch);
+        judging = match (subject.member, on_declared) {
+            (false, _) => judging.only(&[ChoiceId::C10]),
+            (true, true) => judging.only(&[ChoiceId::C11, ChoiceId::C7]),
+            (true, false) => judging.bind("<W>", subject.branch).only(&[
+                ChoiceId::C22,
+                ChoiceId::C9,
+                ChoiceId::C7,
+            ]),
+        };
+    } else if let Some(declared) = subject.declared {
         judging = judging.bind("<b>", declared);
     }
     judging = judging.bind("<repo>", subject.repo);

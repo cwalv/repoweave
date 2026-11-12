@@ -630,7 +630,13 @@ impl State {
                         fetched, and holds commits no remote-tracking branch reaches, listed",
                 refused_by: "`rwv push` skips it unless `--repo` names it; `rwv status` \
                              reports it",
-                offers: &[Form::C15, Form::C7PushRepo, Form::C10Adopt],
+                offers: &[
+                    Form::C10Adopt,
+                    Form::C11SetBranch,
+                    Form::C22,
+                    Form::C9BranchDeleteDiscardUnlanded,
+                    Form::C7PushRepo,
+                ],
                 verb_offers: &[],
             },
             Self::PushBranchForeignUpstream => &StateRow {
@@ -753,10 +759,8 @@ impl State {
                              declared branch a hand edit named that exists nowhere; `rwv switch`, \
                              for a branch the project repo lacks, and `rwv branch create`, for a \
                              `--target` or `--at` that names nothing here",
-                offers: &[Form::C33],
+                offers: &[Form::C33, Form::C11SetBranchNew, Form::C18],
                 verb_offers: &[
-                    ("member set-branch", Form::C11SetBranchNew),
-                    ("lock", Form::C11SetBranchNew),
                     ("switch", Form::C24),
                     ("switch", Form::C14Keep),
                 ],
@@ -1549,6 +1553,7 @@ pub enum Form {
     C7PushRepo,
     C7PushBranch,
     C9BranchDelete,
+    C9BranchDeleteDiscardUnlanded,
     C9WorkweaveDelete,
     C10,
     C10Adopt,
@@ -1611,7 +1616,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 66] = [
+    pub const ALL: [Form; 67] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1627,6 +1632,7 @@ impl Form {
         Self::C7PushRepo,
         Self::C7PushBranch,
         Self::C9BranchDelete,
+        Self::C9BranchDeleteDiscardUnlanded,
         Self::C9WorkweaveDelete,
         Self::C10,
         Self::C10Adopt,
@@ -1773,6 +1779,12 @@ impl Form {
             Self::C9BranchDelete => &FormRow {
                 choice: C::C9,
                 steps: &[Rwv("rwv branch delete <W>")],
+                at: W::BranchNotCheckedOut,
+                shipped: true,
+            },
+            Self::C9BranchDeleteDiscardUnlanded => &FormRow {
+                choice: C::C9,
+                steps: &[Rwv("rwv branch delete <W> --discard-unlanded")],
                 at: W::BranchNotCheckedOut,
                 shipped: true,
             },
@@ -2105,7 +2117,9 @@ impl Form {
             | Self::C1UpdateRemoteCommit
             | Self::C2UpdateRemote
             | Self::C3UpdateRemote
-            | Self::C7PushRepo => Some(Scope::Member),
+            | Self::C7PushRepo
+            | Self::C11SetBranchNew
+            | Self::C18 => Some(Scope::Member),
             _ => None,
         }
     }
