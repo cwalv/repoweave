@@ -31,6 +31,7 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<W>", "feat"),
         ("<T>", "main"),
         ("<rev>", "0123abc"),
+        ("<pin>", "0123abc"),
         ("<url>", "https://example.com/o/lib.git"),
         ("<role>", "owned"),
         ("<bool>", "true"),

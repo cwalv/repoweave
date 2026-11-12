@@ -112,6 +112,13 @@ const ALLOWLIST: &[Allowed] = &[
              against the manifest and refused when it lists no such member.",
     },
     Allowed {
+        file: "repin.rs",
+        count: 1,
+        justification: "A lookup key read back from a commit's re-pin record, which \
+             names a member by the path the manifest listed; it is compared with the \
+             member being judged and never asserted into the manifest.",
+    },
+    Allowed {
         file: "entry_report.rs",
         count: 1,
         justification: "A lookup key read back from the workspace's stored entries, which \
