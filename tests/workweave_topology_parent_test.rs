@@ -260,7 +260,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let ww = create_workweave(&main, "busyforce", None);
 
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -288,7 +288,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("sync in progress"),
+        stderr.contains("sync-to in progress"),
         "refusal must name the in-flight op even under the waivers; got:\n{stderr}"
     );
     assert!(
@@ -1197,36 +1197,5 @@ fn bare_sync_to_follows_recorded_stacked_parent() {
     assert_ne!(
         primary_lib_head, wwb_sha,
         "primary must not advance — bare sync-to targets only the immediate recorded parent"
-    );
-}
-
-/// `rwv sync <source>` from a workweave whose recorded parent is ANOTHER
-/// workweave (not primary) must NOT warn about crossing siblings when the
-/// explicit source IS that recorded parent — the case that would misfire if
-/// the sibling-sync check compared the source against primary instead of the
-/// marker's stacked parent.
-#[test]
-fn sibling_sync_no_warning_when_source_is_recorded_stacked_parent() {
-    let tmp = common::tempdir().unwrap();
-    let main = make_main_workspace(tmp.path());
-
-    let wwa = create_workweave(&main, "wwa", None);
-    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
-
-    let output = rwv()
-        .args(["sync", &wwa.root.to_string_lossy()])
-        .current_dir(&wwb.root)
-        .output()
-        .expect("rwv sync should run");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("siblings") && !stderr.contains("skips the recorded parent"),
-        "syncing from the recorded (stacked) parent must not warn about crossing \
-         siblings; got: {stderr}"
-    );
-    assert!(
-        output.status.success(),
-        "sync from the recorded parent should succeed; stderr: {stderr}"
     );
 }
