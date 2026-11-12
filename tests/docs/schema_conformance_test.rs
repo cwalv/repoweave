@@ -1941,6 +1941,13 @@ fn landing_reports() -> Vec<LandingReportOutput> {
             was: id('f'),
             backup: "proj--feat/rebased-ffffffffffff".to_owned(),
         },
+        LandingReportOutput::Carried {
+            path: "local/remotes/app".to_owned(),
+            branch: "w2".to_owned(),
+            was: id('c'),
+            now: id('d'),
+            backup: "w2/rebased-cccccccccccc".to_owned(),
+        },
         LandingReportOutput::Remapped {
             path: "local/remotes/app".to_owned(),
             was: id('a'),

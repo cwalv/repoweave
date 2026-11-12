@@ -737,7 +737,7 @@ pub fn judge(
     let off_alignment = judge_source_members(
         source_root,
         &landing.project,
-        Some((&landing.feature, &landing.target)).filter(|_| retire),
+        retire.then_some((&landing.feature, &landing.target)),
         report,
     )?;
     let target_aligner = landing
