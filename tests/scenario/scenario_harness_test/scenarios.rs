@@ -11566,6 +11566,7 @@ pub fn continue_after_the_first_move(stop: MovedStop) -> Scenario {
         Step::rwv_paused(&ww("w"), &["land"], point, "landing"),
         Step::kill("landing"),
         Step::commit(&ww("w"), Repo::App, "after-stop"),
+        Step::commit(&ww("w"), Repo::Lib, "after-stop-lib"),
         lands_on_main(
             lands_on_main(
                 Step::rwv(&ww("w"), &["land", "--continue"]),
@@ -11578,6 +11579,8 @@ pub fn continue_after_the_first_move(stop: MovedStop) -> Scenario {
         .expect(Exit::Succeeds),
         Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
             .claim(Claim::OutputLacks("after-stop")),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("after-stop-lib")),
         lands_on_main(
             Step::rwv(&ww("w"), &["land", "--retire"]),
             Repo::App,
@@ -11587,6 +11590,56 @@ pub fn continue_after_the_first_move(stop: MovedStop) -> Scenario {
         .claim(Claim::WorkweaveGone(ww("w"))),
     ]);
     scenario("continue after the first move", steps)
+}
+
+/// What changed in the target while a landing sat killed once it composed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovedWhileStopped {
+    /// The target's checkout of `app` switched to another branch.
+    SwitchedOffItsBranch,
+    /// `lib`'s `main`, moved as a ref, deleted.
+    RefGone,
+    /// `lib`'s `main`, moved as a ref, moved on by another commit.
+    RefMovedOn,
+}
+
+/// A landing killed once it composed, its target then changed: `--continue`
+/// refuses `target` moved mid-operation, naming what moved, and the printed
+/// `rwv abort` ends it.
+pub fn continue_refuses_a_target_moved_while_stopped(moved: MovedWhileStopped) -> Scenario {
+    let mut steps = vec![create("w")];
+    if moved != MovedWhileStopped::SwitchedOffItsBranch {
+        steps.extend(main_checked_out_nowhere());
+    }
+    let (change, says) = match moved {
+        MovedWhileStopped::SwitchedOffItsBranch => (
+            Step::git(&a(), Repo::App, &["switch", "-q", "-c", "other"]),
+            "on 'other', not on 'main'",
+        ),
+        MovedWhileStopped::RefGone => (
+            Step::git(&a(), Repo::Lib, &["branch", "-q", "-D", "main"]).may_strand(&[Repo::Lib]),
+            "'main' is gone",
+        ),
+        MovedWhileStopped::RefMovedOn => (
+            Step::hand_commit(&a(), Repo::Lib, "main", &[("moved.txt", "moved\n")]),
+            "where the landing read it",
+        ),
+    };
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        change,
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+            .claim(Claim::OutputContains(says)),
+        Step::rwv_printed_exactly(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+    ]);
+    scenario("continue refuses a target moved while stopped", steps)
 }
 
 /// How a landing that fast-forwards the primary's checkout in place ends.

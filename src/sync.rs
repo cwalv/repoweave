@@ -9627,6 +9627,14 @@ fn ff_advance_repo(
             cwd_tip,
         ),
     };
+    if on.to_string() != branch {
+        return Err(target_moved_line_for(
+            label,
+            target_repo,
+            format!("on '{on}', not on '{branch}'"),
+        )
+        .refused());
+    }
 
     // Fast-forwarding a target worktree with dirty tracked files risks
     // clobbering them. The land preflight already refused on tracked

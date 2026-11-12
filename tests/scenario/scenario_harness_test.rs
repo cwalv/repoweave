@@ -854,6 +854,11 @@ every_scenario!(
     dc05_compose_in_source(scenarios::Dc05::LandedAborted),
     continue_after_the_first_move(scenarios::MovedStop::CheckoutMoved),
     continue_after_the_first_move(scenarios::MovedStop::RefsMoved),
+    continue_refuses_a_target_moved_while_stopped(
+        scenarios::MovedWhileStopped::SwitchedOffItsBranch
+    ),
+    continue_refuses_a_target_moved_while_stopped(scenarios::MovedWhileStopped::RefGone),
+    continue_refuses_a_target_moved_while_stopped(scenarios::MovedWhileStopped::RefMovedOn),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2873,6 +2878,19 @@ holding_rwv! {
             .assert_fully_decided_green();
         runner::run(scenarios::a_landing_meets_a_stopped_landing_in_a_checkout())
             .assert_fully_decided_green();
+    }
+
+    /// A target moved while a landing sat killed refuses `--continue`,
+    /// naming what moved; the printed abort ends the landing.
+    fn continue_refuses_a_target_moved_while_stopped() {
+        for moved in [
+            scenarios::MovedWhileStopped::SwitchedOffItsBranch,
+            scenarios::MovedWhileStopped::RefGone,
+            scenarios::MovedWhileStopped::RefMovedOn,
+        ] {
+            runner::run(scenarios::continue_refuses_a_target_moved_while_stopped(moved))
+                .assert_fully_decided_green();
+        }
     }
 
     /// A landing killed after its first move, continued after a commit in
