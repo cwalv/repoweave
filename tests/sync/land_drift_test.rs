@@ -1254,6 +1254,26 @@ fn an_edit_saved_as_the_refresh_starts_is_kept_and_landing_again_refreshes_the_r
     assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
 }
 
+/// The checkout takes part of the move by hand after the landing first read
+/// it: read again before the write, it no longer shows the move under it, and
+/// nothing is written, the path the move added included.
+#[test]
+fn a_hand_refresh_after_the_first_reading_voids_the_drift_before_the_write() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    let held = held_landing(&f, "drift-read");
+    common::git_in(&f.ww_lib, &["checkout", "HEAD", "--", "notes.txt"]);
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{stderr}");
+}
+
 /// Moves `ww/project` adding `path` as a tracked file and runs `prepare` in
 /// the source checkout; then lands, `put` putting something at the path while
 /// the landing is about to write. That something is kept, and the drift left.

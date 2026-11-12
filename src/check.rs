@@ -7348,6 +7348,7 @@ pub fn refresh_drift(
             .collect()
     };
     let first = read_stale(reading);
+    crate::test_pause::point("drift-read");
     let now = read_drift(vcs, repo)?;
     if (&now.left, &now.head) != (&reading.left, &reading.head) {
         let why = match vcs.head_revision(repo)?.id() == moved_to {

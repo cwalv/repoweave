@@ -13557,4 +13557,87 @@ pub fn stack_remote_dependent() -> Scenario {
             .claim(Claim::OutputLacks("carried")),
     ]);
     scenario("stack: a dependent published from another machine", steps)
+
+/// A member's branch moved under its seat, the seat refreshed by hand with a
+/// git command that writes no reflog entry, then a staged return of every
+/// path the move changed: three returns, each after three hand refreshes.
+/// The index, files and reflog are then those of a seat never refreshed, so
+/// nothing git records tells the staged return from drift. Whether a landing
+/// refreshes it (today) or keeps it is the operator's open ruling Q3; each
+/// landing's outcome is undecided until it lands.
+pub fn drift_staged_return_after_a_hand_refresh() -> Scenario {
+    let refreshes: [&[&str]; 3] = [
+        &["checkout", "HEAD", "--", "."],
+        &["restore", "--staged", "--worktree", "--source=HEAD", "."],
+        &["read-tree", "-m", "-u", "HEAD"],
+    ];
+    let seats: [[&'static str; 3]; 3] = [
+        ["q3-add-1", "q3-add-2", "q3-add-3"],
+        ["q3-change-1", "q3-change-2", "q3-change-3"],
+        ["q3-two-1", "q3-two-2", "q3-two-3"],
+    ];
+    let mut steps = Vec::new();
+    for (variant, names) in seats.iter().enumerate() {
+        for (refresh, seat) in refreshes.iter().zip(names) {
+            let branch = format!("proj--{seat}");
+            steps.push(create(seat));
+            match variant {
+                0 => {
+                    steps.push(Step::hand_commit(
+                        &a(),
+                        Repo::Lib,
+                        &branch,
+                        &[("new.txt", "new\n")],
+                    ));
+                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
+                    steps.push(Step::git(&ww(seat), Repo::Lib, &["rm", "-q", "new.txt"]));
+                }
+                1 => {
+                    steps.push(Step::commit(&ww(seat), Repo::Lib, seat));
+                    let file = format!("{seat}.txt");
+                    steps.push(Step::hand_commit(
+                        &a(),
+                        Repo::Lib,
+                        &branch,
+                        &[(&file, "moved\n")],
+                    ));
+                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
+                    steps.push(Step::git(
+                        &ww(seat),
+                        Repo::Lib,
+                        &["checkout", "HEAD~1", "--", &file],
+                    ));
+                }
+                _ => {
+                    steps.push(Step::commit(&ww(seat), Repo::Lib, seat));
+                    let file = format!("{seat}.txt");
+                    steps.push(Step::hand_commit(
+                        &a(),
+                        Repo::Lib,
+                        &branch,
+                        &[(&file, "moved\n"), ("new.txt", "new\n")],
+                    ));
+                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
+                    steps.push(Step::git(
+                        &ww(seat),
+                        Repo::Lib,
+                        &["revert", "--no-commit", "HEAD"],
+                    ));
+                    steps.push(Step::git(&ww(seat), Repo::Lib, &["revert", "--quit"]));
+                }
+            }
+            steps.push(
+                Step::git(
+                    &ww(seat),
+                    Repo::Lib,
+                    &["diff", "--cached", "--quiet", "HEAD"],
+                )
+                .expect(Exit::Code(1)),
+            );
+            steps.push(
+                Step::rwv(&ww(seat), &["land", "--history", "linear"]).expect(Exit::Undecided),
+            );
+        }
+    }
+    scenario("drift staged return after a hand refresh", steps)
 }

@@ -881,6 +881,7 @@ every_scenario!(
     landed_history_pin_no_ref_keeps,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
+    drift_staged_return_after_a_hand_refresh,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -1063,6 +1064,13 @@ fn every_refusal_step_names_its_state_and_every_claim_has_an_exit() {
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The staged return of a whole move after a hand refresh: undecided until
+/// the operator's ruling Q3, whose answer gives each landing its exit.
+#[test]
+fn a_staged_return_of_a_whole_move_after_a_hand_refresh_awaits_its_ruling() {
+    runner::run(scenarios::drift_staged_return_after_a_hand_refresh()).assert_green();
 }
 
 #[test]

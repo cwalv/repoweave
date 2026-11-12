@@ -10554,6 +10554,177 @@ mod drift_tests {
         }
     }
 
+    impl Drift {
+        /// Moves `feat` forward from the store's checkout by what `change`
+        /// does there.
+        fn move_with(&self, change: impl FnOnce(&Path)) -> CommitId {
+            git(&self.store, &["checkout", "-q", "--detach", "feat"]);
+            change(&self.store);
+            git(&self.store, &["add", "-A"]);
+            git(&self.store, &["commit", "-q", "-m", "moved"]);
+            let moved = git(&self.store, &["rev-parse", "HEAD"]);
+            git(&self.store, &["update-ref", "refs/heads/feat", &moved]);
+            git(&self.store, &["checkout", "-q", "main"]);
+            CommitId::parse(&moved).unwrap()
+        }
+
+        fn standing(&self, left: &CommitId, path: &str) -> PathStanding {
+            path_standings(&self.worktree, Some(left))
+                .unwrap()
+                .into_iter()
+                .find(|s| s.path == path)
+                .unwrap_or_else(|| panic!("{path} has no standing"))
+        }
+    }
+
+    /// A source repository with one commit, added as the submodule `sub` of
+    /// the store, populated in the worktree.
+    fn with_submodule(d: &Drift) -> (PathBuf, CommitId) {
+        let source = d.store.parent().unwrap().join("subsrc");
+        std::fs::create_dir_all(&source).unwrap();
+        git(&source, &["init", "-q", "-b", "main"]);
+        git(&source, &["config", "user.email", "t@t"]);
+        git(&source, &["config", "user.name", "T"]);
+        std::fs::write(source.join("s.txt"), "s1\n").unwrap();
+        git(&source, &["add", "s.txt"]);
+        git(&source, &["commit", "-q", "-m", "s1"]);
+        let url = source.to_str().unwrap();
+        git(
+            &d.store,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                url,
+                "sub",
+            ],
+        );
+        git(&d.store, &["commit", "-q", "-m", "sub"]);
+        git(&d.worktree, &["merge", "-q", "--ff-only", "main"]);
+        git(
+            &d.worktree,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "-q",
+                "--init",
+            ],
+        );
+        let at = id(&source, "HEAD");
+        (source, at)
+    }
+
+    #[test]
+    fn a_checkout_whose_index_has_no_entries_records_no_move() {
+        let d = Drift::new();
+        d.move_from_outside("a2\n");
+        let index = git(
+            &d.worktree,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+        );
+        std::fs::remove_file(index).unwrap();
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+    }
+
+    #[test]
+    fn an_untracked_file_put_where_the_move_adds_one_after_the_reading_is_not_written_over() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        let head = d.move_with(|store| std::fs::write(store.join("new.txt"), "new\n").unwrap());
+        assert_eq!(
+            (
+                d.standing(&left, "new.txt").index,
+                d.standing(&left, "new.txt").file
+            ),
+            (Holds::LeftTip, Holds::LeftTip)
+        );
+        std::fs::write(d.worktree.join("new.txt"), "never committed\n").unwrap();
+
+        let written = refresh_paths_if_left(
+            &d.worktree,
+            &left,
+            &head,
+            &["new.txt".to_owned()],
+            RefreshScope::IndexAndFiles,
+        )
+        .unwrap();
+
+        assert!(
+            matches!(written, RefreshWrite::Declined { .. }),
+            "{written:?}"
+        );
+        assert_eq!(
+            text(&d.worktree.join("new.txt")).as_deref(),
+            Some("never committed\n")
+        );
+    }
+
+    #[test]
+    fn a_populated_submodule_the_move_turns_into_a_file_is_an_edit() {
+        let d = Drift::new();
+        with_submodule(&d);
+        std::fs::write(d.worktree.join("sub/notes-untracked"), "mine\n").unwrap();
+        let left = id(&d.worktree, "HEAD");
+        d.move_with(|store| {
+            git(store, &["rm", "-q", "-f", "sub"]);
+            let _ = std::fs::remove_dir_all(store.join("sub"));
+            std::fs::write(store.join("sub"), "now a file\n").unwrap();
+        });
+
+        assert_eq!(d.standing(&left, "sub").file, Holds::Other);
+    }
+
+    #[test]
+    fn a_moved_submodule_entry_is_refreshed_in_the_index_alone() {
+        let d = Drift::new();
+        let (source, _) = with_submodule(&d);
+        std::fs::write(source.join("s.txt"), "s2\n").unwrap();
+        git(&source, &["commit", "-q", "-am", "s2"]);
+        let bumped = id(&source, "HEAD");
+        let left = id(&d.worktree, "HEAD");
+        d.move_with(|store| {
+            git(&store.join("sub"), &["fetch", "-q", "origin"]);
+            git(&store.join("sub"), &["checkout", "-q", bumped.as_str()]);
+        });
+
+        let sub = d.standing(&left, "sub");
+
+        assert_eq!((sub.index, sub.file), (Holds::LeftTip, Holds::Head));
+    }
+
+    #[test]
+    fn an_unchanged_assume_unchanged_file_at_a_moved_path_is_stale() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        git(
+            &d.worktree,
+            &["update-index", "--assume-unchanged", "a.txt"],
+        );
+        d.move_from_outside("a2\n");
+
+        let a = d.standing(&left, "a.txt");
+
+        assert_eq!((a.index, a.file), (Holds::LeftTip, Holds::LeftTip));
+    }
+
+    #[test]
+    fn a_changed_assume_unchanged_file_at_a_moved_path_is_an_edit() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        git(
+            &d.worktree,
+            &["update-index", "--assume-unchanged", "a.txt"],
+        );
+        std::fs::write(d.worktree.join("a.txt"), "local\n").unwrap();
+        d.move_from_outside("a2\n");
+
+        assert_eq!(d.standing(&left, "a.txt").file, Holds::Other);
+    }
+
     #[test]
     fn a_move_from_another_worktree_is_read_as_one_under_the_checkout() {
         let d = Drift::new();
