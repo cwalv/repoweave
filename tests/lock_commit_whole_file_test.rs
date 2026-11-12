@@ -72,10 +72,7 @@ fn commit_in(dir: &Path, file: &str) -> String {
 }
 
 fn hand_declare_lib_on(w: &PushWorkspace, branch: &str) {
-    let edited = manifest(w).replace(
-        &format!("branch = \"main\"\nrole = \"owned\"\n[repositories.\"{LIB}\"]"),
-        &format!("branch = \"main\"\nrole = \"owned\"\n[repositories.\"{LIB}\"]"),
-    );
+    let edited = manifest(w);
     let lib_section = edited.find(&format!("[repositories.\"{LIB}\"]")).unwrap();
     let (head, tail) = edited.split_at(lib_section);
     let tail = tail.replacen("branch = \"main\"", &format!("branch = \"{branch}\""), 1);
@@ -182,7 +179,10 @@ fn a_hand_removed_member_is_committed_removed_and_its_checkout_is_kept() {
 #[test]
 fn a_whole_file_commit_refuses_project_edits_before_it_writes_the_lock() {
     let w = two_members();
-    let hand = format!("{}\n[integrations.vscode-workspace]\nenabled = false\n", manifest(&w));
+    let hand = format!(
+        "{}\n[integrations.vscode-workspace]\nenabled = false\n",
+        manifest(&w)
+    );
     std::fs::write(project(&w).join("rwv.toml"), hand).unwrap();
     std::fs::write(project(&w).join("README"), "tracked\n").unwrap();
     git_in(project(&w), &["add", "README"]);

@@ -27,7 +27,9 @@ pub(crate) fn authored_across(
     manifests: &[&Manifest],
 ) -> BTreeSet<String> {
     let dir = crate::workspace::project_dir(ctx.active_path(), project);
-    let committed = committed_manifest(project_vcs().as_ref(), &dir).ok().flatten();
+    let committed = committed_manifest(project_vcs().as_ref(), &dir)
+        .ok()
+        .flatten();
     manifests
         .iter()
         .copied()

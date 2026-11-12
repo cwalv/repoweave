@@ -472,13 +472,11 @@ fn placement_disagreement_compares_with_the_url_on_the_default_branch() {
     git_in(&proj, &["push", "-q", "origin", "main"]);
     git_in(&proj, &["remote", "set-head", "origin", "main"]);
     git_in(&proj, &["switch", "-q", "-c", "stable"]);
-    let moved = manifest_text(&w)
-        .replace("github/acme/lib\"\n", "github/acme/lib\"\n")
-        .replacen(
-            "url = \"github/acme/lib\"",
-            "url = \"github/mirror/lib\"",
-            1,
-        );
+    let moved = manifest_text(&w).replacen(
+        "url = \"github/acme/lib\"",
+        "url = \"github/mirror/lib\"",
+        1,
+    );
     assert_ne!(moved, manifest_text(&w));
     std::fs::write(proj.join("rwv.toml"), moved).unwrap();
     git_in(&proj, &["commit", "-qam", "stable: mirror url"]);
