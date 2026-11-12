@@ -614,6 +614,26 @@ destructive verb over the whole weave.
 **Exits.** Supply a pattern, or drop `--repo` entirely to mean all repos
 explicitly.
 
+### `filesystem-without-exclusive-publish`
+
+**Condition.** The filesystem under a workspace or clone makes neither a hard
+link nor a rename that refuses an occupied target, so rwv cannot publish its
+operation records and claims there exclusively. The refusal names the file,
+the filesystem as the OS reports it, and the error each call returned.
+
+**Why.** An operation record, a lease and a claim are each written whole into
+a temporary file and published in one step that fails if something is already
+there: two processes racing for one find exactly one winner, and a reader sees
+nothing or the whole file. rwv publishes by hard link, and where the
+filesystem makes none (FAT and exFAT on Linux, some FUSE and SMB mounts), by a
+rename that does not replace. Creating the file and then writing it would be
+exclusive but not whole: a process killed between the two leaves an empty
+record that every later operation refuses. An operation refused here has
+written nothing.
+
+**Exits.** Move the workspace to a filesystem that makes hard links (ext4,
+XFS, Btrfs, APFS, NTFS) or a no-replace rename, then re-run.
+
 ### `foreign-clone-at-placement`
 
 **Condition.** `rwv member add <url>` (or shorthand) for a repo the manifest does not
@@ -1241,7 +1261,9 @@ re-point or publish the branch it is held on or a branch its operation lands
 into or carries, with the same two exits. A landing claim whose workspace is here and
 no longer records its operation is taken over by the next landing; one whose
 workspace is not here to read is refused as
-[`claim-owner-unreachable`](doctor-findings.md#claim-owner-unreachable).
+[`claim-owner-unreachable`](doctor-findings.md#claim-owner-unreachable), and
+one that holds what this rwv does not read as
+[`claim-unreadable`](doctor-findings.md#claim-unreadable).
 
 ### `surfacing-path-occupied`
 
