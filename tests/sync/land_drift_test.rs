@@ -1473,7 +1473,7 @@ fn unresolved_conflicts_leave_the_drift_and_resolving_them_then_landing_again_la
     let status = format!("git -C {} status", f.ww_lib.display());
     let choices = choice_lines(&stderr);
     assert!(
-        choices.iter().any(|l| *l == status) && choices.iter().any(|l| l == "rwv land"),
+        choices.contains(&status) && choices.iter().any(|l| l == "rwv land"),
         "{choices:?}\n{stderr}"
     );
     assert!(
