@@ -781,3 +781,161 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     );
     assert!(!ww.exists());
 }
+
+fn work_on(w: &common::PushWorkspace, member: &str, branch: &str, file: &str) -> String {
+    let wt = w._tmp.path().join(format!("scratch-{file}"));
+    common::git_in(
+        w.workspace.join(member),
+        &["worktree", "add", "-q", wt.to_str().unwrap(), branch],
+    );
+    let work = commit_in(&wt, file);
+    common::git_in(
+        w.workspace.join(member),
+        &["worktree", "remove", "--force", wt.to_str().unwrap()],
+    );
+    work
+}
+
+/// `main` once declared `lib -> next`; a later feature named `next` gives lib
+/// a branch of that name. Its unlanded work is not "landed" on itself.
+#[test]
+fn a_branch_is_never_proved_landed_on_itself() {
+    let w = weave(&[LIB]);
+    let project = project_dir(&w.workspace);
+    let manifest = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "branch = \"next\""),
+    )
+    .unwrap();
+    common::git_in(&project, &["commit", "-qam", "declare next"]);
+    std::fs::write(project.join("rwv.toml"), &manifest).unwrap();
+    common::git_in(&project, &["commit", "-qam", "declare main again"]);
+    feature_branch(&w, "next", &[LIB]);
+    let work = work_on(&w, LIB, "next", "unlanded.txt");
+
+    let out = run(&["branch", "delete", "next", "--json"], &w.workspace);
+
+    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    assert_eq!(survivor(&json(&out), LIB)["reason"], "unlanded");
+    assert_eq!(
+        common::git_in(w.workspace.join(LIB), &["rev-parse", "next"]),
+        work
+    );
+}
+
+/// `--delete-remote-unlanded` is under the pin rule: a published lock pinning
+/// a commit only the push branch holds keeps it.
+#[test]
+fn delete_remote_unlanded_keeps_a_push_branch_a_published_lock_needs() {
+    let w = weave(&[LIB]);
+    feature_branch(&w, "feat", &[LIB]);
+    let work = work_on(&w, LIB, "feat", "pinned.txt");
+    common::git_in(w.workspace.join(LIB), &["push", "-q", "origin", "feat"]);
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["switch", "-q", "-c", "other"]);
+    let url = common::file_url(bare_of(&w, LIB));
+    common::fixture_lock(&project, &[(LIB, &url, &work)]);
+    common::git_in(&project, &["commit", "-qam", "other pins the work"]);
+    common::git_in(&project, &["push", "-q", "origin", "other"]);
+    common::git_in(&project, &["switch", "-q", "main"]);
+
+    let out = run(
+        &[
+            "branch",
+            "delete",
+            "feat",
+            "--discard-unlanded",
+            "--delete-remote-unlanded",
+            LIB,
+            "--json",
+        ],
+        &w.workspace,
+    );
+
+    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    assert!(
+        bare_has(bare_of(&w, LIB), "feat"),
+        "origin/other's lock pins a commit only the push branch holds"
+    );
+    assert_eq!(survivor(&json(&out), LIB)["reason"], "pinned");
+}
+
+/// A remote that refuses a delete keeps its branch, reported, and the rule
+/// goes on: what it already deleted is still listed.
+#[test]
+fn a_remote_that_refuses_the_delete_keeps_the_branch_and_the_rest_is_reported() {
+    let w = weave(&[LIB, APP]);
+    feature_branch(&w, "feat", &[LIB, APP]);
+    common::git_in(w.workspace.join(LIB), &["push", "-q", "origin", "feat"]);
+    common::git_in(w.workspace.join(APP), &["push", "-q", "origin", "feat"]);
+    common::refuse_pushes_to(bare_of(&w, LIB), "refs/heads/feat");
+
+    let out = run(
+        &["branch", "delete", "feat", "--delete-remote", "--json"],
+        &w.workspace,
+    );
+
+    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    let doc = json(&out);
+    assert_eq!(survivor(&doc, LIB)["reason"], "unconfirmed");
+    assert!(
+        doc["deleted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["path"] == APP && d["site"] == "remote origin"),
+        "{doc}"
+    );
+    assert!(!bare_has(bare_of(&w, APP), "feat"));
+    assert!(bare_has(bare_of(&w, LIB), "feat"));
+}
+
+/// "Landed on `T`'s remote-tracking branch" reads `T`'s upstream: a
+/// colleague's remote whose `main` holds the work does not make it landed.
+#[test]
+fn delete_remote_reads_only_the_targets_upstream() {
+    let w = weave(&[LIB]);
+    feature_branch(&w, "feat", &[LIB]);
+    let work = work_on(&w, LIB, "feat", "pr.txt");
+    let lib = w.workspace.join(LIB);
+    common::git_in(&lib, &["push", "-q", "origin", "feat"]);
+    let colleague = w._tmp.path().join("colleague.git");
+    common::git_in(
+        w._tmp.path(),
+        &["init", "-q", "--bare", colleague.to_str().unwrap()],
+    );
+    common::git_in(
+        &lib,
+        &["remote", "add", "colleague", colleague.to_str().unwrap()],
+    );
+    common::git_in(
+        &lib,
+        &[
+            "push",
+            "-q",
+            "colleague",
+            &format!("{work}:refs/heads/main"),
+        ],
+    );
+    common::git_in(&lib, &["fetch", "-q", "colleague"]);
+    common::git_in(&lib, &["config", "remote.pushDefault", "origin"]);
+
+    let out = run(
+        &[
+            "branch",
+            "delete",
+            "feat",
+            "--discard-unlanded",
+            "--delete-remote",
+            "--json",
+        ],
+        &w.workspace,
+    );
+
+    assert!(
+        bare_has(bare_of(&w, LIB), "feat"),
+        "origin/feat has not landed on origin/main; {}",
+        describe(&out)
+    );
+}

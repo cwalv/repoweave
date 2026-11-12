@@ -8,13 +8,14 @@
 //! with its record.
 
 use crate::alignment::{Accounting, Aligner, Member as AlignedMember, Pin, Target};
+use crate::branch_ref::BranchRef;
 use crate::cli::consent::OverwriteConsent;
 use crate::diagnosis::{ChoiceId, Fact, FactKind, Report, State};
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoEntry, RepoOperand, RepoPath, Role, VcsType,
 };
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
-use crate::push_branch::Standing;
+use crate::push_branch::{NewerOfBranchAndUpstream, Standing};
 use crate::records::{BranchName, Published, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
@@ -867,7 +868,7 @@ fn judge_into(
         reported: Report::default(),
     };
 
-    let target_lock = target_lock_of(pushed, pvcs)?;
+    let target_lock = target_lock_of(pushed, pvcs, project_url_remote, refusals)?;
     let declared = declared_by_pushed_range(pushed, pvcs, project_url_remote)?;
     for member in members {
         if !member.acting {
@@ -919,6 +920,7 @@ fn judge_into(
         reported,
         &mut plan,
     )?;
+    judge_overwrites(pushed, members, &live, push_project, refusals, &mut plan)?;
     Ok(plan)
 }
 
@@ -1056,21 +1058,6 @@ fn judge_member(
                 refusals.extend(judged);
                 return Ok(());
             };
-            let stranded = overwrite_strands_pins(
-                pushed,
-                member,
-                &branch,
-                target
-                    .as_ref()
-                    .expect("a diverged branch has a push target"),
-                lease.expected(),
-                &head,
-                live,
-            )?;
-            if let Some(stranded) = stranded {
-                refusals.add(stranded);
-                return Ok(());
-            }
             Replace::Leased(lease)
         }
         Standing::Behind | Standing::Diverged { .. } => {
@@ -1101,40 +1088,50 @@ fn judge_member(
     Ok(())
 }
 
-/// `T`'s lock: the one at the tip of the newer of the record's target and its
-/// upstream, `None` where this is no feature or the target has no lock here.
-fn target_lock_of(pushed: &Pushed, pvcs: &dyn Vcs) -> anyhow::Result<Option<LockFile>> {
+/// `T`'s lock, read at `T`'s tip: the newer of the record's target and its
+/// upstream. `None` where this is no feature or the target has no lock here;
+/// a target diverged from its upstream is refused.
+fn target_lock_of(
+    pushed: &Pushed,
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+    refusals: &mut Report,
+) -> anyhow::Result<Option<LockFile>> {
     let Record::Feature { target, .. } = &pushed.record else {
         return Ok(None);
     };
     let raw = RawRefName::new(target.as_str());
-    let mut tips: Vec<ResolvedRevisionId> = pvcs
-        .resolve_local_branch_tip(&pushed.project_dir, &raw)?
-        .into_iter()
-        .collect();
-    tips.extend(
-        pvcs.remote_copies(&pushed.project_dir, &raw)?
-            .into_iter()
-            .map(|copy| copy.tip),
-    );
-    let mut newest: Option<ResolvedRevisionId> = None;
-    for tip in tips {
-        newest = match newest {
-            None => Some(tip),
-            Some(held) if pvcs.is_ancestor(&pushed.project_dir, &held, &tip)? => Some(tip),
-            Some(held) if pvcs.is_ancestor(&pushed.project_dir, &tip, &held)? => Some(held),
-            Some(_) => {
-                return Err(crate::untokened!(
-                    InternalInvariant,
-                    "rwv push: {target} and its upstream have diverged, so its tip, whose lock \
-                 says what {} holds beyond it, is not one commit; take theirs in first",
-                    pushed.branch
-                ))
-            }
-        };
-    }
-    let Some(tip) = newest else {
-        return Ok(None);
+    let tip = match crate::push_branch::newer_of_branch_and_upstream(
+        pvcs,
+        &pushed.project_dir,
+        &raw,
+        project_url_remote,
+    )? {
+        NewerOfBranchAndUpstream::Tip(tip) => tip,
+        NewerOfBranchAndUpstream::Nowhere => return Ok(None),
+        NewerOfBranchAndUpstream::Diverged {
+            local,
+            upstream,
+            upstream_tip,
+        } => {
+            refusals.add(
+                State::PushBranchDiverged
+                    .of(project_label(&pushed.project))
+                    .project_repo()
+                    .subject(format!("{target} and {upstream}"))
+                    .listing([format!(
+                        "{target} is at {} and {upstream} at {}; {target}'s tip, whose lock says \
+                         what {} holds beyond it, is not one commit",
+                        local.id().short(),
+                        upstream_tip.id().short(),
+                        pushed.branch
+                    )])
+                    .checkout(&pushed.project_dir)
+                    .bind("<T>", target.as_str())
+                    .judge(pvcs),
+            );
+            return Ok(None);
+        }
     };
     Ok(pvcs
         .read_file_at_revision(&pushed.project_dir, &tip, Path::new(LockFile::FILE_NAME))
@@ -1299,64 +1296,86 @@ fn fetch_age_text(vcs: &dyn Vcs, repo: &Path, remote: Option<&RemoteHandle>) -> 
     }
 }
 
-/// The line refusing an overwrite of `branch`'s push branch while a live lock
-/// of another weave branch pins a commit only the tip being replaced reaches:
-/// replacing it would leave that pin in no remote-tracking branch. The locks of
-/// the branch being pushed are replaced by the push and do not count.
-fn overwrite_strands_pins(
+/// The pin rule for each member overwrite the plan holds: the replaced tip is
+/// kept as a backup, so what counts is a live pin a remote-tracking lock holds
+/// that no remote-tracking branch of the member would reach. The lock of the
+/// project branch this run publishes, fast-forward, is exempt where the lock
+/// it publishes pins a commit the new member tip reaches.
+fn judge_overwrites(
     pushed: &Pushed,
-    member: &Member,
-    branch: &RawRefName,
-    remote: &RemoteHandle,
-    replaced: &ResolvedRevisionId,
-    replacing: &ResolvedRevisionId,
+    members: &[Member],
     live: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
-) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
-    let vcs = member.vcs.as_ref();
-    let Some(held) = live.get(&member.path) else {
-        return Ok(None);
-    };
-    let own = |pin: &crate::pins::LivePin| {
-        pin.project == pushed.project
-            && (pin.branch == pushed.branch.as_str()
-                || pin.branch.ends_with(&format!("/{}", pushed.branch)))
-    };
-    let replaced_name = format!("{remote}/{branch}");
-    let others: Vec<ResolvedRevisionId> = vcs
-        .branch_tips(&member.dir)?
-        .into_iter()
-        .filter(|tip| tip.label != branch.as_str() && tip.label != replaced_name)
-        .map(|tip| tip.tip)
-        .collect();
-    let mut listing: Vec<String> = Vec::new();
-    for pin in held.iter().filter(|pin| !own(pin)) {
-        let commit = ResolvedRevisionId::from(pin.commit.clone());
-        let reached = |tip: &ResolvedRevisionId| vcs.is_ancestor(&member.dir, &commit, tip);
-        if reached(replaced)?
-            && !reached(replacing)?
-            && !others.iter().any(|t| matches!(reached(t), Ok(true)))
-        {
-            listing.push(format!(
-                "{} is pinned by {}, and only {replaced_name} reaches it",
-                pin.commit.short(),
-                pin.held_by
-            ));
+    push_project: bool,
+    refusals: &mut Report,
+    plan: &mut Plan,
+) -> anyhow::Result<()> {
+    let replaced_project = plan
+        .project
+        .as_ref()
+        .filter(|p| push_project && p.push_branch && matches!(p.replace, Replace::FastForwardOnly))
+        .map(|p| BranchRef::Remote {
+            remote: p.target.clone(),
+            name: pushed.raw.clone(),
+        });
+    let mut kept = Vec::with_capacity(plan.items.len());
+    for item in std::mem::take(&mut plan.items) {
+        let Replace::Leased(lease) = &item.replace else {
+            kept.push(item);
+            continue;
+        };
+        let member = members
+            .iter()
+            .find(|m| m.path == item.repo_path)
+            .expect("a planned member is a member");
+        let vcs = member.vcs.as_ref();
+        let head = item.publish_ref.commit();
+        let new_lock_reached = pushed
+            .lock
+            .as_ref()
+            .and_then(|lock| lock.get_entry(&member.path))
+            .and_then(|entry| {
+                vcs.resolve_revision(&member.dir, entry.version.as_str())
+                    .ok()
+            })
+            .map(|pin| vcs.is_ancestor(&member.dir, &pin, head))
+            .transpose()?
+            .unwrap_or(false);
+        let exempt = |pin: &crate::pins::LivePin| {
+            new_lock_reached
+                && pin.project == pushed.project
+                && replaced_project.as_ref() == Some(&pin.branch)
+        };
+        let replaced = BranchRef::Remote {
+            remote: item.target.clone(),
+            name: RawRefName::new(item.branch.clone()),
+        };
+        let change = crate::pins::RefChange {
+            branch: &replaced,
+            was: lease.expected(),
+            now: Some(head),
+            was_backed_up: true,
+        };
+        let held = live
+            .get(&member.path)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let stranded = crate::pins::stranded_by(vcs, &member.dir, held, &change, exempt)?;
+        if stranded.is_empty() {
+            kept.push(item);
+            continue;
         }
+        refusals.add(
+            State::PinWouldBeUnreachable
+                .of(&member.path)
+                .member()
+                .checkout(&member.dir)
+                .bind("<m>", member.path.as_str())
+                .listing(stranded.iter().map(|s| s.line(&change)))
+                .judge(vcs),
+        );
     }
-    if listing.is_empty() {
-        return Ok(None);
-    }
-    listing.sort();
-    listing.dedup();
-    Ok(Some(
-        State::PinWouldBeUnreachable
-            .of(&member.path)
-            .member()
-            .checkout(&member.dir)
-            .bind("<m>", member.path.as_str())
-            .listing(listing)
-            .judge(vcs),
-    ))
+    plan.items = kept;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

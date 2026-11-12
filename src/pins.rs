@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::branch_ref::BranchRef;
 use crate::diagnosis::{ChoiceId, Fact, FactKind, Judged, State};
 use crate::manifest::{LockFile, ProjectName, RepoPath};
 use crate::vcs::{
@@ -25,7 +26,7 @@ pub(crate) struct LivePin {
     pub(crate) commit: CommitId,
     pub(crate) project: ProjectName,
     /// The project branch whose lock holds it.
-    pub(crate) branch: String,
+    pub(crate) branch: BranchRef,
     /// The project and branch whose lock holds it, as an operator reads them.
     pub(crate) held_by: String,
 }
@@ -68,7 +69,7 @@ pub(crate) fn live_pins(primary: &Path) -> anyhow::Result<BTreeMap<RepoPath, Vec
                     pins.entry(path.clone()).or_default().push(LivePin {
                         commit,
                         project: project.clone(),
-                        branch: branch.label.clone(),
+                        branch: branch.branch.clone(),
                         held_by: format!("{project} {}", branch.label),
                     });
                 }
@@ -353,4 +354,106 @@ pub(crate) fn off_remote(
         );
     }
     Ok(lines)
+}
+
+/// One change to one ref of a member's clone, as the pin rule judges it.
+pub(crate) struct RefChange<'a> {
+    pub(crate) branch: &'a BranchRef,
+    /// The tip the ref held.
+    pub(crate) was: &'a ResolvedRevisionId,
+    /// The tip it is given, `None` when it is deleted.
+    pub(crate) now: Option<&'a ResolvedRevisionId>,
+    /// A backup holds `was` once the change is made.
+    pub(crate) was_backed_up: bool,
+}
+
+/// A live pin a ref change would leave reached as the pin rule forbids.
+pub(crate) struct Stranded {
+    pub(crate) commit: CommitId,
+    pub(crate) held_by: Vec<String>,
+}
+
+impl Stranded {
+    pub(crate) fn line(&self, change: &RefChange<'_>) -> String {
+        format!(
+            "{} is pinned by {}, and only {} reaches it",
+            self.commit.short(),
+            self.held_by.join(", "),
+            change.branch
+        )
+    }
+}
+
+/// The pin rule for one ref change in the clone at `dir`: each live pin `was`
+/// reaches that, after the change, no branch, remote-tracking branch or
+/// backup reaches, or, when a remote-tracking lock holds it and the change is
+/// to a remote-tracking branch, no remote-tracking branch reaches. Pins held
+/// only by locks `exempt` names do not count.
+pub(crate) fn stranded_by(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    live: &[LivePin],
+    change: &RefChange<'_>,
+    exempt: impl Fn(&LivePin) -> bool,
+) -> anyhow::Result<Vec<Stranded>> {
+    let mut remaining: Vec<(bool, ResolvedRevisionId)> = vcs
+        .branch_tips(dir)?
+        .into_iter()
+        .filter(|tip| &tip.branch != change.branch)
+        .map(|tip| (tip.branch.is_remote(), tip.tip))
+        .collect();
+    if let Some(now) = change.now {
+        remaining.push((change.branch.is_remote(), now.clone()));
+    }
+    let mut backups: Vec<ResolvedRevisionId> = vcs
+        .list_backups(dir, crate::vcs::RemoteTracking::Counted)?
+        .into_iter()
+        .map(|listed| listed.backup.tip)
+        .collect();
+    if change.was_backed_up {
+        backups.push(change.was.clone());
+    }
+
+    let mut by_commit: BTreeMap<&CommitId, Vec<&LivePin>> = BTreeMap::new();
+    for pin in live.iter().filter(|pin| !exempt(pin)) {
+        by_commit.entry(&pin.commit).or_default().push(pin);
+    }
+    let mut stranded = Vec::new();
+    for (commit, holders) in by_commit {
+        let Ok(pinned) = vcs.resolve_revision(dir, commit.as_str()) else {
+            continue;
+        };
+        let reaches = |tip: &ResolvedRevisionId| vcs.is_ancestor(dir, &pinned, tip);
+        if !reaches(change.was)? {
+            continue;
+        }
+        let mut by_any = false;
+        let mut by_remote = false;
+        for (remote, tip) in &remaining {
+            if reaches(tip)? {
+                by_any = true;
+                by_remote |= *remote;
+            }
+        }
+        if !by_any {
+            for tip in &backups {
+                if reaches(tip)? {
+                    by_any = true;
+                    break;
+                }
+            }
+        }
+        let remote_clause =
+            change.branch.is_remote() && holders.iter().any(|pin| pin.branch.is_remote());
+        if !by_any || (remote_clause && !by_remote) {
+            let mut held_by: Vec<String> = holders.iter().map(|pin| pin.held_by.clone()).collect();
+            held_by.sort();
+            held_by.dedup();
+            stranded.push(Stranded {
+                commit: commit.clone(),
+                held_by,
+            });
+        }
+    }
+    Ok(stranded)
 }

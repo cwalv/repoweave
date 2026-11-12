@@ -1167,6 +1167,7 @@ pub enum Relation {
 pub struct BranchTip {
     /// The branch as the backend spells it for an operator.
     pub label: String,
+    pub branch: crate::branch_ref::BranchRef,
     pub tip: ResolvedRevisionId,
 }
 
@@ -2236,6 +2237,23 @@ impl DestroyProof {
             }
         }
         Ok(None)
+    }
+
+    /// [`Self::landed`] onto named branches. A branch of the destroyed
+    /// branch's own name, at any site, is never what it landed on.
+    pub fn landed_on(
+        vcs: &dyn Vcs,
+        store: &Path,
+        site: Site,
+        branch: &RawRefName,
+        onto: &[(crate::branch_ref::BranchRef, ResolvedRevisionId)],
+    ) -> Result<Option<Self>, VcsError> {
+        let others: Vec<ResolvedRevisionId> = onto
+            .iter()
+            .filter(|(named, _)| named.name() != branch)
+            .map(|(_, tip)| tip.clone())
+            .collect();
+        Self::landed(vcs, store, site, branch, &others)
     }
 
     /// The branch's tip is kept as a backup, and the proof rests on that

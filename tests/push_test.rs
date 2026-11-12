@@ -1556,3 +1556,242 @@ fn a_raw_merge_settled_with_the_other_sides_lock_is_pin_unmerged() {
     assert!(stderr.contains("local/org/a: pin unmerged"), "{stderr}");
     assert!(!stderr.contains("pin waived"), "{stderr}");
 }
+
+/// A feature, its member branch holding work, on a project whose `main` has
+/// a commit `origin/main` lacks.
+fn feature_with_work(ws: &common::PushWorkspace, name: &str) {
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["checkout", "-qb", name]);
+    common::record_feature(&project_dir, name, "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    advance(&ws.workspace.join("local/org/a"), "work.txt");
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+}
+
+/// Another clone of `bare` with one commit of its own on `main`, pushed to
+/// `remote_bare`.
+fn diverging_main(ws: &common::PushWorkspace, remote_bare: &Path, dir: &str) {
+    let other = ws._tmp.path().join(dir);
+    common::git_in(
+        ws._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            ws.project_bare.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    common::git_in(&other, &["config", "user.email", "c@c"]);
+    common::git_in(&other, &["config", "user.name", "C"]);
+    advance(&other, "theirs.txt");
+    common::git_in(
+        &other,
+        &[
+            "push",
+            "-q",
+            remote_bare.to_str().unwrap(),
+            "HEAD:refs/heads/main",
+        ],
+    );
+}
+
+/// `T`'s tip is read from `T` and its own upstream: a colleague's remote whose
+/// `main` went its own way does not stop a feature's push.
+#[test]
+fn a_feature_push_reads_only_the_targets_own_upstream() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let colleague = ws._tmp.path().join("colleague.git");
+    common::git_in(
+        ws._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            ws.project_bare.to_str().unwrap(),
+            colleague.to_str().unwrap(),
+        ],
+    );
+    diverging_main(&ws, &colleague, "colleague-clone");
+    common::git_in(
+        &project_dir,
+        &["remote", "add", "colleague", colleague.to_str().unwrap()],
+    );
+    common::git_in(&project_dir, &["config", "remote.pushDefault", "origin"]);
+    feature_with_work(&ws, "feat/c");
+
+    let out = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A target diverged from its own upstream has no one tip: the push refuses
+/// on the `push-branch` axis, before anything is published.
+#[test]
+fn a_feature_push_whose_target_diverged_from_its_upstream_is_refused_as_push_branch_diverged() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let origin = ws.project_bare.clone();
+    diverging_main(&ws, &origin, "upstream-clone");
+    feature_with_work(&ws, "feat/d");
+
+    let out = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("projects/alpha: push-branch diverged (main and origin/main)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("rwv explain push-branch"), "{stderr}");
+    let none = common::git()
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/feat/d"])
+        .current_dir(&ws.manifest_bares[0].1)
+        .output()
+        .unwrap();
+    assert!(none.stdout.is_empty(), "nothing is published");
+}
+
+// ----------------------------------------------------------------------------
+// The pin rule at a member `--overwrite`.
+// ----------------------------------------------------------------------------
+
+/// Feature `x`, published with member work `m1`; then the member branch is
+/// rewritten to `m2`, diverged from its push branch. Returns `m1`.
+fn rewritten_feature(ws: &common::PushWorkspace) -> String {
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let member = ws.workspace.join("local/org/a");
+    feature_with_work(ws, "x");
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let m1 = common::git_in(&member, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        common::git_in(&ws.manifest_bares[0].1, &["rev-parse", "refs/heads/x"]),
+        m1
+    );
+    common::git_in(&member, &["reset", "-q", "--hard", "HEAD~1"]);
+    advance(&member, "rewritten.txt");
+    let _ = project_dir;
+    m1
+}
+
+fn relock_by_name(ws: &common::PushWorkspace) {
+    rwv()
+        .args(["lock", "--repo", "local/org/a", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+}
+
+/// A project branch `name` cut from the checked-out one, published raw.
+fn published_sibling(ws: &common::PushWorkspace, name: &str) {
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["branch", name]);
+    common::git_in(&project_dir, &["push", "-q", "origin", name]);
+}
+
+fn member_tip_on_remote(ws: &common::PushWorkspace) -> String {
+    common::git_in(&ws.manifest_bares[0].1, &["rev-parse", "refs/heads/x"])
+}
+
+#[test]
+fn a_member_overwrite_that_publishes_no_project_branch_keeps_its_published_lock_reachable() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let m1 = rewritten_feature(&ws);
+    relock_by_name(&ws);
+
+    let out = rwv()
+        .args([
+            "push",
+            "--repo",
+            "local/org/a",
+            "--overwrite",
+            "local/org/a",
+        ])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("pin would be unreachable"), "{stderr}");
+    assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
+}
+
+#[test]
+fn a_member_overwrite_does_not_exempt_a_sibling_whose_name_ends_like_the_pushed_branch() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let m1 = rewritten_feature(&ws);
+    published_sibling(&ws, "review/x");
+    relock_by_name(&ws);
+
+    let out = rwv()
+        .args(["push", "--overwrite", "local/org/a"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("origin/review/x"), "{stderr}");
+    assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
+}
+
+#[test]
+fn a_published_lock_needs_a_remote_tracking_branch_not_a_local_one() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let m1 = rewritten_feature(&ws);
+    published_sibling(&ws, "other");
+    common::git_in(ws.workspace.join("local/org/a"), &["branch", "keep", &m1]);
+    relock_by_name(&ws);
+
+    let out = rwv()
+        .args(["push", "--overwrite", "local/org/a"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("origin/other"), "{stderr}");
+    assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
+}
+
+#[test]
+fn a_member_overwrite_whose_own_project_branch_is_republished_runs() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    rewritten_feature(&ws);
+    relock_by_name(&ws);
+
+    let out = rwv()
+        .args(["push", "--overwrite", "local/org/a"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        member_tip_on_remote(&ws),
+        common::git_in(ws.workspace.join("local/org/a"), &["rev-parse", "HEAD"])
+    );
+}

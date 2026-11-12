@@ -15,9 +15,12 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::branch_ref::BranchRef;
 use crate::cli::consent::DiscardUnlandedConsent;
 use crate::diagnosis::{Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoOperand, RepoPath};
+use crate::pins::{stranded_by, LivePin, RefChange};
+use crate::push_branch::{newer_of_branch_and_upstream, upstream_copy, NewerOfBranchAndUpstream};
 use crate::records::{BranchName, Lookup, Mode, Store};
 use crate::vcs::{
     project_vcs, vcs_for, DestroyProof, RawRefName, RemoteHandle, RemoteTip, ResolvedRevisionId,
@@ -172,39 +175,50 @@ pub struct Rule<'a> {
     w_record_mode: Option<Mode>,
 }
 
-fn tips_of(
+type NamedTip = (BranchRef, ResolvedRevisionId);
+
+/// Each of `names` here and its upstream copy: the branches a branch lands on.
+fn landing_refs(
     vcs: &dyn Vcs,
     dir: &Path,
     names: &[RawRefName],
-) -> anyhow::Result<Vec<ResolvedRevisionId>> {
-    let mut tips: Vec<ResolvedRevisionId> = Vec::new();
+    home: Option<&RemoteHandle>,
+) -> anyhow::Result<Vec<NamedTip>> {
+    let mut refs: Vec<NamedTip> = Vec::new();
     for name in names {
-        let found = vcs
-            .resolve_local_branch_tip(dir, name)?
-            .into_iter()
-            .chain(vcs.remote_copies(dir, name)?.into_iter().map(|c| c.tip));
-        for tip in found {
-            if !tips.contains(&tip) {
-                tips.push(tip);
-            }
+        if let Some(tip) = vcs.resolve_local_branch_tip(dir, name)? {
+            refs.push((BranchRef::Local(name.clone()), tip));
+        }
+        refs.extend(upstream_copy(vcs, dir, name, home)?);
+    }
+    Ok(refs)
+}
+
+fn tips(refs: &[NamedTip]) -> Vec<ResolvedRevisionId> {
+    let mut tips: Vec<ResolvedRevisionId> = Vec::new();
+    for (_, tip) in refs {
+        if !tips.contains(tip) {
+            tips.push(tip.clone());
         }
     }
-    Ok(tips)
+    tips
 }
 
 fn branch_tip(
     vcs: &dyn Vcs,
     dir: &Path,
     name: &RawRefName,
+    home: Option<&RemoteHandle>,
 ) -> anyhow::Result<Option<ResolvedRevisionId>> {
-    if let Some(tip) = vcs.resolve_local_branch_tip(dir, name)? {
-        return Ok(Some(tip));
-    }
-    Ok(vcs
-        .remote_copies(dir, name)?
-        .into_iter()
-        .next()
-        .map(|c| c.tip))
+    Ok(match newer_of_branch_and_upstream(vcs, dir, name, home)? {
+        NewerOfBranchAndUpstream::Tip(tip) => Some(tip),
+        NewerOfBranchAndUpstream::Diverged { local, .. } => Some(local),
+        NewerOfBranchAndUpstream::Nowhere => vcs
+            .remote_copies(dir, name)?
+            .into_iter()
+            .next()
+            .map(|copy| copy.tip),
+    })
 }
 
 impl<'a> Rule<'a> {
@@ -278,10 +292,16 @@ impl<'a> Rule<'a> {
         let url_remote = project_repo.vcs.project_url_remote(&project_repo.dir)?;
         repos[0].url_remote = url_remote;
 
-        let w_tip = branch_tip(repos[0].vcs.as_ref(), &project_path, &branch_name)?
-            .expect("the branch was listed");
+        let home = repos[0].url_remote.clone();
+        let w_tip = branch_tip(
+            repos[0].vcs.as_ref(),
+            &project_path,
+            &branch_name,
+            home.as_ref(),
+        )?
+        .expect("the branch was listed");
         let t_raw = RawRefName::new(request.target.as_str());
-        let t_tip = branch_tip(repos[0].vcs.as_ref(), &project_path, &t_raw)?;
+        let t_tip = branch_tip(repos[0].vcs.as_ref(), &project_path, &t_raw, home.as_ref())?;
         let target_manifest = match &t_tip {
             Some(tip) => manifest_at(repos[0].vcs.as_ref(), &project_path, tip),
             None => None,
@@ -407,7 +427,7 @@ impl<'a> Rule<'a> {
                     .of(repo.label())
                     .project_repo()
                     .subject(&self.request.branch)
-                    .by_verb("branch delete")
+                    .by_verb(self.request.verb)
                     .judge(repo.vcs.as_ref())
                     .refused());
             }
@@ -488,7 +508,7 @@ impl<'a> Rule<'a> {
         for index in 1..self.repos.len() {
             member_survives |= self.judge_member(index, &unconfirmed, &pins, &mut outcome)?;
         }
-        self.judge_project(&unconfirmed, member_survives, &mut outcome)?;
+        self.judge_project(&unconfirmed, &pins, member_survives, &mut outcome)?;
 
         outcome.records_dropped = crate::branch::drop_records(
             self.request.project,
@@ -518,7 +538,7 @@ impl<'a> Rule<'a> {
         &self,
         index: usize,
         unconfirmed: &BTreeMap<usize, BTreeMap<String, String>>,
-        pins: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
+        pins: &BTreeMap<RepoPath, Vec<LivePin>>,
         outcome: &mut Outcome,
     ) -> anyhow::Result<bool> {
         let repo = &self.repos[index];
@@ -533,9 +553,9 @@ impl<'a> Rule<'a> {
             self.survives(repo, Reason::Unconfirmed, cut_off, outcome);
             return Ok(true);
         }
-        self.delete_remote(repo, outcome)?;
+        let remote_kept = self.delete_remote(repo, pins, outcome)?;
         let Some(local) = local else {
-            return Ok(false);
+            return Ok(remote_kept);
         };
         let member = repo.member.as_ref().expect("a member repo names its path");
         let held = self.pinned(repo, member, &local, pins)?;
@@ -543,12 +563,13 @@ impl<'a> Rule<'a> {
             self.survives(repo, Reason::Pinned, held, outcome);
             return Ok(true);
         }
-        self.delete_local(repo, &local, outcome)
+        Ok(self.delete_local(repo, &local, outcome)? || remote_kept)
     }
 
     fn judge_project(
         &self,
         unconfirmed: &BTreeMap<usize, BTreeMap<String, String>>,
+        pins: &BTreeMap<RepoPath, Vec<LivePin>>,
         member_survives: bool,
         outcome: &mut Outcome,
     ) -> anyhow::Result<()> {
@@ -563,7 +584,7 @@ impl<'a> Rule<'a> {
             }
             return Ok(());
         }
-        self.delete_remote(repo, outcome)?;
+        self.delete_remote(repo, pins, outcome)?;
         let Some(local) = local else {
             return Ok(());
         };
@@ -592,13 +613,19 @@ impl<'a> Rule<'a> {
         local: &ResolvedRevisionId,
         outcome: &mut Outcome,
     ) -> anyhow::Result<bool> {
-        let onto = tips_of(repo.vcs.as_ref(), &repo.dir, &repo.names_in_target)?;
-        let proof = match DestroyProof::landed(
+        let refs = landing_refs(
+            repo.vcs.as_ref(),
+            &repo.dir,
+            &repo.names_in_target,
+            repo.url_remote.as_ref(),
+        )?;
+        let onto = tips(&refs);
+        let proof = match DestroyProof::landed_on(
             repo.vcs.as_ref(),
             &repo.dir,
             Site::Local,
             &self.branch_name,
-            &onto,
+            &refs,
         )? {
             Some(proof) => proof,
             None => match self.request.discard_unlanded {
@@ -616,8 +643,7 @@ impl<'a> Rule<'a> {
                 }
             },
         };
-        self.destroy(repo, proof, Site::Local, outcome)?;
-        Ok(false)
+        Ok(!self.destroy(repo, proof, Site::Local, outcome)?)
     }
 
     fn survives(&self, repo: &Repo, reason: Reason, detail: Vec<String>, outcome: &mut Outcome) {
@@ -629,18 +655,34 @@ impl<'a> Rule<'a> {
         });
     }
 
+    /// Delete what `proof` names. A remote that does not take the delete
+    /// keeps its branch, reported unconfirmed with its answer. Whether it was
+    /// deleted.
     fn destroy(
         &self,
         repo: &Repo,
         proof: DestroyProof,
         site: Site,
         outcome: &mut Outcome,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let because = proof.describe();
         let backup = proof.backup().map(|b| b.backup().name.to_string());
-        repo.vcs
-            .delete_branch(proof)
-            .with_context(|| format!("{}: could not delete {}", repo.label(), self.branch_name))?;
+        match (repo.vcs.delete_branch(proof), &site) {
+            (Ok(()), _) => {}
+            (Err(e), Site::Remote(remote)) => {
+                let mut detail = vec![format!("{remote} did not take the delete: {e:#}")];
+                detail.extend(backup.map(|b| format!("kept as backup {b}")));
+                self.survives(repo, Reason::Unconfirmed, detail, outcome);
+                return Ok(false);
+            }
+            (Err(e), Site::Local) => {
+                return Err(anyhow::Error::new(e).context(format!(
+                    "{}: could not delete {}",
+                    repo.label(),
+                    self.branch_name
+                )))
+            }
+        }
         outcome.deleted.push(Deleted {
             path: repo.label(),
             branch: self.branch_name.to_string(),
@@ -651,7 +693,7 @@ impl<'a> Rule<'a> {
             because,
             backup,
         });
-        Ok(())
+        Ok(true)
     }
 
     fn push_branch_of(&self, repo: &Repo) -> anyhow::Result<Option<RemoteTip>> {
@@ -668,53 +710,113 @@ impl<'a> Rule<'a> {
             .find(|copy| copy.remote == target))
     }
 
-    fn target_remote_tips(&self, repo: &Repo) -> anyhow::Result<Vec<ResolvedRevisionId>> {
-        let mut tips = Vec::new();
+    fn target_upstream_refs(&self, repo: &Repo) -> anyhow::Result<Vec<NamedTip>> {
+        let mut refs = Vec::new();
         for name in &repo.names_in_target {
-            tips.extend(
-                repo.vcs
-                    .remote_copies(&repo.dir, name)?
-                    .into_iter()
-                    .map(|c| c.tip),
-            );
+            refs.extend(upstream_copy(
+                repo.vcs.as_ref(),
+                &repo.dir,
+                name,
+                repo.url_remote.as_ref(),
+            )?);
         }
-        Ok(tips)
+        Ok(refs)
     }
 
     /// The push branch, when `--delete-remote` or `--delete-remote-unlanded`
     /// reaches it and the proof it needs can be made.
-    fn delete_remote(&self, repo: &Repo, outcome: &mut Outcome) -> anyhow::Result<()> {
+    fn delete_remote(
+        &self,
+        repo: &Repo,
+        pins: &BTreeMap<RepoPath, Vec<LivePin>>,
+        outcome: &mut Outcome,
+    ) -> anyhow::Result<bool> {
         let flags = self.request.remote_deletes;
         let named = flags.unlanded.contains(&repo.operand);
         if !flags.landed && !named {
-            return Ok(());
+            return Ok(false);
         }
         let Some(pushed) = self.push_branch_of(repo)? else {
-            return Ok(());
+            return Ok(false);
         };
         let site = Site::Remote(pushed.remote.clone());
-        let onto = self.target_remote_tips(repo)?;
-        let proof = match DestroyProof::landed(
+        let onto = self.target_upstream_refs(repo)?;
+        let landed = DestroyProof::landed_on(
             repo.vcs.as_ref(),
             &repo.dir,
             site.clone(),
             &self.branch_name,
             &onto,
-        )? {
-            Some(proof) => proof,
-            None if named => match self.request.discard_unlanded {
-                Some(consent) => DestroyProof::backed_up(
-                    repo.vcs.as_ref(),
-                    &repo.dir,
-                    site.clone(),
-                    &self.branch_name,
-                    consent,
-                )?,
-                None => return Ok(()),
-            },
-            None => return Ok(()),
+        )?;
+        if landed.is_none() && !(named && self.request.discard_unlanded.is_some()) {
+            return Ok(false);
+        }
+        if let Some(member) = &repo.member {
+            let removed = BranchRef::Remote {
+                remote: pushed.remote.clone(),
+                name: self.branch_name.clone(),
+            };
+            let change = RefChange {
+                branch: &removed,
+                was: &pushed.tip,
+                now: None,
+                was_backed_up: landed.is_none(),
+            };
+            let held = pins.get(member).map(Vec::as_slice).unwrap_or_default();
+            let stranded = stranded_by(repo.vcs.as_ref(), &repo.dir, held, &change, |pin| {
+                self.own_lock_goes(pin)
+            })?;
+            if !stranded.is_empty() {
+                let detail = stranded.iter().map(|s| s.line(&change)).collect();
+                self.survives(repo, Reason::Pinned, detail, outcome);
+                return Ok(true);
+            }
+        }
+        let proof = match (landed, self.request.discard_unlanded) {
+            (Some(proof), _) => proof,
+            (None, Some(consent)) => DestroyProof::backed_up(
+                repo.vcs.as_ref(),
+                &repo.dir,
+                site.clone(),
+                &self.branch_name,
+                consent,
+            )?,
+            (None, None) => return Ok(false),
         };
-        self.destroy(repo, proof, site, outcome)
+        Ok(!self.destroy(repo, proof, site, outcome)?)
+    }
+
+    /// A lock of `W` itself whose branch this run deletes: the project branch
+    /// here, and its push branch when the flags reach it.
+    fn own_lock_goes(&self, pin: &LivePin) -> bool {
+        if pin.project != *self.request.project || pin.branch.name() != &self.branch_name {
+            return false;
+        }
+        match &pin.branch {
+            BranchRef::Local(_) => true,
+            BranchRef::Remote { .. } => {
+                let project = &self.repos[0];
+                let flags = self.request.remote_deletes;
+                (flags.unlanded.contains(&project.operand)
+                    && self.request.discard_unlanded.is_some())
+                    || (flags.landed && matches!(self.project_push_branch_landed(), Ok(true)))
+            }
+        }
+    }
+
+    fn project_push_branch_landed(&self) -> anyhow::Result<bool> {
+        let project = &self.repos[0];
+        let Some(pushed) = self.push_branch_of(project)? else {
+            return Ok(false);
+        };
+        Ok(DestroyProof::landed_on(
+            project.vcs.as_ref(),
+            &project.dir,
+            Site::Remote(pushed.remote),
+            &self.branch_name,
+            &self.target_upstream_refs(project)?,
+        )?
+        .is_some())
     }
 
     /// The commits on the published copy that the branch it lands into does
@@ -723,8 +825,12 @@ impl<'a> Rule<'a> {
         let Some(pushed) = self.push_branch_of(repo)? else {
             return Ok(None);
         };
-        let mut onto = tips_of(repo.vcs.as_ref(), &repo.dir, &repo.names_in_target)?;
-        onto.dedup();
+        let onto = tips(&landing_refs(
+            repo.vcs.as_ref(),
+            &repo.dir,
+            &repo.names_in_target,
+            repo.url_remote.as_ref(),
+        )?);
         for target in &onto {
             if repo.vcs.is_ancestor(&repo.dir, &pushed.tip, target)? {
                 return Ok(None);
@@ -775,80 +881,34 @@ impl<'a> Rule<'a> {
         detail
     }
 
-    /// The live pins that only `tip` reaches: pins in locks other than the
-    /// weave branch's own.
+    /// The live pins that only the local branch reaches: pins in locks
+    /// other than the weave branch's own.
     fn pinned(
         &self,
         repo: &Repo,
         member: &RepoPath,
         tip: &ResolvedRevisionId,
-        pins: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
+        pins: &BTreeMap<RepoPath, Vec<LivePin>>,
     ) -> anyhow::Result<Vec<String>> {
         let Some(live) = pins.get(member) else {
             return Ok(Vec::new());
         };
-        let project_repo = &self.repos[0];
-        let own: BTreeSet<String> = std::iter::once(self.request.branch.as_str().to_owned())
-            .chain(
-                project_repo
-                    .vcs
-                    .recorded_urls(&project_repo.dir)?
-                    .into_iter()
-                    .map(|r| format!("{}/{}", r.remote, self.request.branch)),
-            )
-            .collect();
-        let others: Vec<ResolvedRevisionId> = repo
-            .vcs
-            .branch_tips(&repo.dir)?
-            .into_iter()
-            .filter(|b| {
-                b.label != self.branch_name.as_str()
-                    && !b.label.ends_with(&format!("/{}", self.branch_name))
-            })
-            .map(|b| b.tip)
-            .chain(
-                repo.vcs
-                    .list_backups(&repo.dir, crate::vcs::RemoteTracking::Counted)?
-                    .into_iter()
-                    .map(|l| l.backup.tip),
-            )
-            .collect();
-        let mut held: Vec<String> = Vec::new();
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        for pin in live {
-            if pin.project == *self.request.project && own.contains(&pin.branch) {
-                continue;
-            }
-            if !seen.insert(pin.commit.to_string()) {
-                continue;
-            }
-            let pinned = ResolvedRevisionId::from(pin.commit.clone());
-            let reached_here = repo
-                .vcs
-                .is_ancestor(&repo.dir, &pinned, tip)
-                .unwrap_or(false);
-            if !reached_here {
-                continue;
-            }
-            let elsewhere = others.iter().any(|other| {
-                repo.vcs
-                    .is_ancestor(&repo.dir, &pinned, other)
-                    .unwrap_or(false)
-            });
-            if !elsewhere {
-                let by: Vec<&str> = live
-                    .iter()
-                    .filter(|p| p.commit == pin.commit)
-                    .map(|p| p.held_by.as_str())
-                    .collect();
-                held.push(format!(
-                    "{} is pinned by {}",
-                    pin.commit.short(),
-                    by.join(", ")
-                ));
-            }
-        }
-        Ok(held)
+        let local = BranchRef::Local(self.branch_name.clone());
+        let change = RefChange {
+            branch: &local,
+            was: tip,
+            now: None,
+            was_backed_up: false,
+        };
+        let own = |pin: &LivePin| {
+            pin.project == *self.request.project && pin.branch.name() == &self.branch_name
+        };
+        Ok(
+            stranded_by(repo.vcs.as_ref(), &repo.dir, live, &change, own)?
+                .iter()
+                .map(|s| s.line(&change))
+                .collect(),
+        )
     }
 }
 

@@ -1,10 +1,11 @@
 //! Where a member's checked-out branch stands to the branch it publishes to:
 //! the `push-branch` axis, read from the seam's roles.
 
+use crate::branch_ref::BranchRef;
 use crate::diagnosis::{Judged, State};
 use crate::vcs::{
-    short_revision, AttachedRef, CommitSummary, RawRefName, Relation, RemoteHandle, TrackingRef,
-    Vcs, VcsError,
+    short_revision, AttachedRef, CommitSummary, RawRefName, Relation, RemoteHandle,
+    ResolvedRevisionId, TrackingRef, Vcs, VcsError,
 };
 use std::fmt;
 use std::path::Path;
@@ -198,4 +199,78 @@ pub(crate) fn upstream_is_push_branch(
     };
     upstream.branch == *branch
         && vcs.push_target_of(repo, branch, url_remote).ok().flatten() == Some(upstream.remote)
+}
+
+/// The remote-tracking copy a branch takes in from: its recorded upstream's;
+/// with none recorded, the only remote's copy of its name, else `home`'s.
+pub(crate) fn upstream_copy(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    home: Option<&RemoteHandle>,
+) -> Result<Option<(BranchRef, ResolvedRevisionId)>, VcsError> {
+    let (name, copies) = match vcs.upstream_of(repo, branch)? {
+        Some(upstream) => {
+            let copy = vcs
+                .remote_copies(repo, &upstream.branch)?
+                .into_iter()
+                .find(|copy| copy.remote == upstream.remote);
+            (upstream.branch, copy.into_iter().collect::<Vec<_>>())
+        }
+        None => {
+            let copies = vcs.remote_copies(repo, branch)?;
+            let chosen = match copies.as_slice() {
+                [only] => Some(only.clone()),
+                _ => copies.into_iter().find(|copy| Some(&copy.remote) == home),
+            };
+            (branch.clone(), chosen.into_iter().collect())
+        }
+    };
+    Ok(copies.into_iter().next().map(|copy| {
+        (
+            BranchRef::Remote {
+                remote: copy.remote,
+                name,
+            },
+            copy.tip,
+        )
+    }))
+}
+
+/// A branch and its upstream copy, read as one tip.
+#[derive(Debug, Clone)]
+pub(crate) enum NewerOfBranchAndUpstream {
+    Tip(ResolvedRevisionId),
+    Nowhere,
+    Diverged {
+        local: ResolvedRevisionId,
+        upstream: BranchRef,
+        upstream_tip: ResolvedRevisionId,
+    },
+}
+
+/// The newer of `branch` and its [`upstream_copy`], or that they diverged.
+pub(crate) fn newer_of_branch_and_upstream(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    home: Option<&RemoteHandle>,
+) -> Result<NewerOfBranchAndUpstream, VcsError> {
+    let local = vcs.resolve_local_branch_tip(repo, branch)?;
+    let upstream = upstream_copy(vcs, repo, branch, home)?;
+    Ok(match (local, upstream) {
+        (None, None) => NewerOfBranchAndUpstream::Nowhere,
+        (Some(tip), None) | (None, Some((_, tip))) => NewerOfBranchAndUpstream::Tip(tip),
+        (Some(local), Some((upstream, upstream_tip))) => {
+            match vcs.relation(repo, &local, &upstream_tip)? {
+                Relation::Behind => NewerOfBranchAndUpstream::Tip(upstream_tip),
+                Relation::Ahead | Relation::Even => NewerOfBranchAndUpstream::Tip(local),
+                Relation::Diverged => NewerOfBranchAndUpstream::Diverged {
+                    local,
+                    upstream,
+                    upstream_tip,
+                },
+            }
+        }
+    })
 }

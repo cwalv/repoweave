@@ -542,34 +542,22 @@ fn target_pin(
         return Ok(TargetPin::Lacks);
     };
     let raw = RawRefName::new(target.as_str());
-    let local = vcs.resolve_local_branch_tip(dir, &raw)?;
-    let upstream = vcs
-        .upstream_of(dir, &raw)?
-        .and_then(|up| {
-            vcs.remote_copies(dir, &up.branch)
-                .ok()?
-                .into_iter()
-                .find(|copy| copy.remote == up.remote)
-        })
-        .map(|copy| copy.tip);
-    let tip = match (local, upstream) {
-        (Some(local), Some(upstream)) => match vcs.relation(dir, &local, &upstream)? {
-            Relation::Diverged => {
-                refusals.add(
-                    State::PushBranchDiverged
-                        .of(crate::workspace::project_rel_path(&loaded.project))
-                        .project_repo()
-                        .subject(target.as_str())
-                        .checkout(dir)
-                        .judge(vcs),
-                );
-                return Ok(TargetPin::Refused);
-            }
-            Relation::Behind => upstream,
-            Relation::Ahead | Relation::Even => local,
-        },
-        (Some(only), None) | (None, Some(only)) => only,
-        (None, None) => return Ok(TargetPin::Lacks),
+    let home = vcs.project_url_remote(dir)?;
+    let tip = match crate::push_branch::newer_of_branch_and_upstream(vcs, dir, &raw, home.as_ref())?
+    {
+        crate::push_branch::NewerOfBranchAndUpstream::Tip(tip) => tip,
+        crate::push_branch::NewerOfBranchAndUpstream::Nowhere => return Ok(TargetPin::Lacks),
+        crate::push_branch::NewerOfBranchAndUpstream::Diverged { .. } => {
+            refusals.add(
+                State::PushBranchDiverged
+                    .of(crate::workspace::project_rel_path(&loaded.project))
+                    .project_repo()
+                    .subject(target.as_str())
+                    .checkout(dir)
+                    .judge(vcs),
+            );
+            return Ok(TargetPin::Refused);
+        }
     };
     let Ok(text) = vcs.read_file_at_revision(dir, &tip, Path::new(LockFile::FILE_NAME)) else {
         return Ok(TargetPin::Lacks);

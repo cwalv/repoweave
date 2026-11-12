@@ -15,8 +15,8 @@ use crate::manifest::{LockFile, Manifest, ProjectName, Role};
 use crate::records::{BranchName, Entry, Lookup, NameError, Record, Store, View, Write};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
-    project_vcs, short_revision, vcs_for, HeadAttachment, LocalRefName, RawRefName, Relation,
-    RemoteTip, ResolvedRevisionId, Upstream, Vcs, VcsError,
+    project_vcs, short_revision, vcs_for, HeadAttachment, LocalRefName, RawRefName, RemoteTip,
+    ResolvedRevisionId, Upstream, Vcs, VcsError,
 };
 use crate::workspace::WorkspaceContext;
 
@@ -509,31 +509,18 @@ fn diverged_start(
     target: &RawRefName,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let Some(local) = vcs.resolve_local_branch_tip(dir, target)? else {
-        return Ok(());
-    };
-    let Some(upstream) = vcs.upstream_of(dir, target)? else {
-        return Ok(());
-    };
-    let Some(copy) = vcs
-        .remote_copies(dir, &upstream.branch)?
-        .into_iter()
-        .find(|copy| copy.remote == upstream.remote)
+    let home = vcs.project_url_remote(dir)?;
+    let crate::push_branch::NewerOfBranchAndUpstream::Diverged { upstream, .. } =
+        crate::push_branch::newer_of_branch_and_upstream(vcs, dir, target, home.as_ref())?
     else {
         return Ok(());
     };
-    if vcs.relation(dir, &local, &copy.tip)? != Relation::Diverged {
-        return Ok(());
-    }
     let unpushed = vcs.unpushed_commits(dir, target)?;
     report.add(
         State::PushBranchDiverged
             .of(label(project))
             .project_repo()
-            .subject(format!(
-                "{target} and {}/{}",
-                upstream.remote, upstream.branch
-            ))
+            .subject(format!("{target} and {upstream}"))
             .listing(
                 unpushed
                     .iter()
