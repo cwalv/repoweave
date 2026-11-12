@@ -877,11 +877,11 @@ mod tests {
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
         let held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
-        let budget = Duration::from_millis(300);
+        let budget = Duration::from_millis(1000);
         let holder = {
             let owner = owner.clone();
             std::thread::spawn(move || {
-                for step in 0..12 {
+                for step in 0..40 {
                     let mut record = crate::op_state::OwnerRecord::new_land(
                         &op(1),
                         None,
