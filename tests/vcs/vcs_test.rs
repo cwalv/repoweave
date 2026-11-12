@@ -1010,7 +1010,13 @@ fn rwvs_own_merges_settle_the_lock_without_running_the_driver() {
             repoweave::vcs::TreeMerge::Clean(_)
         ));
     }
-    let conflicted = git_vcs().start_merge(p, &feat).unwrap();
+    let conflicted = git_vcs()
+        .start_merge(
+            p,
+            &feat,
+            repoweave::vcs::DerivedContentPolicy::vcs_default(),
+        )
+        .unwrap();
     assert!(conflicted.is_empty(), "{conflicted:?}");
     assert!(
         !p.join("driver-ran").exists(),

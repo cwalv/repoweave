@@ -1297,6 +1297,7 @@ fn settle_diverged(
             tip.id(),
             Order::SourceFirst,
             &message,
+            crate::vcs::DerivedContentPolicy::vcs_default(),
         ) {
             Ok(joined) => {
                 if joined.tip().is_some() {

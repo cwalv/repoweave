@@ -13,6 +13,7 @@ use crate::lock_merge::{merge_pins, Held, Parent, PinFinding, PinMerge, Reach};
 use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath, Role};
 use crate::op_state::{self, RefMove};
 use crate::refusal::RefusalKind;
+use crate::vcs::DerivedContentPolicy;
 use crate::vcs::{
     project_vcs, vcs_for, CommitId, RawRefName, RefMerge, ResolvedRevisionId, TreeMerge, Vcs,
     VcsError,
@@ -206,6 +207,7 @@ pub(crate) fn merge_member(
     source: &CommitId,
     order: Order,
     message: &str,
+    derived: DerivedContentPolicy,
 ) -> Result<Joined, MemberStop> {
     let vcs = vcs_for(entry.vcs_type);
     let journal = |tip: &CommitId| {
@@ -269,7 +271,7 @@ pub(crate) fn merge_member(
         crate::manifest::RepoKey::Member(repo.clone()),
         source,
     )?;
-    let paths = vcs.start_merge(dir, source)?;
+    let paths = vcs.start_merge(dir, source, derived)?;
     if !paths.is_empty() {
         return Err(MemberStop::Conflict(Conflicted {
             repo: repo.to_string(),
@@ -620,7 +622,11 @@ impl ProjectMerge<'_> {
                 crate::manifest::RepoKey::Project,
                 sides.incoming(self.head),
             )?;
-            let paths = vcs.start_merge(&dir, sides.incoming(self.head))?;
+            let paths = vcs.start_merge(
+                &dir,
+                sides.incoming(self.head),
+                DerivedContentPolicy::vcs_default(),
+            )?;
             if !paths.iter().all(|path| path == LockFile::FILE_NAME) {
                 return Err(crate::untokened!(
                     InternalInvariant,
@@ -732,7 +738,11 @@ impl ProjectMerge<'_> {
             sides.incoming(self.head),
         )?;
         let paths: Vec<String> = vcs
-            .start_merge(dir, sides.incoming(self.head))?
+            .start_merge(
+                dir,
+                sides.incoming(self.head),
+                DerivedContentPolicy::vcs_default(),
+            )?
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();
@@ -772,6 +782,7 @@ impl ProjectMerge<'_> {
                 theirs,
                 Order::HeadFirst,
                 &message,
+                DerivedContentPolicy::vcs_default(),
             ) {
                 Ok(Joined::Merged(tip)) => {
                     merged.insert(path.clone(), tip);

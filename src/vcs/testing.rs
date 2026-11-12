@@ -862,7 +862,12 @@ impl Vcs for FakeVcs {
         unsupported("write_commit")
     }
 
-    fn start_merge(&self, _checkout: &Path, _other: &CommitId) -> Result<Vec<String>, VcsError> {
+    fn start_merge(
+        &self,
+        _checkout: &Path,
+        _other: &CommitId,
+        _derived: DerivedContentPolicy,
+    ) -> Result<Vec<String>, VcsError> {
         unsupported("start_merge")
     }
 

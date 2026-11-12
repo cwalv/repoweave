@@ -2,9 +2,13 @@
 //! exists, and in a checkout stopped before its commit where it does not.
 
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
-use super::{git_command, local_branch, lock_driver_held_args, nul_terminated_fields, GitVcs};
+use super::{
+    derived_content_git_args, git_command, local_branch, lock_driver_held_args,
+    nul_terminated_fields, GitVcs,
+};
 use crate::vcs::{
-    BackupWitness, CommitId, RawRefName, RefMerge, TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
+    BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
+    TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
 };
 use std::path::Path;
 
@@ -90,6 +94,7 @@ impl GitVcs {
     pub(super) fn begin_checkout_merge(
         checkout: &Path,
         other: &CommitId,
+        derived: DerivedContentPolicy,
     ) -> Result<Vec<String>, VcsError> {
         let args = [
             "merge",
@@ -98,8 +103,12 @@ impl GitVcs {
             "--no-edit",
             other.as_str(),
         ];
+        let held = match derived.resolution() {
+            DerivedContentResolution::VcsDefault => lock_driver_held_args().to_vec(),
+            _ => derived_content_git_args(derived),
+        };
         let output = git_command()
-            .args(lock_driver_held_args())
+            .args(held)
             .args(args)
             .current_dir(checkout)
             .output()
@@ -233,16 +242,18 @@ impl GitVcs {
             ],
             repo,
         )?;
-        let merged = Self::begin_checkout_merge(scratch, second).and_then(|paths| {
-            if paths.is_empty() {
-                let tree = Self::run_trimmed(["write-tree"], scratch)?;
-                Ok(RefMerge::Merged(Self::commit_tree_of(
-                    scratch, &tree, first, second, message,
-                )?))
-            } else {
-                Ok(RefMerge::Conflicted { paths })
-            }
-        });
+        let merged =
+            Self::begin_checkout_merge(scratch, second, DerivedContentPolicy::vcs_default())
+                .and_then(|paths| {
+                    if paths.is_empty() {
+                        let tree = Self::run_trimmed(["write-tree"], scratch)?;
+                        Ok(RefMerge::Merged(Self::commit_tree_of(
+                            scratch, &tree, first, second, message,
+                        )?))
+                    } else {
+                        Ok(RefMerge::Conflicted { paths })
+                    }
+                });
         let _ = Self::run(["merge", "--abort"], scratch);
         let removed = Self::run(["worktree", "remove", &scratch.display().to_string()], repo);
         let merged = merged?;

@@ -394,6 +394,14 @@ fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
             args.extend(lock_driver_held_args());
             args
         }
+        DerivedContentResolution::KeepIncomingSide => {
+            let mut args = vec![
+                "-c".to_owned(),
+                format!("{DERIVED_CONTENT_DRIVER_CONFIG_KEY}=cp %B %A"),
+            ];
+            args.extend(lock_driver_held_args());
+            args
+        }
         DerivedContentResolution::VcsDefault => Vec::new(),
     }
 }
@@ -5021,8 +5029,13 @@ impl Vcs for GitVcs {
         git_merges_trees().then_some(self as &dyn TreeMerges)
     }
 
-    fn start_merge(&self, checkout: &Path, other: &CommitId) -> Result<Vec<String>, VcsError> {
-        Self::begin_checkout_merge(checkout, other)
+    fn start_merge(
+        &self,
+        checkout: &Path,
+        other: &CommitId,
+        derived: DerivedContentPolicy,
+    ) -> Result<Vec<String>, VcsError> {
+        Self::begin_checkout_merge(checkout, other, derived)
     }
 
     fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
@@ -10659,7 +10672,9 @@ mod name_reading_tests {
         let (_tmp, repo) = diverged();
         let other = tip(&repo, "other");
 
-        let unmerged = GitVcs::begin_checkout_merge(&repo, &other).unwrap();
+        let unmerged =
+            GitVcs::begin_checkout_merge(&repo, &other, DerivedContentPolicy::vcs_default())
+                .unwrap();
 
         assert_eq!(unmerged, vec![AWKWARD.to_owned()]);
     }

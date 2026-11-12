@@ -13336,6 +13336,88 @@ pub fn history_overwrite_to_a_newer_tip_drops_the_old_rebased_backup() -> Scenar
     )
 }
 
+/// `app` declares `DERIVED` regenerated; the seat and the target `main` each
+/// changed it, and `OTHER` too where `other` is set. Under a `merge` target
+/// the verb composes a merge, whose result must be the one a rebase reaches:
+/// `DERIVED` takes the receiving side's content, and a path nobody declared
+/// that both sides changed still stops.
+fn derived_both_sides(verb: &'static str, other: bool) -> Scenario {
+    let main_files: &[(&str, &str)] = if other {
+        &[("DERIVED", "main-side\n"), ("OTHER", "main-other\n")]
+    } else {
+        &[("DERIVED", "main-side\n")]
+    };
+    let seat_files: &[(&str, &str)] = if other {
+        &[("DERIVED", "seat-side\n"), ("OTHER", "seat-other\n")]
+    } else {
+        &[("DERIVED", "seat-side\n")]
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        Step::hand_commit(
+            &a(),
+            Repo::App,
+            "main",
+            &[
+                (".gitattributes", "DERIVED merge=rwv-ours\n"),
+                ("DERIVED", "base\n"),
+                ("OTHER", "base\n"),
+            ],
+        ),
+        Step::git(&a(), Repo::App, &["reset", "--hard"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_commit(&ww("w"), Repo::App, "proj--w", seat_files),
+        Step::git(&ww("w"), Repo::App, &["reset", "--hard"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_commit(&a(), Repo::App, "main", main_files),
+        Step::git(&a(), Repo::App, &["reset", "--hard"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    let run = Step::rwv(&ww("w"), &[verb]);
+    if other {
+        steps.push(run.expect(Exit::refuses_kind(RefusalKind::OpParked)));
+    } else {
+        let read = if verb == "land" {
+            Step::git(&a(), Repo::App, &["show", "main:DERIVED"])
+        } else {
+            Step::git(&ww("w"), Repo::App, &["show", "proj--w:DERIVED"])
+        };
+        steps.push(
+            run.expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj]),
+        );
+        steps.push(
+            read.expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main-side")),
+        );
+    }
+    scenario(
+        if verb == "land" {
+            "history: a landing merge resolves a derived path to the receiving side"
+        } else {
+            "history: a sync merge resolves a derived path to the receiving side"
+        },
+        steps,
+    )
+}
+
+pub fn history_land_merge_resolves_derived_to_the_receiving_side() -> Scenario {
+    derived_both_sides("land", false)
+}
+
+pub fn history_land_merge_still_stops_on_an_undeclared_path() -> Scenario {
+    derived_both_sides("land", true)
+}
+
+pub fn history_sync_merge_resolves_derived_to_the_receiving_side() -> Scenario {
+    derived_both_sides("sync", false)
+}
+
+pub fn history_sync_merge_still_stops_on_an_undeclared_path() -> Scenario {
+    derived_both_sides("sync", true)
+}
+
 /// A target recording `history` that moved in `app` and `lib`, and a seat whose `app`
 /// edit conflicts with `main`'s: `sync` stops on `app`'s merge before `lib`,
 /// planned a fast-forward, is reached. The operator resolves `app` and

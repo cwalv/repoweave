@@ -2689,6 +2689,11 @@ pub(crate) enum DerivedContentResolution {
     /// commit that ends up empty, for a caller that writes the declared paths
     /// of every replayed commit itself afterward.
     KeepTargetSideKeepingEmpty,
+    /// A declared path keeps the version of the side a merge brings in,
+    /// for a merge whose checkout holds the work and whose incoming side is
+    /// the one receiving it, so the result is the one a rebase onto that side
+    /// reaches.
+    KeepIncomingSide,
 }
 
 impl DerivedContentPolicy {
@@ -2728,6 +2733,15 @@ impl DerivedContentPolicy {
     /// change to carry.
     pub fn rewritten_after() -> Self {
         Self(DerivedContentResolution::KeepTargetSideKeepingEmpty)
+    }
+
+    /// Declared derived paths keep the version of the side a merge brings
+    /// in. For a merge made in the checkout of the work being integrated, with
+    /// the receiving side incoming: it resolves a path both sides regenerated
+    /// to the receiving side, as [`DerivedContentPolicy::keep_target_side`]
+    /// does for a rebase onto it.
+    pub fn keep_incoming_side() -> Self {
+        Self(DerivedContentResolution::KeepIncomingSide)
     }
 
     /// Which resolution this policy names, for a [`Vcs`] impl to translate.
@@ -4890,7 +4904,12 @@ pub trait Vcs: Send + Sync {
     /// Merge `other` into the checkout, leaving the result staged and
     /// uncommitted, and list the paths left conflicted (none: a clean merge,
     /// ready for [`Vcs::commit_merge`]). A merge already in flight refuses.
-    fn start_merge(&self, checkout: &Path, other: &CommitId) -> Result<Vec<String>, VcsError>;
+    fn start_merge(
+        &self,
+        checkout: &Path,
+        other: &CommitId,
+        derived: DerivedContentPolicy,
+    ) -> Result<Vec<String>, VcsError>;
 
     /// The commit a merge in flight in `checkout` is merging in.
     fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;

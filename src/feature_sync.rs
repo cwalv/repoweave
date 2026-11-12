@@ -1782,6 +1782,7 @@ fn take_member(
                 Order::HeadFirstAlwaysMerge
             },
             &message,
+            crate::vcs::DerivedContentPolicy::keep_incoming_side(),
         ) {
             Ok(joined) => {
                 let tip = joined.tip().cloned().unwrap_or_else(|| head.id().clone());

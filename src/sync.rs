@@ -1515,7 +1515,10 @@ fn stage_merge(vcs: &dyn Vcs, repo: &Path, onto: &ResolvedRevisionId) -> Result<
         vcs.advance_if_fast_forward(repo, onto)?;
         return Ok(Staged::FastForwarded);
     }
-    if !vcs.start_merge(repo, onto.id())?.is_empty() {
+    if !vcs
+        .start_merge(repo, onto.id(), DerivedContentPolicy::keep_incoming_side())?
+        .is_empty()
+    {
         return Err(conflicted());
     }
     Ok(Staged::Merge)
@@ -10365,7 +10368,10 @@ mod tests {
         let onto = commit(&repo, "target");
         git(&repo, &["checkout", "feat"]);
         let vcs = git_vcs();
-        assert!(vcs.start_merge(&repo, onto.id()).unwrap().is_empty());
+        assert!(vcs
+            .start_merge(&repo, onto.id(), DerivedContentPolicy::vcs_default())
+            .unwrap()
+            .is_empty());
         let tree = git(&repo, &["write-tree"]);
         let merged = git(
             &repo,
