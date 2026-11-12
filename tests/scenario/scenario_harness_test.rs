@@ -62,6 +62,11 @@ fn a_landing_lists_what_a_declared_branch_change_leaves_behind_and_status_keeps_
 }
 
 #[test]
+fn a_diverged_main_left_by_a_member_change_publishes_through_a_workspace_on_it() {
+    runner::run(scenarios::main_diverged_after_member_change()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
     runner::run(scenarios::shared_checkout_detached()).assert_fully_decided_green();
 }
@@ -895,6 +900,7 @@ every_scenario!(
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
     member_change_race_listing,
+    main_diverged_after_member_change,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
     backward_pin_reported_in_json,

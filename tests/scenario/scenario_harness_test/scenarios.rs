@@ -6806,6 +6806,47 @@ pub fn member_change_race_listing() -> Scenario {
     )
 }
 
+/// `main-diverged-after-member-change`: a seat lands `lib`'s move from
+/// `main` to `dev` while `main` holds a commit its push branch lacks, and the
+/// push branch then moves elsewhere with a conflicting change. The push
+/// publishing the range that declared `main` refuses `main` diverged.
+pub fn main_diverged_after_member_change() -> Scenario {
+    scenario(
+        "main diverged after member change",
+        vec![
+            Step::new_machine(Machine::B),
+            create("seat"),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "alpha"),
+            Step::git(&a(), Repo::Lib, &["commit", "-qam", "alpha"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("seat"), &["sync"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("seat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::commit(&ww("seat"), Repo::App, "feat-app"),
+            Step::rwv(
+                &ww("seat"),
+                &["land", "--history", "linear", "--allow-member-change", LIB],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
+            Step::hand_edit(&b(), Repo::Lib, "README", "lib", "beta"),
+            Step::git(&b(), Repo::Lib, &["commit", "-qam", "beta"]),
+            Step::git(&b(), Repo::Lib, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Lib), "main"),
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "'main' is declared by a commit being pushed",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv update --remote --merge-upstream --repo local/remotes/lib",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv update --remote --reset-to-upstream local/remotes/lib",
+                )),
+        ],
+    )
+}
+
 /// The member change race under `--json`: the envelope lists the fix as a
 /// commit `dev` lacks, with the copy that ports it, and reports `lib`,
 /// holding no new work, following `dev`.

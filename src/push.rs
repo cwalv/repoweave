@@ -921,6 +921,7 @@ fn judge_into(
                 member,
                 fetched.url_remote(&member.path),
                 names,
+                refusals,
                 &mut plan,
             )?;
         }
@@ -1044,6 +1045,7 @@ fn judge_member(
         declared: Some(&member.entry.branch),
         member: true,
         republish: republishable(vcs, &member.dir, &branch, target.as_ref(), &branch_standing),
+        why: None,
     };
     let judged = crate::push_branch::judge(vcs, &subject, &branch_standing);
     if pushed.is_feature()
@@ -1245,12 +1247,14 @@ fn declared_by_pushed_range(
 
 /// Each branch the tip or a commit of the pushed range declares for `member`,
 /// other than the one already judged, goes to its push target when it exists
-/// here and has commits the push target lacks or no push branch.
+/// here and has commits the push target lacks or no push branch; one diverged
+/// from its push branch while holding unpushed commits refuses.
 fn plan_declared_branches(
     pushed: &Pushed,
     member: &Member,
     url_remote: Option<&RemoteHandle>,
     names: &std::collections::BTreeSet<String>,
+    refusals: &mut Report,
     plan: &mut Plan,
 ) -> anyhow::Result<()> {
     let vcs = member.vcs.as_ref();
@@ -1274,6 +1278,21 @@ fn plan_declared_branches(
         let publishes = match standing {
             Standing::Unpublished => true,
             Standing::Ahead => !pushed.is_feature(),
+            Standing::Diverged { .. }
+                if standing.diverged_with_unpushed() && !pushed.is_feature() =>
+            {
+                let subject = crate::push_branch::Subject {
+                    repo: &member.path,
+                    checkout: &member.dir,
+                    branch: name,
+                    declared: None,
+                    member: true,
+                    republish: republishable(vcs, &member.dir, &branch, Some(&target), &standing),
+                    why: Some("is declared by a commit being pushed"),
+                };
+                refusals.extend(crate::push_branch::judge(vcs, &subject, &standing));
+                false
+            }
             _ => false,
         };
         if publishes {
@@ -1429,6 +1448,7 @@ fn judge_project(
         branch: pushed.branch.as_str(),
         declared: None,
         member: false,
+        why: None,
         republish: republishable(
             pvcs,
             &pushed.project_dir,

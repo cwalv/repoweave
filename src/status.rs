@@ -822,6 +822,7 @@ fn judge_push_branch(
             declared: Some(&entry.branch),
             member: true,
             republish: false,
+            why: None,
         },
         &standing,
     )

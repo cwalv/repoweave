@@ -153,6 +153,8 @@ pub(crate) struct Subject<'a> {
     /// The divergence is rwv's own rebase of what was published: a `rebased`
     /// backup holds the push branch's tip.
     pub(crate) republish: bool,
+    /// Why this branch is judged, where it is not the one checked out.
+    pub(crate) why: Option<&'a str>,
 }
 
 /// `standing` judged for `subject`, when it is worth a line.
@@ -169,7 +171,10 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
             judging.subject(format!("{} takes in from {upstream}", subject.branch))
         }
         Standing::NoPushTarget => judging.subject(subject.branch),
-        _ => judging,
+        _ => match subject.why {
+            Some(why) => judging.subject(format!("'{}' {why}", subject.branch)),
+            None => judging,
+        },
     };
     if let Standing::Gone { .. } = standing {
         let on_declared = subject
