@@ -645,6 +645,8 @@ Text output is one `=== <path> ===` section per member followed by `=== (project
 
 Convention and health audit across clones, `rwv.toml`, `rwv.lock`, workweaves, op-state leases, git attributes/merge drivers, and enabled integrations.
 
+A repo whose alignment or pin `rwv doctor` cannot read is an error of the run: it is printed as an error naming the checkout and the cause, after every finding the run did establish, and the run exits non-zero. It is never read as no finding.
+
 | Flag | Effect |
 |---|---|
 | `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync`) |
