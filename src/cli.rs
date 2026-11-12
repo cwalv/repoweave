@@ -870,6 +870,7 @@ pub enum MemberAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkweaveAction {
     /// Create a workweave, or open or detach one, from the workspace the verb runs in. That workspace is provenance only: it does not switch, and its uncommitted files stay where they are, reported
     ///
