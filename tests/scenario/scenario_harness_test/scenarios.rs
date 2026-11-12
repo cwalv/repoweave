@@ -9899,7 +9899,7 @@ fn abort_refused_over_colliding_edits() -> Vec<Step> {
                 "--allow-member-change",
                 LIB,
             ],
-            "retire",
+            "landed",
             "landing",
         ),
         Step::kill("landing"),
