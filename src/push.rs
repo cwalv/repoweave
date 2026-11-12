@@ -165,6 +165,8 @@ struct Pushed {
     workweave_dir: Option<PathBuf>,
     branch: BranchName,
     raw: RawRefName,
+    /// The commit the push judges and publishes.
+    tip: ResolvedRevisionId,
     /// The project repo has it checked out here.
     checked_out: bool,
     record: Record,
@@ -410,12 +412,12 @@ fn resolve(
             .refused());
     }
     let record = crate::branch::recorded_value(pvcs, &project, &dir, &branch)?;
+    let tip = tip.expect("an attached branch with commits has a tip");
     let (manifest, lock) = if checked_out {
         let loaded = Project::from_dir(&dir, project.clone())
             .with_context(|| format!("failed to load project '{project}'"))?;
         (loaded.manifest, loaded.lock)
     } else {
-        let tip = tip.expect("a branch that is not checked out was found");
         let manifest = Manifest::from_toml_str(
             &pvcs
                 .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
@@ -434,6 +436,7 @@ fn resolve(
         workweave_dir,
         branch,
         raw,
+        tip,
         checked_out,
         record,
         manifest,
@@ -1091,7 +1094,7 @@ fn judge_member(
         repo_path: path.clone(),
         branch: branch.as_str().to_owned(),
         vcs_type: member.entry.vcs_type,
-        publish_ref: PublishRef::from_local(&LocalRefName::of_branch(&branch)),
+        publish_ref: PublishRef::judged(&LocalRefName::of_branch(&branch), head),
         target,
         replace,
     });
@@ -1166,9 +1169,7 @@ fn pushed_project_range(
     pvcs: &dyn Vcs,
     project_url_remote: Option<&RemoteHandle>,
 ) -> anyhow::Result<(Vec<crate::vcs::RangeCommit>, Option<ResolvedRevisionId>)> {
-    let Some(tip) = pvcs.resolve_local_branch_tip(&pushed.project_dir, &pushed.raw)? else {
-        return Ok((Vec::new(), None));
-    };
+    let tip = pushed.tip.clone();
     let (standing, target) = crate::push_branch::standing_of_branch(
         pvcs,
         &pushed.project_dir,
@@ -1244,12 +1245,12 @@ fn plan_declared_branches(
                 .items
                 .iter()
                 .any(|i| i.repo_path == member.path && i.branch == *name)
-            || vcs
-                .resolve_local_branch_tip(&member.dir, &branch)?
-                .is_none()
         {
             continue;
         }
+        let Some(tip) = vcs.resolve_local_branch_tip(&member.dir, &branch)? else {
+            continue;
+        };
         let (standing, target) =
             crate::push_branch::standing_of_branch(vcs, &member.dir, &branch, url_remote)?;
         let Some(target) = target else { continue };
@@ -1263,7 +1264,7 @@ fn plan_declared_branches(
                 repo_path: member.path.clone(),
                 branch: name.clone(),
                 vcs_type: member.entry.vcs_type,
-                publish_ref: PublishRef::from_local(&LocalRefName::of_branch(&branch)),
+                publish_ref: PublishRef::judged(&LocalRefName::of_branch(&branch), tip),
                 target,
                 replace: Replace::FastForwardOnly,
             });
@@ -1454,9 +1455,7 @@ fn judge_range(
     refusals: &mut Report,
     reported: &mut Report,
 ) -> anyhow::Result<()> {
-    let Some(tip) = pvcs.resolve_local_branch_tip(&pushed.project_dir, &pushed.raw)? else {
-        return Ok(());
-    };
+    let tip = pushed.tip.clone();
     let pushed_tip = match standing {
         Standing::Unpublished | Standing::Gone { .. } => None,
         _ => pvcs
@@ -1791,15 +1790,18 @@ fn publish(
                 project_plan.target,
             );
         }
-        let publish_ref = PublishRef::from_local(&LocalRefName::of_branch(&pushed.raw));
-        let result = pvcs.push_ref(
+        let judged = PublishRef::judged(&LocalRefName::of_branch(&pushed.raw), pushed.tip.clone());
+        let result = publish_ref(
+            pvcs,
             &pushed.project_dir,
             &project_plan.target,
-            &publish_ref,
+            &judged,
             &project_plan.replace,
-        );
-        let result = result.and_then(|()| {
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .and_then(|()| {
             give_upstream(pvcs, &pushed.project_dir, &pushed.raw, &project_plan.target)
+                .map_err(anyhow::Error::from)
         });
         match &result {
             Ok(()) => json_outcomes.push(PushOutcomeOutput::ProjectRepoPushed {
@@ -1972,21 +1974,13 @@ fn push_one(
         item.branch,
         item.target,
     ));
-    if let Replace::Leased(lease) = &item.replace {
-        let branch = RawRefName::new(item.branch.clone());
-        if let Err(e) = vcs.create_backup(
-            repo_dir,
-            &BackupSource::Branch(branch),
-            lease.expected(),
-            None,
-        ) {
-            return PushOutcome::Failed(format!(
-                "{}: could not keep the remote tip as a backup first: {e:#}",
-                item.repo_path.as_str()
-            ));
-        }
-    }
-    match vcs.push_ref(repo_dir, &item.target, &item.publish_ref, &item.replace) {
+    match publish_ref(
+        vcs,
+        repo_dir,
+        &item.target,
+        &item.publish_ref,
+        &item.replace,
+    ) {
         Ok(()) => {
             let branch = RawRefName::new(item.branch.clone());
             match give_upstream(vcs, repo_dir, &branch, &item.target) {
@@ -1997,11 +1991,46 @@ fn push_one(
                 )),
             }
         }
-        Err(e) => PushOutcome::Failed(format!(
-            "{}: git push failed: {e:#}",
-            item.repo_path.as_str()
-        )),
+        Err(e) => PushOutcome::Failed(format!("{}: {e}", item.repo_path.as_str())),
     }
+}
+
+/// Why a publish did not happen.
+#[derive(Debug)]
+enum PublishFailure {
+    Backup(crate::vcs::VcsError),
+    Push(crate::vcs::VcsError),
+}
+
+impl std::fmt::Display for PublishFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Backup(e) => write!(f, "could not keep the remote tip as a backup first: {e:#}"),
+            Self::Push(e) => write!(f, "the push failed: {e:#}"),
+        }
+    }
+}
+
+/// Publish `r` to `target`. A leased replace keeps the tip it replaces as a
+/// backup of the branch first, so the remote's commits stay reachable here.
+fn publish_ref(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    target: &RemoteHandle,
+    r: &PublishRef,
+    replace: &Replace,
+) -> Result<(), PublishFailure> {
+    if let Replace::Leased(lease) = replace {
+        vcs.create_backup(
+            repo,
+            &BackupSource::Branch(r.name().clone()),
+            lease.expected(),
+            None,
+        )
+        .map_err(PublishFailure::Backup)?;
+    }
+    vcs.push_ref(repo, target, r, replace)
+        .map_err(PublishFailure::Push)
 }
 
 /// The pushed branch takes in from its push branch when it takes in from

@@ -4029,7 +4029,7 @@ impl Vcs for GitVcs {
         let mut args: Vec<&str> = vec!["push"];
         args.extend(lease.as_deref());
         args.push(target.name());
-        let refspec = format!("{branch}:{branch}");
+        let refspec = format!("{}:{branch}", r.commit().id().as_str());
         args.push(&refspec);
         Self::run(&args, repo)?;
         Ok(())
@@ -6598,7 +6598,12 @@ mod branch_model_tests {
         let HeadAttachment::Attached(a) = GitVcs.head_attachment(repo).unwrap() else {
             panic!("fixture should be attached");
         };
-        PublishRef::from_local(&LocalRefName::of_branch(&RawRefName::new(a.to_string())))
+        let name = RawRefName::new(a.to_string());
+        let tip = GitVcs
+            .resolve_local_branch_tip(repo, &name)
+            .unwrap()
+            .unwrap();
+        PublishRef::judged(&LocalRefName::of_branch(&name), tip)
     }
 
     #[test]

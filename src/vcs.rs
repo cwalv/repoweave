@@ -1938,26 +1938,37 @@ impl fmt::Display for RemoteDefaultBranch {
     }
 }
 
-/// The ref a publish targets: a local branch, named at the one place
-/// `push.rs` decides what to publish.
+/// What a publish sends: the commit that was judged, to the branch of that
+/// name on the remote. The local branch may have moved since; the commit is
+/// what goes out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishRef(RawRefName);
+pub struct PublishRef {
+    name: RawRefName,
+    commit: ResolvedRevisionId,
+}
 
 impl PublishRef {
-    /// Publish the local branch `l`.
-    pub(crate) fn from_local(l: &LocalRefName) -> Self {
-        Self(RawRefName(l.0.clone()))
+    /// Publish `commit` as the local branch `l`'s push branch.
+    pub(crate) fn judged(l: &LocalRefName, commit: ResolvedRevisionId) -> Self {
+        Self {
+            name: RawRefName(l.0.clone()),
+            commit,
+        }
     }
 
-    /// The name to hand the VCS.
+    /// The branch name the remote receives it under.
     pub(crate) fn name(&self) -> &RawRefName {
-        &self.0
+        &self.name
+    }
+
+    pub(crate) fn commit(&self) -> &ResolvedRevisionId {
+        &self.commit
     }
 }
 
 impl fmt::Display for PublishRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0.as_str())
+        write!(f, "{} at {}", self.name.as_str(), self.commit.id().short())
     }
 }
 

@@ -1378,3 +1378,129 @@ fn push_judges_only_the_members_it_acts_on() {
         "naming `projects/alpha` publishes the project branch"
     );
 }
+
+// ----------------------------------------------------------------------------
+// What reaches the remote is what the push judged.
+// ----------------------------------------------------------------------------
+
+fn advance(dir: &Path, file: &str) -> String {
+    std::fs::write(dir.join(file), file).unwrap();
+    common::git_in(dir, &["add", "."]);
+    common::git_in(dir, &["commit", "-qm", file]);
+    common::git_in(dir, &["rev-parse", "HEAD"])
+}
+
+fn relock(ws: &common::PushWorkspace, member: &str, sha: &str) -> String {
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == member).unwrap();
+    common::fixture_lock(&project_dir, &[(member, &common::file_url(bare), sha)]);
+    common::git_in(&project_dir, &["commit", "-qam", &format!("lock {sha}")]);
+    common::git_in(&project_dir, &["rev-parse", "HEAD"])
+}
+
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_branch_that_moves_while_the_push_runs_publishes_the_commit_it_judged() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let member = ws.workspace.join("local/org/a");
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let judged_member = advance(&member, "judged.txt");
+    let judged_project = relock(&ws, "local/org/a", &judged_member);
+
+    let mut push = common::rwv_std();
+    push.args(["push"]).current_dir(&ws.workspace);
+    let held = common::pause::Paused::spawn(push, "push-members", &ws._tmp.path().join("pause"))
+        .expect("the push is held before the member pushes");
+    let later_member = advance(&member, "later.txt");
+    let later_project = relock(&ws, "local/org/a", &later_member);
+    let out = held.release();
+
+    assert!(
+        out.status.success(),
+        "{}",
+        common::pause::describe("push", &out)
+    );
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[0].1),
+        Some(judged_member),
+        "the member's remote holds the commit the push judged"
+    );
+    assert_eq!(
+        bare_main_sha(&ws.project_bare),
+        Some(judged_project),
+        "the project remote holds the lock the gate judged, not {later_project}"
+    );
+    assert_eq!(
+        common::git_in(&project_dir, &["rev-parse", "HEAD"]),
+        later_project,
+        "the local branch keeps what was committed meanwhile"
+    );
+}
+
+/// `--overwrite projects/<p>` keeps the remote tip it replaces as a backup,
+/// as a member's overwrite does.
+#[test]
+fn a_project_overwrite_keeps_the_replaced_remote_tip_as_a_backup() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["checkout", "-qb", "feat/o"]);
+    common::record_feature(&project_dir, "feat/o", "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let other = ws._tmp.path().join("colleague");
+    common::git_in(
+        ws._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "feat/o",
+            ws.project_bare.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    common::git_in(&other, &["config", "user.email", "c@c"]);
+    common::git_in(&other, &["config", "user.name", "C"]);
+    let replaced = advance(&other, "theirs.txt");
+    common::git_in(&other, &["push", "-q", "origin", "feat/o"]);
+    advance(&project_dir, "ours.txt");
+
+    let out = rwv()
+        .args(["push", "--overwrite", "projects/alpha"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        common::git_in(&ws.project_bare, &["rev-parse", "refs/heads/feat/o"]),
+        common::git_in(&project_dir, &["rev-parse", "HEAD"]),
+    );
+    let listed = rwv()
+        .args(["backup", "list", "--json"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let tips: Vec<&str> = doc["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["path"] == "projects/alpha")
+        .flat_map(|r| r["backups"].as_array().unwrap().iter())
+        .map(|b| b["tip"].as_str().unwrap())
+        .collect();
+    assert_eq!(tips, vec![replaced.as_str()], "{doc}");
+}
