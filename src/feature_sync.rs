@@ -1677,7 +1677,7 @@ impl FeatureLineage {
                     base.short(),
                     upstream.short()
                 ))
-                .by_verb("update --remote")
+                .by_verb("update")
                 .only(&[choice])
                 .judge(vcs),
         ))

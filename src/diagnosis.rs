@@ -1219,10 +1219,13 @@ impl State {
                         lock in the target's history pins or built on, listed with the \
                         receiving branch",
                 refused_by: "`rwv sync`, for a member it would integrate, or that would follow \
-                             while the branch has dependents; `rwv pull --merge-upstream` and \
-                             `rwv update --remote --merge-upstream`, for a feature's member",
+                             while the branch has dependents; `rwv update --remote \
+                             --merge-upstream`, for a feature's member",
                 offers: &[Form::C22, Form::C11SetBranch],
-                verb_offers: &[],
+                verb_offers: &[
+                    ("update", Form::C3UpdateRemote),
+                    ("update", Form::C27),
+                ],
             },
             Self::PinOffRemote => &StateRow {
                 axis: Axis::Pin,
