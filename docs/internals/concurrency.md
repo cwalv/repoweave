@@ -66,6 +66,27 @@ the verb refuses as `state-claim-held`, naming the file to delete when no rwv is
 running. The claim orders rwv's own fetches; a `git fetch` typed by hand into
 the same store takes no `.rwv-fetch.lock`.
 
+The claim also covers the one record a fetch keeps: `FetchClaim::fetch_pruning`
+writes, beside the claim, when each remote the fetch completed did
+(`StateFile::FetchRecord`, `.rwv-fetched`), so the record is per store and per
+remote, as the remote-tracking refs it dates are. It is rwv's record of its own
+fetches, so a transfer from a local path or a hand `git fetch` does not move it.
+
+**The workspace state takes no claim.** `rwv-workspace-state` lives in one
+checkout's private directory and only a verb acting on that workspace writes it,
+published whole. Two mutating verbs racing in one workspace are what git leaves
+unguarded in one worktree, so the file is atomic and not serialized. One that
+does not parse reads as absent and is reported by the verb that reads it; losing
+it loses no record.
+
+**The index is the record of a workweave's parent.** The worktree relation says
+nothing of `parent`, so of the three records a marker is restored from, two
+speak to it, and reconcile takes the index's. A change of parent therefore
+writes the index first and the marker second (`workspace::reparent`): a stop
+between them leaves the index ahead, and the next verb in that workweave
+restores the marker forward to it. The other order would have that verb undo
+the change.
+
 **The working tree: detect, don't prevent.** Member checkouts, manifests, and
 everything else that editors, builds, and other processes legitimately touch is
 shared, unlocked space. rwv never locks it and never assumes exclusive access —

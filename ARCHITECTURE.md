@@ -211,10 +211,16 @@ All durable rwv state is files. There is no database and no cache directory.
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. Read only by `observe_root`, through the private `read_active_pointer`; a file naming no project refuses where a verb would select by it (`unreadable-active-project`). |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Restored from the index and the worktree relation when missing or disagreeing (`src/workspace/reconcile.rs`). |
-| `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`. A file of the old name at `projects/<project>/` (`StateFile::LegacyWorkweaveIndex`) is read only by its conversion. |
+| `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`, the record of `parent` a marker is restored from. A file of the old name at `projects/<project>/` (`StateFile::LegacyWorkweaveIndex`) is read only by its conversion. |
+| `rwv-workweave-index.lock` | `StateFile::IndexClaim`, `src/workweave_index.rs` | beside the index | The claim every edit of the index holds (`IndexClaim::hold`). |
+| `rwv-workspace-state` | `StateFile::WorkspaceState`, `src/alignment.rs` | each workspace's private dir (`Vcs::private_dir`) | The branch the workspace last aligned its members for, and the entries it aligned them by. Single-workspace state, published whole with no claim; one that does not parse reads as absent, reported. |
+| `.rwv-fetch.lock` | `StateFile::FetchClaim`, `src/fetch_claim.rs` | a member's or the project clone's store (`Vcs::store_of`) | The claim every pruning fetch into that store holds (`FetchClaim::hold`). |
+| `.rwv-fetched` | `StateFile::FetchRecord`, `src/fetch_claim.rs` | beside `.rwv-fetch.lock` | When rwv's pruning fetch of each remote into the store last completed, written under the fetch claim; `push --dry-run` reads it for the age of the refs it judged. |
+| `.rwv-health-floor` | `StateFile::HealthFloor`, `src/health_floor.rs` | weave root | The rwv version that last observed the weave clean. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
+| `.rwv-owned-digests.lock` | `StateFile::OwnedDigestsClaim`, `src/owned_state.rs` | beside the ledger | The claim every edit of the ledger holds. |
 
 Two ownership rules are structural rather than conventional:
 
@@ -228,7 +234,11 @@ matches). A stale or foreign entry degrades to `None` plus a `rwv doctor`
 finding. Where two of the three agree, the third is rewritten from them by every
 verb that does not destroy the workweave (`reconcile_invocation`, run once in
 `cli::dispatch` before the verb resolves its root); `workweave delete` and
-`sync-to --retire` refuse on any disagreement instead (`src/workspace/reconcile.rs`).
+`sync-to --retire`, a resumed one included, refuse on any disagreement instead
+(`src/workspace/reconcile.rs`). The relation says nothing of `parent`, so for
+that field the index is the authority a marker is restored from, and a change
+of parent (`workspace::reparent`) writes the index first: a stop between the
+two writes is carried forward to the new parent by the next verb.
 
 **The index records no ownership.** What rwv may delete is decided by the
 deletion rule (`src/deletion.rs`) from the branch records and the refs
@@ -270,6 +280,13 @@ in a different spelling. Two shapes, and they are not the same guarantee:
   `&LedgerClaim`, and `workweave_index::read_for_edit` and
   `workweave_index::write` take an `&IndexClaim`, so an edit path that reads or
   writes outside the exclusion does not compile.
+- **The workspace state takes no claim.** Each workspace keeps its own in its
+  private dir and only a verb acting on that workspace writes it, published
+  whole; two mutating verbs racing in one workspace are not a case rwv guards,
+  as git does not guard two commands racing in one worktree. One that does not
+  parse reads as absent and is reported, and the next aligning verb rewrites
+  it; losing it loses no record, since the branch records hold every fact it
+  caches.
 - **The op record and its lease are claimed once, by creation.** `acquire_op`
   creates them with `link(2)` and a loser gets `EEXIST`, so for the operation's
   lifetime there is exactly one writer and its later phase writes need no
@@ -515,8 +532,12 @@ serializable mirror, `VcsErrorOutput`, for `--json`.
 
 **What the seam holds by compiler, and what it does not.** No production frame
 outside `git.rs` spawns git or assembles its argv: `git_command` is private to
-the module, and the only `Command::new("git")` elsewhere in `src/` are two
-`#[cfg(test)]` fixtures in `sync.rs`. A remote is held the same way — it crosses
+the module, and every git a production frame spawns is built by
+`GitCommand::new` (`src/git/argv.rs`), which removes the `GIT_*` variables that
+redirect it and pins `LC_ALL=C`, since the backend tells some failures apart by
+git's untranslated wording. A `#[cfg(test)]` fixture that spawns git outside
+that constructor inherits `GIT_DIR` when the suite runs under the pre-push
+hook; `git_command_in_test` builds the same command for one. A remote is held the same way — it crosses
 the seam as a `RemoteHandle`, which only a backend constructs and which
 displays but does not give its name back, and no trait method accepts text for
 one — so core can neither spell a remote nor be handed a parameter to spell it

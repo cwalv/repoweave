@@ -230,7 +230,7 @@ pub enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
-        /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live staged content or live edits, and never a ref rwv holds no ownership receipt for. Idempotent. Active-project scoped; use --all to widen.
+        /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. Active-project scoped; use --all to widen.
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
         /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.

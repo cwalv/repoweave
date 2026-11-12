@@ -1433,8 +1433,7 @@ impl GitVcs {
     /// The directory to run ref-level git commands in for a canonical
     /// store path.
     ///
-    /// A receipt is keyed by canonical store, and `store_of`
-    /// reports the store itself (`<clone>/.git`), not the working
+    /// `store_of` reports the store itself (`<clone>/.git`), not the working
     /// directory. git will accept a `.git` directory as its cwd, but the
     /// behavior differs subtly between porcelain commands, so normalize to
     /// the clone root and leave anything else alone.
@@ -3763,8 +3762,8 @@ impl Vcs for GitVcs {
         //
         //   * `checkout.guess` (on by default) invents a local branch from
         //     a remote-tracking one of the same name and reports "Switched
-        //     to a new branch". That is a birth with no receipt, so the ref
-        //     is unowned under R2 forever. It is also the ordinary case
+        //     to a new branch", a branch no caller asked for. It is also the
+        //     ordinary case
         //     here: a `LocalRefName` is a projection of a *remote* branch
         //     name, and rwv clones have exactly one remote.
         //   * a name matching a tag detaches HEAD and exits 0 — the very
@@ -3794,8 +3793,8 @@ impl Vcs for GitVcs {
                 repo: Self::work_dir_for_store(repo),
                 stderr: format!(
                     "no local branch named '{name}': attaching to a branch that \
-                     does not exist would create it, and a birth needs a receipt \
-                     so the ref can be owned"
+                     does not exist would create it, and rwv attaches only to a branch \
+                     that exists"
                 ),
             });
         }
@@ -4683,20 +4682,16 @@ impl GitVcs {
         // before it fails on the destination, so a post-hoc look sees a ref
         // this very call just made.
         if self.resolve_local_branch_tip(&store, name)?.is_some() {
-            // ADOPT. The shipped path force-deleted the branch here and
-            // retried with -b, destroying a ref on nothing but a name match
-            // — a DESTROY needs a receipt and a warrant (R2, R3), and this
-            // call holds neither, so it cannot be reached from here.
+            // ADOPT. The branch is checked out as it stands, never deleted
+            // and made again: deleting a ref takes a `DestroyProof`, and a
+            // name match is not one.
             Self::run_awaiting_peers(Argv::from(add).path(&dest_arg).text(branch), &store)
                 .map_err(classify)?;
             return Ok(RefOrigin::Adopted);
         }
         // AUTHOR. If this fails after git has already written the ref (a
-        // taken destination is the usual way), the ref is left in place
-        // rather than cleaned up: the receipt was persisted before this
-        // call, so what remains is a recorded ref with no worktree, which
-        // doctor can reconcile. Deleting it here would be an unwarranted
-        // DESTROY, which is the failure mode this path exists to remove.
+        // taken destination is the usual way), the ref is left in place:
+        // deleting it takes a `DestroyProof`, which this call does not hold.
         //
         // git creates the branch before it reads the registrations, so an
         // attempt that dies on a peer's has already authored it: the next one

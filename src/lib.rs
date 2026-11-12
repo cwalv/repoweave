@@ -16,8 +16,8 @@
 //!   handful of marker and record files ([`workspace`], [`op_state`],
 //!   [`workweave_index`]) plus the version control system's own refs.
 //! - **Destructive operations are gated by the type system, not by
-//!   convention.** [`vcs`] admits a ref write only against a witness,
-//!   receipt, warrant or consent token that cannot be forged from a string.
+//!   convention.** [`vcs`] admits a ref write only against a witness, proof
+//!   or consent token that cannot be forged from a string.
 //!
 //! `ARCHITECTURE.md` at the repo root is the module map, dataflow and seam
 //! description; `docs/explanation/joints/` holds the normative contracts.
