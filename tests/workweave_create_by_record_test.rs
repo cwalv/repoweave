@@ -453,9 +453,12 @@ fn set_flags_on_a_workweave_create_are_judged_before_anything_is_written() {
     let ws = &w.workspace;
     let project = project_dir(ws);
     let records_before = common::git_in(&project, &["rev-parse", "rwv-records"]);
+    common::git_in(ws.join(LIB), &["branch", "lib-existing"]);
+    common::git_in(ws.join(APP), &["branch", "app-existing"]);
     let lib_branches = common::git_in(ws.join(LIB), &["branch", "--list"]);
-    let ok = format!("{LIB}=lib-b");
-    let missing = format!("{APP}=no-such-branch");
+    let app_branches = common::git_in(ws.join(APP), &["branch", "--list"]);
+    let ok = format!("{LIB}=lib-existing");
+    let taken = format!("{APP}=app-existing");
 
     let out = refuse(
         &[
@@ -465,18 +468,15 @@ fn set_flags_on_a_workweave_create_are_judged_before_anything_is_written() {
             PROJECT,
             "ww",
             "--declared",
-            "--set-new-branch",
-            &ok,
             "--set-branch",
-            &missing,
+            &ok,
+            "--set-new-branch",
+            &taken,
         ],
         ws,
     );
 
-    assert!(
-        out.contains("no-such-branch") || out.contains("no such branch"),
-        "{out}"
-    );
+    assert!(out.contains("name exists"), "{out}");
     assert!(!workweave_of(ws, "ww").exists());
     assert_eq!(
         common::git_in(&project, &["rev-parse", "rwv-records"]),
@@ -485,6 +485,10 @@ fn set_flags_on_a_workweave_create_are_judged_before_anything_is_written() {
     assert_eq!(
         common::git_in(ws.join(LIB), &["branch", "--list"]),
         lib_branches
+    );
+    assert_eq!(
+        common::git_in(ws.join(APP), &["branch", "--list"]),
+        app_branches
     );
     assert!(!has_branch(&project, "p--ww"));
 }
@@ -535,9 +539,12 @@ fn set_flags_on_a_branch_create_are_judged_before_anything_is_written() {
     let ws = &w.workspace;
     let project = project_dir(ws);
     let records_before = common::git_in(&project, &["rev-parse", "rwv-records"]);
+    common::git_in(ws.join(LIB), &["branch", "lib-existing"]);
+    common::git_in(ws.join(APP), &["branch", "app-existing"]);
     let lib_branches = common::git_in(ws.join(LIB), &["branch", "--list"]);
-    let ok = format!("{LIB}=lib-b");
-    let missing = format!("{APP}=no-such-branch");
+    let app_branches = common::git_in(ws.join(APP), &["branch", "--list"]);
+    let ok = format!("{LIB}=lib-existing");
+    let taken = format!("{APP}=app-existing");
 
     let out = refuse(
         &[
@@ -545,18 +552,15 @@ fn set_flags_on_a_branch_create_are_judged_before_anything_is_written() {
             "create",
             "dec",
             "--declared",
-            "--set-new-branch",
-            &ok,
             "--set-branch",
-            &missing,
+            &ok,
+            "--set-new-branch",
+            &taken,
         ],
         ws,
     );
 
-    assert!(
-        out.contains("no-such-branch") || out.contains("no such branch"),
-        "{out}"
-    );
+    assert!(out.contains("name exists"), "{out}");
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     assert!(!has_branch(&project, "dec"));
     assert_eq!(
@@ -566,6 +570,10 @@ fn set_flags_on_a_branch_create_are_judged_before_anything_is_written() {
     assert_eq!(
         common::git_in(ws.join(LIB), &["branch", "--list"]),
         lib_branches
+    );
+    assert_eq!(
+        common::git_in(ws.join(APP), &["branch", "--list"]),
+        app_branches
     );
 }
 
