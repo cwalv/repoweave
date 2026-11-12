@@ -2945,7 +2945,8 @@ holding_rwv! {
 
     /// Abort of a landing a member entered with, `main` checked out.
     fn abort_of_a_landing_a_member_entered_with() {
-        runner::run(scenarios::abort_of_a_landing_a_member_entered_with()).assert_green();
+        runner::run(scenarios::abort_of_a_landing_a_member_entered_with())
+            .assert_fully_decided_green();
     }
 
     /// A branch a landing created as its member entered the target, moved
@@ -2969,11 +2970,7 @@ holding_rwv! {
             EnteredEnd::Restore,
         ))
         .assert_fully_decided_green();
-        runner::run(scenarios::abort_after_an_entered_branch_moved(
-            EnteredThen::HandCommit,
-            EnteredEnd::Restore,
-        ))
-        .assert_green();
+
     }
 
     /// The other choice the same refusal prints: finish the first

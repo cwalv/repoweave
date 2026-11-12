@@ -7288,6 +7288,8 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey, to: &CommitId) -> an
 /// workspace presents shares with it, which aligning does not move. Aligning
 /// moves a checkout by its attachment as well as its commit, so a checkout
 /// already at its pin is journaled too; each one comes with where it stood.
+/// A checkout the op filed no savepoint of, of a member entering `T`, gets
+/// one first, so abort can put it back where it stood.
 fn journal_alignment(
     ctx: &OpContext<'_>,
     dest_workspace_dir: &Path,
@@ -7315,6 +7317,10 @@ fn journal_alignment(
         let vcs = vcs_for(entry.vcs_type);
         let dir = dest_workspace_dir.join(path.as_path());
         let key = RepoKey::Member(path.clone());
+        let target_savepoint = ctx.target_savepoint_key();
+        if vcs.is_repo(&dir) && vcs.resolve_savepoint(&dir, &target_savepoint).is_none() {
+            vcs.create_savepoint(&dir, &target_savepoint)?;
+        }
         journal_fast_forward(ctx, &key, &pin)?;
         aligning.push((key, standing(vcs.as_ref(), &dir)));
     }
@@ -9077,6 +9083,7 @@ struct TargetWrite {
     dir: PathBuf,
     branch: Option<crate::vcs::RawRefName>,
     in_place: Option<PathBuf>,
+    created: bool,
     wrote: CommitId,
     now: Option<CommitId>,
     held_at: Vec<PathBuf>,
@@ -9131,13 +9138,13 @@ impl TargetStanding {
 
     /// Whether giving up every moved tip puts the whole target back: not
     /// where the project branch moved, since its lock pins whatever its
-    /// commits moved, this landing's or not.
+    /// commits moved, this landing's or not, nor where a branch the landing
+    /// created moved on, which abort deletes rather than restores.
     fn abandonable(&self) -> bool {
         self.held.is_empty()
-            && self
-                .moved
-                .iter()
-                .all(|moved| moved.now.is_some() && moved.repo != RepoKey::Project)
+            && self.moved.iter().all(|moved| {
+                moved.now.is_some() && moved.repo != RepoKey::Project && !moved.created
+            })
     }
 
     fn writes(&self) -> impl Iterator<Item = &TargetWrite> {
@@ -9225,6 +9232,7 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
             dir,
             branch: Some(branch),
             in_place,
+            created: created.is_some(),
             wrote,
             now,
             held_at,
@@ -9264,6 +9272,7 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
             dir,
             branch: None,
             in_place: None,
+            created: false,
             wrote: wrote.clone(),
             now,
             held_at: Vec::new(),
@@ -9345,7 +9354,7 @@ fn refuse_moved_target(
             held.label(target_label, project)
         );
         lines.push(format!(
-            "  {}: free the checkout at {at} of {what}, detaching it:\n\t{}\nthen rerun:\n\t\
+            "  {}: free the checkout at {at} of {what} by detaching it:\n\t{}\nthen rerun:\n\t\
              rwv abort",
             RepoOperand::of(&held.repo, project),
             vcs.hint(crate::vcs::VcsAction::Detach)
@@ -9904,9 +9913,8 @@ fn report_abort_outcome(
                         held_at
                             .iter()
                             .map(|at| vcs
-                                .hint(crate::vcs::VcsAction::SwitchDetached)
-                                .replace("<checkout>", &at.display().to_string())
-                                .replace(" <r>/<b>", ""))
+                                .hint(crate::vcs::VcsAction::Detach)
+                                .replace("<checkout>", &at.display().to_string()))
                             .collect::<Vec<_>>()
                             .join("\n\t")
                     ),

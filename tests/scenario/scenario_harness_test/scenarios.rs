@@ -11149,8 +11149,9 @@ pub fn abort_after_another_landing_built_on_the_target(
 
 /// `docs`, which `main` lacks, enters it with a landing on `docs-next`,
 /// which the landing creates and aligns `main`'s checkout of `docs` onto;
-/// the landing stops in its retire and nothing else happens. Abort should
-/// put `main` back whole.
+/// the landing stops in its retire and nothing else happens. Abort puts
+/// `main` back whole: the checkout back on the branch it was on, and
+/// `docs-next` gone.
 pub fn abort_of_a_landing_a_member_entered_with() -> Scenario {
     scenario(
         "abort of a landing a member entered with",
@@ -11180,10 +11181,14 @@ pub fn abort_of_a_landing_a_member_entered_with() -> Scenario {
             ),
             Step::kill("landing"),
             Step::rwv(&ww("w1"), &["abort"])
-                .expect(Exit::Defect(Defect::EnteredBranchTheTargetHoldsIsNotUndone))
+                .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
-                .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Proj]),
+                .may_rewind(&[Repo::App, Repo::Docs, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Docs, Repo::Proj]),
+            Step::git(&a(), Repo::Docs, &["branch", "--show-current"])
+                .claim(Claim::OutputLine("main")),
+            Step::git(&a(), Repo::Docs, &["branch", "--list", "docs-next"])
+                .claim(Claim::OutputLacks("docs-next")),
         ],
     )
 }
@@ -11205,8 +11210,9 @@ pub enum EnteredThen {
 pub enum EnteredEnd {
     LeaveTarget,
     ContinueTheRetire,
-    /// `--abandon-foreign-tip`, or freeing the checkout and rerunning abort:
-    /// the choice that puts the whole target back.
+    /// Freeing the checkout and rerunning abort: the choice that puts the
+    /// whole target back. Abort prints no `--abandon-foreign-tip` for a
+    /// branch it created that moved on, which it would delete.
     Restore,
 }
 
@@ -11268,6 +11274,7 @@ pub fn abort_after_an_entered_branch_moved(then: EnteredThen, end: EnteredEnd) -
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
             .claim(Claim::OutputContains("rwv abort --leave-target"))
+            .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
     );
@@ -11285,31 +11292,23 @@ pub fn abort_after_an_entered_branch_moved(then: EnteredThen, end: EnteredEnd) -
                 .claim(Claim::WorkweaveGone(ww("w1"))),
         ),
         EnteredEnd::Restore => {
-            let restores = match then {
-                EnteredThen::CheckedOut => {
-                    steps.push(
-                        Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
-                            .expect(Exit::Succeeds),
-                    );
-                    Step::rwv(&ww("w1"), &["abort"])
-                }
-                EnteredThen::HandCommit | EnteredThen::BuiltOn => {
-                    Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--abandon-foreign-tip")
-                }
-            };
-            let restores = match then {
-                EnteredThen::CheckedOut => restores.expect(Exit::Succeeds),
-                _ => restores.expect(Exit::Defect(Defect::EnteredBranchTheTargetHoldsIsNotUndone)),
-            };
+            assert_eq!(
+                then,
+                EnteredThen::CheckedOut,
+                "only a held branch prints a choice that restores the target"
+            );
+            steps.push(
+                Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
+                    .expect(Exit::Succeeds),
+            );
+            let restores = Step::rwv(&ww("w1"), &["abort"]);
             steps.push(
                 restores
+                    .expect(Exit::Succeeds)
                     .may_strand(&[Repo::Proj])
                     .may_rewind(&[Repo::App, Repo::Docs, Repo::Proj])
                     .may_restore(&[Repo::App, Repo::Docs, Repo::Proj]),
             );
-            if then != EnteredThen::CheckedOut {
-                return scenario("abort after an entered branch moved", steps);
-            }
             steps.push(
                 Step::git(&a(), Repo::Docs, &["branch", "--list", "docs-next"])
                     .claim(Claim::OutputLacks("docs-next")),

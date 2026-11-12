@@ -281,11 +281,6 @@ pub enum Defect {
     /// `rwv.toml`, conflict markers and all, so it cannot settle the
     /// conflicted entry and stage the file as the conflict stop says it does.
     SettersCannotReadAConflictedManifest,
-    /// A landing aligns the target's checkout of a member that enters with
-    /// it onto the branch it created, with no savepoint of that checkout, so
-    /// abort neither switches it back nor deletes the branch it holds: it
-    /// refuses, printing only a rerun of itself.
-    EnteredBranchTheTargetHoldsIsNotUndone,
 }
 
 impl Defect {
@@ -294,10 +289,6 @@ impl Defect {
             Defect::SettersCannotReadAConflictedManifest => {
                 "a setter cannot read an rwv.toml a merge left conflicted, so it cannot settle \
                  the entry"
-            }
-            Defect::EnteredBranchTheTargetHoldsIsNotUndone => {
-                "abort cannot undo a branch a landing created for an entering member while the \
-                 target's checkout holds it"
             }
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
