@@ -2912,6 +2912,7 @@ impl OpContext<'_> {
                 &repos,
                 &landing_feature(self)?,
                 &[(repo.clone(), head.clone())],
+                &[],
             )?;
             let mut report = Report::default();
             crate::stack::judge(&stack, &repos, &target, "land", &mut report);

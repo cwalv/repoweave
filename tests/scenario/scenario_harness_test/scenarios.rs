@@ -14700,6 +14700,38 @@ pub fn git_below_2_38() -> Scenario {
 /// `stack-carried`, by a landing: `w1`'s `linear` landing rebases `w1`
 /// onto the moved `main` in its seat and carries `w2` along before `main`
 /// fast-forwards.
+/// `stack-carried-by-a-landing` killed as advance-target begins, after the carry
+/// moved `w2` and before `main` moved: `rwv land --continue` reads `w2` as
+/// carried, not as lacking `w1`'s tip, and the landing completes.
+pub fn a_landing_killed_after_its_carry_continues() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
+            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::kill("landing"),
+        Step::rwv(&ww("w1"), &["land", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            })
+            .claim(Claim::OutputLacks("lacks")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge-base", "--is-ancestor", "proj--w1", "main"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: a landing killed after its carry moved continues",
+        steps,
+    )
+}
+
 pub fn stack_carried_by_a_landing() -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));

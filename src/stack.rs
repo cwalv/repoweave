@@ -87,12 +87,25 @@ pub(crate) struct Stack {
 /// with its tip there before. A dependent's own dependents are walked only
 /// where it is carried. A record whose branch exists nowhere is no
 /// dependent, and neither is one known only on a remote `w` is not
-/// published on.
+/// published on. A dependent's branch at the tip a journaled carry in
+/// `carried` composed and moved it to is read at the tip it was carried
+/// from, so a rerun judges the stack as the carry first did.
 pub(crate) fn walk(
     repos: &Repos<'_>,
     w: &BranchName,
     moved: &[(RepoKey, CommitId)],
+    carried: &[Carrying],
 ) -> anyhow::Result<Stack> {
+    let before_carry = |repo: &RepoKey, dependent: &BranchName, now: &CommitId| {
+        carried
+            .iter()
+            .find(|c| {
+                &c.repo == repo
+                    && c.branch == dependent.as_str()
+                    && c.composed.as_ref() == Some(now)
+            })
+            .map_or_else(|| now.clone(), |c| c.from.clone())
+    };
     let mut stack = Stack::default();
     if moved.is_empty() {
         return Ok(stack);
@@ -134,20 +147,24 @@ pub(crate) fn walk(
             for (repo, old) in &parent_moved {
                 let dir = repos.dir(repo);
                 let vcs = repos.vcs(repo);
-                let Some(tip) = vcs.resolve_local_branch_tip(&dir, &name)? else {
+                let Some(now) = vcs.resolve_local_branch_tip(&dir, &name)? else {
                     continue;
                 };
+                let tip = before_carry(repo, &dependent, now.id());
                 checked_out.extend(vcs.checkouts_of_branch(&dir, &name)?);
-                if !vcs.is_ancestor(&dir, &rev(old), &tip)? {
+                if !vcs.is_ancestor(&dir, &rev(old), &rev(&tip))? {
                     lacking.push(repos.label(repo));
                 }
-                tips.push((repo.clone(), tip.id().clone()));
+                tips.push((repo.clone(), tip));
             }
             let project_moved = parent_moved.iter().any(|(r, _)| r == &RepoKey::Project);
             if !tips.is_empty() && !project_moved {
                 if let Some(tip) = held.as_ref() {
                     checked_out.extend(project_vcs.checkouts_of_branch(&project_dir, &name)?);
-                    tips.push((RepoKey::Project, tip.id().clone()));
+                    tips.push((
+                        RepoKey::Project,
+                        before_carry(&RepoKey::Project, &dependent, tip.id()),
+                    ));
                 }
             }
             let why = if !lacking.is_empty() {
@@ -409,7 +426,7 @@ impl Carrier<'_> {
                 (rebase.from.clone(), now.id().clone()),
             );
         }
-        let stack = walk(&self.repos, self.w, &moved)?;
+        let stack = walk(&self.repos, self.w, &moved, &record.carries)?;
         let mut report = Report::default();
         let verb = match self.verb {
             OpVerb::Land => "land",
@@ -449,7 +466,13 @@ impl Carrier<'_> {
                     .into_iter()
                     .find(|c| &c.repo == repo && c.branch == carry.dependent.as_str());
                 let tip = match journaled.and_then(|c| c.composed.clone().map(|t| (c, t))) {
-                    Some((c, tip)) if c.from == *from || c.composed.as_ref() == Some(from) => tip,
+                    Some((c, tip))
+                        if (c.from == *from || c.composed.as_ref() == Some(from))
+                            && c.base == base
+                            && c.onto == onto =>
+                    {
+                        tip
+                    }
                     _ => self.compose(repo, carry, from, &base, &onto, &record.rebases)?,
                 };
                 new_tips.insert(
