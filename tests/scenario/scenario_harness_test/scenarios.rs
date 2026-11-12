@@ -11149,7 +11149,8 @@ pub enum TargetHeld {
 /// A commit lands on the target's `main` in `app` after the landing composed
 /// and before it moves anything: the landing's own read of the savepoint is
 /// what stops it, naming the tip it read, `--continue` refuses, `rwv abort`
-/// leaves the commit where it is, and the landing run again lands on it.
+/// leaves the commit where it is, and the landing run again lands on it, once
+/// a branch left beyond its pin has its commit recorded.
 pub fn a_target_moved_before_the_landing_moves_it(held: TargetHeld) -> Scenario {
     let mut steps = vec![create("w")];
     if held == TargetHeld::AsRef {
@@ -11185,8 +11186,18 @@ pub fn a_target_moved_before_the_landing_moves_it(held: TargetHeld) -> Scenario 
                 "where something other than this landing moved it",
             )),
     ]);
-    if held == TargetHeld::InCheckout {
-        steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    match held {
+        TargetHeld::InCheckout => {
+            steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+        }
+        TargetHeld::AsRef => steps.extend([
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
+                .claim(Claim::OutputContains("hand commit"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed(&ww("w"), "rwv workweave create").expect(Exit::Succeeds),
+            Step::rwv(&ww("main"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ]),
     }
     steps.extend([
         Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
