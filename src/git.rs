@@ -2483,7 +2483,12 @@ impl Vcs for GitVcs {
             ],
             repo,
         )?;
-        let born = Self::run_trimmed(["rev-parse", "--verify", "--quiet", "HEAD"], repo).is_ok();
+        let born = Self::run_or_absent(
+            ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+            repo,
+            Absent::Revision,
+        )?
+        .is_some();
         let outcome = Self::commit_through_own_index(repo, &index, born, paths, message);
         let _ = std::fs::remove_file(&index);
         outcome
