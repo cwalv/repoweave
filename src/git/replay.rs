@@ -14,15 +14,41 @@ fn record_name(old: &CommitId, onto: &CommitId) -> String {
     format!("{RECORD_PREFIX}{}-{}", old.as_str(), onto.as_str())
 }
 
+/// The name of the copy of the todo git built for the same replay.
+fn todo_name(old: &CommitId, onto: &CommitId) -> String {
+    format!("{}.todo", record_name(old, onto))
+}
+
+/// The commits a todo git built schedules, each as the id it names them by,
+/// abbreviated where git abbreviated it.
+fn scheduled(todo: &str) -> Vec<String> {
+    todo.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            match words.next()? {
+                "pick" | "p" | "reword" | "r" | "edit" | "e" | "squash" | "s" | "fixup" | "f" => {
+                    words.next().map(str::to_owned)
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// What a record's pairs, each replayed commit with the commit git noted
-/// for it, say of `olds` replayed onto `onto` as `written`; `None` where a
-/// pair names a commit of neither.
+/// for it, say of `olds` replayed onto `onto` as `written`, given the
+/// commits git's todo scheduled; `None` where a pair names a commit of
+/// neither, or where a scheduled commit has no pair: a replay whose
+/// recording did not run for every commit describes nothing.
 ///
 /// Git notes a commit it dropped as left empty against the commit HEAD was
 /// on, which is the image of the commit before it or `onto`: a commit noted
-/// against `onto` or against an earlier commit's image was dropped.
+/// against `onto` or against an earlier commit's image was dropped. A commit
+/// of `olds` git's todo does not schedule is one git left out as already
+/// upstream: dropped too.
 fn read_pairs(
     pairs: &[(CommitId, CommitId)],
+    scheduled: &[String],
     olds: &[CommitId],
     onto: &CommitId,
     written: &[CommitId],
@@ -40,8 +66,13 @@ fn read_pairs(
                 claimed.push(new);
                 Some(new.clone())
             }
-            Some(_) => return None,
-            None => None,
+            None if !scheduled
+                .iter()
+                .any(|id| !id.is_empty() && old.as_str().starts_with(id.as_str())) =>
+            {
+                None
+            }
+            Some(_) | None => return None,
         };
         images.push((old.clone(), image));
     }
@@ -52,6 +83,19 @@ fn read_pairs(
 }
 
 impl GitVcs {
+    fn todo_path(repo: &Path, old: &CommitId, onto: &CommitId) -> Result<PathBuf, VcsError> {
+        Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &todo_name(old, onto),
+            ],
+            repo,
+        )
+        .map(PathBuf::from)
+    }
+
     fn record_path(repo: &Path, old: &CommitId, onto: &CommitId) -> Result<PathBuf, VcsError> {
         Self::run_trimmed(
             [
@@ -66,23 +110,41 @@ impl GitVcs {
     }
 
     /// Start the record of a replay of `old` onto `onto`, empty, and return
-    /// the command the replay runs after each commit to keep it: a copy of
+    /// the command the replay runs after each commit to keep it, a copy of
     /// git's own list of what it rewrote, which git keeps only while the
-    /// replay is in progress.
+    /// replay is in progress; and the sequence editor that keeps the todo git
+    /// hands it, unchanged.
     pub(super) fn start_replay_record(
         repo: &Path,
         old: &CommitId,
         onto: &CommitId,
-    ) -> Result<String, VcsError> {
+    ) -> Result<(String, String), VcsError> {
         let path = Self::record_path(repo, old, onto)?;
         std::fs::write(&path, b"").map_err(|source| VcsError::Io {
             ctx: format!("failed to start {}", path.display()),
             source,
         })?;
-        Ok(format!(
-            "cp -f \"$(git rev-parse --git-path rebase-merge/rewritten-list)\" \
-             \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
-            record_name(old, onto)
+        let todo = Self::todo_path(repo, old, onto)?;
+        match std::fs::remove_file(&todo) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to start {}", todo.display()),
+                    source,
+                })
+            }
+        }
+        Ok((
+            format!(
+                "cp -f \"$(git rev-parse --git-path rebase-merge/rewritten-list)\" \
+                 \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
+                record_name(old, onto)
+            ),
+            format!(
+                "f() {{ cp -f \"$1\" \"$(git rev-parse --git-path {})\"; }}; f",
+                todo_name(old, onto)
+            ),
         ))
     }
 
@@ -133,7 +195,22 @@ impl GitVcs {
                 _ => return Ok(None),
             }
         }
-        Ok(read_pairs(&pairs, &olds, onto, &written))
+        let todo = match std::fs::read_to_string(Self::todo_path(repo, old, onto)?) {
+            Ok(todo) => scheduled(&todo),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(olds.is_empty().then(|| Replayed {
+                    images: Vec::new(),
+                    written,
+                }))
+            }
+            Err(source) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to read the todo of {}", path.display()),
+                    source,
+                })
+            }
+        };
+        Ok(read_pairs(&pairs, &todo, &olds, onto, &written))
     }
 
     pub(super) fn remove_replay_records(repo: &Path) -> Result<(), VcsError> {
@@ -341,6 +418,10 @@ mod tests {
         CommitId::parse(&format!("{n:040x}")).unwrap()
     }
 
+    fn ids(olds: &[CommitId]) -> Vec<String> {
+        olds.iter().map(|c| c.as_str().to_owned()).collect()
+    }
+
     fn pairs(of: &[(u8, u8)]) -> Vec<(CommitId, CommitId)> {
         of.iter().map(|(o, n)| (commit(*o), commit(*n))).collect()
     }
@@ -351,6 +432,7 @@ mod tests {
         let written = [commit(12), commit(14)];
         let replayed = read_pairs(
             &pairs(&[(1, 9), (2, 12), (3, 12), (4, 14)]),
+            &ids(&olds),
             &olds,
             &commit(9),
             &written,
@@ -363,24 +445,81 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_the_record_does_not_name_was_dropped_and_one_written_unnoted_was_added() {
+    fn a_record_missing_a_replayed_commit_describes_nothing() {
+        let olds = [commit(1), commit(2)];
+        let written = [commit(11)];
+        assert_eq!(
+            read_pairs(&pairs(&[(2, 11)]), &ids(&olds), &olds, &commit(9), &written),
+            None
+        );
+        assert_eq!(
+            read_pairs(&[], &ids(&olds), &olds, &commit(9), &written),
+            None
+        );
+    }
+
+    #[test]
+    fn a_commit_written_that_the_record_does_not_note_was_added() {
         let olds = [commit(1), commit(2)];
         let written = [commit(11), commit(20)];
-        let replayed = read_pairs(&pairs(&[(2, 11)]), &olds, &commit(9), &written).unwrap();
+        let replayed = read_pairs(
+            &pairs(&[(1, 9), (2, 11)]),
+            &ids(&olds),
+            &olds,
+            &commit(9),
+            &written,
+        )
+        .unwrap();
         assert_eq!(replayed.image(&commit(1)), None);
         assert_eq!(replayed.image(&commit(2)), Some(&commit(11)));
         assert_eq!(replayed.original(&commit(20)), None);
     }
 
     #[test]
+    fn a_commit_git_s_todo_does_not_schedule_was_dropped_as_already_upstream() {
+        let olds = [commit(1), commit(2)];
+        let written = [commit(11)];
+        let replayed = read_pairs(
+            &pairs(&[(2, 11)]),
+            &ids(&olds[1..]),
+            &olds,
+            &commit(9),
+            &written,
+        )
+        .unwrap();
+        assert_eq!(replayed.image(&commit(1)), None);
+        assert_eq!(replayed.image(&commit(2)), Some(&commit(11)));
+    }
+
+    #[test]
+    fn the_scheduled_commits_are_the_picks_of_git_s_todo() {
+        assert_eq!(
+            scheduled("pick 0731fb9 # c2\nexec cp a b\np abc1234 x\n\n# Rebase da9613e..0731fb9\n"),
+            vec!["0731fb9".to_owned(), "abc1234".to_owned()]
+        );
+    }
+
+    #[test]
     fn a_record_naming_a_commit_the_branch_does_not_hold_describes_nothing() {
         let olds = [commit(1)];
         assert_eq!(
-            read_pairs(&pairs(&[(1, 11)]), &olds, &commit(9), &[commit(12)]),
+            read_pairs(
+                &pairs(&[(1, 11)]),
+                &ids(&olds),
+                &olds,
+                &commit(9),
+                &[commit(12)]
+            ),
             None
         );
         assert_eq!(
-            read_pairs(&pairs(&[(5, 11)]), &olds, &commit(9), &[commit(11)]),
+            read_pairs(
+                &pairs(&[(5, 11)]),
+                &ids(&olds),
+                &olds,
+                &commit(9),
+                &[commit(11)]
+            ),
             None
         );
     }

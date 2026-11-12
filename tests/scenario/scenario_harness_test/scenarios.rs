@@ -16898,6 +16898,44 @@ pub fn a_dependent_moved_as_its_carry_moves(then: MovedAsCarried) -> Scenario {
     scenario("stack: a dependent moved as its carry moves it", steps)
 }
 
+/// `stack-carry-conflict` stopped on `w2` in `app`, and the operator leaves
+/// the replay with `git rebase --quit`: the checkout is detached on `main`'s
+/// work with no record of what became of `w2`'s commit, so `--continue`
+/// refuses `replay-unrecorded` rather than moving `w2` there. `rwv abort`
+/// refuses the quit's conflicted edits, and its printed abandon keeps them
+/// as a backup and puts everything back.
+pub fn a_carry_left_by_a_quit_is_unrecorded() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(&ww("w1"), Repo::App, &["rebase", "--quit"]),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::ReplayUnrecorded))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv_printed(&ww("w1"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+    ];
+    scenario("stack: a carry left by a quit is unrecorded", steps)
+}
+
 /// How the carry a landing into its dependent waits on ends.
 #[derive(Debug, Clone, Copy)]
 pub enum StoppedCarryEnds {

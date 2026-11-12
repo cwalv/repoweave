@@ -3034,9 +3034,10 @@ impl Vcs for GitVcs {
             DerivedContentResolution::KeepTargetSideKeepingEmpty => "--empty=keep",
             _ => "--empty=drop",
         };
-        let record = Self::start_replay_record(repo, &old, onto.id())?;
+        let (record, todo) = Self::start_replay_record(repo, &old, onto.id())?;
         let rebase_args = [
             "rebase",
+            "--interactive",
             "--force-rebase",
             "--no-keep-empty",
             empty,
@@ -3045,12 +3046,13 @@ impl Vcs for GitVcs {
             upstream.id().as_str(),
         ];
         let mut args = rebase_config_args(derived);
-        args.extend(rebase_args[..4].iter().map(|a| (*a).to_owned()));
+        args.extend(rebase_args[..5].iter().map(|a| (*a).to_owned()));
         args.extend(["--exec".to_owned(), record]);
-        args.extend(rebase_args[4..].iter().map(|a| (*a).to_owned()));
+        args.extend(rebase_args[5..].iter().map(|a| (*a).to_owned()));
 
         let output = git_command()
             .args(&args)
+            .env("GIT_SEQUENCE_EDITOR", &todo)
             .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {

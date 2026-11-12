@@ -1360,6 +1360,77 @@ fn a_rebase_finished_by_hand_maps_as_recorded_and_an_amended_tip_has_no_map() {
 }
 
 #[test]
+fn a_replay_aborted_and_redone_by_hand_has_no_map() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = commit_file(p, "shared", "v0\n", "add shared", None);
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    commit_file(p, "shared", "feat\n", "clash", None);
+    commit_file(p, "mine", "m\n", "mine", None);
+    let old = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    let onto = commit_file(p, "shared", "main\n", "main", None);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    let stopped = git_vcs().rebase(
+        p,
+        &resolved(&onto),
+        &resolved(&base),
+        DerivedContentPolicy::keep_target_side(),
+    );
+    assert!(matches!(stopped, Err(VcsError::RebaseConflict { .. })));
+    common::git_in(p, &["rebase", "--abort"]);
+    common::git_in(p, &["rebase", "-q", "-X", "theirs", "main"]);
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        git_vcs()
+            .replayed(
+                p,
+                &commit(&base),
+                &commit(&old),
+                &commit(&onto),
+                &commit(&new)
+            )
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_commit_git_leaves_out_of_the_replay_as_already_upstream_is_recorded_as_dropped() {
+    let dir = init_repo();
+    let p = dir.path();
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    let first = commit_file(p, "one", "1\n", "one", None);
+    let second = commit_file(p, "two", "2\n", "two", None);
+    let old = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    common::git_in(p, &["cherry-pick", "-x", &first]);
+    let onto = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    git_vcs()
+        .rebase(
+            p,
+            &resolved(&onto),
+            &resolved(&onto),
+            DerivedContentPolicy::keep_target_side(),
+        )
+        .unwrap();
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    let replayed = git_vcs()
+        .replayed(
+            p,
+            &commit(&onto),
+            &commit(&old),
+            &commit(&onto),
+            &commit(&new),
+        )
+        .unwrap()
+        .expect("git's own todo records the commit it left out");
+    assert_eq!(replayed.image(&commit(&first)), None);
+    assert_eq!(replayed.image(&commit(&second)), Some(&commit(&new)));
+}
+
+#[test]
 fn a_replay_rwv_did_not_start_has_no_map() {
     let (dir, c1) = diverged_repo();
     let p = dir.path();

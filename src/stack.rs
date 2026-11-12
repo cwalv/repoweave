@@ -427,8 +427,9 @@ impl Carrier<'_> {
         Ok(())
     }
 
-    /// Record `head` as what carrying `carrying` composed, a project carry
-    /// first given the pins the member carries made.
+    /// Record `head` as what carrying `carrying` composed, once the replay's
+    /// record describes it, a project carry first given the pins the member
+    /// carries made.
     fn composed(
         &self,
         carrying: &Carrying,
@@ -438,16 +439,16 @@ impl Carrier<'_> {
         let dir = self.repos.dir(&carrying.repo);
         let vcs = self.repos.vcs(&carrying.repo);
         let mut tip = head;
+        let replayed = crate::remap::recorded(
+            vcs.as_ref(),
+            &dir,
+            &self.repos.label(&carrying.repo),
+            &carrying.base,
+            &carrying.from,
+            &carrying.onto,
+            &tip,
+        )?;
         if carrying.repo == RepoKey::Project {
-            let replayed = crate::remap::recorded(
-                vcs.as_ref(),
-                &dir,
-                &self.repos.label(&carrying.repo),
-                &carrying.base,
-                &carrying.from,
-                &carrying.onto,
-                &tip,
-            )?;
             let carries = take_in(self.workspace)?.carries;
             let replays = crate::remap::member_replays(
                 self.repos.root,

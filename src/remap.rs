@@ -71,7 +71,9 @@ pub(crate) fn recorded(
 }
 
 /// The member rebases of `rebases`, each read back from its branch's tip in
-/// its checkout under `root`, one whose branch is gone left out, and the
+/// its checkout under `root`, one whose branch is gone or still holds the
+/// commits the rebase started from (integrated by a merge instead) left out,
+/// and the
 /// member carries of `carries` that composed, each read back from the tip
 /// it composed.
 pub(crate) fn member_replays(
@@ -116,6 +118,10 @@ pub(crate) fn member_replays(
         else {
             continue;
         };
+        let from = crate::vcs::ResolvedRevisionId::from(rebase.from.clone());
+        if vcs.is_ancestor(&dir, &from, &tip)? {
+            continue;
+        }
         let replayed = recorded(
             vcs.as_ref(),
             &dir,

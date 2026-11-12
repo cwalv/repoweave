@@ -630,9 +630,31 @@ under the checkout's own git dir. The exec lines are in the rebase's own
 todo, so a continue the operator runs by hand records too. Git notes a
 commit it dropped as left empty against the commit HEAD was on; the reader
 (`src/git/replay.rs`) reads one noted against `onto` or against an earlier
-commit's image as dropped, and one absent from the list (skipped, or dropped
-as already upstream) likewise. `Vcs::replayed` answers `None` where the record
-of a replay of any commit is missing, or names a commit the branch from
+commit's image as dropped. Every commit of the range must be accounted for
+positively: noted in that list, or absent from the todo git built for the
+replay, which is how git shows a commit it left out before replaying as
+already on the `upstream` side. The rebase runs as `--interactive` with
+`GIT_SEQUENCE_EDITOR` set, for rwv's own child only, to a command that
+copies the todo git hands it to `rwv-replayed-<old tip>-<onto>.todo` and
+leaves it unchanged, so the replay stays non-interactive; git never invokes
+the editor again on a continue, and the copy from the start stands. A commit
+the todo schedules with no line in the list makes the record describe
+nothing, whatever left it out (a replay aborted and redone by hand, a todo
+edited without its exec lines, `git rebase --quit`), and so does a missing
+todo copy. What becomes of a commit left empty is held on the command line,
+`--empty=drop` (or `--empty=keep` where the derived-content policy keeps
+empty commits; git 2.26).
+
+What the record depends on in git: the documented sequence-editor channel
+for the todo (`GIT_SEQUENCE_EDITOR`, which outranks `sequence.editor`), the
+todo's `<command> <id>` line format for picks, `--exec`, and
+`rebase-merge/rewritten-list`, an internal file of git's sequencer whose
+path and `<old> <new>` line format are not documented. The seam tests in
+`tests/vcs/vcs_test.rs` (a dropped commit, a commit left out as already
+upstream, a hand continue, an aborted and redone replay) pin both formats at
+the gate's git; a git upgrade that changes either turns them red.
+`Vcs::replayed` answers `None` where the record
+of a replay of any commit is missing or incomplete, or names a commit the branch from
 `onto` no longer holds (a replay of no commit needs no record), and the
 callers that move pins on it refuse `replay-unrecorded`; abort reads `None`
 as "not this op's tip". When the re-map rewrites the replayed project
