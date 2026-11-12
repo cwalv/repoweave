@@ -1190,8 +1190,8 @@ impl Run<'_> {
                 project,
                 member,
             } => {
-                let path = sb.checkout(at, *project).join("rwv.toml");
-                let text = std::fs::read_to_string(&path).unwrap();
+                let manifest_path = sb.checkout(at, *project).join("rwv.toml");
+                let text = std::fs::read_to_string(&manifest_path).unwrap();
                 let header = format!("[repositories.\"{}\"]", member.rel_path());
                 let mut kept = Vec::new();
                 let mut dropping = false;
@@ -1208,10 +1208,14 @@ impl Run<'_> {
                 if !found {
                     return (
                         false,
-                        format!("{} has no table for {}", path.display(), member.name()),
+                        format!(
+                            "{} has no table for {}",
+                            manifest_path.display(),
+                            member.name()
+                        ),
                     );
                 }
-                std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+                std::fs::write(&manifest_path, format!("{}\n", kept.join("\n"))).unwrap();
                 (true, String::new())
             }
             Action::TruncateWorkspaceState { at } => {
