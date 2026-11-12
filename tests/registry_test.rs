@@ -160,23 +160,15 @@ fn github_registry() -> DomainRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// 2-part shorthand: defaults to first registry at resolve time
+// 2 segments: no shorthand, a path
 // ---------------------------------------------------------------------------
 
 #[test]
-fn shorthand_two_part_no_registry() {
+fn two_segments_are_a_path_not_a_shorthand() {
     let url: RepoUrl = "cwalv/repoweave".parse().unwrap();
-    match &url {
-        RepoUrl::Shorthand {
-            registry: None,
-            owner,
-            repo,
-        } => {
-            assert_eq!(owner, "cwalv");
-            assert_eq!(repo, "repoweave");
-        }
-        _ => panic!("expected Shorthand with no registry, got {url:?}"),
-    }
+    assert!(matches!(url, RepoUrl::Unknown(_)), "{url:?}");
+    assert!(url.is_plain_path());
+    assert_eq!(url.registry(), None);
 }
 
 // ---------------------------------------------------------------------------

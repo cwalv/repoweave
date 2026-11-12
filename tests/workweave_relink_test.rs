@@ -33,7 +33,6 @@ impl Weave {
         rwv(&primary, &["init", "demo"]);
         rwv(&primary, &["member", "add", &common::file_url(&origin)]);
         rwv(&primary, &["lock"]);
-        let project = primary.join("projects").join("demo");
         rwv(
             &primary,
             &["workweave", "create", "--project", "demo", "feat"],

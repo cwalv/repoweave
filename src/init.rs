@@ -7,7 +7,7 @@
 //! `--provider` is given.
 //!
 //! `rwv init --adopt SOURCE` clones an existing repo as a project. The source
-//! can be a URL or a shorthand (`owner/repo` or `registry/owner/repo`). The
+//! can be a URL or a `registry/owner/repo` shorthand. The
 //! cloned repo is placed under `projects/{name}/`, an `rwv.toml` is written if
 //! missing, the files it wrote are committed, and the project is activated.
 //! It authors nothing: its members are not on disk yet, and authoring from
@@ -328,7 +328,7 @@ fn provider_remote_url(provider: &str, name: &str) -> anyhow::Result<CloneUrl> {
 
 /// Adopt an existing repo as a project.
 ///
-/// `source` is a URL or shorthand (`owner/repo` or `registry/owner/repo`).
+/// `source` is a URL or a `registry/owner/repo` shorthand.
 /// The function:
 /// 1. Determines the clone URL and project name from `source`, and
 ///    validates the name.
@@ -429,6 +429,13 @@ pub fn init_adopt(
 /// repo name becomes the project name.
 fn resolve_adopt_source(source: &str) -> anyhow::Result<(CloneUrl, String)> {
     let parsed: RepoUrl = source.parse()?;
+    if parsed.is_plain_path() {
+        return Err(crate::registry::unresolvable_source(
+            "rwv init --adopt",
+            source,
+            None,
+        ));
+    }
     let info = resolve_to_clone_info(&parsed)?;
     let repo = info.id.repo().to_owned();
     Ok((info.url, repo))

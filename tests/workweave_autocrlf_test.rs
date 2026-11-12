@@ -190,7 +190,6 @@ fn an_authoring_verb_leaves_a_smudged_unchanged_workspace_file_clean() {
             .success();
     };
     rwv(&["init", "app"], &ws);
-    let project = ws.join("projects/app");
     rwv(&["workweave", "create", "--project", "app", "ww1"], &ws);
     let ww = tmp.path().join(".workweaves/app--ww1");
     let file = ww.join("projects/app/app.code-workspace");

@@ -5,7 +5,8 @@
 Create a new project in the workspace, or adopt an existing repo as a project.
 `init` is the day-0 verb: it bootstraps the workspace (if needed), creates
 `projects/<name>/`, writes a skeletal `rwv.toml`, authors the integration
-files it implies, and auto-activates the project. It records the branch the
+files it implies, commits exactly the files it wrote as the project's first
+commit, and auto-activates the project. It records the branch the
 project repo is on as `declared` (`rwv branch list` shows it); `init --adopt`
 first merges in the records the adopted repo's remote holds, so a branch someone
 already recorded keeps its record.
@@ -53,18 +54,30 @@ project directory inside the existing workspace.
    push` publishes the project repo to.
 9. Authors the integration files the empty manifest implies into
    `projects/<name>/`.
-10. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
+10. Commits `rwv.toml`, `.gitattributes` and the authored integration files
+    as the project repo's first commit, and nothing else. It does not push.
+11. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
+
+Before anything is written, `init` refuses when no commit author is
+configured, naming the setting. A commit refused after the files are written
+(a commit hook that declines it) names the files left uncommitted, and the
+project is not activated.
 
 ### Adopt form (`rwv init <source> --adopt`)
 
 Clones an existing repo as a project instead of creating a new one. `source`
-is a full clone URL (`https://`, `git@`) or a shorthand
-(`owner/repo` or `registry/owner/repo`). The cloned repo is placed at
-`projects/<name>/` where `<name>` is the repo name derived from the source.
+is a full clone URL (`https://`, `git@`, `file://`) or a shorthand naming its
+registry (`<registry>/<owner>/<repo>`, such as `github/myorg/my-service`). A
+two-segment `<owner>/<repo>` names no registry and is refused
+(`unresolvable-repo-source`). The cloned repo is placed at `projects/<name>/`
+where `<name>` is the repo name derived from the source.
 
 If the cloned repo does not already contain `rwv.toml`, a skeletal one is
 written. Replay-exclusion and merge driver config are applied (idempotent if
-already present). The project is auto-activated after cloning.
+already present). Whichever of `rwv.toml` and `.gitattributes` this changed is
+committed, and nothing else: one more commit on the adopted history, or the
+repo's first commit when it had none. A repo that already carries both gets no
+commit. The project is auto-activated after cloning.
 
 ## Invocation
 
@@ -80,8 +93,8 @@ rwv init <source> --adopt [--no-materialize]
   is derived from the named registry. Known registries: `github`, `gitlab`,
   `bitbucket`.
 - `--adopt` — adopt an existing repo. `<source>` must be a clone URL or a
-  `owner/repo` / `registry/owner/repo` shorthand. The project name is derived
-  from the repository name segment of the source.
+  `<registry>/<owner>/<repo>` shorthand. The project name is derived from the
+  repository name segment of the source.
 - `--no-materialize` — with `--adopt`, skip the integration install hooks of
   the adopted project's activation (they run for any member whose clone the
   weave already holds); `rwv materialize` runs them later. Refused without
@@ -96,6 +109,7 @@ Progress messages to stderr:
 - `Bootstrapped workspace at <path> (created projects/)` — emitted when an
   empty directory is converted into a workspace.
 - `Initialized project '<name>' at <path>` — project created successfully.
+- `Committed <files>` — the files `init` wrote, committed.
 - `Cloning <url> into <path>` — emitted by `--adopt` before the clone.
 - `Adopted project '<name>' at <path>` — `--adopt` completed successfully.
 
@@ -106,10 +120,11 @@ tool is not on `PATH` is skipped with its `tool-missing` warning.
 
 ## Exit codes
 
-- `0` — project created (or adopted) and activated successfully.
+- `0` — project created (or adopted), committed and activated successfully.
 - non-zero — CWD is a non-empty non-workspace directory; project already
-  exists at `projects/<name>/`; the provider registry is unknown; the clone
-  failed; or activation returned an error.
+  exists at `projects/<name>/`; the provider registry is unknown; no commit
+  author is configured; the clone or the commit failed; or activation returned
+  an error.
 
 ## Examples
 
@@ -141,7 +156,7 @@ rwv init https://github.com/myorg/my-service --adopt
 Adopt using a shorthand:
 
 ```
-rwv init myorg/my-service --adopt
+rwv init github/myorg/my-service --adopt
 ```
 
 ## Common errors
@@ -155,7 +170,14 @@ rwv init myorg/my-service --adopt
   fresh empty directory, or `cd` into an existing workspace.
 - *project '<name>' already exists at projects/<name>/* — a project directory
   with this name already exists. Choose a different name or remove the
-  existing directory.
+  existing directory. A second `init` of the same name changes and commits
+  nothing.
+- *no author is configured for that commit* — `init` commits what it writes;
+  configure the author name and email it prints, then run it again. Nothing
+  was written.
+- *'<source>' is neither a URL nor a registry shorthand*
+  (`unresolvable-repo-source`, with `--adopt`) — spell the shorthand with its
+  registry (`github/<owner>/<repo>`) or a local path as a `file://` URL.
 - *invalid --provider format '...', expected 'registry/owner'* — the
   `--provider` argument must be `<registry>/<owner>` (e.g., `github/myorg`).
 - *unknown registry '...'* — the registry name is not one of `github`,

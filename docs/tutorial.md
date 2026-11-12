@@ -25,12 +25,11 @@ for repo in protocol server web; do
   git -C "/tmp/chatly-remotes/work-${repo}" push -u origin main
   rwv member add "file:///tmp/chatly-remotes/${repo}.git"
 done
-git -C projects/web-app add -A && git -C projects/web-app commit -m "initial project"
 git -C projects/web-app push -u origin main
 rm -rf /tmp/chatly-seed
 ```
 
-When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv clone`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
+When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `github/chatly/web-app`) in `rwv clone`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
 
 </details>
 
@@ -40,7 +39,7 @@ You have a fresh machine. Someone else already created the project. You want to 
 
 ```bash
 mkdir ~/work && cd ~/work
-rwv clone chatly/web-app
+rwv clone github/chatly/web-app
 ```
 
 What happens:
@@ -135,7 +134,7 @@ Anyone else can now reproduce your exact state:
 
 ```bash
 mkdir ~/work-ci && cd ~/work-ci
-rwv clone chatly/web-app
+rwv clone github/chatly/web-app
 ```
 
 The exit status tells a CI job whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned (`rwv.lock` has no entry for it) or its pinned commit is unreachable. A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv clone`, and this check exits non-zero for it. A checkout that does not stand at its pin is reported by `rwv doctor` as [`pin`](reference/doctor-findings.md#pin).

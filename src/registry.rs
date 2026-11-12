@@ -338,7 +338,7 @@ impl Registry for DomainRegistry {
             && !parts[2].is_empty()
         {
             return Some(RepoUrl::Shorthand {
-                registry: Some(self.registry_name.clone()),
+                registry: self.registry_name.clone(),
                 owner: parts[1].to_owned(),
                 repo: parts[2].to_owned(),
             });
@@ -572,7 +572,7 @@ pub struct CloneInfo {
 ///
 /// HTTPS and SSH variants pass through directly — their registry, owner,
 /// and repo are already known from parsing. Shorthand variants are converted
-/// into a real clone URL via the named (or default) registry. Unknown variants
+/// into a real clone URL via the registry they name. Unknown variants
 /// that look like URLs are accepted with a synthetic `"unknown"` registry;
 /// non-URL Unknowns error.
 pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
@@ -599,17 +599,9 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
             repo,
         } => {
             let registries = builtin_registries();
-            let target_name = match registry {
-                Some(name) => name.clone(),
-                None => registries
-                    .first()
-                    .expect("builtin_registries is never empty")
-                    .name()
-                    .clone(),
-            };
             let reg = registries
                 .iter()
-                .find(|r| r.name() == &target_name)
+                .find(|r| r.name() == registry)
                 .expect("Shorthand registry names only ever come from a builtin registry");
             let id = RepoId::new(owner.as_str(), repo.as_str());
             let url = reg
@@ -617,7 +609,7 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
                 .expect("the only Registry impl always supports clone URLs");
             Ok(CloneInfo {
                 url,
-                registry: target_name,
+                registry: registry.clone(),
                 id,
             })
         }
@@ -630,15 +622,38 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
                     id: RepoId::new("", project_name),
                 })
             } else {
-                crate::refuse!(
-                    RefusalKind::UnresolvableRepoSource,
-                    "cannot resolve '{s}': expected a URL (https://..., git@..., or {file_url} \
-                     for a local remote) or shorthand (owner/repo)",
-                    file_url = file_url_suggestion(s),
-                )
+                Err(unresolvable_source("cannot resolve", s, None))
             }
         }
     }
+}
+
+/// The refusal for a source that is neither a URL nor a registry shorthand,
+/// naming both spellings it could have meant: a shorthand, whose first segment
+/// names the registry, and a `file://` URL for a local path. `other` is the
+/// verb's own further reading of a path, when it has one.
+pub(crate) fn unresolvable_source(
+    lead: &str,
+    source: &str,
+    other: Option<String>,
+) -> anyhow::Error {
+    let shorthand_registries: Vec<String> = builtin_registries()
+        .iter()
+        .filter(|r| r.matches(&format!("{}/o/r", r.name().as_str())).is_some())
+        .map(|r| r.name().as_str().to_owned())
+        .collect();
+    let mut message = format!(
+        "{lead}: '{source}' is neither a URL nor a registry shorthand. A shorthand names its \
+         registry first, `<registry>/<owner>/<repo>`, where <registry> is one of {}. A local \
+         path is spelled as a URL: `{}`.",
+        shorthand_registries.join(", "),
+        file_url_suggestion(source),
+    );
+    if let Some(other) = other {
+        message.push(' ');
+        message.push_str(&other);
+    }
+    crate::refusal::refusal(RefusalKind::UnresolvableRepoSource, message)
 }
 
 /// The short names of the built-in registries — the first path segment of
@@ -681,11 +696,9 @@ pub fn builtin_registries() -> Vec<Box<dyn Registry>> {
             registry_name: RegistryName::new("bitbucket"),
             domain: "bitbucket.org".into(),
         }),
-        // Appended, never prepended: `resolve_to_clone_info` defaults a
-        // registry-less two-part shorthand to `registries.first()`, and that
-        // stays GitHub. `matches` claims nothing, so `RepoUrl::from_str` can
-        // never mint `Shorthand { registry: Some(local) }` — `local` is
-        // reachable only by being named as a creation address.
+        // `matches` claims nothing, so `RepoUrl::from_str` can never mint
+        // `Shorthand { registry: local }` — `local` is reachable only by
+        // being named as a creation address.
         Box::new(LocalRegistry {
             registry_name: RegistryName::new("local"),
         }),
@@ -857,7 +870,7 @@ mod tests {
         let url = github_reg().matches("github/owner/repo").unwrap();
         match url {
             RepoUrl::Shorthand {
-                registry: Some(r),
+                registry: r,
                 owner,
                 repo,
             } => {
@@ -976,19 +989,14 @@ mod tests {
     }
 
     #[test]
-    fn from_str_two_part_shorthand_no_registry() {
+    fn from_str_two_segments_are_no_shorthand() {
         let url: RepoUrl = "cwalv/repoweave".parse().unwrap();
-        match &url {
-            RepoUrl::Shorthand {
-                registry: None,
-                owner,
-                repo,
-            } => {
-                assert_eq!(owner, "cwalv");
-                assert_eq!(repo, "repoweave");
-            }
-            _ => panic!("expected Shorthand with no registry, got {url:?}"),
-        }
+        assert!(url.is_plain_path(), "{url:?}");
+        let refused = resolve_to_clone_info(&url).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::UnresolvableRepoSource)
+        );
     }
 
     #[test]
@@ -1061,8 +1069,6 @@ mod tests {
         assert!(u.is_url()); // Unknown but URL-shaped
         let u: RepoUrl = "git@github.com:owner/repo.git".parse().unwrap();
         assert!(u.is_url()); // SSH variant
-        let u: RepoUrl = "owner/repo".parse().unwrap();
-        assert!(!u.is_url()); // Shorthand variant
         let u: RepoUrl = "github/owner/repo".parse().unwrap();
         assert!(!u.is_url()); // Shorthand with named registry
     }

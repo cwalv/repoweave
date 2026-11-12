@@ -10,7 +10,7 @@ rwv member add https://github.com/chatly/client.git
 rwv member add https://github.com/chatly/shared-types.git --role dependency
 ```
 
-`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml`, `.gitattributes` (with `rwv.lock merge=rwv-ours`) and `web-app.code-workspace`, configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv member add` clones the repo, records it in `rwv.toml`, regenerates the integration files, and commits them together with `rwv.lock`, which pins the commit it cloned.
+`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml`, `.gitattributes` (with `rwv.lock merge=rwv-ours`) and `web-app.code-workspace`, commits exactly those three files as its first commit, configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv member add` clones the repo, records it in `rwv.toml`, regenerates the integration files, and commits them together with `rwv.lock`, which pins the commit it cloned.
 
 ## Enable ecosystem integrations
 
@@ -35,18 +35,17 @@ rwv doctor --fix
 rwv materialize
 ```
 
+Commit the edit and the files it generated with git (`git -C projects/web-app add -A`, then `git -C projects/web-app commit`).
+
 `rwv doctor --fix` authors files for an integration you just enabled; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv member add`, `rwv member remove`, `rwv update --remote`, and `rwv member set-role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
 
 ## Commit and publish the project repository
 
-`projects/web-app/` is an ordinary git repository. `rwv member add` commits `rwv.lock`, `rwv.toml` and the integration files it regenerates, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set its `HEAD`, which `rwv push` requires before it publishes the project repo:
+`projects/web-app/` is an ordinary git repository, and everything above is already committed: `rwv init` committed `rwv.toml`, `.gitattributes` and the workspace file, and each `rwv member add` committed `rwv.lock`, `rwv.toml` and the integration files it regenerated. Add a remote and publish:
 
 ```bash
-git -C projects/web-app add -A
-git -C projects/web-app commit -m "Initialize web-app project"
 git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
-git -C projects/web-app push -u origin main
-git -C projects/web-app remote set-head origin main
+rwv push
 ```
 
 `rwv push` publishes the project repo to its url remote: the remote `rwv init --provider`, `rwv init --adopt` or `rwv clone` created it with, else its only remote. With several remotes and none recorded, a branch that has no push remote of its own has no push target, and `rwv push` refuses it (`push-branch` `no push target`) before pushing anything.
@@ -74,8 +73,6 @@ A single weave can host multiple projects under `projects/` that share canonical
 rwv init billing-service
 rwv member add https://github.com/chatly/shared-types.git --role dependency
 rwv member add https://github.com/chatly/billing.git
-git -C projects/billing-service add -A
-git -C projects/billing-service commit -m "Initialize billing-service project"
 ```
 
 `rwv init billing-service` makes `billing-service` the active project, so the `rwv member add` commands that follow write to its `rwv.toml`. Because `github/chatly/shared-types/` is already cloned in the weave, `rwv member add` reuses the existing canonical clone without re-downloading it, and warns that the clone is now shared between two projects. Switch between projects at the weave root with [`rwv activate`](./switch-projects.md) or open both simultaneously in separate [workweaves](./create-feature-workweave.md).

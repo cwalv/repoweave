@@ -6,8 +6,8 @@ Clone a project into the workspace and bring up every member repo at the
 commit the project's `rwv.lock` pins. `clone` reproduces a recorded state: it
 never advances a pin, and it never writes the lock.
 
-Given a `source` (a URL — `file://` for a local remote — or `owner/repo`
-shorthand), `clone` clones the project repo into `projects/<name>/`, reads its
+Given a `source` (a URL — `file://` for a local remote — or a shorthand
+naming its registry, `<registry>/<owner>/<repo>`), `clone` clones the project repo into `projects/<name>/`, reads its
 `rwv.lock`, and clones every member repo. Each member is born attached to the
 local counterpart of the branch its `rwv.toml` entry declares, positioned at
 the commit the lock pins for it. When no project is active, `clone` then
@@ -17,8 +17,10 @@ activates the project it cloned, as `rwv activate` would.
 then records the branch it leaves checked out as `declared` when they hold none
 for it (`rwv branch list` shows it).
 
-A plain path is not a source: it names no remote, so `clone` refuses
-(`unresolvable-repo-source`) and names the two spellings that are — `rwv clone
+A plain path is not a source, and neither is a two-segment `<owner>/<repo>`,
+which names no registry: `clone` refuses either (`unresolvable-repo-source`)
+and names the spellings that are — the shorthand with its registry
+(`github/<owner>/<repo>`, listing the built-in registries), `rwv clone
 file://<absolute path>` to clone from a local remote, and `rwv update --project
 <name>` for a project already at `projects/<name>/`.
 
@@ -47,8 +49,8 @@ rwv clone <source> [--allow-non-empty-dir] [--no-reference]
           [-j <N>] [--json] [--no-materialize]
 ```
 
-- `<source>` — full clone URL (`file://` for a local remote) or `owner/repo` /
-  `registry/owner/repo` shorthand.
+- `<source>` — full clone URL (`file://` for a local remote) or
+  `<registry>/<owner>/<repo>` shorthand.
 - `--allow-non-empty-dir` — clone into a non-empty directory that is not
   already a workspace (normally an error).
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
@@ -143,7 +145,7 @@ Schema:
 Clone a project from a GitHub shorthand:
 
 ```
-rwv clone owner/myproject
+rwv clone github/owner/myproject
 ```
 
 Same, with a full URL:
@@ -155,25 +157,25 @@ rwv clone https://github.com/owner/myproject.git
 CI — fail unless every member sits at the commit the lock pins:
 
 ```
-rwv clone owner/myproject
+rwv clone github/owner/myproject
 ```
 
 Skip reference repos (faster when mirrors are offline):
 
 ```
-rwv clone owner/myproject --no-reference
+rwv clone github/owner/myproject --no-reference
 ```
 
 Clone with 4 workers and emit the JSON envelope:
 
 ```
-rwv clone owner/myproject -j 4 --json
+rwv clone github/owner/myproject -j 4 --json
 ```
 
 Get the paths of the members the lock left unpinned:
 
 ```
-rwv clone owner/myproject --json | jq -r '.left[].path'
+rwv clone github/owner/myproject --json | jq -r '.left[].path'
 ```
 
 ## Common errors

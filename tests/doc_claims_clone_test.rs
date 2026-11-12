@@ -4,6 +4,7 @@
 //! Each test states the documented claim it pins in its own section banner.
 
 use assert_cmd::Command;
+use repoweave::refusal::RefusalKind;
 use std::path::Path;
 use std::process;
 
@@ -387,42 +388,74 @@ fn add_from_local_path_infers_url() {
 }
 
 // ============================================================================
-// Test 4 — two-segment shorthand resolves to github.com
+// Test 4 — the registry shorthand names its registry
 //
-// Doc claim: `rwv clone owner/name` (two-segment shorthand) resolves to
-//             github.com and clones.
+// Doc claim: `rwv clone <registry>/<owner>/<repo>` resolves through the named
+// registry, and a two-segment argument is refused as neither a URL nor a
+// shorthand, naming both spellings it could mean.
 //
-// We verify resolution without network access by checking that the error
-// message from the failed clone contains "github.com" — proving the shorthand
-// was expanded before the clone attempt.
+// Resolution is seen without network access: the failed clone's error names
+// github.com, so the shorthand was expanded before the clone was attempted.
 // ============================================================================
 
 #[test]
-fn clone_shorthand_notation_resolves_to_github() {
+fn clone_registry_shorthand_resolves_through_the_named_registry() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
     let output = rwv()
-        .args(["clone", "nonexistent-owner-xyzzy/nonexistent-repo-xyzzy"])
+        .args([
+            "clone",
+            "github/nonexistent-owner-xyzzy/nonexistent-repo-xyzzy",
+        ])
         .current_dir(&workspace)
         .output()
         .expect("rwv clone should run");
 
-    assert!(
-        !output.status.success(),
-        "clone of nonexistent shorthand repo should fail"
+    assert!(!output.status.success());
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(combined.contains("github.com"), "{combined}");
+}
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let combined = format!("{stdout}{stderr}");
+#[test]
+fn every_verb_taking_a_source_refuses_two_segments_naming_the_shorthand_and_a_file_url() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(workspace.join("projects")).unwrap();
+    rwv()
+        .args(["init", "web"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
 
-    assert!(
-        combined.contains("github.com"),
-        "error output should mention 'github.com', proving the owner/repo shorthand \
-         was resolved to a GitHub URL before the clone was attempted; got:\n{combined}"
-    );
+    for verb in [
+        &["clone"][..],
+        &["init", "--adopt"][..],
+        &["member", "add"][..],
+    ] {
+        let out = rwv()
+            .args(verb)
+            .arg("chatly/web-app")
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        let stderr = common::cli::refused(&out, RefusalKind::UnresolvableRepoSource);
+        assert!(
+            stderr.contains("`<registry>/<owner>/<repo>`"),
+            "{verb:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("github, gitlab, bitbucket"),
+            "{verb:?}: {stderr}"
+        );
+        assert!(stderr.contains("file://"), "{verb:?}: {stderr}");
+        assert!(!stderr.contains("github.com"), "{verb:?}: {stderr}");
+    }
 }
 
 /// A full `file://` URL is passed through as it stands (shorthand only expands

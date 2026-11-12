@@ -1,9 +1,8 @@
 //! `rwv clone` — clone a project and its members into the workspace.
 //!
-//! The source must be a URL (full URL or `owner/repo` shorthand resolved via
-//! the registry). A plain path is refused: a local remote is spelled
-//! `file://`, and a project already in the weave is brought up with
-//! `rwv update`.
+//! The source must be a URL or a `<registry>/<owner>/<repo>` shorthand. A
+//! plain path is refused: a local remote is spelled `file://`, and a project
+//! already in the weave is brought up with `rwv update`.
 
 use crate::activate::ActivateOptions;
 use crate::diagnosis::{Judged, JudgedOutput, Report, State};
@@ -63,19 +62,20 @@ impl CloneJsonOutput {
 
 /// Resolve `source` to a clone URL.
 ///
-/// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
-/// shorthand (resolved via the built-in registries to an HTTPS clone URL).
+/// Accepts full URLs (returned as-is) or `registry/owner/repo` shorthand
+/// (resolved via the built-in registries to an HTTPS clone URL).
 fn resolve_source(source: &str) -> anyhow::Result<registry::CloneUrl> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
     if parsed.is_plain_path() {
-        crate::refuse!(
-            RefusalKind::UnresolvableRepoSource,
-            "rwv clone: '{source}' is a plain path, which names no remote to clone the \
-             project from. To clone from a local remote, spell it as a URL: \
-             `rwv clone {file_url}`. To bring up the members of a project already in this \
-             weave at projects/<name>/, drop SOURCE: `rwv update --project <name>`.",
-            file_url = crate::path_spelling::file_url_suggestion(source),
-        );
+        return Err(registry::unresolvable_source(
+            "rwv clone",
+            source,
+            Some(
+                "To bring up the members of a project already in this weave at \
+                 projects/<name>/, drop SOURCE: `rwv update --project <name>`."
+                    .to_owned(),
+            ),
+        ));
     }
     Ok(registry::resolve_to_clone_info(&parsed)?.url)
 }
@@ -279,9 +279,22 @@ mod tests {
     }
 
     #[test]
-    fn resolve_source_resolves_two_part_shorthand() {
-        let url = resolve_source("cwalv/repoweave").unwrap();
+    fn resolve_source_resolves_registry_shorthand() {
+        let url = resolve_source("github/cwalv/repoweave").unwrap();
         assert_eq!(url.to_string(), "https://github.com/cwalv/repoweave.git");
+    }
+
+    #[test]
+    fn resolve_source_refuses_two_segments_naming_the_shorthand_and_file_url() {
+        let refused = resolve_source("cwalv/repoweave").unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::UnresolvableRepoSource)
+        );
+        let message = format!("{refused:#}");
+        assert!(message.contains("`<registry>/<owner>/<repo>`"), "{message}");
+        assert!(message.contains("github, gitlab, bitbucket"), "{message}");
+        assert!(message.contains("file://"), "{message}");
     }
 
     #[test]

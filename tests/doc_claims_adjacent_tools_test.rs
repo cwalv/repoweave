@@ -228,7 +228,7 @@ fn shipped_recipe_without_nesting_fails() {
     );
 
     let output = rwv()
-        .args(["clone", "chatly/web-app"])
+        .args(["clone", "github/chatly/web-app"])
         .current_dir(&workspace)
         .output()
         .expect("rwv clone should run");

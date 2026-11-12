@@ -130,7 +130,7 @@ pub enum Commands {
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
     /// Clone a project and each of its members at the commit `rwv.lock` pins. A member the lock does not pin, or pins at a commit no ref reaches, is cloned at its declared branch's tip and listed; the exit status is then 3.
     Clone {
-        /// Project to clone: a URL (`file://` for a local remote) or `owner/repo` shorthand
+        /// Project to clone: a URL (`file://` for a local remote) or `<registry>/<owner>/<repo>` shorthand
         source: String,
         /// Clone into a non-empty directory that is not a workspace
         #[arg(long)]
@@ -150,7 +150,7 @@ pub enum Commands {
     },
     /// Initialize a new project
     Init {
-        /// Project name (or URL / shorthand when --adopt is used)
+        /// Project name (or URL / `<registry>/<owner>/<repo>` shorthand when --adopt is used)
         project: String,
         /// Provider in registry/owner format (e.g., github/myorg)
         #[arg(long, conflicts_with = "adopt")]

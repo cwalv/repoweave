@@ -8,10 +8,8 @@ rwv init web-app
 rwv member add https://github.com/chatly/server.git --role owned
 rwv member add https://github.com/chatly/client.git --role owned
 rwv member add https://github.com/vendor/codec.git --role dependency
-git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize web-app project"
 git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
-git -C projects/web-app push -u origin main
-git -C projects/web-app remote set-head origin main
+rwv push
 ```
 
 `rwv member add` clones each member from its remote, so work that exists only in your old checkouts never reaches the weave. Push it first.
@@ -61,10 +59,10 @@ $EDITOR projects/web-app/rwv.toml   # enable [integrations.<name>]
 rwv doctor --fix
 rwv materialize
 rwv lock --commit
-git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize web-app project"
+git -C projects/web-app add -A && git -C projects/web-app commit -m "Generate workspace files"
 ```
 
-`rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries `.gitattributes` and the generated workspace files.
+`rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries the workspace files the newly enabled integrations generated.
 
 To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, pin each member at its gitlink commit: `rwv member pin github/chatly/server <gitlink-sha> --commit`. The commit must be one the member's declared branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). The member is aligned to the pin, and a teammate's `rwv clone` puts the member at it. While the branch tip is past the pin, `rwv status` reports the member as `pin` `ahead`; when ready, `rwv lock --commit` records the tip.
 

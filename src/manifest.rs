@@ -403,10 +403,9 @@ pub enum RepoUrl {
         owner: String,
         repo: String,
     },
-    /// `owner/repo` (no registry — defaults at resolve time) or
-    /// `{registry}/{owner}/{repo}` (registry named).
+    /// `{registry}/{owner}/{repo}`.
     Shorthand {
-        registry: Option<RegistryName>,
+        registry: RegistryName,
         owner: String,
         repo: String,
     },
@@ -426,40 +425,19 @@ impl FromStr for RepoUrl {
                 return Ok(url);
             }
         }
-        // 2-part shorthand fallback (registry-less; defaults at resolve time).
-        if let Some(url) = parse_two_part_shorthand(s) {
-            return Ok(url);
-        }
         // Anything else: preserve the raw string.
         Ok(RepoUrl::Unknown(s.to_owned()))
     }
-}
-
-fn parse_two_part_shorthand(s: &str) -> Option<RepoUrl> {
-    // git reads `host:owner/repo` as an SCP-style URL, and `C:/a` is a path.
-    if s.contains(':') {
-        return None;
-    }
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return None;
-    }
-    Some(RepoUrl::Shorthand {
-        registry: None,
-        owner: parts[0].to_owned(),
-        repo: parts[1].to_owned(),
-    })
 }
 
 impl RepoUrl {
     /// The registry that recognized this URL, when one did.
     pub fn registry(&self) -> Option<&RegistryName> {
         match self {
-            Self::Https { registry, .. } | Self::Ssh { registry, .. } => Some(registry),
-            Self::Shorthand {
-                registry: Some(r), ..
-            } => Some(r),
-            Self::Shorthand { registry: None, .. } | Self::Unknown(_) => None,
+            Self::Https { registry, .. }
+            | Self::Ssh { registry, .. }
+            | Self::Shorthand { registry, .. } => Some(registry),
+            Self::Unknown(_) => None,
         }
     }
 
@@ -491,8 +469,7 @@ impl RepoUrl {
     }
 
     /// Canonical local path `{registry}/{owner}/{repo}` for variants where the
-    /// registry is known. Returns `None` for [`Self::Shorthand`] without a
-    /// registry and for [`Self::Unknown`]. The value is the `RepoPath`
+    /// registry is known. Returns `None` for [`Self::Unknown`]. The value is the `RepoPath`
     /// identity spelling, `/`-separated on every platform.
     pub fn local_path(&self) -> Option<String> {
         let registry = self.registry()?;
@@ -515,15 +492,10 @@ impl fmt::Display for RepoUrl {
                 host, owner, repo, ..
             } => write!(f, "git@{}:{}/{}.git", host, owner, repo),
             Self::Shorthand {
-                registry: None,
+                registry,
                 owner,
                 repo,
-            } => write!(f, "{}/{}", owner, repo),
-            Self::Shorthand {
-                registry: Some(r),
-                owner,
-                repo,
-            } => write!(f, "{}/{}/{}", r.as_str(), owner, repo),
+            } => write!(f, "{}/{}/{}", registry.as_str(), owner, repo),
             Self::Unknown(s) => f.write_str(s),
         }
     }

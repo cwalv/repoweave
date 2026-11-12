@@ -72,7 +72,7 @@ rm ~/.local/bin/rwv ~/.local/bin/rwv-each
 
 ```bash
 mkdir my-workspace && cd my-workspace
-rwv clone chatly/web-app          # clone project + all its repos at their pins, activate, install
+rwv clone github/chatly/web-app   # clone project + all its repos at their pins, activate, install
 ```
 
 That single command clones the project repo, reads its `rwv.toml` manifest, clones every listed repo to its canonical path (`github/chatly/server/`, etc.) at the commit `rwv.lock` pins, activates the project (surfacing ecosystem workspace files like `package.json`, `go.work`, `Cargo.toml` at the weave root via symlinks), and runs install hooks. You are ready to work.
@@ -90,9 +90,11 @@ rwv lock --commit -m "lock: update after payment feature"   # record repo SHAs o
 
 ```bash
 mkdir my-workspace && cd my-workspace
-rwv init web-app
+rwv init web-app                                                             # commits rwv.toml, .gitattributes and the workspace file
 rwv member add https://github.com/chatly/server.git
 rwv member add https://github.com/chatly/shared-types.git --role dependency   # commits the entry with the member's first pin
+git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
+rwv push
 ```
 
 **Working in an isolated workweave (parallel features, PR review, or agent sandboxes):**
@@ -115,7 +117,7 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `-w <project>--<name>`, `--workweave <project>--<name>` | Global: address a workweave by name from anywhere (precedes the subcommand) |
 | `rwv` | Show current context (weave, project, workweave, repos) |
 | `rwv clone <source>` | Clone a project and each of its repos at the commit `rwv.lock` pins; activate and install. Writes no lock. A repo the lock has no entry for, or pins at an unreachable commit, is cloned at its branch tip and listed, and the clone exits `3` — the check a CI job runs for a reproducible build |
-| `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
+| `rwv init <project>` | Create a new project with empty `rwv.toml` and commit the files it wrote. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — update `.rwv-active`, verify integration files, surface symlinks at the weave root, and run install hooks (`--no-materialize` to skip hooks). Moves no checkout: a member the project shares with the active project that holds edits or is not aligned for it refuses the switch, and `--update` aligns first |
 | `rwv materialize` | Run integration install hooks, clean up disabled-integration artifacts, and settle drifted attested files (`--regenerate-drifted`, `--adopt-drifted`, `--remove-undeclared-links`) without switching projects |
 | `rwv member add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations, and commit the change with the repo's first pin. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init`, `--no-recurse-submodules` leaves the member's submodules uninitialized in new checkouts |

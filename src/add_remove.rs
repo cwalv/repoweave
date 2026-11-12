@@ -6,7 +6,7 @@ use crate::manifest::{
     BelowError, LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role,
     SubmoduleRecursion, UnspellableLocation, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, CanonicalPath};
+use crate::path_spelling::CanonicalPath;
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remotes, resolve_to_clone_info, CloneUrl, CreationParamError,
@@ -302,15 +302,14 @@ pub fn run_add(
         Ok(repo_path) => repo_path,
         Err(crate::registry::PlacementError::Invalid(e)) => return Err(e.into()),
         Err(crate::registry::PlacementError::NoMatch) if !parsed_url.is_url() => {
-            crate::refuse!(
-                RefusalKind::UnresolvableRepoSource,
-                "rwv member add: '{url}' is not a URL and no registry reads it as shorthand, so it \
-                 reads as a path, which could name a remote to clone from or a clone to \
-                 register. To clone from a local remote, spell it as a URL: \
-                 `rwv member add {file_url}`. To register the clone already at that path under the \
-                 weave root: `rwv member add --adopt {url}`.",
-                file_url = file_url_suggestion(url),
-            );
+            return Err(crate::registry::unresolvable_source(
+                "rwv member add",
+                url,
+                Some(format!(
+                    "To register the clone already at that path under the weave root: \
+                     `rwv member add --adopt {url}`."
+                )),
+            ));
         }
         Err(crate::registry::PlacementError::NoMatch) => {
             let registries = builtin_registries();
