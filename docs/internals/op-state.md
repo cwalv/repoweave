@@ -110,7 +110,38 @@ wrote (`moved_refs`, `wrote_in_target`, `created_refs`) and the tip it found
 (`receiving`, or the savepoint): one elsewhere, or a ref-moved branch
 checked out outside both workspaces, refuses the whole abort before anything
 moves, and `--leave-target` drops the target's savepoints instead of
-consuming them. A savepoint at the key's own name, with nothing below it, was filed
+consuming them.
+
+#### Abort is planned whole, then executed
+
+`rwv abort` plans every write it would make, on both sides, before it makes
+any: each checkout's restore (`Vcs::plan_checkout_restore`: a stopped
+operation, the checkout's branch and HEAD against its savepoint, the
+uncommitted edits a move would discard, who holds the branch it switches
+back to), each branch moved as a ref (`Vcs::plan_ref_restore`, held as the
+plan leaves the checkouts), each branch moved in place in a workspace since
+gone, each created branch it deletes, and each ref an update moved. The plan
+is the restore: the restore executes those steps and decides nothing the plan
+did not. Any blocked step, or a landing's target judged moved as a unit,
+refuses the whole abort with one report naming each obstacle and the one
+command that ends the operation; nothing is written, `abort_begun` stays
+unset, and `--continue` stays open. The plan is made again under the retaken
+claim and lease, judged again, and only then executed. The target's
+project-branch write runs first: a later write that loses a race leaves the
+target's lock behind its members, every commit on a branch, never a lock
+pinning commits the restored members left. `--leave-target` is accepted
+exactly where the plan does not restore the target, and writes nothing until
+the source's plan is unblocked.
+
+The residual against raw git: each planned write checks, immediately before
+it writes, the state the plan judged (HEAD, attachment, the operation in
+progress, a branch's tip, its holders) and a branch moves by compare-and-swap,
+so a raw git change in between makes that one write refuse, never overwrite;
+the writes already made stay, and a rerun of `rwv abort` completes the rest.
+Git refusing to cancel an operation the plan cancels (`CancelRefused`) is
+known only when it refuses, and has the same aftermath.
+
+A savepoint at the key's own name, with nothing below it, was filed
 by an earlier release; only `rwv doctor --fix` reads one. Savepoints live
 exactly as long as the record: cleanup drops them with it, over every member
 either side listed before the op and after it, and `rwv abort` consumes

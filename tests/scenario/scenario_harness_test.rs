@@ -925,6 +925,9 @@ every_scenario!(
         scenarios::EndedBy::LeaveTarget
     ),
     abort_of_a_landing_a_member_entered_with,
+    abort_with_both_sides_foreign,
+    abort_over_a_target_checkout_switched_off_its_branch(scenarios::SwitchedOffEnd::LeaveTarget),
+    abort_over_a_target_checkout_switched_off_its_branch(scenarios::SwitchedOffEnd::Abandon),
     abort_after_an_entered_branch_moved(
         scenarios::EnteredThen::HandCommit,
         scenarios::EnteredEnd::LeaveTarget
@@ -3014,6 +3017,23 @@ holding_rwv! {
                 ))
                 .assert_fully_decided_green();
             }
+        }
+    }
+
+    /// Both sides foreign: one refusal, one printed command that ends it.
+    fn abort_with_both_sides_foreign() {
+        runner::run(scenarios::abort_with_both_sides_foreign()).assert_fully_decided_green();
+    }
+
+    /// A target checkout switched off its branch refuses the whole abort,
+    /// and each printed choice ends it.
+    fn abort_over_a_target_checkout_switched_off_its_branch() {
+        for end in [
+            scenarios::SwitchedOffEnd::LeaveTarget,
+            scenarios::SwitchedOffEnd::Abandon,
+        ] {
+            runner::run(scenarios::abort_over_a_target_checkout_switched_off_its_branch(end))
+                .assert_fully_decided_green();
         }
     }
 

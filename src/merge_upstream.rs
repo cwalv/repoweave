@@ -288,6 +288,27 @@ pub(crate) fn restore_ref_moves(
     moves: &[RefMove],
     abandon: &dyn Fn(&RepoKey) -> bool,
 ) -> Vec<RefMoveLeft> {
+    walk_ref_moves(workspace, project_dir, moves, abandon, true)
+}
+
+/// What [`restore_ref_moves`] would leave, each as it would report it,
+/// writing nothing.
+pub(crate) fn judge_ref_moves(
+    workspace: &Path,
+    project_dir: Option<&Path>,
+    moves: &[RefMove],
+    abandon: &dyn Fn(&RepoKey) -> bool,
+) -> Vec<RefMoveLeft> {
+    walk_ref_moves(workspace, project_dir, moves, abandon, false)
+}
+
+fn walk_ref_moves(
+    workspace: &Path,
+    project_dir: Option<&Path>,
+    moves: &[RefMove],
+    abandon: &dyn Fn(&RepoKey) -> bool,
+    write: bool,
+) -> Vec<RefMoveLeft> {
     let vcs = crate::vcs::probe_vcs();
     let mut left = Vec::new();
     for moved in moves.iter().rev() {
@@ -315,6 +336,22 @@ pub(crate) fn restore_ref_moves(
                 held_at,
                 error: None,
             });
+            continue;
+        }
+        if !write {
+            let restorable = now
+                .as_ref()
+                .is_some_and(|now| *now == moved.to || abandon(&moved.repo));
+            if !restorable {
+                left.push(RefMoveLeft::Foreign {
+                    repo: moved.repo.clone(),
+                    branch: moved.branch.clone(),
+                    dir,
+                    now,
+                    held_at,
+                    error: None,
+                });
+            }
             continue;
         }
         let restored = match &now {
