@@ -1193,6 +1193,18 @@ impl Aligner {
         if self.is_aligned(m, plan)? {
             return Ok(Vec::new());
         }
+        if let Target::Branch { name, .. } = &plan.target {
+            crate::landing_claim::refuse_moving_claimed(
+                crate::vcs::project_vcs().as_ref(),
+                &self.project_dir,
+                &self.project,
+                &[(
+                    crate::manifest::RepoKey::Member(m.path.clone()),
+                    name.as_str().to_owned(),
+                )],
+                None,
+            )?;
+        }
         let facts: Vec<Fact> = match &plan.target {
             Target::Detached { why, .. } => why.fact().into_iter().collect(),
             _ => Vec::new(),

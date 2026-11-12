@@ -950,6 +950,7 @@ every_scenario!(
     a_refused_continue_of_a_released_landing_leaves_the_target_free,
     a_continued_retire_releases_the_target_first,
     a_landing_records_its_op_before_it_claims,
+    a_switch_refuses_to_align_a_member_onto_a_claimed_branch,
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Switch),
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::SwitchDetached),
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Rename),
@@ -3161,6 +3162,12 @@ holding_rwv! {
     /// A landing's record stands before its claim is taken.
     fn a_landing_records_its_op_before_it_claims() {
         runner::run(scenarios::a_landing_records_its_op_before_it_claims())
+            .assert_fully_decided_green();
+    }
+
+    /// A switch that would check a claimed member branch out refuses.
+    fn a_switch_refuses_to_align_a_member_onto_a_claimed_branch() {
+        runner::run(scenarios::a_switch_refuses_to_align_a_member_onto_a_claimed_branch())
             .assert_fully_decided_green();
     }
 

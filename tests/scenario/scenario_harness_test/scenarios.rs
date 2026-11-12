@@ -12326,7 +12326,7 @@ impl ClaimedMove {
 
     fn args(self) -> &'static [&'static str] {
         match self {
-            ClaimedMove::Switch => &["switch", "proj--w2"],
+            ClaimedMove::Switch => &["switch", "rel"],
             ClaimedMove::SwitchDetached => &["switch", "--detach", "HEAD"],
             ClaimedMove::Rename => &["branch", "rename", "trunk"],
             ClaimedMove::SetMode => &["branch", "set-mode", "main", "declared"],
@@ -12346,6 +12346,8 @@ pub fn a_verb_refuses_a_branch_a_stopped_landing_claims(verb: ClaimedMove) -> Sc
         vec![
             create("w"),
             create("w2"),
+            Step::git(&a(), Repo::Proj, &["branch", "rel", "main"]),
+            Step::rwv(&a(), &["branch", "set-mode", "rel", "declared"]).expect(Exit::Succeeds),
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::rwv_paused(&ww("w"), &["land"], "landed", "landing"),
             Step::kill("landing"),
@@ -12362,6 +12364,44 @@ pub fn a_verb_refuses_a_branch_a_stopped_landing_claims(verb: ClaimedMove) -> Sc
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
                 .claim(Claim::OutputLacks("w-app")),
         ],
+    )
+}
+
+/// `main` is checked out nowhere, and a landing into it, which moves `app`'s
+/// `main` as a ref, is stopped holding its claim. Switching the primary to
+/// `rel`, a declared branch whose members sit on `main`, would check `app`'s
+/// claimed `main` out: it refuses before anything moves, naming the landing,
+/// and once that landing is aborted the switch goes ahead.
+pub fn a_switch_refuses_to_align_a_member_onto_a_claimed_branch() -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["branch", "rel", "main"]),
+        Step::rwv(&a(), &["branch", "set-mode", "rel", "declared"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::rwv(&a(), &["switch", "rel"])
+            .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+            .claim(Claim::OutputContains("landing into 'main' holds it"))
+            .claim(Claim::OutputContains("proj--w"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+        Step::rwv(&a(), &["switch", "rel"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::App,
+                branch: "main",
+            }),
+    ]);
+    scenario(
+        "a switch refuses to align a member onto a claimed branch",
+        steps,
     )
 }
 
