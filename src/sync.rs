@@ -3952,21 +3952,47 @@ fn guard_and_mark<'a>(
             return Err(e);
         }
     };
-    let in_place: Vec<PathBuf> = {
-        let mut out: Vec<PathBuf> = Vec::new();
-        for receiving in plan.receiving.values() {
-            if let op_state::Moves::InPlace { workspace } = &receiving.moves {
-                if !out.contains(workspace) {
-                    out.push(workspace.clone());
-                }
-            }
-        }
-        out
+    let leasing_in_place = op_state::TakeInRecord {
+        receiving: plan
+            .receiving
+            .iter()
+            .filter(|(_, receiving)| matches!(receiving.moves, op_state::Moves::InPlace { .. }))
+            .map(|(path, receiving)| {
+                (
+                    RepoKey::Member(path.clone()),
+                    op_state::Receiving {
+                        branch: receiving.branch.as_str().to_owned(),
+                        tip: receiving.tip.clone(),
+                        moves: receiving.moves.clone(),
+                    },
+                )
+            })
+            .collect(),
+        ..Default::default()
     };
+    let in_place = leasing_in_place.in_place_workspaces();
+    if !in_place.is_empty() {
+        let recorded = op_state::read_owner(&owner_workspace_dir).and_then(|record| {
+            let mut record =
+                record.context("the op record vanished as the landing leased in place")?;
+            record
+                .take_in
+                .get_or_insert_with(Default::default)
+                .receiving
+                .extend(leasing_in_place.receiving);
+            op_state::write_owner(&owner_workspace_dir, &record)
+                .context("failed to record the workspaces the landing moves in place")
+        });
+        if let Err(e) = recorded {
+            release_start(&acquired);
+            return Err(e);
+        }
+    }
     if let Err(e) = op_state::acquire_more_leases(&mut acquired, &in_place, &initial_record) {
         release_start(&acquired);
         return Err(e);
     }
+    crate::test_pause::point("leased-in-place");
 
     // Savepoints on both sides: the source's repos replay, the target's
     // fast-forward, and `rwv abort` restores either. The target's are filed
@@ -8501,7 +8527,7 @@ fn restore_in_place(
                 continue;
             }
             let attribution = Attribution {
-                intent: None,
+                intent: take_in.wrote_in_target.get(repo_key),
                 converged: converged.and_then(|tips| tips.get(repo_key)),
                 started_from: None,
                 integrates: Integrates::No,
@@ -8656,6 +8682,16 @@ fn retake_target(
             .take_in
             .iter()
             .flat_map(op_state::TakeInRecord::in_place_workspaces)
+            .filter(|workspace| {
+                let there = workspace.is_dir();
+                if !there {
+                    eprintln!(
+                        "  [{}]: gone, so nothing there is put back",
+                        workspace.display()
+                    );
+                }
+                there
+            })
             .collect(),
         op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
     };

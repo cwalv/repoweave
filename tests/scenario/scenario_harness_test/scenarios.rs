@@ -11320,6 +11320,9 @@ pub enum InPlaceEnd {
     /// `main` moved under the primary's checkout from another worktree: the
     /// landing refreshes the drift, then lands.
     Drifted,
+    /// Killed once it leased the primary, before it recorded its plan, then
+    /// aborted: nothing of it is left in the primary.
+    KilledBeforeThePlan,
 }
 
 /// The primary detached on the project, its members still on `main`: a
@@ -11379,6 +11382,27 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                     .claim(Claim::OutputLacks("moved.txt")),
             ]);
             return scenario("in-place fast-forward: drifted", steps);
+        }
+        InPlaceEnd::KilledBeforeThePlan => {
+            steps.extend([
+                Step::rwv_paused(
+                    &ww("w"),
+                    &["land", "--history", "linear"],
+                    "leased-in-place",
+                    "landing",
+                ),
+                Step::kill("landing"),
+                Step::rwv(&ww("w"), &["abort"])
+                    .expect(Exit::Succeeds)
+                    .may_restore(&[Repo::App, Repo::Proj]),
+                Step::rwv(&a(), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("in progress")),
+                Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/pre-op/"])
+                    .claim(Claim::OutputLacks("-in-place")),
+                land(),
+            ]);
+            return scenario("in-place fast-forward: killed before the plan", steps);
         }
         InPlaceEnd::AbortedFromTheSource => ww("w"),
         InPlaceEnd::AbortedFromThePrimary => a(),
