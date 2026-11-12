@@ -18,6 +18,9 @@ const DETACHED_HEAD: &str = "HEAD";
 const REBASED_PREFIX: &str = "rebased-";
 const ABANDONED_PREFIX: &str = "abandoned-";
 const EDITS_MESSAGE: &str = "rwv backup of uncommitted edits";
+/// The second parent of an edits backup whose index held content the
+/// working tree no longer does: the index as it stood.
+const STAGED_MESSAGE: &str = "rwv backup of staged changes";
 
 fn source_component(source: &BackupSource) -> &str {
     match source {
@@ -239,6 +242,14 @@ impl GitVcs {
             }
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
         };
+        let real_index = Self::run_trimmed(
+            ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            repo,
+        )?;
+        let staged = match std::fs::copy(&real_index, index_path) {
+            Ok(_) => in_index(&["write-tree"]).ok(),
+            Err(_) => None,
+        };
         if head.is_some() {
             in_index(&["read-tree", "HEAD"])?;
         }
@@ -251,20 +262,30 @@ impl GitVcs {
         let tree = in_index(&["write-tree"])?;
         if let Some(head) = head {
             let head_tree = Self::run_trimmed(["rev-parse", "HEAD^{tree}"], repo)?;
-            if head_tree == tree {
+            let staged = staged.filter(|staged| *staged != head_tree && *staged != tree);
+            if head_tree == tree && staged.is_none() {
                 return Ok(None);
             }
-            let commit = Self::run_trimmed(
-                [
-                    "commit-tree",
-                    &tree,
-                    "-p",
-                    head.id().as_str(),
-                    "-m",
-                    EDITS_MESSAGE,
-                ],
-                repo,
-            )?;
+            let staged_commit = match &staged {
+                Some(staged) => Some(Self::run_trimmed(
+                    [
+                        "commit-tree",
+                        staged,
+                        "-p",
+                        head.id().as_str(),
+                        "-m",
+                        STAGED_MESSAGE,
+                    ],
+                    repo,
+                )?),
+                None => None,
+            };
+            let mut args = vec!["commit-tree", &tree, "-p", head.id().as_str()];
+            if let Some(staged_commit) = &staged_commit {
+                args.extend(["-p", staged_commit.as_str()]);
+            }
+            args.extend(["-m", EDITS_MESSAGE]);
+            let commit = Self::run_trimmed(args, repo)?;
             return Ok(ResolvedRevisionId::from_rev_parse_output(&commit));
         }
         if in_index(&["ls-files"])?.is_empty() {

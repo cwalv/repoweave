@@ -519,6 +519,40 @@ fn abort_keeps_what_the_reset_destroys(path: &str, made: &str, text: &str) {
     );
 }
 
+/// A change staged, then edited again in the working tree, before abort
+/// resets the checkout the op converged: the backup holds both, the staged
+/// content as its second parent.
+#[test]
+fn abort_keeps_a_staged_change_the_working_tree_no_longer_holds() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+    let op_id = "20991231T000014Z";
+    let dir = &ws.server_dir;
+    let savepoint = common::git_in(dir, &["rev-parse", "HEAD"]);
+    let converged = make_commit(dir, "converged.txt", "converged\n", "converged");
+    std::fs::write(dir.join("README.md"), "staged\n").unwrap();
+    common::git_in(dir, &["add", "README.md"]);
+    std::fs::write(dir.join("README.md"), "edited after staging\n").unwrap();
+    plant_savepoint(dir, op_id, &savepoint);
+    let project_pre = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+    plant_savepoint(&ws.project_dir, op_id, &project_pre);
+    plant_owner_record(&ws.root, op_id, "relock", &[(SERVER_PATH, &converged)]);
+
+    let out = common::cli::run(&["abort"], &ws.root);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let backups = refs_under(dir, BACKUP);
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    let kept = &backups[0].1;
+    assert_eq!(
+        common::git_in(dir, &["show", &format!("{kept}:README.md")]),
+        "edited after staging"
+    );
+    assert_eq!(
+        common::git_in(dir, &["show", &format!("{kept}^2:README.md")]),
+        "staged"
+    );
+}
+
 #[test]
 fn abort_keeps_an_ignored_file_at_a_path_the_savepoint_tracks() {
     abort_keeps_what_the_reset_destroys("ign.txt", "ign.txt", "ignored edit");

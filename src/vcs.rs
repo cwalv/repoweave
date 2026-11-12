@@ -4729,9 +4729,10 @@ pub trait Vcs: Send + Sync {
     ) -> Result<Vec<CommitSummary>, VcsError>;
 
     /// A commit on HEAD holding `repo`'s uncommitted edits as the working
-    /// tree stands (untracked files included, ignored ones not), referenced
-    /// by nothing; `None` when the checkout is clean. The checkout is not
-    /// touched.
+    /// tree stands (untracked files included, ignored ones not), and, where
+    /// the index holds content the working tree does not, the index as its
+    /// second parent; referenced by nothing; `None` when the checkout is
+    /// clean. The checkout is not touched.
     fn snapshot_edits(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError>;
 
     /// Keep `repo`'s uncommitted edits as a backup before anything discards
