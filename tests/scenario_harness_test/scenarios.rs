@@ -1808,6 +1808,21 @@ pub fn records_conflict() -> Scenario {
                     branch: "feat-x",
                     record: feat_x_record(),
                 }),
+            Step::rwv(&b(), &["push", "--branch", "feat-x"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetConflict))
+                .claim(Claim::OutputContains("rwv branch set-mode feat-x"))
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: feat_x_record(),
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-x",
+                    record: Some(Record::Conflict(vec![
+                        Record::Declared,
+                        feature_onto("main", Mode::Declared),
+                    ])),
+                }),
             Step::rwv(&b(), &["branch", "set-mode", "feat-x", "declared"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::RecordIs {
@@ -1819,6 +1834,13 @@ pub fn records_conflict() -> Scenario {
                     machine: Machine::A,
                     branch: "feat-x",
                     record: feat_x_record(),
+                }),
+            publishes_records(Step::rwv(&b(), &["push", "--branch", "feat-x"]))
+                .pushes(origin_records(), "feat-x")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: Some(Record::Declared),
                 }),
         ],
     )
