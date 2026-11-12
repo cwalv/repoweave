@@ -972,3 +972,55 @@ fn a_branch_deleted_here_and_on_its_remote_is_reported_discarded_once() {
     assert_eq!(stderr.matches(&discarded).count(), 1, "{stderr}");
     assert!(!bare_has(bare_of(&w, LIB), &branch));
 }
+
+#[test]
+fn a_declaration_the_rules_own_fetch_brings_in_keeps_the_member_branch() {
+    let w = weave(&[LIB]);
+    feature_branch(&w, "feat", &[LIB]);
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["push", "-q", "origin", "feat"]);
+    common::git_in(&project, &["switch", "-q", "-c", "line"]);
+    let manifest = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "branch = \"feat\""),
+    )
+    .unwrap();
+    common::git_in(&project, &["commit", "-qam", "line declares feat"]);
+    common::git_in(&project, &["push", "-q", "origin", "line"]);
+    common::git_in(&project, &["switch", "-q", "main"]);
+    common::git_in(&project, &["branch", "-D", "line"]);
+    common::git_in(&project, &["update-ref", "-d", "refs/remotes/origin/line"]);
+
+    let out = run(&["branch", "delete", "feat", "--json"], &w.workspace);
+
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(
+        has_branch(&w.workspace.join(LIB), "feat"),
+        "`line`, fetched by the rule, declares lib's `feat`"
+    );
+}
+
+#[test]
+fn a_pre_schema_tip_the_rule_acts_on_is_refused_naming_where_to_fix_it() {
+    let w = weave(&[LIB]);
+    feature_branch(&w, "old", &[LIB]);
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["switch", "-q", "old"]);
+    let manifest = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        manifest.replace("branch = \"main\"", "version = \"main\""),
+    )
+    .unwrap();
+    common::git_in(&project, &["commit", "-qam", "an earlier release's keys"]);
+    common::git_in(&project, &["switch", "-q", "main"]);
+
+    let deleted = run(&["branch", "delete", "old"], &w.workspace);
+    let stderr = common::cli::refused(&deleted, State::UnparseableProjectAt);
+    assert!(stderr.contains("rwv doctor --fix"), "{stderr}");
+    assert!(has_branch(&project, "old") && has_branch(&w.workspace.join(LIB), "old"));
+
+    let pushed = run(&["push", "--branch", "old"], &w.workspace);
+    common::cli::refused(&pushed, State::UnparseableProjectAt);
+}

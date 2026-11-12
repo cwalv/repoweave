@@ -569,3 +569,26 @@ fn a_rename_from_a_detached_project_repo_is_the_detached_state_with_its_choices(
     assert!(out.contains("rwv switch"), "{out}");
     assert_routes_to(&out, "alignment");
 }
+
+#[test]
+fn a_member_branch_an_unrecorded_live_branch_declares_protects_the_rename() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "x"], ws);
+    common::git_in(&project, &["switch", "-q", "-c", "line", "main"]);
+    let toml = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        toml.replace("branch = \"main\"", "branch = \"x\""),
+    )
+    .unwrap();
+    common::git_in(&project, &["commit", "-qam", "line declares x, unrecorded"]);
+    common::git_in(&project, &["switch", "-q", "x"]);
+
+    common::cli::refused(
+        &run(&["branch", "rename", "y"], ws),
+        State::ProtectedDeclared,
+    );
+    assert!(has_branch(&ws.join(LIB), "x") && !has_branch(&ws.join(LIB), "y"));
+}
