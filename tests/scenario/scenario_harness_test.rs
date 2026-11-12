@@ -773,7 +773,8 @@ every_scenario!(
     abort_keeps_edits_made_in_the_target_after_the_stop(scenarios::LandedStop::Retire),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
-    abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
+    abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
+    abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Retire),
     abort_restores_a_target_fast_forward_killed_after_the_move,
@@ -797,6 +798,8 @@ every_scenario!(
     dc05_compose_in_source(scenarios::Dc05::AtTheMoveAborted),
     dc05_compose_in_source(scenarios::Dc05::AtTheMoveContinued),
     dc05_compose_in_source(scenarios::Dc05::LandedAborted),
+    continue_after_the_first_move(scenarios::MovedStop::CheckoutMoved),
+    continue_after_the_first_move(scenarios::MovedStop::RefsMoved),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2612,8 +2615,10 @@ holding_rwv! {
     /// A receiving branch the landing moved as a ref, deleted before `rwv
     /// abort`: abort refuses, printing a choice that clears it when run.
     fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
-        runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it())
-            .assert_fully_decided_green();
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(stop))
+                .assert_fully_decided_green();
+        }
     }
 
     /// Each move is journaled before it is made: killed right after a
@@ -2762,6 +2767,14 @@ holding_rwv! {
             .assert_fully_decided_green();
         runner::run(scenarios::a_landing_meets_a_stopped_landing_in_a_checkout())
             .assert_fully_decided_green();
+    }
+
+    /// A landing killed after its first move, continued after a commit in
+    /// the source, lands what it composed and moves no ref twice.
+    fn a_landing_continued_after_its_first_move_lands_what_it_composed() {
+        for stop in [scenarios::MovedStop::CheckoutMoved, scenarios::MovedStop::RefsMoved] {
+            runner::run(scenarios::continue_after_the_first_move(stop)).assert_fully_decided_green();
+        }
     }
 
     /// A landing killed before it recorded its plan leaves no claim once

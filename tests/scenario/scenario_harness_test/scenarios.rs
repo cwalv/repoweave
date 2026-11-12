@@ -10052,7 +10052,9 @@ pub fn land_clones_a_member_its_target_took_in_by_fetch_alone() -> Scenario {
 /// workspace aligned onto it; someone switches that checkout back to `main`
 /// and deletes `lib-next`. Abort cannot put back a branch that is gone, so it
 /// refuses, and the choice it prints clears that state when run.
-pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Scenario {
+pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(
+    stop: LandedStop,
+) -> Scenario {
     let steps = vec![
         create("w"),
         Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
@@ -10081,7 +10083,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
                 "--allow-member-change",
                 LIB,
             ],
-            "landed",
+            stop.point(),
             "landing",
         ),
         Step::kill("landing"),
@@ -10953,6 +10955,57 @@ pub fn dc05_compose_in_source(stop: Dc05) -> Scenario {
         .expect(Exit::Succeeds)]),
     }
     scenario("dc05: compose in source", steps)
+}
+
+/// Where a landing that moved its first tip is killed before `--continue`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovedStop {
+    /// Killed once it fast-forwarded `app` in the primary's checkout.
+    CheckoutMoved,
+    /// Killed as refs once every ref moved, the project's `main` included.
+    RefsMoved,
+}
+
+/// A landing killed after its first move, then a commit in the source's
+/// `app`: `--continue` lands what the landing composed, as an uninterrupted
+/// landing would, and moves no ref it already moved; the next landing takes
+/// the new commit.
+pub fn continue_after_the_first_move(stop: MovedStop) -> Scenario {
+    let mut steps = vec![create("w")];
+    let point = match stop {
+        MovedStop::CheckoutMoved => "target-fast-forwarded",
+        MovedStop::RefsMoved => {
+            steps.extend(main_checked_out_nowhere());
+            "landed"
+        }
+    };
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(&ww("w"), &["land"], point, "landing"),
+        Step::kill("landing"),
+        Step::commit(&ww("w"), Repo::App, "after-stop"),
+        lands_on_main(
+            lands_on_main(
+                Step::rwv(&ww("w"), &["land", "--continue"]),
+                Repo::App,
+                "w-app",
+            ),
+            Repo::Lib,
+            "w-lib",
+        )
+        .expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("after-stop")),
+        lands_on_main(
+            Step::rwv(&ww("w"), &["land", "--retire"]),
+            Repo::App,
+            "after-stop",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w"))),
+    ]);
+    scenario("continue after the first move", steps)
 }
 
 /// How a landing that fast-forwards the primary's checkout in place ends.

@@ -711,6 +711,14 @@ pub enum LandingReport {
 }
 
 impl TakeInRecord {
+    /// Whether the landing has begun writing the target: any checkout, ref
+    /// or branch is journaled.
+    pub fn wrote_target(&self) -> bool {
+        !self.moved_in_target.is_empty()
+            || !self.moved_refs.is_empty()
+            || !self.created_refs.is_empty()
+    }
+
     /// Each workspace a landing fast-forwards a checkout of in place, outside
     /// both of its own, and leases.
     pub fn in_place_workspaces(&self) -> Vec<PathBuf> {

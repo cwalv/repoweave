@@ -3269,12 +3269,19 @@ fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
 /// into advance-target has: relock ran immediately before it with no operator
 /// window in between.
 ///
+/// Once the landing wrote any of the target, the tips it composed are what
+/// it publishes: a resume completes that landing as recorded, so it never
+/// moves a ref it moved again, nor lands what CWD gained since.
+///
 /// Replay reaches relock by running forward. Retire runs after the target was
 /// already advanced, and its merged-check refuses a CWD that moved rather than
 /// publishing it, so retire is entered as recorded.
-fn resume_entry_phase(recorded: &op_state::OpPhase) -> op_state::OpPhase {
+fn resume_entry_phase(
+    recorded: &op_state::OpPhase,
+    take_in: &op_state::TakeInRecord,
+) -> op_state::OpPhase {
     match recorded {
-        op_state::OpPhase::AdvanceTarget => op_state::OpPhase::Relock,
+        op_state::OpPhase::AdvanceTarget if !take_in.wrote_target() => op_state::OpPhase::Relock,
         other => other.clone(),
     }
 }
@@ -4304,7 +4311,7 @@ fn load_continuing_context<'a>(
     )?;
 
     handler.record_resumed(record.phase.clone());
-    let entry_phase = resume_entry_phase(&record.phase);
+    let entry_phase = resume_entry_phase(&record.phase, &take_in);
     if entry_phase != record.phase {
         op_state::set_phase(&owner_workspace_dir, entry_phase.clone())
             .context("failed to record the phase this resume re-enters")?;
@@ -4358,8 +4365,11 @@ fn load_continuing_context<'a>(
     // is advance-target, whose fast-forward a dirty target blocks: refused
     // here, before relock commits. Retire re-entry is exempt: its own check
     // refuses any uncommitted state, untracked included.
-    if let (op_state::OpPhase::Relock, Some(dest_workspace_dir), Some(dest_project_dir)) =
-        (&entry_phase, &dest_workspace_dir, &dest_project_dir)
+    if let (
+        op_state::OpPhase::Relock | op_state::OpPhase::AdvanceTarget,
+        Some(dest_workspace_dir),
+        Some(dest_project_dir),
+    ) = (&entry_phase, &dest_workspace_dir, &dest_project_dir)
     {
         let cwd_project_preflight =
             Project::from_dir(&cwd_project_dir, cwd_project_name.clone())

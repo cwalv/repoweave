@@ -61,15 +61,17 @@ stateDiagram-v2
     op_kept : op-state kept
     op_kept --> replay : --continue (recorded replay)
     op_kept --> relock : --continue (recorded relock)
-    op_kept --> relock : --continue (recorded advance-target)
+    op_kept --> relock : --continue (recorded advance-target, target untouched)
+    op_kept --> advance_target : --continue (recorded advance-target, target written)
     op_kept --> retire : --continue (recorded retire)
     op_kept --> [*] : rwv abort (restore and clear)
 
     note right of op_kept
         --continue enters the phase the record
-        names, except advance-target, which
-        re-enters relock first — only one arc
-        fires. rwv abort restores via savepoints.
+        names, except advance-target before any
+        target write, which re-enters relock
+        first — only one arc fires. rwv abort
+        restores via savepoints.
     end note
 ```
 
@@ -103,6 +105,14 @@ by construction — relock ran immediately before advance-target, with no
 operator window between them. Retire is entered as recorded: the target
 is already advanced by then, and retire's merged-check refuses a CWD that
 moved rather than publishing it.
+
+Advance-target is entered as recorded once the landing journaled any write
+to the target (a checkout, a ref, a created branch). Those writes carry the
+composed tips, so a re-composed table would make the landing's own moves
+read as a race, and land a mix of two compositions. The resumed landing
+completes the one it began: it reaches the result an uninterrupted landing
+reaches, moves no ref twice, and leaves what CWD gained after the stop for
+the next landing.
 
 ## guard
 
