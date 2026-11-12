@@ -1,4 +1,4 @@
-//! Per-phase idempotent re-entry tests for the sync phase machine.
+//! Per-phase idempotent re-entry tests for the sync-to phase machine.
 //!
 //! Acceptance criteria: phase functions are individually
 //! exercised for idempotent re-entry. The full (phase × kill-point) crash
@@ -6,8 +6,8 @@
 //! each phase from a quiescent state is a no-op-shaped success.
 //!
 //! Mechanism: write an owner record at the target phase (sometimes with
-//! converged_tips pre-populated), then invoke `rwv sync --continue` /
-//! `rwv sync-to --continue` and assert success with no spurious mutation.
+//! converged_tips pre-populated), then invoke `rwv sync-to --continue` and
+//! assert success with no spurious mutation.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &str) {
     let body = format!(
-        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -164,7 +164,7 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
     // record at phase=replay and savepoints to mirror what a crashed
     // mid-replay invocation would have left behind.
     let op_id = "reentry-test-replay";
-    write_owner_record(&ww.root, &primary.root, &ww.root, "replay");
+    write_owner_record(&ww.root, &ww.root, &primary.root, "replay");
     create_savepoint(&ww.project_dir, op_id);
     create_savepoint(&ww.server_dir, op_id);
 
@@ -176,7 +176,7 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
     let server_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -208,7 +208,7 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "reentry-test-relock";
-    write_owner_record(&ww.root, &primary.root, &ww.root, "relock");
+    write_owner_record(&ww.root, &ww.root, &primary.root, "relock");
     create_savepoint(&ww.project_dir, op_id);
     create_savepoint(&ww.server_dir, op_id);
 
@@ -217,7 +217,7 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
     let server_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -384,6 +384,21 @@ fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
 fn continue_refuses_a_sync_invocation_against_a_sync_to_op() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
+
+    for args in [
+        ["branch", "set-mode", "main", "declared"].as_slice(),
+        [
+            "branch",
+            "set-mode",
+            "ww/project",
+            "feature",
+            "--target",
+            "main",
+        ]
+        .as_slice(),
+    ] {
+        rwv().args(args).current_dir(&ww.root).assert().success();
+    }
 
     let op_id = "reentry-test-advance";
     write_sync_to_owner_record_at_advance_target(&ww.root, &primary.root);
@@ -1028,13 +1043,13 @@ fn re_entering_each_phase_independently_completes_to_a_clean_state() {
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
     for phase in ["replay", "relock"] {
         // Plant owner record at the phase, with savepoints under its id.
-        write_owner_record(&ww.root, &primary.root, &ww.root, phase);
+        write_owner_record(&ww.root, &ww.root, &primary.root, phase);
         let op_id = format!("reentry-test-{phase}");
         create_savepoint(&ww.project_dir, &op_id);
         create_savepoint(&ww.server_dir, &op_id);
 
         rwv()
-            .args(["sync", "--continue"])
+            .args(["sync-to", "--continue"])
             .current_dir(&ww.root)
             .assert()
             .success();
@@ -1176,7 +1191,7 @@ fn a_resume_refuses_a_source_that_went_anomalous_and_leaves_the_op_parked() {
     let (primary, ww, base_sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "reentry-test-replay";
-    write_owner_record(&ww.root, &primary.root, &ww.root, "replay");
+    write_owner_record(&ww.root, &ww.root, &primary.root, "replay");
     create_savepoint(&ww.project_dir, op_id);
     create_savepoint(&ww.server_dir, op_id);
 
@@ -1190,7 +1205,7 @@ fn a_resume_refuses_a_source_that_went_anomalous_and_leaves_the_op_parked() {
     let cwd_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     let out = rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv command failed to run");
@@ -1207,7 +1222,7 @@ fn a_resume_refuses_a_source_that_went_anomalous_and_leaves_the_op_parked() {
          stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("rwv sync --continue") && stderr.contains("rwv abort"),
+        stderr.contains("rwv sync-to --continue") && stderr.contains("rwv abort"),
         "a refused resume must name both ways out of the op it left standing; \
          stderr:\n{stderr}"
     );
@@ -1252,12 +1267,12 @@ fn a_resume_names_the_source_tip_it_re_read() {
     );
     let source_project_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    write_owner_record(&ww.root, &primary.root, &ww.root, "replay");
+    write_owner_record(&ww.root, &ww.root, &primary.root, "replay");
     create_savepoint(&ww.project_dir, "reentry-test-replay");
     create_savepoint(&ww.server_dir, "reentry-test-replay");
 
     let out = rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv command failed to run");
