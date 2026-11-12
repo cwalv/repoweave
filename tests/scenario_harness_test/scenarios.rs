@@ -3135,8 +3135,7 @@ pub fn reset_acts_only_on_the_named_repo() -> Scenario {
             &[
                 "update",
                 "--remote",
-                "--repo",
-                "local/remotes/app",
+                "--merge-upstream",
                 "--reset-to-upstream",
                 "local/remotes/app",
             ],
@@ -3154,18 +3153,19 @@ pub fn reset_acts_only_on_the_named_repo() -> Scenario {
             rev: "HEAD",
             mark: "app-remote",
         }),
-        Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "-q", "HEAD^2"]).expect(Exit::Fails),
-        Step::git(&a(), Repo::Lib, &["log", "-1", "--format=%P"])
-            .expect(Exit::Succeeds)
+        Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "-q", "HEAD^2"])
+            .expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["rev-parse", "--verify", "-q", "HEAD^2"])
+            .expect(Exit::Fails)
             .claim(Claim::Contains {
                 at: a(),
                 repo: Repo::Lib,
                 rev: "HEAD",
-                mark: "lib-local",
+                mark: "lib-remote",
             }),
     ]);
     scenario(
-        "update --remote --reset-to-upstream acts only on the named repo",
+        "update --remote --reset-to-upstream resets only the repo it names, --merge-upstream merges the rest",
         steps,
     )
 }

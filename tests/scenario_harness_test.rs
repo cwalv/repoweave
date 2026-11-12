@@ -383,7 +383,16 @@ fn unpushed_branches_and_minted_seats_never_reach_a_remote() {
 
 #[test]
 fn a_pin_one_side_moved_backward_by_name_survives_a_merge_of_the_other() {
-    runner::run(scenarios::three_way_pins()).assert_fully_decided_green();
+    let sandbox = Sandbox::new(Seed::default());
+    let report = runner::run_in(&sandbox, scenarios::three_way_pins());
+    report.assert_fully_decided_green();
+    let pinned = sandbox.git_ok(
+        &sandbox.weave_root(Machine::A).join("projects/proj"),
+        &["show", "HEAD:rwv.lock"],
+    );
+    let origin = sandbox.remote_path(Remote::origin(Repo::App));
+    let one_back = sandbox.git_ok(&origin, &["rev-parse", "main~1"]);
+    assert!(pinned.contains(&one_back), "{pinned}");
 }
 
 #[test]

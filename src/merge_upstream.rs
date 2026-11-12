@@ -253,3 +253,67 @@ pub(crate) fn restore_ref_moves(
     }
     foreign
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn commit(dir: &Path, text: &str) -> CommitId {
+        std::fs::write(dir.join("f"), text).unwrap();
+        git(dir, &["add", "f"]);
+        git(dir, &["commit", "-qm", text]);
+        CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap()
+    }
+
+    fn member_with_a_moved_branch() -> (tempfile::TempDir, RefMove, PathBuf) {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path().join("m");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        let from = commit(&dir, "one");
+        let to = commit(&dir, "two");
+        git(&dir, &["checkout", "-q", "--detach"]);
+        let moved = RefMove {
+            repo: RepoKey::Member(crate::manifest::RepoPath::new("m").unwrap()),
+            branch: "main".to_owned(),
+            from,
+            to,
+        };
+        (tmp, moved, dir)
+    }
+
+    #[test]
+    fn a_branch_the_op_moved_as_a_ref_is_put_back_where_it_still_sits_at_the_tip_the_op_wrote() {
+        let (tmp, moved, dir) = member_with_a_moved_branch();
+        let foreign = restore_ref_moves(tmp.path(), std::slice::from_ref(&moved));
+        assert!(foreign.is_empty());
+        assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
+    }
+
+    #[test]
+    fn a_branch_that_moved_since_the_op_wrote_it_is_left_where_it_is() {
+        let (tmp, moved, dir) = member_with_a_moved_branch();
+        git(&dir, &["checkout", "-q", "main"]);
+        let later = commit(&dir, "three");
+        git(&dir, &["checkout", "-q", "--detach"]);
+        let foreign = restore_ref_moves(tmp.path(), std::slice::from_ref(&moved));
+        assert_eq!(foreign.len(), 1);
+        assert_eq!(git(&dir, &["rev-parse", "main"]), later.as_str());
+    }
+}
