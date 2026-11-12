@@ -125,16 +125,10 @@ impl GitVcs {
             source,
         })?;
         let todo = Self::todo_path(repo, old, onto)?;
-        match std::fs::remove_file(&todo) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(VcsError::Io {
-                    ctx: format!("failed to start {}", todo.display()),
-                    source,
-                })
-            }
-        }
+        std::fs::write(&todo, b"").map_err(|source| VcsError::Io {
+            ctx: format!("failed to start {}", todo.display()),
+            source,
+        })?;
         Ok((
             format!(
                 "cp -f \"$(git rev-parse --git-path rebase-merge/rewritten-list)\" \
@@ -196,7 +190,13 @@ impl GitVcs {
             }
         }
         let todo = match std::fs::read_to_string(Self::todo_path(repo, old, onto)?) {
-            Ok(todo) => scheduled(&todo),
+            Ok(todo) if !todo.trim().is_empty() => scheduled(&todo),
+            Ok(_) => {
+                return Ok(olds.is_empty().then(|| Replayed {
+                    images: Vec::new(),
+                    written,
+                }))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(olds.is_empty().then(|| Replayed {
                     images: Vec::new(),
