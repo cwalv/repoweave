@@ -770,12 +770,10 @@ const ALLOWLIST: &[Allowed] = &[
             Unlinking is the whole release: left behind, the claim is the \
             wedge every later writer refuses on, so release reports a \
             removal that keeps failing rather than dropping it. (5) \
-            remove_if_holds, the landing claim's release and its takeover of \
-            a claim whose op is no longer recorded: it unlinks only the name \
-            it renamed the file to, spelled with the caller's own op id, after \
-            reading that it holds the bytes the caller judged, and links a \
-            file holding anything else back first, so it never removes a \
-            claim another landing wrote in between. Sites \
+            remove_named, the landing claim's takeover lock: called only on \
+            a lock its own op created with create_new, or one `rwv abort` \
+            of that op finds naming it, so it removes rwv-internal \
+            bookkeeping of an op that is ending, never user data. Sites \
             (1)-(3): every site \
             unlinks only the sibling temp this call created moments earlier, \
             named <file>.tmp.<pid>.<serial>: the pid keeps processes apart and \

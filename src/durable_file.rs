@@ -228,29 +228,13 @@ pub(crate) fn create_new(path: &Path, bytes: &[u8]) -> Result<(), CreateNewError
     }
 }
 
-/// Remove `path` only if it holds `expected`. It is first renamed to a
-/// sibling spelled with `aside`, which no other caller spells, so a file
-/// written at `path` between the compare and the removal is never the one
-/// removed; one found holding anything else is linked back where it was.
-/// `false` when nothing was removed.
-pub(crate) fn remove_if_holds(path: &Path, expected: &[u8], aside: &str) -> std::io::Result<bool> {
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "durable-file".to_owned());
-    let moved = parent_of(path).join(format!("{file_name}.{aside}"));
-    match std::fs::rename(path, &moved) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e),
+/// Remove a lock file rwv created at `path` with [`create_new`]; one already
+/// gone is no error.
+pub(crate) fn remove_named(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
     }
-    let held = std::fs::read(&moved)?;
-    let removed = held == expected;
-    if !removed {
-        std::fs::hard_link(&moved, path)?;
-    }
-    std::fs::remove_file(&moved)?;
-    Ok(removed)
 }
 
 fn parent_of(path: &Path) -> &Path {

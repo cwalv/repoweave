@@ -175,13 +175,6 @@ impl StatePath {
         std::fs::remove_file(self.located())
     }
 
-    /// Remove the file only if it still holds `expected`
-    /// ([`crate::durable_file::remove_if_holds`]). `false` when nothing was
-    /// removed.
-    pub(crate) fn remove_if_holds(&self, expected: &[u8], aside: &str) -> std::io::Result<bool> {
-        crate::durable_file::remove_if_holds(&self.located(), expected, aside)
-    }
-
     pub fn wire(&self) -> WirePath {
         WirePath::of(&self.located())
     }
