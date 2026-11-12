@@ -31,19 +31,111 @@ pub fn report_skip(reason: &str) {
     let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
 }
 
-/// Run one test out of the calling binary again, as a subprocess under the
-/// default capture.
+/// A test of this binary, by the name libtest selects it with.
+///
+/// A test that runs its own binary again to play a child role selects the
+/// child with `--exact <name>`, and an `--exact` that matches nothing exits 0
+/// having run nothing — so the role's work never happens and nothing says
+/// why. The name is therefore never spelled: [`test_name`] derives it from
+/// the test function itself, and checks this binary lists exactly that test
+/// before handing it out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestName(String);
+
+impl TestName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The arguments that run this test alone: `[<name>, --exact,
+    /// --test-threads=1]`.
+    pub fn selector(&self) -> [&str; 3] {
+        [&self.0, "--exact", "--test-threads=1"]
+    }
+
+    /// The path of the module the test is in, `::`-terminated: a libtest
+    /// filter that selects every test beside it.
+    pub fn module_filter(&self) -> &str {
+        let end = self.0.rfind("::").map_or(0, |i| i + 2);
+        &self.0[..end]
+    }
+}
+
+/// The libtest name of `test`, a `#[test]` function of this binary.
+///
+/// `type_name_of_val` names a function item by its path from the crate root,
+/// which is the name libtest gives the test once the crate's own name is
+/// dropped. A name this binary does not list exactly once panics here,
+/// before any child is started with it.
+pub fn test_name<F: Fn()>(test: F) -> TestName {
+    let path = std::any::type_name_of_val(&test);
+    let (_, name) = path
+        .split_once("::")
+        .unwrap_or_else(|| panic!("{path} is not a function inside a test binary"));
+    let name = TestName(name.to_string());
+    assert_listed_once(&name);
+    name
+}
+
+fn assert_listed_once(name: &TestName) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static CHECKED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let checked = CHECKED.get_or_init(Default::default);
+    if checked.lock().unwrap().contains(name.as_str()) {
+        return;
+    }
+    let exe = std::env::current_exe().expect("this test binary's own path");
+    let out = Command::new(&exe)
+        .args(["--list", "--format", "terse", "--exact", name.as_str()])
+        .output()
+        .unwrap_or_else(|e| panic!("listing {} failed: {e}", exe.display()));
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let wanted = format!("{}: test", name.as_str());
+    let matches = listing.lines().filter(|l| *l == wanted).count();
+    assert!(
+        out.status.success() && matches == 1,
+        "{} does not list `{}` exactly once, so a child selected by it would run \
+         nothing:\n{listing}",
+        exe.display(),
+        name.as_str()
+    );
+    checked.lock().unwrap().insert(name.as_str().to_string());
+}
+
+/// How many tests of this binary libtest's `filter` selects.
+pub fn tests_listed(filter: &str) -> usize {
+    let exe = std::env::current_exe().expect("this test binary's own path");
+    let out = Command::new(&exe)
+        .args(["--list", "--format", "terse", filter])
+        .output()
+        .unwrap_or_else(|e| panic!("listing {} failed: {e}", exe.display()));
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.ends_with(": test"))
+        .count()
+}
+
+/// Run `test` out of this binary again, as a subprocess under the default
+/// capture, and require that it ran.
 ///
 /// A test cannot observe its own capture: libtest installs it around whatever
 /// is running, so a test reading back what it wrote sees the same bytes either
 /// way. A pin on what a notice reaches has to read it from outside, and the
 /// run without `--nocapture` is the one whose silence is the defect.
-pub fn rerun_one_test(name: &str) -> std::process::Output {
+pub fn rerun_one_test(test: &TestName) -> std::process::Output {
     let exe = std::env::current_exe().expect("this test binary's own path");
-    Command::new(&exe)
-        .args([name, "--exact", "--test-threads=1"])
+    let out = Command::new(&exe)
+        .args(test.selector())
         .output()
-        .unwrap_or_else(|e| panic!("re-invoking {} failed: {e}", exe.display()))
+        .unwrap_or_else(|e| panic!("re-invoking {} failed: {e}", exe.display()));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("running 1 test\n"),
+        "re-running `{}` ran no test:\n{stdout}",
+        test.as_str()
+    );
+    out
 }
 
 /// Whether `tool` is absent from PATH, announcing the skip when it is.
@@ -75,7 +167,7 @@ pub fn rerun_one_test(name: &str) -> std::process::Output {
 /// file whose owner cannot read it, so no single status separates a healthy
 /// tool that does not speak `--version` from an install the OS will not run.
 ///
-/// `tests/skip_report_visibility_test.rs` plants those entries and asserts both
+/// `tests/source/skip_report_visibility_test.rs` plants those entries and asserts both
 /// halves against the same file — that this reports it present, and that the OS
 /// will not run it — so closing this gap reddens a test rather than changing
 /// what the corpus's guards mean in silence.
@@ -170,7 +262,7 @@ pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
 /// Canonicalizing the root here rather than at each comparison is the point.
 /// A rule applied where paths are compared has to be remembered by every test
 /// anyone adds later; rooted here there is no non-canonical path in the suite
-/// to get wrong. `tests/canonical_temp_root_test.rs` keeps it that way, and
+/// to get wrong. `tests/source/canonical_temp_root_test.rs` keeps it that way, and
 /// `scripts/ci-local.sh` runs its test stages under the geometry below.
 ///
 /// Reproduce the macOS geometry on any platform:
@@ -760,7 +852,7 @@ pub struct PushWorkspace {
 /// all; a payload that is an arbitrary distinguishable marker because the
 /// path rather than the content is what the test drives; and an append onto
 /// a lock already written here, whose subject is the file reading as
-/// tracked-dirty. `tests/lock_write_route_census_test.rs` holds every such
+/// tracked-dirty. `tests/source/lock_write_route_census_test.rs` holds every such
 /// site to that line, and reports any raw write that carries none.
 pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)]) {
     let entries: Vec<String> = repos
@@ -1316,7 +1408,7 @@ pub fn rwv_std() -> Command {
 /// version, a package name or a digest out of that lock is measuring the
 /// stand-in, and belongs on the real tool behind `skip_without_tool` instead.
 ///
-/// Unix only, for the reason `tests/integrations_test.rs` states at
+/// Unix only, for the reason `tests/integrations/integrations_test.rs` states at
 /// `write_exit_code_shim`: the stand-in is a `#!/bin/sh` script the child
 /// resolves off `PATH` and spawns itself, and Windows has no executable bit
 /// and selects candidates on `PATHEXT`. A caller is therefore `#[cfg(unix)]`

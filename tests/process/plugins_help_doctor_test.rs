@@ -491,16 +491,26 @@ fn suite_stays_green_with_decoy_on_inherited_path() {
     )
     .expect("PATH entries rejoin");
 
+    let me = common::test_name(suite_stays_green_with_decoy_on_inherited_path);
     let out = std::process::Command::new(std::env::current_exe().expect("test binary path"))
         .args([
+            me.module_filter(),
             "--test-threads=1",
             "--skip",
-            "suite_stays_green_with_decoy_on_inherited_path",
+            me.as_str(),
         ])
         .env("PATH", &poisoned)
         .output()
         .expect("re-invoke test binary with a decoy on the inherited PATH");
 
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "running {} tests\n",
+            common::tests_listed(me.module_filter()) - 1
+        )),
+        "the re-run must be this file's other tests, every one of them:\n{stdout}"
+    );
     assert!(
         out.status.success(),
         "suite must stay green with rwv-hostdecoy on the inherited PATH:\nstdout:\n{}\nstderr:\n{}",

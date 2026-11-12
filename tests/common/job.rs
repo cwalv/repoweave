@@ -4,7 +4,9 @@
 //! The processes are this test binary run again: a binary that calls
 //! [`serve`] from a `#[test] fn job_helper` becomes the role [`ROLE`] names
 //! when started with [`helper_args`]. Without [`ROLE`] set that test returns
-//! at once, so an ordinary suite run sees an empty pass.
+//! at once, so an ordinary suite run sees an empty pass. Both take the helper
+//! test itself, and the first one called in a process records it as the test
+//! every job process of that process runs as.
 //!
 //! Ctrl-C reaches every process of the foreground job, and each platform
 //! defines that job differently. On Unix it is a process group, and the
@@ -65,14 +67,27 @@ pub fn helper_exe() -> PathBuf {
     std::env::current_exe().expect("this test binary's own path")
 }
 
-pub fn helper_args() -> [&'static str; 3] {
-    ["--exact", "job_helper", "--test-threads=1"]
+static HELPER: std::sync::OnceLock<crate::common::TestName> = std::sync::OnceLock::new();
+
+fn record<F: Fn()>(job_helper: F) -> &'static crate::common::TestName {
+    HELPER.get_or_init(|| crate::common::test_name(job_helper))
 }
 
-pub fn serve() {
+fn recorded() -> &'static crate::common::TestName {
+    HELPER
+        .get()
+        .expect("a job helper is recorded by helper_args or serve before any job starts")
+}
+
+pub fn helper_args<F: Fn()>(job_helper: F) -> [&'static str; 3] {
+    record(job_helper).selector()
+}
+
+pub fn serve<F: Fn()>(job_helper: F) {
     let Ok(role) = std::env::var(ROLE) else {
         return;
     };
+    record(job_helper);
     match role.as_str() {
         TREE_ROOT => tree_root(),
         TREE_LEAF => tree_leaf(),
@@ -111,7 +126,7 @@ fn linger_with_default_interrupts() {
 
 fn tree_root() {
     let mut leaf = Command::new(helper_exe())
-        .args(helper_args())
+        .args(recorded().selector())
         .env(ROLE, TREE_LEAF)
         .spawn()
         .expect("the leaf starts");
@@ -127,7 +142,7 @@ fn tree_leaf() {
 fn orphaning_root() {
     wait_for_the_terminal();
     let mut leaf = Command::new(helper_exe())
-        .args(helper_args())
+        .args(recorded().selector())
         .env(ROLE, QUIET_LEAF)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -242,7 +257,7 @@ pub fn kill_job(owner: u32) -> Result<(), String> {
 #[cfg(windows)]
 fn run_console_helper(role: &str, owner: u32) -> Result<(), String> {
     let mut helper = Command::new(helper_exe())
-        .args(helper_args())
+        .args(recorded().selector())
         .env(ROLE, role)
         .env(CONSOLE_OF, owner.to_string())
         .stdout(std::process::Stdio::piped())

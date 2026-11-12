@@ -1061,7 +1061,7 @@ fn the_project_repo_is_never_run_in() {
 
 #[test]
 fn job_helper() {
-    common::job::serve();
+    common::job::serve(job_helper);
 }
 
 const SPAN_LOG: &str = "RWV_TEST_SPAN_LOG";
@@ -1096,14 +1096,10 @@ fn span_helper() {
 impl Weave {
     fn each_span(&self, flags: &[&str], log: &Path, fails_in: Option<&str>) -> Command {
         let exe = common::job::helper_exe();
+        let span = common::test_name(span_helper);
         let mut args: Vec<&str> = flags.to_vec();
-        args.extend([
-            "--",
-            exe.to_str().expect("a UTF-8 test binary path"),
-            "--exact",
-            "span_helper",
-            "--test-threads=1",
-        ]);
+        args.extend(["--", exe.to_str().expect("a UTF-8 test binary path")]);
+        args.extend(span.selector());
         let mut cmd = self.each_cmd(&args);
         cmd.env(SPAN_LOG, log);
         if let Some(repo) = fails_in {
@@ -1120,7 +1116,7 @@ impl Weave {
         let mut args: Vec<&str> = flags.to_vec();
         args.push("--");
         args.push(exe.to_str().expect("a UTF-8 test binary path"));
-        args.extend(common::job::helper_args());
+        args.extend(common::job::helper_args(job_helper));
         let mut cmd = self.each_cmd(&args);
         cmd.env(common::job::ROLE, common::job::TREE_ROOT);
         cmd

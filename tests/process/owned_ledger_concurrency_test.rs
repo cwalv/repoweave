@@ -70,7 +70,7 @@ fn stamper_child() {
 
 fn stamper(dir: &Path, results: &Path, entry: &str) -> Command {
     let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
-    cmd.args(["--exact", "stamper_child", "--test-threads=1"]);
+    cmd.args(common::test_name(stamper_child).selector());
     cmd.env(CHILD_DIR, dir);
     cmd.env(CHILD_RESULTS, results);
     cmd.env(CHILD_ENTRY, entry);

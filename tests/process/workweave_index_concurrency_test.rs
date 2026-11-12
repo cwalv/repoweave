@@ -88,7 +88,7 @@ fn recorder_child() {
 
 fn recorder(root: &Path, store: &Path, results: &Path, name: &str) -> Command {
     let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
-    cmd.args(["--exact", "recorder_child", "--test-threads=1"]);
+    cmd.args(common::test_name(recorder_child).selector());
     cmd.env(CHILD_ROOT, root);
     cmd.env(CHILD_STORE, store);
     cmd.env(CHILD_RESULTS, results);

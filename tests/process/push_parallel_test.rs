@@ -1,7 +1,7 @@
 //! Acceptance tests for `rwv push -j N`.
 //!
-//! Mirrors the shape of `tests/parallel_test.rs` (fetch/update
-//! coverage) but for push. The fixtures duplicate `tests/push_test.rs`'s
+//! Mirrors the shape of `tests/process/parallel_test.rs` (fetch/update
+//! coverage) but for push. The fixtures duplicate `tests/sync/push_test.rs`'s
 //! setup helpers (bare-remote + local-clone + project-repo + lock) so
 //! these tests stand alone — the same pattern parallel_test.rs uses
 //! against fetch_test.rs.

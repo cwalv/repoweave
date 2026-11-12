@@ -13,7 +13,7 @@
 //!   asserted via the resulting `rwv.lock` covering every advanced SHA (no
 //!   race / partial-write artifacts).
 //!
-//! The tests follow the existing `tests/clone_test.rs` pattern: spin up
+//! The tests follow the existing `tests/weave/clone_test.rs` pattern: spin up
 //! local bare repos as file:// remotes; no network.
 
 use assert_cmd::Command;
@@ -27,7 +27,7 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-// ----- Setup helpers (mirroring tests/clone_test.rs) -------------------------
+// ----- Setup helpers (mirroring tests/weave/clone_test.rs) -------------------------
 
 fn init_bare_repo(path: &Path) {
     let status = common::git()

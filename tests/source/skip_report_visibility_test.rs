@@ -24,8 +24,8 @@ use crate::common;
 const ABSENT_TOOL: &str = "rwv-absent-tool-probe";
 
 /// Re-invoke this binary for one test, under the default capture.
-fn run_subject(test: &str) -> Output {
-    common::rerun_one_test(test)
+fn run_subject<F: Fn()>(test: F) -> Output {
+    common::rerun_one_test(&common::test_name(test))
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ fn the_location_guard_refuses_what_the_os_will_not_start() {
 /// `ok` — the state the notice exists to end.
 #[test]
 fn a_skip_notice_survives_the_default_capture() {
-    let out = run_subject("a_tool_that_cannot_exist_is_announced");
+    let out = run_subject(a_tool_that_cannot_exist_is_announced);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -322,7 +322,7 @@ fn a_skip_notice_survives_the_default_capture() {
 /// below is a measured absence rather than a subprocess that never started.
 #[test]
 fn a_test_that_did_not_skip_prints_no_notice() {
-    let out = run_subject("a_tool_that_is_there_is_not_announced");
+    let out = run_subject(a_tool_that_is_there_is_not_announced);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -769,7 +769,7 @@ fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
 /// **`PROBES` IS THE POPULATION, AND IT IS NARROWER THAN "ENVIRONMENTAL".** A
 /// return guarded by anything not in that list is invisible here, however
 /// plainly its test is skipping. The known case is in this repository already:
-/// the two sites in `tests/status_broken_clone_test.rs` decide on
+/// the two sites in `tests/doctor/status_broken_clone_test.rs` decide on
 /// `if cat_file.success()`, the exit status of a `git cat-file` probing whether
 /// GC has collected an object. That is an environment question — those two skip
 /// on this host today — but the guard names a local variable, so neither the
@@ -837,14 +837,14 @@ const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
         "resolves the `rwv-*` scripts the test writes into its own temp directory, so no host state can make the lookup fail",
     ),
     (
-        "tests/bundled_binaries_test.rs",
+        "tests/process/bundled_binaries_test.rs",
         "a_tar_that_unpacks_xz_itself_installs_with_no_xz_on_path",
         1,
         LookupKind::HostTool,
         "the stand-in `tar` reports another tar's version and hands extraction to the real one; without a `tar` the install script has nothing to unpack with",
     ),
     (
-        "tests/bundled_binaries_test.rs",
+        "tests/process/bundled_binaries_test.rs",
         "toolbox",
         1,
         LookupKind::HostTool,
@@ -865,91 +865,91 @@ const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
         "the shim directory exists to expose one real tool on an otherwise empty `PATH`; without the tool the shim has no content, and every caller needs it to drive the subject",
     ),
     (
-        "tests/doctor_kind_filter_test.rs",
+        "tests/doctor/doctor_kind_filter_test.rs",
         "a_clone_passes_over_a_missing_tool_and_the_kind_gate_fails_it",
         1,
         LookupKind::HostTool,
         "links the real `git` beside a stand-in `npm` on a `PATH` that holds nothing else, because fetch and doctor shell out to it",
     ),
     (
-        "tests/doctor_kind_filter_test.rs",
+        "tests/doctor/doctor_kind_filter_test.rs",
         "kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it",
         1,
         LookupKind::HostTool,
         "links the real `git` beside a stand-in `npm` on a `PATH` that holds nothing else, because doctor shells out to it",
     ),
     (
-        "tests/doctor_perf_test.rs",
+        "tests/doctor/doctor_perf_test.rs",
         "doctor_scan_git_call_count_stays_linear_in_repo_count",
         1,
         LookupKind::HostTool,
         "wraps the real `git` in a counting shim, so it needs the real binary's path and measures nothing without it",
     ),
     (
-        "tests/doctor_perf_test.rs",
+        "tests/doctor/doctor_perf_test.rs",
         "doctor_scan_git_call_count_stays_linear_in_workspace_size",
         1,
         LookupKind::HostTool,
         "wraps the real `git` in a counting shim, so it needs the real binary's path and measures nothing without it",
     ),
     (
-        "tests/integrations_test.rs",
+        "tests/integrations/integrations_test.rs",
         "activate_with_tool_shim",
         1,
         LookupKind::HostTool,
         "links the real `git` into a shim `PATH` that holds nothing else, because activation shells out to it",
     ),
     (
-        "tests/integrations_test.rs",
+        "tests/integrations/integrations_test.rs",
         "doctor_json_on_tool_only_path",
         1,
         LookupKind::HostTool,
         "links the real `git` into a shim `PATH` that holds nothing else, because doctor shells out to it",
     ),
     (
-        "tests/integrations_test/activate_hooks.rs",
+        "tests/integrations/integrations_test/activate_hooks.rs",
         "hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run",
         1,
         LookupKind::HostTool,
         "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
     ),
     (
-        "tests/no_materialize_parity_test.rs",
+        "tests/integrations/no_materialize_parity_test.rs",
         "new",
         1,
         LookupKind::HostTool,
         "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
     ),
     (
-        "tests/plugins_help_doctor_test.rs",
+        "tests/process/plugins_help_doctor_test.rs",
         "doctor_json_same_directory_pathext_duplicates_shadow_in_dispatch_order",
         1,
         LookupKind::PlantedFile,
         "resolves the `rwv-dup` files the test writes into its own temp directory",
     ),
     (
-        "tests/skip_report_visibility_test.rs",
+        "tests/source/skip_report_visibility_test.rs",
         "the_guards_resolver_accepts_files_the_os_will_not_run",
         2,
         LookupKind::PlantedFile,
         "resolves the files the test plants in its own directory through `which_in`",
     ),
     (
-        "tests/skipped_effects_test.rs",
+        "tests/integrations/skipped_effects_test.rs",
         "new",
         1,
         LookupKind::HostTool,
         "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
     ),
     (
-        "tests/tool_written_lock_adoption_test.rs",
+        "tests/integrations/tool_written_lock_adoption_test.rs",
         "a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_tool",
         1,
         LookupKind::HostTool,
         "the stand-in `npm` is a symlink to the real `mv`, because the rename that adopts the lock is the thing under test",
     ),
     (
-        "tests/workweave_create_carried_lock_clean_test.rs",
+        "tests/weave/workweave_create_carried_lock_clean_test.rs",
         "new",
         1,
         LookupKind::HostTool,
@@ -1073,7 +1073,7 @@ fn fn_name_of(line: &str) -> Option<String> {
 ///
 /// BLIND SPOTS:
 /// - A lookup reached through a wrapper (`fn which(name) -> Option<_>` in
-///   `tests/e2e_install_test.rs`, `go_on_path`) is invisible, and so is a caller
+///   `tests/integrations/e2e_install_test.rs`, `go_on_path`) is invisible, and so is a caller
 ///   that unwraps the wrapper's answer.
 /// - A lookup whose answer is bound on one statement and unwrapped on another,
 ///   or matched with `let … else { panic!(..) }`, is not read as panicking.

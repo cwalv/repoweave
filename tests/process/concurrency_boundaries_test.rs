@@ -96,7 +96,7 @@ fn call_sites(needle: &str) -> Vec<(String, usize)> {
 /// that reached exclusion by some other route — its own `create_new` on a file
 /// of its own, an `flock`, a lease taken through a helper this does not name —
 /// is not caught. What narrows that gap is not here but in
-/// `tests/state_file_publish_audit_test.rs`, which holds `StateFile::ALL` —
+/// `tests/source/state_file_publish_audit_test.rs`, which holds `StateFile::ALL` —
 /// the closed, derived set of names rwv keeps as state, the claim files among
 /// them — to its declared constants in both directions. A new exclusion
 /// mechanism has to add a `StateFile` to get a `StatePath` at all, and that

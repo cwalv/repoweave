@@ -281,7 +281,7 @@ fn external_verb_signal_reported_as_128_plus_n() {
 
 #[test]
 fn job_helper() {
-    common::job::serve();
+    common::job::serve(job_helper);
 }
 
 /// `rwv hold` as a foreground job, its plugin a [`common::job::hold`] that
@@ -293,7 +293,7 @@ fn hold_job(plugin_dir: &Path) -> (std::process::Child, PathBuf) {
         .expect("the plugin is this test binary under a plugin's name");
     let mut cmd = common::rwv_std();
     cmd.arg("hold")
-        .args(common::job::helper_args())
+        .args(common::job::helper_args(job_helper))
         .current_dir(tmp_cwd())
         .env("PATH", prepend_path(plugin_dir))
         .stdout(std::process::Stdio::null());
@@ -337,7 +337,7 @@ fn a_plugin_that_takes_no_interrupt_action_dies_of_the_jobs_interrupt() {
         .expect("the plugin is this test binary under a plugin's name");
     let mut cmd = common::rwv_std();
     cmd.arg("linger")
-        .args(common::job::helper_args())
+        .args(common::job::helper_args(job_helper))
         .current_dir(tmp_cwd())
         .env("PATH", prepend_path(plugin_dir.path()))
         .stdout(std::process::Stdio::null());

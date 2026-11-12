@@ -9,8 +9,8 @@
 //! scenario there, announced on stderr.
 //!
 //! The invariants and what they cannot see are stated in
-//! `tests/scenario_harness_test/invariants.rs`; the sandbox's fixed shape in
-//! `tests/scenario_harness_test/sandbox.rs`. A test that holds rwv at a pause
+//! `tests/scenario/scenario_harness_test/invariants.rs`; the sandbox's fixed shape in
+//! `tests/scenario/scenario_harness_test/sandbox.rs`. A test that holds rwv at a pause
 //! point runs only in a build with the `test-pause` feature, and announces
 //! its skip in any other.
 
@@ -244,7 +244,7 @@ fn a_green_run_through_an_undecided_step() {
 
 #[test]
 fn an_undecided_step_is_announced_by_a_green_run() {
-    let out = common::rerun_one_test("a_green_run_through_an_undecided_step");
+    let out = common::rerun_one_test(&common::test_name(a_green_run_through_an_undecided_step));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     assert!(
@@ -608,7 +608,7 @@ every_scenario!(
 /// those a `#[cfg(unix)]` leaves out of this build.
 fn scenario_constructors() -> std::collections::BTreeSet<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/scenario_harness_test/scenarios.rs");
+        .join("tests/scenario/scenario_harness_test/scenarios.rs");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut unix_only = false;
     let mut found = std::collections::BTreeSet::new();

@@ -141,19 +141,20 @@ fn every_arm_this_host_cannot_reach_announces_itself() {
 
     for (subject, notice) in [
         (
-            "workweave_reuse_refuses_to_adopt_a_case_twin_directory",
+            common::test_name(workweave_reuse_refuses_to_adopt_a_case_twin_directory),
             NOT_FOLDING_HERE_REUSE,
         ),
         (
-            "a_confusable_sibling_warns_at_mint_and_is_still_created",
+            common::test_name(a_confusable_sibling_warns_at_mint_and_is_still_created),
             NOT_FOLDING_HERE_MINT,
         ),
         (
-            "a_confusable_sibling_is_reported_by_doctor",
+            common::test_name(a_confusable_sibling_is_reported_by_doctor),
             NOT_FOLDING_HERE_DOCTOR,
         ),
     ] {
-        let out = common::rerun_one_test(subject);
+        let out = common::rerun_one_test(&subject);
+        let subject = subject.as_str();
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
