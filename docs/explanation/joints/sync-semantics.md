@@ -165,9 +165,11 @@ under the same `--strategy`:
 A rebase replays each commit as a three-way merge; rwv holds the lock merge
 driver for the replay, so a lock-only commit replays as an empty patch rather
 than a conflict, and Phase 3 relocks. The replay reads the attribute line the
-source's project checkout commits, so under `--strategy=rebase` sync refuses
-`missing-lock-merge-driver` for the source as well as for the workspace it
-writes; `rwv doctor --fix`, run where the refusal names, migrates it. A bare
+tree it replays onto commits: `rwv sync-to --strategy=rebase` refuses
+`missing-lock-merge-driver` for the source's project checkout as well as for
+the workspace it writes, and `rwv doctor --fix`, run where the refusal names,
+migrates it. Where that tree assigns `rwv.lock` no driver, rwv's own replay
+merges the lock as text and stops on a conflict there, never taking a side. A bare
 `git rebase --continue` runs the clone's lock merge driver instead, which
 merges pins three-way; [vcs-as-seam](./vcs-as-seam.md) covers the mechanism.
 
