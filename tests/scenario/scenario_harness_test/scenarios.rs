@@ -733,8 +733,12 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
                 .expect(Exit::Succeeds),
             Step::commit(&side, Repo::Lib, "side-lib"),
-            landing,
         ]
+        .into_iter()
+        .chain(
+            (branch != "main").then(|| Step::hand_edit(&a(), Repo::Lib, "README", "lib", "edited")),
+        )
+        .chain([landing])
         .into_iter()
         .chain((branch != "main").then(|| {
             Step::git(&a(), Repo::Lib, &["log", "--format=%s", branch])
