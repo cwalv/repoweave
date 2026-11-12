@@ -785,7 +785,10 @@ error code — the type-level rules of §6.3 fail the suite if they are relaxed.
 
 `scripts/ci-local.sh` is the single gate: `cargo check`, `cargo test --release`,
 `cargo clippy -D warnings`, `cargo fmt --check`, then the explain-artifact drift
-gate. `.github/workflows/ci.yml` runs that same script; a separate Windows job
+gate. With no argument it runs every default stage; `--tier=seat` and
+`--tier=landing` split those stages between iterating on a change and landing
+it (`docs/internals/testing.md`). `.github/workflows/ci.yml` runs that same
+script, with no argument; a separate Windows job
 runs `cargo check` and `cargo clippy` only, because the suite assumes symlinks,
 permission bits and signals.
 

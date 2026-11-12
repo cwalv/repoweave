@@ -4,20 +4,31 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
+# Usage: scripts/ci-local.sh [--tier=seat|landing | --stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
 #
-# With no --stages, runs all stages in the order above but the last — this is
-# what CI, the release gate and the pre-push hook invoke. windows-wine runs
-# only when named: it is scripts/windows-wine.sh, which downloads several GB
-# on first use and reports reds that belong to Wine rather than to the code.
-# git-floor runs only when named too: it runs the suite against the oldest git
-# release rwv runs on, which scripts/git-floor.sh downloads and builds into a
-# cache outside the repository on first use.
-# --stages selects a subset, in that same fixed order, regardless of the order
-# named on the command line; re-gating an integration tip between landings
-# wants --stages=drift alone, without paying for a full build first. A subset
-# run's terminal line names the stages it ran, so a log naming less than every
-# default stage is never mistaken for a full gate.
+# With no argument, runs all stages in the order above but the last two — the
+# full gate, which CI, the release gate and the pre-push hook invoke.
+# windows-wine runs only when named: it is scripts/windows-wine.sh, which
+# downloads several GB on first use and reports reds that belong to Wine
+# rather than to the code. git-floor runs only when named too: it runs the
+# suite against the oldest git release rwv runs on, which scripts/git-floor.sh
+# downloads and builds into a cache outside the repository on first use.
+#
+# --tier=seat runs the default stages a change is most likely to redden and
+# the ones whose output it must commit, for iterating on that change in its
+# own seat. --tier=landing runs exactly the default stages seat skips: the
+# whole-suite and cross-target reruns, which a landing pays once. The two
+# together are the full gate, each stage once. Only the seat list is written
+# down; landing is computed from it.
+#
+# --stages selects any subset, in the same fixed order, regardless of the
+# order named on the command line; re-gating an integration tip between
+# landings wants --stages=drift alone, without paying for a full build first.
+# --tier and --stages are refused together.
+#
+# A subset run's terminal line names its tier, if any, and the stages it ran,
+# so a log naming less than every default stage is never mistaken for a full
+# gate.
 #
 # Both test stages run the suite with TMPDIR behind a symlink, the geometry
 # macOS's temp root has, on every host that can make one, and with the
@@ -48,49 +59,74 @@ set -euo pipefail
 ALL_STAGES=(check windows test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
 OPT_IN_STAGES=(windows-wine git-floor)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
+SEAT_STAGES=(check test no-test-pause clippy doc fmt drift)
+TIERS=(seat landing)
 
 join_by_comma() {
     local IFS=,
     echo "$*"
 }
 
-usage() {
-    printf 'Usage: %s [--stages=%s]\n' "$0" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
-    printf '  also valid, not run by default: %s\n' "$(join_by_comma "${OPT_IN_STAGES[@]}")" >&2
+is_one_of() {
+    local want="$1" candidate
+    shift
+    for candidate in "$@"; do
+        [ "$candidate" = "$want" ] && return 0
+    done
+    return 1
 }
 
+LANDING_STAGES=()
+for s in "${ALL_STAGES[@]}"; do
+    is_one_of "$s" "${SEAT_STAGES[@]}" || LANDING_STAGES+=("$s")
+done
+
+usage() {
+    printf 'Usage: %s [--tier=%s | --stages=%s]\n' "$0" "$(IFS='|'; echo "${TIERS[*]}")" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
+    printf '  seat: %s\n' "$(join_by_comma "${SEAT_STAGES[@]}")" >&2
+    printf '  landing: %s\n' "$(join_by_comma "${LANDING_STAGES[@]}")" >&2
+    printf '  also valid in --stages, not run by default: %s\n' "$(join_by_comma "${OPT_IN_STAGES[@]}")" >&2
+}
+
+tier=""
+selector=""
 stages_csv="$(join_by_comma "${ALL_STAGES[@]}")"
 for arg in "$@"; do
     case "$arg" in
-        --stages=*)
-            stages_csv="${arg#--stages=}"
-            ;;
+        --tier=* | --stages=*) ;;
         *)
             printf 'unknown argument: %s\n' "$arg" >&2
             usage
             exit 1
             ;;
     esac
+    if [ -n "$selector" ]; then
+        printf 'conflicting stage selectors: %s and %s (pass one --tier or one --stages)\n' "$selector" "$arg" >&2
+        usage
+        exit 1
+    fi
+    selector="$arg"
+    case "$arg" in
+        --tier=seat) tier=seat stages_csv="$(join_by_comma "${SEAT_STAGES[@]}")" ;;
+        --tier=landing) tier=landing stages_csv="$(join_by_comma "${LANDING_STAGES[@]}")" ;;
+        --tier=*)
+            printf 'unknown tier: %s (valid: %s)\n' "${arg#--tier=}" "$(join_by_comma "${TIERS[@]}")" >&2
+            exit 1
+            ;;
+        --stages=*) stages_csv="${arg#--stages=}" ;;
+    esac
 done
 
 IFS=',' read -ra requested <<< "$stages_csv"
 for s in "${requested[@]}"; do
-    known=0
-    for known_stage in "${KNOWN_STAGES[@]}"; do
-        [ "$s" = "$known_stage" ] && known=1 && break
-    done
-    if [ "$known" -ne 1 ]; then
+    if ! is_one_of "$s" "${KNOWN_STAGES[@]}"; then
         printf 'unknown stage: %s (valid: %s)\n' "$s" "$(join_by_comma "${KNOWN_STAGES[@]}")" >&2
         exit 1
     fi
 done
 
 run_stage() {
-    local want="$1"
-    for s in "${requested[@]}"; do
-        [ "$s" = "$want" ] && return 0
-    done
-    return 1
+    is_one_of "$1" "${requested[@]}"
 }
 
 header() {
@@ -243,5 +279,5 @@ done
 if [ "${ran_stages[*]}" = "${ALL_STAGES[*]}" ]; then
     printf '\nAll checks passed.\n'
 else
-    printf '\nAll checks passed (stages: %s).\n' "$(join_by_comma "${ran_stages[@]}")"
+    printf '\nAll checks passed (%sstages: %s).\n' "${tier:+tier: $tier; }" "$(join_by_comma "${ran_stages[@]}")"
 fi

@@ -13,7 +13,9 @@
 //! stage runs the suite under a system config that converts line endings and
 //! leaves the tree as it found it; and every `cargo test` it runs sees
 //! `TMPDIR` behind a symlink made inside the one it was handed, except on a
-//! host that cannot make one, which says so.
+//! host that cannot make one, which says so. `--tier=seat` and
+//! `--tier=landing` split the default stages between them, each once, and
+//! say which tier ran on the terminal line.
 //!
 //! Every test drives the real script as a subprocess with a stub `cargo` and
 //! `rustup` on `PATH` (and, for the wine stage's wiring, a stub
@@ -1127,4 +1129,202 @@ fn ci_runs_the_git_floor_stage() {
         workflow.contains("run: ./scripts/ci-local.sh --stages=git-floor"),
         "ci-checks.yml runs no git-floor stage"
     );
+
+/// The stage headers a run printed, in order. Two stages can run the same
+/// cargo argv, so a header, not an invocation, says which stage ran.
+fn header_lines(out: &Output) -> Vec<String> {
+    stdout_of(out)
+        .lines()
+        .filter(|l| l.starts_with("==> "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The stages a subset run's terminal line says it ran.
+fn stages_named_by_terminal_line(out: &Output) -> Vec<String> {
+    let stdout = stdout_of(out);
+    let last = stdout.trim_end().lines().last().unwrap_or("").to_owned();
+    let list = last
+        .split_once("stages: ")
+        .and_then(|(_, rest)| rest.strip_suffix(")."))
+        .unwrap_or_else(|| panic!("terminal line names no stages: {last:?}"));
+    list.split(',').map(str::to_owned).collect()
+}
+
+/// The default stages, in order, as the script's usage line spells them.
+fn default_stages_from_usage(cwd: &Path, stub_bin: &Path) -> Vec<String> {
+    let out = run_ci_local(cwd, stub_bin, &["--no-such-flag"], &[]);
+    let stderr = stderr_of(&out);
+    let list = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("Usage: "))
+        .and_then(|l| l.split_once("--stages="))
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(list, _)| list)
+        .unwrap_or_else(|| panic!("no usage line naming --stages:\n{stderr}"));
+    list.split(',').map(str::to_owned).collect()
+}
+
+fn is_subsequence(part: &[String], whole: &[String]) -> bool {
+    let mut rest = whole.iter();
+    part.iter().all(|p| rest.any(|w| w == p))
+}
+
+/// Seat and landing together are the full gate: every stage header of a
+/// no-argument run prints in exactly one of them, each in the default run's
+/// order, and their terminal lines name disjoint stages that make up the
+/// default list. The opt-in wine stage is in neither.
+#[test]
+fn seat_and_landing_tiers_partition_the_default_stages() {
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let run = |args: &[&str]| {
+        let fixture = fixture_repo();
+        let out = run_script(
+            &ci_local,
+            fixture.path(),
+            stub.path(),
+            args,
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        assert!(
+            !stdout_of(&out).contains("STUB_WINDOWS_WINE"),
+            "{args:?} ran the opt-in wine stage"
+        );
+        out
+    };
+    let full = run(&[]);
+    let seat = run(&["--tier=seat"]);
+    let landing = run(&["--tier=landing"]);
+
+    let cargo_runs = |out: &Output| stdout_of(out).matches("STUB_CARGO:").count();
+    assert_eq!(
+        cargo_runs(&seat) + cargo_runs(&landing),
+        cargo_runs(&full),
+        "seat and landing together do not make one full gate's cargo invocations"
+    );
+    let (full_runs, seat_runs, landing_runs) = (
+        header_lines(&full),
+        header_lines(&seat),
+        header_lines(&landing),
+    );
+    assert!(!seat_runs.is_empty() && !landing_runs.is_empty());
+    assert_eq!(
+        seat_runs.len() + landing_runs.len(),
+        full_runs.len(),
+        "seat {seat_runs:?} and landing {landing_runs:?} together are not one full gate {full_runs:?}"
+    );
+    for part in [&seat_runs, &landing_runs] {
+        assert!(
+            is_subsequence(part, &full_runs),
+            "{part:?} is not in the full gate's order {full_runs:?}"
+        );
+    }
+    for invocation in &full_runs {
+        let in_seat = seat_runs.contains(invocation);
+        let in_landing = landing_runs.contains(invocation);
+        assert!(
+            in_seat != in_landing,
+            "{invocation:?} printed in seat: {in_seat}, in landing: {in_landing}; it belongs to exactly one"
+        );
+    }
+
+    let fixture = fixture_repo();
+    let defaults = default_stages_from_usage(fixture.path(), stub.path());
+    let (seat_stages, landing_stages) = (
+        stages_named_by_terminal_line(&seat),
+        stages_named_by_terminal_line(&landing),
+    );
+    let mut merged: Vec<String> = seat_stages.iter().chain(&landing_stages).cloned().collect();
+    merged.sort_by_key(|s| defaults.iter().position(|d| d == s));
+    assert_eq!(
+        merged, defaults,
+        "seat {seat_stages:?} and landing {landing_stages:?} do not partition the default stages"
+    );
+    for part in [&seat_stages, &landing_stages] {
+        assert!(is_subsequence(part, &defaults), "{part:?} out of order");
+    }
+}
+
+#[test]
+fn each_tier_names_itself_and_its_stages_on_the_terminal_line() {
+    let stub = stub_bin_dir();
+    for (tier, line) in [
+        (
+            "seat",
+            "All checks passed (tier: seat; stages: check,test,no-test-pause,clippy,doc,fmt,drift).",
+        ),
+        (
+            "landing",
+            "All checks passed (tier: landing; stages: windows,test-ambient-autocrlf).",
+        ),
+    ] {
+        let fixture = fixture_repo();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &[&format!("--tier={tier}")],
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stdout = stdout_of(&out);
+        assert_eq!(stdout.trim_end().lines().last().unwrap_or(""), line, "{stdout}");
+    }
+}
+
+#[test]
+fn unknown_tier_is_refused_naming_the_valid_tiers() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    for arg in ["--tier=bogus", "--tier="] {
+        let out = run_ci_local(fixture.path(), stub.path(), &[arg], &[]);
+        assert!(!out.status.success(), "{arg} should be refused");
+        let tier = arg.trim_start_matches("--tier=");
+        assert!(
+            stderr_of(&out).contains(&format!("unknown tier: {tier} (valid: seat,landing)")),
+            "{}",
+            stderr_of(&out)
+        );
+        assert!(
+            !stdout_of(&out).contains("STUB_CARGO:"),
+            "{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// Two selectors are refused whichever comes first, naming both, with the
+/// usage that documents each spelling; a repeated one is refused the same
+/// way rather than the last silently winning.
+#[test]
+fn tier_and_stages_together_are_refused_naming_both() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    for args in [
+        ["--tier=seat", "--stages=check"],
+        ["--stages=check", "--tier=landing"],
+        ["--tier=seat", "--tier=landing"],
+        ["--stages=check", "--stages=drift"],
+    ] {
+        let out = run_ci_local(fixture.path(), stub.path(), &args, &[]);
+        assert!(!out.status.success(), "{args:?} should be refused");
+        let stderr = stderr_of(&out);
+        assert!(
+            stderr.contains(&format!(
+                "conflicting stage selectors: {} and {}",
+                args[0], args[1]
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Usage: ") && stderr.contains("--tier=seat|landing | --stages="),
+            "{stderr}"
+        );
+        assert!(
+            !stdout_of(&out).contains("STUB_CARGO:"),
+            "{}",
+            stdout_of(&out)
+        );
+    }
 }

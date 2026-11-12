@@ -324,6 +324,28 @@ Gates, scans, and summaries are tested like the code they guard:
   reaches your predicate, not only that the predicate is correct.
 - Judge a gate from its output, never from a piped exit code.
 
+## The gate and its tiers
+
+`scripts/ci-local.sh` with no argument is the full gate, and it is what CI,
+the release gate and the pre-push hook run. Two named tiers split it:
+
+- `scripts/ci-local.sh --tier=seat` runs the stages a change is most likely
+  to redden and the ones whose output it must commit — `check`, `test`,
+  `no-test-pause`, `clippy`, `doc`, `fmt`, `drift` — for iterating on a
+  change in its own checkout.
+- `scripts/ci-local.sh --tier=landing` runs exactly the default stages seat
+  skips — `windows` and `test-ambient-autocrlf`, a cross-target check and a
+  second whole-suite run — once per landing.
+
+Together they are the full gate, each stage once. The script writes down only
+the seat list and computes landing from it, and
+`tests/ci_local_stages_test.rs` holds the partition. A change touching
+`cfg(windows)` code, or how line endings are read, written or compared, runs
+the full gate in its own checkout, since those are exactly what the landing
+stages catch. A tier run's terminal line names the tier and its stages, so
+its log never reads as a full gate's. `--tier` and `--stages` are refused
+together.
+
 ## The scenario harness
 
 `tests/scenario_harness_test.rs` runs branching scenarios step by step in a
