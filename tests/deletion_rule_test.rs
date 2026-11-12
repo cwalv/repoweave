@@ -189,6 +189,33 @@ fn a_workweave_whose_branches_landed_is_deleted_whole_with_its_record() {
     );
 }
 
+/// A branch with no upstream has no settings to remove with it, and whether
+/// it had any is read from the repository, so an operator whose git speaks
+/// another language sees the same delete.
+#[test]
+fn a_landed_branch_is_deleted_cleanly_whatever_language_git_speaks() {
+    let w = weave(&[LIB]);
+    create_workweave(&w.workspace, "feat");
+    let branch = minted("feat");
+
+    let out = common::rwv()
+        .args(["workweave", "delete", "feat"])
+        .env("LANGUAGE", "de")
+        .env("LC_MESSAGES", "de_DE.UTF-8")
+        .current_dir(&w.workspace)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("could not delete"),
+        "{}",
+        describe(&out)
+    );
+    assert!(!has_branch(&w.workspace.join(LIB), &branch));
+    assert!(!has_branch(&project_dir(&w.workspace), &branch));
+}
+
 #[test]
 fn an_unlanded_branch_survives_with_status_3_and_a_json_outcome_naming_it() {
     let w = weave(&[LIB]);

@@ -30,6 +30,11 @@ const GIT_ENV_VARS: &[&str] = &[
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
+/// The locale every git runs in. git translates its messages into the
+/// operator's locale, and the backend tells some failures apart by git's
+/// wording, which only the untranslated messages hold to.
+const MESSAGE_LOCALE: &str = "C";
+
 /// A path in the form git is told it: its UTF-8 text, unchanged.
 ///
 /// Only [`GitArg::from_path`] makes one.
@@ -145,6 +150,7 @@ impl GitCommand {
         for var in GIT_ENV_VARS {
             command.env_remove(var);
         }
+        command.env("LC_ALL", MESSAGE_LOCALE);
         GitCommand { command }
     }
 
@@ -239,6 +245,20 @@ mod tests {
                 "{var} is inherited by the git this command spawns"
             );
         }
+    }
+
+    #[test]
+    fn git_speaks_untranslated_whatever_language_the_operator_asks_for() {
+        let out = GitCommand::new()
+            .args(["rev-parse", "--verify", "no-such-revision-here"])
+            .env("LANGUAGE", "de")
+            .env("LC_MESSAGES", "de_DE.UTF-8")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success());
+        assert!(stderr.starts_with("fatal: "), "{stderr}");
     }
 
     #[cfg(unix)]

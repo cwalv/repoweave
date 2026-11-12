@@ -675,7 +675,10 @@ fn a_record_another_machine_published_survives_a_fetch_during_the_publish() {
         .current_dir(&ws.project_bare)
         .output()
         .unwrap();
-    let parent = String::from_utf8(on_remote.stdout).unwrap().trim().to_owned();
+    let parent = String::from_utf8(on_remote.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
     let theirs = common::records::commit(
         &project_dir,
         (!parent.is_empty()).then_some(parent.as_str()),

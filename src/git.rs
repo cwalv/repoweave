@@ -931,6 +931,25 @@ impl GitVcs {
         })
     }
 
+    /// Whether `repo`'s config holds any `branch.<branch>.*` key.
+    fn has_branch_section(repo: &Path, branch: &str) -> Result<bool, VcsError> {
+        let listing = match Self::run(
+            ["config", "-z", "--name-only", "--get-regexp", r"^branch\."],
+            repo,
+        ) {
+            Ok(listing) => listing,
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
+                return Ok(false)
+            }
+            Err(e) => return Err(e),
+        };
+        let prefix = format!("branch.{branch}.");
+        Ok(listing.split_terminator('\0').any(|key| {
+            key.strip_prefix(&prefix)
+                .is_some_and(|variable| !variable.contains('.'))
+        }))
+    }
+
     /// The value of config `key` in `repo`, or `None` when it is unset.
     fn config_get(repo: &Path, key: &str) -> Result<Option<String>, VcsError> {
         let output = git_command()
@@ -3762,15 +3781,11 @@ impl Vcs for GitVcs {
                     ["update-ref", "-d", &local_branch(branch.as_str()), tip],
                     &store,
                 )?;
-                match Self::run(
-                    ["config", "--remove-section", &format!("branch.{branch}")],
-                    &store,
-                ) {
-                    Err(VcsError::CommandFailed { stderr, .. })
-                        if stderr.contains("no such section") => {}
-                    other => {
-                        other?;
-                    }
+                if Self::has_branch_section(&store, branch.as_str())? {
+                    Self::run(
+                        ["config", "--remove-section", &format!("branch.{branch}")],
+                        &store,
+                    )?;
                 }
             }
             Site::Remote(remote) => {
