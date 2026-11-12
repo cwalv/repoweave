@@ -1027,14 +1027,6 @@ fn delete_savepoint(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) {
     vcs.drop_savepoint(repo, key);
 }
 
-// NOTE: the old `check_lock_freshness` / `lock_recovery`
-// pair — which refused on ANY lock↔HEAD mismatch — is replaced by the
-// benign-staleness classification (`classify_lock_relations` +
-// `anomalous_relation_refusal` + the tips-as-truth / op-start-relock handling
-// in `guard_and_mark`). `behind` is no longer an error; only genuinely
-// anomalous relations (ahead / diverged / no-lock / unknown) refuse, naming the
-// relation. `--allow-stale-lock` still bypasses the whole gate.
-
 /// Number of commits to show inline per refused repo before summarizing the
 /// rest as "and N more".
 const BLOCKING_COMMITS_CAP: usize = 5;
@@ -3688,8 +3680,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             eprintln!("Phase 1' (project repo) failed: {e:#}");
         }
         // Only teach the VCS-native resume when the project repo is actually
-        // left mid-op. A `--discard-local-commits` hard-reset
-        // failure or a non-conflict rebase error leaves no in-flight VCS op.
+        // left mid-op: a non-conflict rebase error leaves no in-flight VCS op.
         let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
         crate::refuse!(
             RefusalKind::OpParked,
@@ -3709,8 +3700,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
     // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite the
     // project repo's advanced_tips entry with the actual post-rebase HEAD.
-    // This also covers the ff/discard-local-commits case (tip == source tip,
-    // idempotent overwrite).
+    // This also covers the fast-forward case (tip == source tip, idempotent
+    // overwrite).
     {
         let project_tip = ctx
             .project_vcs
@@ -4209,9 +4200,8 @@ fn pin_source_snapshot(
 /// Read every manifest repo's HEAD in `workspace_dir`, skipping the checkouts
 /// [`classify_lock_relations`] skips — repos absent from disk.
 ///
-/// The unclassified counterpart to reading the relations' pinned tips:
-/// `--allow-stale-lock` takes no classification, so this is where the tips a
-/// disclosure needs come from on that path, and it is still one read per repo.
+/// The unclassified counterpart to reading the relations' pinned tips, still
+/// one read per repo.
 fn read_member_tips(
     manifest: &Manifest,
     workspace_dir: &Path,
@@ -7181,8 +7171,8 @@ mod tests {
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Site 2 — Phase 1' non-conflict failure (e.g. discard-local-commits
-    // hard-reset error): no live ConflictOp, so no VCS-native hint.
+    // Site 2 — Phase 1' non-conflict failure (a rebase error that is no
+    // conflict): no live ConflictOp, so no VCS-native hint.
     #[test]
     fn phase1_bail_message_no_conflict_omits_vcs_hint() {
         let cwd = Path::new("/ws/projects/web-app");

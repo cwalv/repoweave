@@ -59,7 +59,7 @@ Once your changes are committed across the member repos, land them into the bran
 rwv land --retire
 ```
 
-`rwv land` automatically snapshots any `Ahead` member-repo tips into the workweave's `rwv.lock` at the start of the operation, replays the workweave's commits onto the parent workspace, fast-forwards the parent, and — with `--retire` — deletes the workweave once it converges cleanly.
+`rwv land` automatically snapshots any `Ahead` member-repo tips into the workweave's `rwv.lock` at the start of the operation, composes the workweave's commits onto its branch's target, fast-forwards the target where it is checked out, and — with `--retire` — deletes the workweave once it converges cleanly.
 
 If you want to checkpoint the workweave's `rwv.lock` without landing yet, run `rwv lock --commit` (which updates `rwv.lock` and commits it to `projects/web-app`).
 

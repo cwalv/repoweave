@@ -109,18 +109,13 @@ The consent applies to the tip abort finds when it runs. If a foreign agent
 committed on top of a tip an earlier abort refused, or reset the branch and
 built something else, the rerun keeps the tip as it now stands.
 
-### After `--discard-local-commits` sync
+### A savepoint left after its operation ended
 
-When `rwv sync --discard-local-commits` discards a project repo's committed
-divergence, the savepoint for the project repo is kept as a **tombstone**
-even after the successful sync completes. The op-state file is still removed
-(the op succeeded), so `rwv abort` will refuse — but the tombstone ref at
-`refs/rwv/pre-op/<op-id>` remains. `rwv doctor --fix` turns it into a backup
-(a live `orphaned-savepoint`), which `rwv backup list` shows and `rwv backup
-drop` drops; nothing reads a tombstone as a backup before then.
-
-Member-repo savepoints are deleted on success regardless; only the project
-repo tombstone is preserved.
+A savepoint an earlier release kept after its operation completed (a
+**tombstone**) is no recovery point `rwv abort` reads: the operation's record
+is gone, so `rwv abort` refuses. `rwv doctor --fix` turns it into a backup (a
+live `orphaned-savepoint`), which `rwv backup list` shows and `rwv backup drop`
+drops; nothing reads a tombstone as a backup before then.
 
 ## Invocation
 

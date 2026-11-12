@@ -554,7 +554,7 @@ inspecting the writes the operation performs:
 
 | Kind | Predicate | Consent required |
 |---|---|---|
-| **MOVE** | Changes the *value* of `ref(W)` and nothing about `HEAD`'s symbolic-ness or target. | The verb's own preconditions. A MOVE that is not a fast-forward (a rewind) additionally requires a savepoint under `refs/rwv/pre-op/*` and a `DiscardWarrant` (§4.4). A MOVE of an already-detached HEAD is subject to the mid-operation precondition (§3.6). |
+| **MOVE** | Changes the *value* of `ref(W)` and nothing about `HEAD`'s symbolic-ness or target. | The verb's own preconditions. A MOVE that is not a fast-forward (a rewind) additionally requires a backup of the tip it leaves, taken first (`BackupWitness`, §4.4). A MOVE of an already-detached HEAD is subject to the mid-operation precondition (§3.6). |
 | **ATTACH** | Changes whether `HEAD` is symbolic, or which branch it points at. | Birth, or a named override. |
 | **DESTROY** | Removes a ref under `refs/heads/`, or a push branch on a remote. | A `DestroyProof` (§4.4): the deletion rule's verdict (§3.7). |
 | **DESTROY-STORE** | Removes an entire ref store and its object database (`remove_dir_all` of a repo). | R4: no live worktree registered against the store, and the verb's own named preconditions. |
@@ -639,10 +639,9 @@ procedure is total:
 - **`rwv abort`'s savepoint restore** (`abort_one_repo`, `sync.rs:4975-5003`,
   the `verified_restore_savepoint` call at `:4995-5002` → `git.rs:2200-2210`,
   reset at `:2207`) `[V]` — resets the current branch to
-  `refs/rwv/pre-op/<id>`. → **MOVE**, usually a rewind — and its
-  `DiscardWarrant` (§3.2) is trivially held: the savepoint the warrant
-  requires is the very ref being restored to, and invoking `abort` is the
-  named consent. Note it *already* implemented the attributability
+  `refs/rwv/pre-op/<id>`. → **MOVE**, usually a rewind — and the tip it
+  leaves needs no further backup: the savepoint is the very ref being
+  restored to, and invoking `abort` is the named consent. Note it *already* implemented the attributability
   discipline R3 generalizes: `verified_restore_savepoint` classifies the
   tip and refuses on `ForeignTip` (`vcs.rs:539-587`, `:2223-2266`) `[V]`.
 - **A hypothetical `rwv workweave rename`** — would change a ref's name, which
@@ -1061,7 +1060,7 @@ types, and the rest of the trait surface is typed to match.
 
 Implementation added types this section did not anticipate, each earning its
 place: `HeadObservation` (the VCS-specific half of `head_attachment`),
-`RefNameError`, and `SavepointRef` (the `DiscardWarrant`'s payload) `[V]`.
+and `RefNameError` `[V]`.
 
 ### 4.3 The `Vcs` signatures
 
@@ -1085,9 +1084,9 @@ Two neighbors survive because they are not branch-model operations:
 `hard_reset` remain on the trait as the mechanical primitives the typed MOVEs
 call underneath. `advance_if_fast_forward` still takes a bare `&Path`, which
 is why §4.6(1)'s argument is about the *caller's* obligation rather than
-about that method's signature; `hard_reset` now has **zero** call sites in
-`sync.rs` — `rewind_project_repo` (`sync.rs:4484-4521`) goes through
-`reset_attached_ref` with a `DiscardWarrant` instead `[V]`.
+about that method's signature; `hard_reset` is reached only through
+`reset_attached_ref_keeping`, which takes a `BackupWitness` of the tip it
+leaves `[V]`.
 
 The replacement, shipped (`vcs.rs`, decls at the line numbers noted):
 
@@ -1108,9 +1107,9 @@ fn head_attachment(&self, repo: &Path) -> Result<HeadAttachment, VcsError>;  // 
 // witness (the wider validity-window question is Q15, §9).
 fn advance_attached_ref(&self, on: &AttachedRef,
                         to: &ResolvedRevisionId) -> Result<(), VcsError>;   // :2683
-fn reset_attached_ref(&self, on: &AttachedRef,
-                      to: &ResolvedRevisionId, warrant: DiscardWarrant)
-    -> Result<(), VcsError>;                                                // :2698
+fn reset_attached_ref_keeping(&self, on: &AttachedRef,
+                              to: &ResolvedRevisionId, kept: &BackupWitness)
+    -> Result<(), VcsError>;
 // Moving a HEAD that is already detached is a MOVE, not an ATTACH —
 // subject to the mid-operation precondition (§3.6). DetachedHead carries
 // its repo, like AttachedRef.
@@ -1195,8 +1194,8 @@ sites had an answer.
 
 Homes, as specified: the two ATTACH consents live in the CLI flag module
 (`cli::consent`, `src/cli/consent.rs` — `DetachConsent` at `:50`,
-`ReattachConsent` at `:81`), and the warrant and the proof live in `vcs.rs`
-(`DiscardWarrant`, and `DestroyProof` with the private `Ground`) `[V]`.
+`ReattachConsent` at `:81`), and the witness and the proof live in `vcs.rs`
+(`BackupWitness`, and `DestroyProof` with the private `Ground`) `[V]`.
 
 The "no minting caller yet" gap this section used to carry is closed, and
 closed harder than this section asked for. The ask was that one module be the
@@ -1366,12 +1365,10 @@ pub struct DetachConsent(());
 /// to another. Same home, same idiom. Minted from `--reattach-checkouts`.
 pub struct ReattachConsent(());
 
-/// Proof that a rewinding MOVE (non-fast-forward) may proceed: a savepoint
-/// under refs/rwv/pre-op/* has been written AND the operator passed the
-/// verb's named override (e.g. --discard-local-commits). Constructed only
-/// by the savepoint-writing path, so a rewind without a savepoint is
-/// unrepresentable. This is the token §3.2's MOVE row requires.
-pub struct DiscardWarrant { savepoint: SavepointRef }
+/// Proof that a backup of the tip a rewinding MOVE leaves exists on disk.
+/// Constructed only by the backup-writing path, so a rewind without a backup
+/// is unrepresentable. This is the token §3.2's MOVE row requires.
+pub struct BackupWitness { /* the repo and the backup written */ }
 
 /// Why this branch may be destroyed now: every commit on it is reached by a
 /// ref that outlives it (landed), or a backup of it was made first. An opaque
@@ -1872,7 +1869,6 @@ one names where.
 |---|---|---|---|
 | `workweave create` | mints `{project}--{workweave}`, attaches worktree | birth | Name uniqueness is checked against the workweave index before the directory check. `birth_ephemeral_worktree` takes the branch §2.1 found (`FoundBranch`) and applies its `BranchPolicy`: a branch standing at the start point is the create's own partial result and is taken; one anywhere else refuses as `name` `exists`. Nothing is recorded about the birth beyond the branch itself. |
 | `sync` (ff / rebase) | advances the ref the CWD checkout is on (`apply_strategy`, `sync.rs:722-778`) `[V]` | MOVE | Legal, unchanged. |
-| `sync --discard-local-commits` | rewinds the current ref | MOVE | **Now typed.** `hard_reset` has zero call sites in `sync.rs`; `rewind_project_repo` (`sync.rs:4484-4521`) mints a `DiscardWarrant` from the savepoint (`:4485`, `:4495`) and calls `reset_attached_ref` (`:4502`) or `advance_detached_head` (`:4512`), bailing on `Unborn` `[V]`. The savepoint-plus-named-loss shape §3.2 requires of every rewinding MOVE is now a property of the kind, not of this verb. |
 | `land` (landing) | advances the *target's* ref (`ff_advance_repo`, `sync.rs:5458-5554`) `[V]` | MOVE | **Shipped.** `62af89f` added the runtime refusal; this model replaced it with the witness (`:5477-5506`), closing the "landed onto nothing, then deleted the only ref" chain by construction — see §4.6(1) for the one residual (the function's own argument list). |
 | `abort` | resets the current ref to the savepoint (`sync.rs:4975-5003` → `git.rs:2200-2210`) `[V]` | MOVE | Legal, unchanged. Already verified attributability (`git.rs:1324-1405`) `[V]`. |
 | `fetch` (present clone) | `realign_present_clone` (`fetch.rs:717-809`) `[V]` | ATTACH | **Shipped as specified.** On the tracking counterpart: no-op when equal (`:782-784`), `advance_attached_ref` when an advance (`:789-792`), refuse-or-`detach_head` on a non-fast-forward (`:794-808`). Attached to any *other* ref: refuses, naming `--detach-checkouts` (`:763-776`, §5.3). Already-detached repos stay detached via `advance_detached_head` (`:735`), subject to §3.6. `Unborn` is its own refusal (`:737-745`). |
@@ -2215,20 +2211,6 @@ document's own order), plus `migrate_legacy_ref` (`:4935-5013`),
 (`:5046-5095`) `[V]`. Detection is `scan_workweave_repo_branches`
 (`:3567-3678`) over `refs_in_workweave_namespace` (`:3296-3326`) and
 `legacy_ref_at_tip` (`:3679-3731`). Each arm below names where it lives.
-
-The precedent for the error shape is `cli/dispatch.rs:337-351` `[V]` — it
-moved out of `main.rs` with the rest of dispatch, unchanged in shape: rwv
-detects a removed flag before clap sees it and exits 2 with the replacements
-named —
-
-```
-error: `--force` has been removed from `rwv sync` and `rwv land`.
-
-Replace it with the specific override(s) you need:
-  --allow-stale-lock        skip the lock-freshness precondition
-  --discard-local-commits   discard CWD project commits not in source
-                            (recoverable via `rwv abort`)
-```
 
 ### 7.1 The migration pass
 

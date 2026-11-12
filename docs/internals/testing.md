@@ -106,7 +106,7 @@ rather than the suite's. `source` holds the structural pins, compile-fail and
 seal probes and the tests of the test tooling; `docs` the doc-claim, explain,
 prime, schema and refusal-entry tests; `process` plugins, `rwv each`, job
 control and concurrent rwv processes; `vcs` the git seam and branch model;
-`doctor` doctor, status and the health and state checks; `sync` sync, sync-to,
+`doctor` doctor, status and the health and state checks; `sync` sync, land,
 abort, lock, push, pull, fetch and update; `weave` workweaves, branches,
 members, clone, init, activation and project resolution; `integrations` the
 ecosystem integrations, hooks and surfacing; `scenario` the scenario harness.

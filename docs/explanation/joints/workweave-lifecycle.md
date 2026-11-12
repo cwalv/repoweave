@@ -59,8 +59,8 @@ rwv workweave create <name> --detach <rev>       # a detached workspace
 2. `[workweave]` artifacts from `rwv.toml` (`copy = [...]` entries deep-copied;
    `link = [...]` entries are absolute symlinks into the parent's root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
-   `parent` is the workspace the command ran in — it becomes the auto-target for
-   bare `rwv land` from inside the workweave. This is the workweave
+   `parent` is the workspace the command ran in, recorded as provenance only:
+   where the workweave lands is its branch's record. This is the workweave
    root's **only** identity file: no `.rwv-active` is written beside it.
    The pointer records project *selection*, which is primary-only — a
    workweave's project is fixed here at creation and cannot be switched —

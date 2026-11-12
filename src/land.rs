@@ -30,6 +30,8 @@ pub struct Landing {
     pub target_workspace: PathBuf,
     /// The newer of `T` and its upstream.
     pub target_tip: CommitId,
+    /// `T`'s mode as its record holds it now.
+    pub target_mode: Mode,
     /// Refusals judged while resolving, reported with the rest.
     pub judged: Report,
 }
@@ -178,6 +180,7 @@ pub fn resolve(ctx: &WorkspaceContext, target_flag: Option<&str>) -> anyhow::Res
         target,
         target_workspace,
         target_tip,
+        target_mode: target_record.mode(),
         judged,
     })
 }
@@ -561,18 +564,10 @@ fn judge_member(
     if sides.theirs.get_entry(path).is_none() {
         return Ok(None);
     }
-    let as_mode = crate::branch::recorded_value(
-        project_vcs().as_ref(),
-        &landing.project,
-        &project_dir(&landing.target_workspace, &landing.project),
-        &landing.target,
-    )
-    .map(|r| r.mode())
-    .unwrap_or(Mode::Declared);
     let Some(receiving) = crate::feature_sync::receiving_branch(
         path,
         landing.target.as_str(),
-        Some(as_mode),
+        Some(landing.target_mode),
         &sides.ours,
         Some(&sides.theirs),
         sides.base.as_ref(),

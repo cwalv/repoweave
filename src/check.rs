@@ -1535,9 +1535,8 @@ impl WeaveRootIdentityConflictKind<PathBuf> {
 pub enum WorkweaveTreeIntegrityKind<P> {
     /// The marker's `parent:` path no longer exists on disk. The workweave's
     /// parent was retired or deleted out-of-band (a crash mid-adopt, or a
-    /// hand-deletion) while this child remained. Bare `rwv land` would
-    /// otherwise mis-fire; instead it now surfaces friendly doctor-remediation
-    /// text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary
+    /// hand-deletion) while this child remained. The parent is provenance
+    /// only. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary
     /// (which always exists). Normal retire/delete adopts children before the
     /// parent is destroyed, so this only arises off the happy path.
     DanglingParent {

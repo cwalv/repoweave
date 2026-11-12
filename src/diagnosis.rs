@@ -1539,9 +1539,10 @@ impl State {
                         last saw it hold, and this workspace did not write the change: the \
                         old and the new value, listed, and whether the change arrived by \
                         fetch or was written in another workspace of this clone",
-                refused_by: "`rwv sync`, before anything is fetched or moved, until the change \
-                             is accepted or the old value restored; `rwv status`, `rwv update`, \
-                             `rwv pull`, `rwv switch`, `rwv push` and `rwv land` report it",
+                refused_by: "`rwv sync` and `rwv land`, before anything is fetched or moved, \
+                             until the change is accepted or the old value restored; `rwv \
+                             status`, `rwv update`, `rwv pull`, `rwv switch` and `rwv push` \
+                             report it",
                 offers: &[Form::C6, Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },

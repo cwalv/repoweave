@@ -1452,8 +1452,8 @@ branch tip, so the commits are still anchored by a live branch.
 
 **Warning. Auto-fixable.** The savepoint tip is *not* reachable. The ref is the
 last pointer to commits that would otherwise become unreachable — the same
-reason the reflog is never cut. A savepoint `rwv land
---discard-local-commits` keeps after its operation ended (a tombstone) is one.
+reason the reflog is never cut. A savepoint an earlier release kept after its
+operation ended (a tombstone) is one.
 
 **What to do:** `rwv doctor --fix` keeps the commits as a backup, then drops the
 savepoint: `rwv backup list` shows what it holds and `rwv backup drop` drops it

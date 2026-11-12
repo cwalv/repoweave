@@ -513,8 +513,8 @@ requires.** The proof is a value that cannot be forged:
   (`DestroyProof::backed_up`, which makes the backup and holds the witness).
   The proof names the store, the branch and the tip it was proved about, and
   `Vcs::delete_branch` deletes only at that tip, so a branch that moved since is
-  left. `DiscardWarrant` pairs a `SavepointRef` with an operator consent token:
-  a destructive reset is representable only when a savepoint provably exists.
+  left. `Vcs::reset_attached_ref_keeping` takes a `BackupWitness`: a reset that
+  leaves a tip is representable only when a backup of that tip provably exists.
 - **Found branches.** `FoundBranch` is the branch §2.1 of the branch model
   found in a store, with the revision a birth would start it at; a worktree is
   born only on one, so a birth derives its branch from the store rather than

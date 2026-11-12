@@ -3213,14 +3213,11 @@ pub trait Vcs: Send + Sync {
     /// commits and overwriting the working tree.
     ///
     /// Destructive — discarded commits are not recoverable through this VCS
-    /// call alone. Used only by `rwv sync --discard-local-commits` after a
-    /// Phase 1 ancestor check would have refused, with a savepoint already
-    /// in place under [`refs/rwv/pre-op/<op-id>`] for `rwv abort` to roll
-    /// back to.
+    /// call alone. Reached only through
+    /// [`Vcs::reset_attached_ref_keeping`], which requires a backup of the
+    /// tip being left.
     ///
     /// For git: runs `git reset --hard <to>`.
-    ///
-    /// [`refs/rwv/pre-op/<op-id>`]: Vcs::create_savepoint
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
 
     /// Return `true` when `ancestor` is an ancestor of `descendant` in
@@ -4067,9 +4064,8 @@ pub trait Vcs: Send + Sync {
     /// on disk: no consent token, because there was no prior attachment to
     /// lose. The birth target is the pin, not the remote tip. Cloning onto the
     /// tip and then aligning would make bootstrapping a weave from a lock that
-    /// is behind origin a *rewind*, and a rewinding MOVE needs a
-    /// `DiscardWarrant` — so that sequence would refuse on every repo and
-    /// mass-produce a weave with every member detached. A pin the clone does
+    /// is behind origin a *rewind*, and a rewinding MOVE needs a backup of the
+    /// tip it leaves — so that sequence would back up every repo for nothing. A pin the clone does
     /// not hold is [`PinOutcome::Unreachable`], and a member with no `pin`
     /// starts at the tip with [`PinOutcome::None`]; neither is a failure.
     ///
