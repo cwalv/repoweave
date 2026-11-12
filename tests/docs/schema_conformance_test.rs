@@ -1365,6 +1365,10 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
             repo: repo.clone(),
             op: ConflictOp::CherryPick,
         },
+        VcsErrorOutput::RebaseConflict {
+            repo: repo.clone(),
+            op: ConflictOp::Revert,
+        },
         VcsErrorOutput::StaleRefWitness {
             repo: repo.clone(),
             expected: sha('a'),
