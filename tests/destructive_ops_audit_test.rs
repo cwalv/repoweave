@@ -393,10 +393,13 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"--hard\"",
         count: 2,
-        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 1)],
+        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 2)],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait \
-            any more — the only one is Vcs::reset_attached_ref, so the \
+            any more — the only two are Vcs::reset_attached_ref and \
+            Vcs::reset_attached_ref_keeping (the second takes a \
+            BackupWitness of the tip being left instead of a warrant, and \
+            refuses a witness that backs up another repo or tip), so the \
             rewind is now type-gated rather than gated by a check the author \
             remembered to write: reset_attached_ref takes an AttachedRef \
             witness (which a detached or unborn HEAD cannot produce), \
@@ -431,7 +434,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 6,
+        count: 7,
         callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
@@ -457,7 +460,9 @@ const ALLOWLIST: &[Allowed] = &[
             store, so it cannot authorize a delete in a different refdb. \
             It refuses a branch checked out in any worktree before it \
             deletes. (6) the same command spelled in the argument list of \
-            the error that refusal returns; it is not a call.",
+            the error that refusal returns; it is not a call. (7) the same command \
+            spelled in the argument list of the error advance_branch_ref \
+            returns when the move is not a fast-forward; it is not a call.",
     },
     Allowed {
         file: "git/backup.rs",
@@ -484,6 +489,34 @@ const ALLOWLIST: &[Allowed] = &[
             file it named under the checkout's private git directory for \
             this process, after the snapshot commit is built. The checkout's \
             real index and working tree are never opened for writing.",
+    },
+    Allowed {
+        file: "git/merge.rs",
+        pattern: "\"update-ref\"",
+        count: 2,
+        callers: &[],
+        justification: "(1) commit_staged_merge: moves HEAD (the branch it \
+            names, or a detached HEAD) onto the merge commit just written \
+            from the index, a descendant of the tip HEAD held. (2) \
+            update_branch_ref: moves a local branch from the tip the caller \
+            read to a new one by a compare-and-swap naming the expected old \
+            value, so a branch another verb moved meanwhile is never \
+            overwritten. Its callers are advance_branch_ref (refuses what is \
+            not a fast-forward), reset_branch_ref (needs a BackupWitness for \
+            the tip being left, checked against the repo and the tip) and \
+            restore_branch_ref (puts back, for abort, a branch only where \
+            it still sits at the tip the operation wrote).",
+    },
+    Allowed {
+        file: "git/merge.rs",
+        pattern: "\"worktree\", \"remove\"",
+        count: 1,
+        callers: &[],
+        justification: "merge_commit_as_refs: removes the scratch worktree \
+            it added moments before to merge in a release with no \
+            merge-tree. It runs after the merge was aborted, so the \
+            worktree is clean, and without --force: a worktree holding \
+            anything is left standing and the error returned.",
     },
     Allowed {
         file: "git/records.rs",

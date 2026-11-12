@@ -218,7 +218,7 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
 // ============================================================================
 
 #[test]
-fn update_refuses_a_non_fast_forward_naming_the_reconcile() {
+fn update_refuses_a_diverged_branch_naming_the_merge_and_the_reset() {
     let fx = build_workspace();
     std::fs::write(fx.canonical.join("local.txt"), "local work").unwrap();
     common::git_in(&fx.canonical, &["add", "."]);
@@ -232,9 +232,8 @@ fn update_refuses_a_non_fast_forward_naming_the_reconcile() {
         .current_dir(&fx.workspace)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is not a fast-forward"))
-        // The exit: reconcile it yourself with ordinary git and re-run.
-        .stderr(predicate::str::contains("git rebase"))
+        .stderr(predicate::str::contains("push-branch diverged"))
+        .stderr(predicate::str::contains("--merge-upstream"))
         .stderr(predicate::str::contains("--detach-checkouts").not());
 
     assert_eq!(current_branch(&fx.canonical).as_deref(), Some("main"));
@@ -388,7 +387,7 @@ fn update_inside_a_workweave_advances_the_ephemeral_ref_without_detaching() {
 }
 
 #[test]
-fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() {
+fn update_inside_a_workweave_refuses_a_diverged_branch_naming_the_merge() {
     let fx = build_workspace();
     let ww = add_workweave(&fx, "my-app--dev");
     let slot = ww.join(&fx.repo_path);
@@ -405,10 +404,8 @@ fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() 
         .current_dir(&ww)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is not a fast-forward"))
-        .stderr(predicate::str::contains("rwv sync"))
-        // The workweave arm offers no detach: `rwv sync` is the verb that
-        // reconciles a workweave with its parent.
+        .stderr(predicate::str::contains("push-branch diverged"))
+        .stderr(predicate::str::contains("--merge-upstream"))
         .stderr(predicate::str::contains("--detach-checkouts").not());
 
     assert_eq!(common::git_in(&slot, &["rev-parse", "HEAD"]), diverged);

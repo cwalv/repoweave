@@ -622,7 +622,7 @@ fn merge_project(
             ctx,
             project,
             verb: "pull",
-            resume: "rwv pull --continue",
+            resume: crate::op_state::resume_command(OpVerb::Pull),
             jobs: how.jobs,
             opts: how.activation,
             message: format!("Merge the upstream of {attached} into {attached}"),

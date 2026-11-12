@@ -3031,7 +3031,17 @@ pub fn merge_conflict_continues() -> Scenario {
 
 pub fn merge_conflict_aborts() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
-    steps.push(Step::rwv(&b(), &["abort"]).expect(Exit::Succeeds));
+    steps.extend([
+        Step::rwv(&b(), &["abort"]).expect(Exit::Succeeds),
+        Step::git(
+            &b(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Fails),
+        Step::git(&b(), Repo::App, &["diff", "--quiet", "HEAD"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Docs, &["status", "--porcelain"]).expect(Exit::Succeeds),
+    ]);
     scenario(
         "pull --merge-upstream: a member conflict stops, abort restores",
         steps,

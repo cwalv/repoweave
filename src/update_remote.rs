@@ -1178,7 +1178,7 @@ fn settle_diverged(
             Err(MemberStop::Conflict(conflicted)) => {
                 return Err(conflict_stop(
                     "update --remote",
-                    "rwv update --remote --continue",
+                    &crate::op_state::resume_command(OpVerb::UpdateRemote),
                     &conflicted,
                     item.vcs.as_ref(),
                     &[],

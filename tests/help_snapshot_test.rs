@@ -48,7 +48,7 @@ Commands:
   sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
-  pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds
+  pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. A diverged branch is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream
   update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`)
   push         Publish a weave branch: its members' branches, then its record and the drops made here, then the project branch. Runs from any workspace on a recorded, named branch; never writes the lock. Pushes `owned` and `fork` members by default and a `dependency` or `reference` member only when named
   completions  Generate shell completions

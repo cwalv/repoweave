@@ -24,7 +24,7 @@ mod common;
 ///
 /// `op_state.rs` is the lease's own implementation, so its internal uses are
 /// not the question; the question is which VERBS take it.
-const LEASE_ACQUIRING_SITES: [(&str, usize); 1] = [("sync.rs", 1)];
+const LEASE_ACQUIRING_SITES: [(&str, usize); 2] = [("merge_upstream.rs", 1), ("sync.rs", 1)];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -133,13 +133,14 @@ fn the_op_lease_is_syncs_tool_and_not_a_verb_surface_mutex() {
 /// A module with more than one site holds a verb per site: `activate.rs`
 /// the two `materialize` and `activate_with_options` added, `backup.rs` the
 /// two backup verbs that write.
-const ADVISORY_REFUSAL_SITES: [(&str, usize); 8] = [
+const ADVISORY_REFUSAL_SITES: [(&str, usize); 9] = [
     ("activate.rs", 2),
     ("backup.rs", 2),
     ("lock.rs", 1),
     ("lock_commit.rs", 1),
     ("manifest_commit.rs", 1),
     ("member_pin.rs", 1),
+    ("pull.rs", 1),
     ("update_remote.rs", 1),
     ("workweave.rs", 1),
 ];

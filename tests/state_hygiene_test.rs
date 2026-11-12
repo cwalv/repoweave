@@ -378,6 +378,13 @@ fn published_op_verbs() -> Vec<String> {
         .collect()
 }
 
+fn resume_words(verb: &str) -> String {
+    match verb {
+        "update-remote" => "update --remote".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 /// An op is only resumable under the verb that started it — running
 /// `rwv sync --continue` against a stalled `sync-to` earns the verb-mismatch
 /// refusal. So the finding has to name the record's own verb, and must not
@@ -407,13 +414,13 @@ fn stale_op_state_hint_names_the_verb_that_started_the_op() {
         let stdout = String::from_utf8_lossy(&out.stdout);
 
         assert!(
-            stdout.contains(&format!("`rwv {verb} --continue`")),
+            stdout.contains(&format!("`rwv {} --continue`", resume_words(verb))),
             "a stalled `{verb}` op must be reported with its own resume \
              command; got:\n{stdout}"
         );
         for other in verbs.iter().filter(|o| *o != verb) {
             assert!(
-                !stdout.contains(&format!("`rwv {other} --continue`")),
+                !stdout.contains(&format!("`rwv {} --continue`", resume_words(other))),
                 "a stalled `{verb}` op must not be reported with `{other}`'s \
                  resume command; got:\n{stdout}"
             );

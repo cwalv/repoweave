@@ -264,10 +264,11 @@ impl FromStr for SavepointKey {
 /// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
 /// made where the message is written.
 pub fn resume_command(verb: OpVerb) -> String {
-    match verb {
-        OpVerb::UpdateRemote => "rwv update --remote --continue".to_owned(),
-        _ => format!("rwv {verb} --continue"),
-    }
+    let words = match verb {
+        OpVerb::UpdateRemote => "update --remote".to_owned(),
+        other => other.to_string(),
+    };
+    format!("rwv {words} --continue")
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,7 +1043,8 @@ fn refuse_other_schema(path: &StatePath, json: &str) -> anyhow::Result<()> {
         Some(release) => format!("rwv {release}"),
         None => format!("an rwv release before {}", crate::rwv_version()),
     };
-    anyhow::bail!(
+    crate::refuse!(
+        RefusalKind::OpParked,
         "the operation recorded at {path} was written by {writer}, in a record schema this \
          release does not read, so neither `--continue` nor `rwv abort` acts on it. Finish or \
          abort it with the release that wrote it, then rerun"
@@ -1691,7 +1693,7 @@ mod tests {
 
     #[test]
     fn a_record_of_an_older_schema_is_refused_by_every_reader_naming_its_release() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         a_record_in(tmp.path(), "");
         for refused in [
             read_owner(tmp.path()).map(|_| ()),
@@ -1708,7 +1710,7 @@ mod tests {
 
     #[test]
     fn a_record_of_the_current_schema_reads_whole() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         a_record_in(
             tmp.path(),
             &format!("\"schema\": {OP_RECORD_SCHEMA}, \"release\": \"1.2.3\", "),

@@ -48,7 +48,12 @@ where
 
 #[test]
 fn op_verb_displays_as_the_token_it_serializes_to() {
-    assert_display_is_the_wire_token(&[OpVerb::Sync, OpVerb::SyncTo]);
+    assert_display_is_the_wire_token(&[
+        OpVerb::Sync,
+        OpVerb::SyncTo,
+        OpVerb::Pull,
+        OpVerb::UpdateRemote,
+    ]);
 }
 
 #[test]

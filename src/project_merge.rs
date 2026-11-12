@@ -356,7 +356,7 @@ pub(crate) struct ProjectMerge<'a> {
     pub(crate) ctx: &'a WorkspaceContext,
     pub(crate) project: &'a ProjectName,
     pub(crate) verb: &'static str,
-    pub(crate) resume: &'static str,
+    pub(crate) resume: String,
     pub(crate) jobs: usize,
     pub(crate) opts: ActivateOptions,
     pub(crate) message: String,
@@ -475,7 +475,7 @@ impl ProjectMerge<'_> {
             let setters = entry_setters(vcs, dir, base, sides);
             conflict_stop(
                 self.verb,
-                self.resume,
+                &self.resume,
                 &Conflicted {
                     repo: repo.to_owned(),
                     checkout: dir.to_path_buf(),
@@ -574,7 +574,7 @@ impl ProjectMerge<'_> {
                 Err(MemberStop::Conflict(conflicted)) => {
                     return Err(conflict_stop(
                         self.verb,
-                        self.resume,
+                        &self.resume,
                         &conflicted,
                         vcs_for(entry.vcs_type).as_ref(),
                         &entry_setters(vcs, dir, base, sides),

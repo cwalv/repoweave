@@ -291,9 +291,10 @@ fn pull_refuses_a_diverged_project_branch_and_moves_nothing() {
         )),
         "{err}"
     );
+    assert!(err.contains("rwv pull --merge-upstream"), "{err}");
     assert!(
-        !err.contains("choices:"),
-        "no choice is printed for a state it would refuse: {err}"
+        err.contains(&format!("rwv pull --reset-to-upstream projects/{PROJECT}")),
+        "{err}"
     );
     assert!(err.contains("rwv explain push-branch"), "{err}");
     assert_eq!(weave.git_project(&["rev-parse", "HEAD"]), mine);

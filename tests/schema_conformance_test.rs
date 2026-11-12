@@ -499,11 +499,14 @@ fn branch_corpus() -> Vec<(&'static str, Value)> {
 /// closed-vocabulary field takes a single value there. Nothing else produces
 /// these, so they are supplied here rather than left unvalidated.
 fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
-    let mut violations = vec![CheckViolation::StaleOpState {
-        workspace_dir: common::doctor_corpus::path("/ws"),
-        verb: OpVerb::Sync,
-        started_at: "2026-01-01T00:00:00Z".to_owned(),
-    }];
+    let mut violations: Vec<CheckViolation> = [OpVerb::Sync, OpVerb::Pull, OpVerb::UpdateRemote]
+        .into_iter()
+        .map(|verb| CheckViolation::StaleOpState {
+            workspace_dir: common::doctor_corpus::path("/ws"),
+            verb,
+            started_at: "2026-01-01T00:00:00Z".to_owned(),
+        })
+        .collect();
     violations.push(CheckViolation::Provenance {
         project: common::doctor_corpus::project(),
         repo: common::doctor_corpus::repo(),
@@ -831,7 +834,15 @@ fn pull_corpus() -> Vec<(&'static str, Value)> {
         .into_iter()
         .enumerate()
         .map(|(i, project)| {
-            let name: &'static str = ["advanced", "even", "ahead", "no-upstream", "detached"][i];
+            let name: &'static str = [
+                "advanced",
+                "even",
+                "ahead",
+                "no-upstream",
+                "detached",
+                "merged",
+                "reset",
+            ][i];
             let full = i == 0;
             (
                 name,
@@ -1289,6 +1300,12 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
             OpPhase::AdvanceTarget,
         ),
         ("op-sync-to-retire", OpVerb::SyncTo, OpPhase::Retire),
+        ("op-pull-replay", OpVerb::Pull, OpPhase::Replay),
+        (
+            "op-update-remote-relock",
+            OpVerb::UpdateRemote,
+            OpPhase::Relock,
+        ),
     ] {
         docs.push((
             label,
