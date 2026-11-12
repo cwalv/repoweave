@@ -753,7 +753,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
-        count: 4,
+        count: 5,
         callers: &[],
         justification: "Temp-file cleanup for the two publish modes, never \
             able to name the published file itself, plus the claim release. \
@@ -769,7 +769,13 @@ const ALLOWLIST: &[Allowed] = &[
             so a ClaimFile that exists names a file this process created. \
             Unlinking is the whole release: left behind, the claim is the \
             wedge every later writer refuses on, so release reports a \
-            removal that keeps failing rather than dropping it. Sites \
+            removal that keeps failing rather than dropping it. (5) \
+            remove_if_holds, the landing claim's release and its takeover of \
+            a claim whose op is no longer recorded: it unlinks only the name \
+            it renamed the file to, spelled with the caller's own op id, after \
+            reading that it holds the bytes the caller judged, and links a \
+            file holding anything else back first, so it never removes a \
+            claim another landing wrote in between. Sites \
             (1)-(3): every site \
             unlinks only the sibling temp this call created moments earlier, \
             named <file>.tmp.<pid>.<serial>: the pid keeps processes apart and \

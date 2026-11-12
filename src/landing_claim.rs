@@ -230,17 +230,17 @@ fn take_within(
                     RefusalKind::StateClaimHeld,
                     "another landing into '{target}' holds it: op {op}, recorded in {owner}. If \
                      it is running, rerun once it ends. If it stopped, either of these, run in \
-                     {owner}, ends it, and then this landing runs:\n  rwv land --continue\n  \
-                     rwv abort",
+                     {owner}, ends it, and then this landing runs:\n  {resume}\n  rwv abort",
                     op = holder.op,
                     owner = holder.owner.as_path().display(),
+                    resume = crate::op_state::resume_command(crate::op_state::OpVerb::Land),
                 ),
                 Err(text) => crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another landing into '{target}' holds it, and {path} names it in a form \
                      this rwv does not read ({text}): an rwv of another release took it. End \
-                     that landing with the release that started it, with `rwv land \
-                     --continue` or `rwv abort`, then rerun."
+                     that landing with the release that started it, resuming or aborting it, \
+                     then rerun."
                 ),
             }
         }
