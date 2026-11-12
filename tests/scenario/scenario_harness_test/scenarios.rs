@@ -5268,7 +5268,7 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::git(&a(), Repo::Proj, &["switch", "--detach"]),
             Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib", "lib edited"),
-            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
                 .claim(Claim::LocalStateUnchanged(ww("w")))
                 .claim(Claim::LocalStateUnchanged(a())),
@@ -5277,7 +5277,7 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
                 Repo::App,
                 &["checkout-index", "--prefix=copy-", "README"],
             ),
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
                 .claim(Claim::Judged(Repo::App, State::EditsDirty))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
@@ -5966,14 +5966,20 @@ pub fn dc29_no_bring() -> Scenario {
             )
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App]),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::App, State::PinOffLineage))
                 .claim(Claim::OutputContains(
                     "rwv sync --reset-to-target local/remotes/app",
                 )),
             Step::rwv(
                 &ww("w"),
-                &["sync", "--reset-to-target", "local/remotes/app"],
+                &[
+                    "sync",
+                    "--history",
+                    "linear",
+                    "--reset-to-target",
+                    "local/remotes/app",
+                ],
             )
             .expect(Exit::Succeeds)
             .may_rewrite(&[Repo::App])
@@ -5982,7 +5988,7 @@ pub fn dc29_no_bring() -> Scenario {
             .claim(Claim::OutputContains("w-app")),
             Step::git(&ww("w"), Repo::App, &["cherry-pick", ":/w-app"]),
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land", "--retire"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w"))),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "other"])
@@ -7001,13 +7007,16 @@ pub fn dc06_member_set_from_merge() -> Scenario {
             ),
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
                 .claim(Claim::OutputLacks("local/remotes/docs: target"))
                 .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
-                .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                .claim(Claim::OutputContains("rwv land --continue")),
+            Step::rwv(
+                &ww("w"),
+                &["land", "--history", "linear", "--allow-member-change", LIB],
+            )
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv land --continue")),
             Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.toml"]),
             Step::drop_manifest_entry(&ww("w"), Repo::Proj, Repo::Lib),
             Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
@@ -8822,21 +8831,17 @@ pub fn land_from_the_primary_refuses_a_target_in_a_workweave() -> Scenario {
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(&a(), &["workweave", "delete", "t", "--project", "proj"])
                 .expect(Exit::Succeeds),
-            lands_on_main(
-                Step::rwv(&a(), &["land", "--history", "linear"]),
-                Repo::App,
-                "feat-app",
-            )
-            .expect(Exit::Succeeds)
-            .claim(Claim::OnBranch {
-                at: a(),
-                repo: Repo::Proj,
-                branch: "main",
-            })
-            .claim(Claim::AtPin {
-                at: a(),
-                repo: Repo::App,
-            }),
+            lands_on_main(Step::rwv(&a(), &["land"]), Repo::App, "feat-app")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "main",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                }),
         ],
     )
 }
@@ -9898,14 +9903,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
         Step::rwv_paused(
             &ww("w"),
-            &[
-                "land",
-                "--history",
-                "linear",
-                "--retire",
-                "--allow-member-change",
-                LIB,
-            ],
+            &["land", "--retire", "--allow-member-change", LIB],
             "retire",
             "landing",
         ),
@@ -10256,12 +10254,7 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
         vec![
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv_paused(
-                &ww("w"),
-                &["land", "--history", "linear", "--retire"],
-                "retire",
-                "landing",
-            ),
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
             Step::kill("landing"),
             Step::rwv(&a(), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
@@ -10275,7 +10268,7 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("in progress")),
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w")))
                 .claim(landed(a())),
@@ -10317,7 +10310,7 @@ pub fn landing_as_refs() -> Scenario {
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
         lands_on_main(
             lands_on_main(
-                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+                Step::rwv(&ww("w"), &["land", "--retire"]),
                 Repo::App,
                 "w-app",
             ),
@@ -10457,13 +10450,13 @@ pub fn dc05_compose_in_source(stop: Dc05) -> Scenario {
     steps.extend([
         Step::commit(&ww("w"), Repo::App, "w-app"),
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
-        Step::rwv_paused(&ww("w"), &["land", "--history", "linear"], point, "landing"),
+        Step::rwv_paused(&ww("w"), &["land"], point, "landing"),
         Step::kill("landing"),
     ]);
     let land = || {
         lands_on_main(
             lands_on_main(
-                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+                Step::rwv(&ww("w"), &["land", "--retire"]),
                 Repo::App,
                 "w-app",
             ),

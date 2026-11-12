@@ -901,15 +901,8 @@ fn abort_after_a_landing_pruned_a_dropped_member_in_the_target_names_the_checkou
     common::commit_staged(&project, "drop extra");
 
     let mut land = common::rwv_std();
-    land.args([
-        "land",
-        "--retire",
-        "--allow-member-change",
-        EXTRA,
-        "--history",
-        "linear",
-    ])
-    .current_dir(&s1);
+    land.args(["land", "--retire", "--allow-member-change", EXTRA])
+        .current_dir(&s1);
     let held = common::pause::Paused::spawn(land, "landed", &weave.root.join("..").join("pause"))
         .expect("the landing is held before it releases its target");
     if common::under(&weave.root, EXTRA).exists() {

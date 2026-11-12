@@ -193,7 +193,7 @@ fn sync_two_workweaves_lock_only_changes() {
     // lock commit, so this is a no-op patch). Phase 3 regenerates ww2's lock
     // to reflect the rebased lib SHA.
     rwv()
-        .args(["sync"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -298,7 +298,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
     // different path → no conflict). Lock commit's diff is empty after
     // exclusion, so it's skipped. Phase 3 produces a fresh lock commit.
     rwv()
-        .args(["sync"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -395,7 +395,7 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
     // ww1's version of notes/shared.md. Real conflict on a non-lock path
     // → sync should fail with a clear error.
     let assert = rwv()
-        .args(["sync"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww2.root)
         .assert()
         .failure();
@@ -825,7 +825,7 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
 
     // ww2 → main rebase: expected to conflict on notes/shared.md.
     rwv()
-        .args(["sync"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww2.root)
         .assert()
         .failure();

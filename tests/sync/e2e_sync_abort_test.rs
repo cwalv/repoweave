@@ -454,24 +454,24 @@ fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
     );
 }
 
-/// Under `ff-only`, land refuses when the target's project tip is not an
-/// ancestor of CWD's: the target is ahead of CWD.
+/// Under `ff-only`, a seat whose project tip is behind the target's has
+/// nothing to land: it reads no setting and the target stays where it is.
 #[test]
-fn ff_only_refuses_when_target_project_repo_is_ahead_of_cwd() {
+fn ff_only_lands_nothing_when_target_project_repo_is_ahead_of_cwd() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
+    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    let out = rwv()
+    rwv()
         .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
-        .output()
-        .unwrap();
-    let stderr = common::cli::refused(&out, repoweave::diagnosis::State::HistoryNotFastForward);
-    assert!(
-        stderr.contains("projects/web-app: history not fast-forward"),
-        "expected the project repo judged; got: {stderr}"
+        .assert()
+        .success();
+    assert_eq!(
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
+        primary_tip
     );
 }
 
@@ -555,6 +555,12 @@ fn ff_only_refusal_names_taking_the_target_in_first() {
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
+        &ww.project_dir,
+        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
+    );
 
     let assertion = rwv()
         .args(["land", "--history", "ff-only"])
@@ -605,6 +611,10 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
+    common::git_in(
+        &ww.project_dir,
+        &["commit", "--allow-empty", "-m", "ww project advance"],
+    );
 
     rwv()
         .args(["land", "--history", "ff-only"])
@@ -613,7 +623,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
         .failure();
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -672,7 +682,7 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     // project repos; this test deliberately constructs that to exercise Phase
     // 2's rebase strategy on the manifest repo, so it opts in via
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -758,7 +768,10 @@ fn abort_restores_repos_to_pre_op_state() {
     // Project repos diverged from independent lock commits.
     // is required to reach Phase 2 where the rebase conflict is the focus
     // (adapted from --force).
-    let _ = rwv().args(["land"]).current_dir(&ww.root).assert();
+    let _ = rwv()
+        .args(["land", "--history", "linear"])
+        .current_dir(&ww.root)
+        .assert();
 
     // Abort should restore ww/main back to pre-op state.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
@@ -1269,7 +1282,7 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
 
     // Land ww: target is C2, but ww is at C3 (C2 is ancestor of C3).
     let out = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1593,7 +1606,7 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
     );
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .args(args)
         .current_dir(&ww.root)
         .output()

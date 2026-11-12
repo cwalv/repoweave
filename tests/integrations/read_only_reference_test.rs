@@ -547,15 +547,8 @@ fn abort_restoring_an_older_manifest_resettles_the_target() {
     succeed(&["lock", "--commit"], &seat);
 
     let mut land = common::rwv_std();
-    land.args([
-        "land",
-        "--history",
-        "linear",
-        "--retire",
-        "--allow-member-change",
-        OWNED_PATH,
-    ])
-    .current_dir(&seat);
+    land.args(["land", "--retire", "--allow-member-change", OWNED_PATH])
+        .current_dir(&seat);
     let held = common::pause::Paused::spawn(land, "landed", &tmp.path().join("pause"))
         .expect("the landing reaches the end of its fast-forwards");
     drop(held);

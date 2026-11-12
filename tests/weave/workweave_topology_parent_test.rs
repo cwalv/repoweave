@@ -742,7 +742,7 @@ fn a_landing_whose_target_workweave_was_removed_lands_as_refs() {
     // Remove wwa out-of-band; wwb's target is now checked out nowhere.
     std::fs::remove_dir_all(&wwa.root).unwrap();
 
-    let out = common::cli::run(&["land", "--history", "linear"], &wwb.root);
+    let out = common::cli::run(&["land"], &wwb.root);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
