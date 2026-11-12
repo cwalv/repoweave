@@ -3492,6 +3492,15 @@ fn judge_target_pins(
     Ok(())
 }
 
+/// Where `T`'s workspace (the primary, for a landing as refs) presents a
+/// project other than the landing's, every choice the landing prints is
+/// spelled for the landing's project.
+fn spell_choices_for_target(dest: Option<&Path>, primary: &Path, project: &ProjectName) {
+    if crate::shared_members::outgoing(dest.unwrap_or(primary), project).is_some() {
+        crate::refusal::spell_choices_for(project.clone());
+    }
+}
+
 /// Run every precondition that gates the op AFTER the atomic acquire, every
 /// judged refusal collected into one report so the operator sees them
 /// together.
@@ -3502,15 +3511,6 @@ fn judge_target_pins(
 /// into `refreshed`, so on refusal every checkout whose edits are not refused
 /// looks exactly as it did before acquisition.
 #[allow(clippy::too_many_arguments)]
-/// Where `T`'s workspace (the primary, for a landing as refs) presents a
-/// project other than the landing's, every choice the landing prints is
-/// spelled for the landing's project.
-fn spell_choices_for_target(dest: Option<&Path>, primary: &Path, project: &ProjectName) {
-    if crate::shared_members::outgoing(dest.unwrap_or(primary), project).is_some() {
-        crate::refusal::spell_choices_for(project.clone());
-    }
-}
-
 fn run_preconditions_after_acquire(
     drifted: &mut Vec<DriftedCheckout>,
     refreshed: &mut Vec<op_state::LandingReport>,
