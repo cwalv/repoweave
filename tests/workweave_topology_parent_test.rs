@@ -526,7 +526,7 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
     commit_file(&a.manifest_repo, "a.txt", "from a\n", "a: add a.txt");
     rwv_lock_commit(&a.root);
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--strategy=ff", "--target", "app--p2"])
         .current_dir(&a.root)
         .assert()
         .success();
