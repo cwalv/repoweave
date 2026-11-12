@@ -1248,6 +1248,18 @@ pub fn run() -> anyhow::Result<()> {
                 let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
                 crate::branch::run_rename(&ctx, crate::branch::Rename { new, adopt })?;
             }
+            BranchAction::SetHistory {
+                history,
+                unset: _,
+                repo,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::set_history::run(&ctx, crate::set_history::SetHistory { history, repo })?;
+            }
             BranchAction::SetMode {
                 words,
                 target,

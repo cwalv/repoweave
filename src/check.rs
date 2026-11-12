@@ -67,6 +67,14 @@ pub enum CheckViolation {
         roles: Vec<(ProjectName, Role)>,
     },
 
+    /// A member two projects list, whose live weave branches record
+    /// different `history` for it.
+    HistoryDisagreement {
+        repo: RepoPath,
+        /// Every live weave branch recording a `history` for the member.
+        histories: Vec<crate::alignment::RecordedHistory>,
+    },
+
     /// A member's checkout does not stand at the commit a project's lock pins
     /// for it, or the lock pins it at no commit that can be stood at.
     ///
@@ -656,6 +664,7 @@ impl CheckViolation {
             | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
             | CheckViolation::RoleDisagreement { .. }
+            | CheckViolation::HistoryDisagreement { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::CargoVersionSkew { .. }
@@ -774,6 +783,7 @@ impl CheckViolation {
 
             CheckViolation::MemberPermissions { .. }
             | CheckViolation::RoleDisagreement { .. }
+            | CheckViolation::HistoryDisagreement { .. }
             | CheckViolation::IndexDrift { .. }
             | CheckViolation::WorkingTreeDrift { .. }
             | CheckViolation::MissingReplayExclusion { .. }
@@ -827,6 +837,7 @@ impl CheckViolation {
             CheckViolation::DanglingReference { .. } => ViolationKind::DanglingReference,
             CheckViolation::MemberPermissions { .. } => ViolationKind::MemberPermissions,
             CheckViolation::RoleDisagreement { .. } => ViolationKind::RoleDisagreement,
+            CheckViolation::HistoryDisagreement { .. } => ViolationKind::HistoryDisagreement,
             CheckViolation::Pin { .. } => ViolationKind::Pin,
             CheckViolation::WorkweaveDrift { .. } => ViolationKind::WorkweaveDrift,
             CheckViolation::IndexDrift { .. } => ViolationKind::IndexDrift,
@@ -894,6 +905,7 @@ pub enum ViolationKind {
     DanglingReference,
     MemberPermissions,
     RoleDisagreement,
+    HistoryDisagreement,
     Pin,
     WorkweaveDrift,
     IndexDrift,
@@ -934,12 +946,13 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
         Self::MemberPermissions,
         Self::RoleDisagreement,
+        Self::HistoryDisagreement,
         Self::Pin,
         Self::WorkweaveDrift,
         Self::IndexDrift,
@@ -1952,6 +1965,13 @@ pub enum ViolationOutput {
         /// Every project listing the clone, with the role it declares.
         roles: Vec<ProjectRoleOutput>,
     },
+    HistoryDisagreement {
+        path: String,
+        absolute_path: WirePath,
+        /// Every live weave branch, of every project listing the member, that
+        /// records a `history` for it, with that value.
+        histories: Vec<BranchHistoryOutput>,
+    },
     Pin {
         path: String,
         absolute_path: WirePath,
@@ -2257,6 +2277,14 @@ pub struct ProjectRoleOutput {
     pub role: Role,
 }
 
+/// The `history` one project's live weave branch records for a member.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct BranchHistoryOutput {
+    pub project: ProjectName,
+    pub branch: String,
+    pub history: crate::manifest::History,
+}
+
 /// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
 ///
 /// Kept separate so the internal type stays free of serde/schemars deps
@@ -2348,6 +2376,18 @@ impl ViolationOutput {
                 workweave: workweave.clone(),
                 sub_kind: kind,
                 files,
+            },
+            CheckViolation::HistoryDisagreement { repo, histories } => Self::HistoryDisagreement {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                histories: histories
+                    .into_iter()
+                    .map(|recorded| BranchHistoryOutput {
+                        project: recorded.project,
+                        branch: recorded.branch,
+                        history: recorded.history,
+                    })
+                    .collect(),
             },
             CheckViolation::RoleDisagreement { repo, roles } => Self::RoleDisagreement {
                 absolute_path: abs(workspace_dir, &repo),
@@ -5172,6 +5212,25 @@ fn scan_role_disagreements(
         .collect()
 }
 
+/// A `history-disagreement` finding for each member the projects in scope
+/// list that two projects' live weave branches record different `history`
+/// for. Every live branch recording one is named, in scope or not.
+fn scan_history_disagreements(
+    ctx: &crate::workspace::WorkspaceContext,
+    projects: &[Project],
+) -> Vec<CheckViolation> {
+    let listed: BTreeSet<&RepoPath> = projects
+        .iter()
+        .flat_map(|project| project.manifest.iter_repo_paths())
+        .collect();
+    crate::alignment::Accounting::scan(ctx.primary_path())
+        .history_disagreements()
+        .into_iter()
+        .filter(|(repo, _)| listed.contains(repo))
+        .map(|(repo, histories)| CheckViolation::HistoryDisagreement { repo, histories })
+        .collect()
+}
+
 /// The member-permissions finding for `slot`, when any of its tracked regular
 /// files does not hold the permissions its role asks for.
 fn member_permissions_finding(slot: &MemberSlot) -> Option<CheckViolation> {
@@ -6260,6 +6319,21 @@ impl CheckViolation {
                 };
                 format!("member permissions: {detail}")
             }
+            CheckViolation::HistoryDisagreement { repo, histories } => format!(
+                "history disagreement: {repo} — the projects listing this member record \
+                     different `history` for it ({}); each project's landings follow its own \
+                     setting, so the member's branches take both shapes; give every project \
+                     the same setting with `rwv branch set-history --project <name> <h> --repo \
+                     {repo}` in a workspace on each branch",
+                histories
+                    .iter()
+                    .map(|recorded| format!(
+                        "{} {}: {}",
+                        recorded.project, recorded.branch, recorded.history
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             CheckViolation::RoleDisagreement { repo, roles } => format!(
                 "role disagreement: {repo} — the projects listing this clone declare \
                      different roles ({}); a clone several projects share is read-only \
@@ -8966,6 +9040,7 @@ fn collect_doctor_violations(
             .filter_map(member_permissions_finding),
     );
     violations.extend(scan_role_disagreements(ctx, &input.projects));
+    violations.extend(scan_history_disagreements(ctx, &input.projects));
     let leftovers = scan_leftover_checkouts(ctx, project_scope, &input.projects);
     violations.retain(|v| match v {
         CheckViolation::OrphanedClone { path } => !leftovers.iter().any(|l| {

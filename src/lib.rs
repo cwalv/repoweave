@@ -144,6 +144,7 @@ pub mod registry;
 pub mod root_write;
 mod schema_url;
 pub mod selector;
+pub mod set_history;
 pub mod settle;
 pub mod setup;
 pub mod share;

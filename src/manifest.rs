@@ -700,6 +700,57 @@ pub struct RepoEntry {
         skip_serializing_if = "SubmoduleRecursion::is_recurse"
     )]
     pub recurse_submodules: SubmoduleRecursion,
+    /// This member's own `history`, overriding the top-level one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<History>,
+}
+
+/// How a weave branch accepts landings and takes its target's work in.
+/// `rwv.toml` records it at the top level and per member; no value is the
+/// default, so an absent one is unset.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    clap::ValueEnum,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+#[clap(rename_all = "kebab-case")]
+pub enum History {
+    /// Fast-forward, else rebase onto the receiving branch.
+    Linear,
+    /// Fast-forward, else a merge commit.
+    Merge,
+    /// A landing only fast-forwards; taking the target in rebases.
+    FfOnly,
+}
+
+impl History {
+    pub const ALL: [History; 3] = [History::Linear, History::Merge, History::FfOnly];
+}
+
+impl fmt::Display for History {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&crate::wire_token::wire_token(self))
+    }
+}
+
+impl FromStr for History {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        History::ALL
+            .into_iter()
+            .find(|h| h.to_string() == s)
+            .ok_or_else(|| format!("'{s}' is not a history (expected linear, merge or ff-only)"))
+    }
 }
 
 /// Whether a new checkout of a member populates the submodules it records;
@@ -1488,7 +1539,8 @@ pub struct WorkweaveConfig {
 /// Listed once so that [`nearest_manifest_key`] and serde's
 /// `deny_unknown_fields` error both name the same set. When a new top-level
 /// table is added to [`Manifest`], add its TOML key here too.
-pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["repositories", "integrations", "workweave"];
+pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] =
+    &["history", "repositories", "integrations", "workweave"];
 
 /// The sentence for a retired top-level key.
 fn retired_manifest_key_hint(unknown: &str) -> Option<&'static str> {
@@ -1603,6 +1655,10 @@ fn nearest_key<'a>(unknown: &str, candidates: &[&'a str]) -> Option<&'a str> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    /// The top-level `history`: the project branch's, and every member's
+    /// that has none of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<History>,
     pub(crate) repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default, deserialize_with = "deserialize_integrations")]
     pub integrations: BTreeMap<String, IntegrationConfig>,
@@ -1816,6 +1872,15 @@ impl Manifest {
         self.repositories.keys()
     }
 
+    /// The `history` that governs `member`: its own, else the top-level one.
+    /// `None` is unset. A member the manifest does not list follows the
+    /// top level.
+    pub fn history_for(&self, member: &RepoPath) -> Option<History> {
+        self.get_entry(member)
+            .and_then(|entry| entry.history)
+            .or(self.history)
+    }
+
     /// Look up a single [`RepoEntry`] by its [`RepoPath`].
     ///
     /// Returns `None` when the path is not present in the manifest.
@@ -2003,6 +2068,7 @@ impl Manifest {
 
     fn declaring_nothing() -> Self {
         Self {
+            history: None,
             repositories: BTreeMap::new(),
             integrations: BTreeMap::new(),
             workweave: None,

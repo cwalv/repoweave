@@ -8689,6 +8689,7 @@ mod tests {
             branch: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
             role: crate::manifest::Role::Owned,
             recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
+            history: None,
         };
         (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }

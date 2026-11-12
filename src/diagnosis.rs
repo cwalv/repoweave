@@ -55,6 +55,10 @@ pub enum Axis {
     Pin,
     /// A weave branch's record: how it is used and the branch it lands into.
     Target,
+    /// How a branch accepts landings and takes its target's work in.
+    History,
+    /// Projects sharing a member that record different `history` for it.
+    HistoryDisagreement,
     /// Where a workspace's checkouts sit against where the checked-out
     /// branch's record says they should.
     Alignment,
@@ -72,7 +76,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 11] = [
+    pub const ALL: [Axis; 13] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -81,6 +85,8 @@ impl Axis {
         Self::UnparseableProject,
         Self::Pin,
         Self::Target,
+        Self::History,
+        Self::HistoryDisagreement,
         Self::Alignment,
         Self::LegacyWorkweaveIndex,
         Self::Protected,
@@ -179,6 +185,31 @@ impl Axis {
                 sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Formats](./formats.md).",
             },
+            Self::History => &KindRow {
+                condition: "Integrating work needs more than a fast-forward, and the branch \
+                            it moves into records no `history` for that repo; or a run names a \
+                            `history` the branch records otherwise; or the branch records \
+                            `ff-only` and only a fast-forward would do.",
+                why: "A branch's `rwv.toml` records how it accepts landings: `linear`, \
+                      `merge` or `ff-only`, at the top level and per member. No value is the \
+                      default and no role implies one, because the choice between rewriting \
+                      a feature onto the target and recording a merge is the target's \
+                      owners' to make, once, and every later landing follows it. A fast-forward \
+                      reads no setting.",
+                sits: "[Formats](./formats.md) states the `history` keys; \
+                       [Sync semantics](../explanation/joints/sync-semantics.md).",
+            },
+            Self::HistoryDisagreement => &KindRow {
+                condition: "Two projects list the same member, and their live weave branches \
+                            record different `history` for it.",
+                why: "A member's clone is shared, so one member branch can be landed into by \
+                      several projects. Each project's landings follow its own setting, so \
+                      the branch takes rebased work from one project and merge commits from \
+                      another, and neither project's setting describes its history. Nothing \
+                      refuses: each project's setting is its own to keep, and `rwv doctor` \
+                      reports the difference.",
+                sits: "[Formats](./formats.md) states the `history` keys.",
+            },
             Self::Alignment => &KindRow {
                 condition: "A member's checkout, or the project repo's, is not where the \
                             checked-out project branch says it should be: on a branch other \
@@ -260,7 +291,16 @@ impl Axis {
             | Self::Name
             | Self::Publish
             | Self::Protected
-            | Self::Target => None,
+            | Self::Target
+            | Self::History => None,
+            Self::HistoryDisagreement => Some(Finding::whole(
+                crate::check::ViolationKind::HistoryDisagreement,
+                FindingMarks {
+                    severity: crate::integration::Severity::Warning,
+                    fix: crate::check::FixDisposition::ReportOnly,
+                    entry: HISTORY_DISAGREEMENT_ENTRY,
+                },
+            )),
             Self::Pin => Some(Finding::of(
                 crate::check::ViolationKind::Pin,
                 crate::check::PinKind::ALL.map(|sub_kind| SubKindRow {
@@ -359,12 +399,30 @@ back.
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and \
 choosing the commits a lock pins is a decision about state, not a repair.";
 
+const HISTORY_DISAGREEMENT_ENTRY: &str = "`histories` names every live weave branch, of \
+every project listing the member, that records a `history` for it, with the value it records: \
+the member's own, else the branch's top-level one. Branches of one project that differ among \
+themselves are not reported. Doctor reports it from any workspace, for each member a project in \
+scope lists.
+
+**What to do:** decide which shape the member's branches take, and give every project that \
+setting with `rwv branch set-history <h> --repo <m>` in a workspace on each branch that records \
+another, then push it. Leaving it is allowed: each project's landings follow its own setting.";
+
 /// What `rwv doctor` reports under a kind's name: the sub-kinds the finding
 /// carries, each with the severity and `--fix` disposition the doctor
-/// register gives it.
+/// register gives it, or for a finding with no sub-kinds, those of the
+/// finding itself.
 pub struct Finding {
     pub kind: crate::check::ViolationKind,
     pub sub_kinds: Vec<SubKindRow>,
+    pub whole: Option<FindingMarks>,
+}
+
+pub struct FindingMarks {
+    pub severity: crate::integration::Severity,
+    pub fix: crate::check::FixDisposition,
+    pub entry: &'static str,
 }
 
 pub struct SubKindRow {
@@ -382,6 +440,15 @@ impl Finding {
         Self {
             kind,
             sub_kinds: sub_kinds.into_iter().collect(),
+            whole: None,
+        }
+    }
+
+    fn whole(kind: crate::check::ViolationKind, marks: FindingMarks) -> Self {
+        Self {
+            kind,
+            sub_kinds: Vec::new(),
+            whole: Some(marks),
         }
     }
 }
@@ -446,6 +513,10 @@ pub enum State {
     PinWaived,
     ProtectedDeclared,
     ProtectedDeclaredMode,
+    HistoryUnset,
+    HistoryContradicted,
+    HistoryNotFastForward,
+    HistoryDisagreement,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -463,7 +534,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 57] = [
+    pub const ALL: [State; 61] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -512,6 +583,10 @@ impl State {
         Self::TargetCycle,
         Self::TargetGone,
         Self::TargetDependents,
+        Self::HistoryUnset,
+        Self::HistoryContradicted,
+        Self::HistoryNotFastForward,
+        Self::HistoryDisagreement,
         Self::AlignmentAligned,
         Self::AlignmentOnBranch,
         Self::AlignmentOnBranchWithStrayCommits,
@@ -1206,6 +1281,45 @@ impl State {
                 offers: &[Form::C12Feature],
                 verb_offers: &[],
             },
+            Self::HistoryUnset => &StateRow {
+                axis: Axis::History,
+                name: "unset",
+                means: "integrating this repo needs more than a fast-forward, and the branch it \
+                        moves into records no `history` for it: neither the member's own nor \
+                        the top-level one",
+                refused_by: "a verb that takes a target's work in or lands work into it, \
+                             where a fast-forward does not do it",
+                offers: &[Form::C23SetHistory, Form::C23Rerun],
+                verb_offers: &[],
+            },
+            Self::HistoryContradicted => &StateRow {
+                axis: Axis::History,
+                name: "contradicted",
+                means: "the run names a `history` for one run, and the branch it moves into \
+                        records another for this repo",
+                refused_by: "a verb that takes a target's work in or lands work into it, run \
+                             with a `history` for one run",
+                offers: &[Form::C23SetHistory, Form::KeepRecordedHistory],
+                verb_offers: &[],
+            },
+            Self::HistoryNotFastForward => &StateRow {
+                axis: Axis::History,
+                name: "not fast-forward",
+                means: "the branch records `ff-only` for this repo, and the landing is not a \
+                        fast-forward: the target has work the source has not taken in",
+                refused_by: "a landing into a branch that records `ff-only`",
+                offers: &[Form::C36],
+                verb_offers: &[],
+            },
+            Self::HistoryDisagreement => &StateRow {
+                axis: Axis::HistoryDisagreement,
+                name: "disagreement",
+                means: "projects listing this member record different `history` for it on \
+                        their live weave branches, each branch listed with its value",
+                refused_by: "nothing refuses; `rwv doctor` reports it",
+                offers: &[Form::C11SetHistory],
+                verb_offers: &[],
+            },
             Self::TargetGone => &StateRow {
                 axis: Axis::Target,
                 name: "gone",
@@ -1286,6 +1400,7 @@ pub enum ChoiceId {
     DoctorFix,
     ConvertIndex,
     RecordCommitted,
+    KeepRecordedHistory,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1493,6 +1608,11 @@ impl ChoiceId {
                          lock",
                 keeps_work: "the edits stay in the checkout, uncommitted",
             },
+            Self::KeepRecordedHistory => &ChoiceRow {
+                id: None,
+                phrase: "integrate by the setting the branch records",
+                keeps_work: "nothing changes",
+            },
             Self::ConvertIndex => &ChoiceRow {
                 id: None,
                 phrase: "convert the index and move it into the project clone",
@@ -1568,6 +1688,8 @@ pub enum Step {
     Then(Form),
     /// A flag to rerun the refused verb with.
     Rerun(&'static str),
+    /// A flag to rerun the refused verb without.
+    RerunWithout(&'static str),
 }
 
 /// One spelling of a choice.
@@ -1643,6 +1765,7 @@ pub enum Form {
     ConvertIndex,
     LockDirty,
     UpdateRemoteDirty,
+    KeepRecordedHistory,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -1654,7 +1777,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 70] = [
+    pub const ALL: [Form; 71] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1725,11 +1848,12 @@ impl Form {
         Self::ConvertIndex,
         Self::LockDirty,
         Self::UpdateRemoteDirty,
+        Self::KeepRecordedHistory,
     ];
 
     pub fn row(self) -> &'static FormRow {
         use ChoiceId as C;
-        use Step::{Rerun, Rwv, Then, Vcs};
+        use Step::{Rerun, RerunWithout, Rwv, Then, Vcs};
         use VcsAction as A;
         use Where as W;
         match self {
@@ -1875,13 +1999,13 @@ impl Form {
                 choice: C::C11,
                 steps: &[Rwv("rwv branch set-history <h> --repo <m>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11UnsetHistory => &FormRow {
                 choice: C::C11,
                 steps: &[Rwv("rwv branch set-history --unset --repo <m>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11MemberAdd => &FormRow {
                 choice: C::C11,
@@ -2001,7 +2125,7 @@ impl Form {
                 choice: C::C23,
                 steps: &[Rwv("rwv branch set-history <h>")],
                 at: W::OnTarget,
-                shipped: false,
+                shipped: true,
             },
             Self::C23Rerun => &FormRow {
                 choice: C::C23,
@@ -2162,6 +2286,12 @@ impl Form {
                 at: W::Here,
                 shipped: true,
             },
+            Self::KeepRecordedHistory => &FormRow {
+                choice: C::KeepRecordedHistory,
+                steps: &[RerunWithout("--history")],
+                at: W::Here,
+                shipped: false,
+            },
         }
     }
 
@@ -2192,7 +2322,7 @@ impl Form {
         row.shipped
             && row.steps.iter().all(|step| match step {
                 Step::Then(next) => next.printable(),
-                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) => true,
+                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => true,
             })
     }
 
@@ -2205,7 +2335,7 @@ impl Form {
             .flat_map(|step| match step {
                 Step::Rwv(command) => vec![*command],
                 Step::Then(next) => next.rwv_commands(),
-                Step::Vcs(_) | Step::Rerun(_) => Vec::new(),
+                Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => Vec::new(),
             })
             .collect()
     }
@@ -2229,6 +2359,7 @@ impl Form {
                 Step::Vcs(action) => vec![vcs.hint(*action).to_owned()],
                 Step::Then(next) => next.for_verb(verb).lines(vcs, verb),
                 Step::Rerun(flag) => vec![format!("rerun with {flag}")],
+                Step::RerunWithout(flag) => vec![format!("rerun without {flag}")],
             })
             .collect()
     }
@@ -2898,6 +3029,14 @@ pub fn finding_entries_markdown(vcs_type: crate::manifest::VcsType) -> Vec<(Axis
                 axis.row().condition,
                 kind_sections(axis, vcs.as_ref(), &vcs_name)
             );
+            if let Some(whole) = &finding.whole {
+                out.push_str(&format!(
+                    "\n**{}. {}** {}\n",
+                    severity_text(whole.severity),
+                    fix_text(whole.fix),
+                    consent_note(whole.fix, whole.entry)
+                ));
+            }
             for sub_kind in &finding.sub_kinds {
                 out.push_str(&format!(
                     "\n#### `{}`\n\n**{}. {}** {}\n",
@@ -3028,6 +3167,10 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
             Step::Rerun(flag) => {
                 flush(&mut actions, &mut parts);
                 parts.push(format!("rerun with `{flag}`"));
+            }
+            Step::RerunWithout(flag) => {
+                flush(&mut actions, &mut parts);
+                parts.push(format!("rerun without `{flag}`"));
             }
         }
     }
@@ -3181,17 +3324,26 @@ mod tests {
                 finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
             assert_eq!(listed, carried, "{axis:?}");
         }
-        assert_eq!(with_finding, 4);
+        assert_eq!(with_finding, 5);
     }
 
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index)] =
+        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::HistoryDisagreement, history), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index)] =
             &entries[..]
         else {
-            panic!("the four axes with a finding yield the four entries: {entries:?}");
+            panic!("the five axes with a finding yield the five entries: {entries:?}");
         };
+        assert!(
+            history.starts_with("### `history-disagreement`\n"),
+            "{history}"
+        );
+        assert!(
+            history.contains("\n**Warning. Report-only.** `histories` names"),
+            "{history}"
+        );
+        assert!(!history.contains("\n#### "), "{history}");
         assert!(pin.starts_with("### `pin`\n"), "{pin}");
         assert!(
             pin.contains("\n#### `behind`\n\n**Error. Report-only.** "),

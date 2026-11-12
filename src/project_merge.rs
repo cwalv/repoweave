@@ -268,6 +268,15 @@ pub(crate) fn entry_setters(
         return Vec::new();
     };
     let mut lines = Vec::new();
+    if theirs.history != ours.history
+        && theirs.history != base.history
+        && ours.history != base.history
+    {
+        lines.push("rwv.toml top-level history differs".to_owned());
+        for (side, value) in [("ours", ours.history), ("theirs", theirs.history)] {
+            lines.push(format!("  keep {side}: {}", history_setter(value, None)));
+        }
+    }
     for (path, was) in base.iter_entries() {
         let (Some(theirs), Some(ours)) = (theirs.get_entry(path), ours.get_entry(path)) else {
             continue;
@@ -295,7 +304,18 @@ pub(crate) fn entry_setters(
     lines
 }
 
+fn history_setter(value: Option<crate::manifest::History>, member: Option<&RepoPath>) -> String {
+    let repo = member.map_or(String::new(), |member| format!(" --repo {member}"));
+    match value {
+        Some(history) => format!("rwv branch set-history {history}{repo}"),
+        None => format!("rwv branch set-history --unset{repo}"),
+    }
+}
+
 fn setter(field: &str, member: &RepoPath, value: &str) -> Option<String> {
+    if field == "history" {
+        return Some(history_setter(value.parse().ok(), Some(member)));
+    }
     let verb = match field {
         "branch" => "set-branch",
         "url" => "set-url",

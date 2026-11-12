@@ -507,9 +507,11 @@ mod tests {
                 branch: TrackingRef::parse(RawRefName::new("main")).unwrap(),
                 role: crate::manifest::Role::Owned,
                 recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
+                history: None,
             },
         );
         Manifest {
+            history: None,
             repositories: repos,
             integrations: integration_configs,
             workweave: None,

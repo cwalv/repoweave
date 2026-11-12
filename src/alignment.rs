@@ -254,11 +254,22 @@ pub fn record(root: &Path, project: &ProjectName) -> anyhow::Result<bool> {
 
 /// Branches nothing the operator made by hand explains: the declared branches
 /// of each member across the weave's live weave branches, and the names of the
-/// recorded weave branches.
+/// recorded weave branches. Each live branch's `history` for each member it
+/// lists is read with them.
 #[derive(Debug, Clone, Default)]
 pub struct Accounting {
     declared: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     recorded: BTreeSet<String>,
+    histories: BTreeMap<RepoPath, Vec<RecordedHistory>>,
+}
+
+/// The `history` one project's live weave branch records for a member: the
+/// member's own, else the top-level one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RecordedHistory {
+    pub project: ProjectName,
+    pub branch: String,
+    pub history: crate::manifest::History,
 }
 
 impl Accounting {
@@ -291,8 +302,13 @@ impl Accounting {
                 if matches!(view.lookup(&name), Lookup::Unrecorded) {
                     continue;
                 }
-                let declarer = format!("{} (projects/{project})", branch.name);
-                accounting.read_declarations(vcs.as_ref(), &dir, &branch.tip, &declarer);
+                accounting.read_declarations(
+                    vcs.as_ref(),
+                    &dir,
+                    &branch.tip,
+                    &project,
+                    branch.name.as_str(),
+                );
             }
         }
         accounting
@@ -303,8 +319,10 @@ impl Accounting {
         vcs: &dyn Vcs,
         dir: &Path,
         tip: &crate::vcs::CommitId,
-        declarer: &str,
+        project: &ProjectName,
+        branch: &str,
     ) {
+        let declarer = format!("{branch} (projects/{project})");
         let tip = ResolvedRevisionId::from(tip.clone());
         let Ok(text) = vcs.read_file_at_revision(dir, &tip, Path::new(Manifest::FILE_NAME)) else {
             return;
@@ -318,8 +336,40 @@ impl Accounting {
                 .or_default()
                 .entry(entry.branch.local_counterpart().as_str().to_owned())
                 .or_default()
-                .insert(declarer.to_owned());
+                .insert(declarer.clone());
+            if let Some(history) = manifest.history_for(path) {
+                self.histories
+                    .entry(path.clone())
+                    .or_default()
+                    .push(RecordedHistory {
+                        project: project.clone(),
+                        branch: branch.to_owned(),
+                        history,
+                    });
+            }
         }
+    }
+
+    /// Each member for which two projects' live weave branches record
+    /// different `history`, with every live branch that records one for it.
+    /// Branches of one project differing among themselves are no
+    /// disagreement: each project's landings follow its own setting.
+    pub fn history_disagreements(&self) -> Vec<(RepoPath, Vec<RecordedHistory>)> {
+        self.histories
+            .iter()
+            .filter(|(_, recorded)| {
+                recorded.iter().any(|a| {
+                    recorded
+                        .iter()
+                        .any(|b| a.project != b.project && a.history != b.history)
+                })
+            })
+            .map(|(member, recorded)| {
+                let mut recorded = recorded.clone();
+                recorded.sort();
+                (member.clone(), recorded)
+            })
+            .collect()
     }
 
     pub fn declares(&self, member: &RepoPath, branch: &str) -> bool {

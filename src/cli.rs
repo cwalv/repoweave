@@ -648,6 +648,32 @@ pub enum BranchAction {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Record how the checked-out weave branch accepts landings: its top-level `history`, or with `--repo` one member's, which overrides the top-level one for that member. Commits only this change
+    ///
+    /// `linear` fast-forwards, else rebases onto the receiving branch;
+    /// `merge` fast-forwards, else makes a merge commit; `ff-only` lands only
+    /// by fast-forward. No value is the default. `--unset` removes the key: a
+    /// member's then follows the top-level setting. Other edits to `rwv.toml`
+    /// stay uncommitted where they are.
+    #[command(override_usage = "rwv branch set-history [OPTIONS] <linear|merge|ff-only|--unset>")]
+    SetHistory {
+        /// The setting to record
+        #[arg(
+            value_enum,
+            required_unless_present = "unset",
+            conflicts_with = "unset"
+        )]
+        history: Option<manifest::History>,
+        /// Remove the setting instead
+        #[arg(long)]
+        unset: bool,
+        /// The member whose own setting to write, as its workspace-relative path; `projects/<name>` names the top-level setting, as no `--repo` does
+        #[arg(long, value_name = "REPO")]
+        repo: Option<crate::manifest::RepoOperand>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Rename the project repo's checked-out branch, and in a feature its `owned` and `fork` members' branches of the same name; the record, its stored entries, every record that lands into it and the workspace's aligned branch follow. A declared-mode project branch can be renamed; a member branch some live weave branch declares cannot
     ///
     /// Each renamed branch stops taking in from the remote branch it did, and

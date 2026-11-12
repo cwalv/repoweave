@@ -37,6 +37,7 @@ fn make_repo_entry(role: Role) -> RepoEntry {
         branch: TrackingRef::parse(RawRefName::new("main")).unwrap(),
         role,
         recurse_submodules: repoweave::manifest::SubmoduleRecursion::Recurse,
+        history: None,
     }
 }
 

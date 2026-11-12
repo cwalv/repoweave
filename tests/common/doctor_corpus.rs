@@ -124,6 +124,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             PermissionsKind::ReadOnlyMember => "member-permissions/read-only-member".into(),
         },
         CheckViolation::RoleDisagreement { .. } => "role-disagreement".into(),
+        CheckViolation::HistoryDisagreement { .. } => "history-disagreement".into(),
         CheckViolation::Pin { sub_kind, .. } => {
             let tail = match sub_kind {
                 PinKind::None => "none",
@@ -297,6 +298,26 @@ pub fn corpus() -> Vec<CheckViolation> {
                 (ProjectName::new("other").unwrap(), Role::Owned),
                 (ProjectName::new("third").unwrap(), Role::Fork),
                 (ProjectName::new("fourth").unwrap(), Role::Dependency),
+            ],
+        },
+        CheckViolation::HistoryDisagreement {
+            repo: repo(),
+            histories: vec![
+                repoweave::alignment::RecordedHistory {
+                    project: project(),
+                    branch: "main".into(),
+                    history: repoweave::manifest::History::Linear,
+                },
+                repoweave::alignment::RecordedHistory {
+                    project: ProjectName::new("other").unwrap(),
+                    branch: "main".into(),
+                    history: repoweave::manifest::History::Merge,
+                },
+                repoweave::alignment::RecordedHistory {
+                    project: ProjectName::new("other").unwrap(),
+                    branch: "stable".into(),
+                    history: repoweave::manifest::History::FfOnly,
+                },
             ],
         },
         CheckViolation::Pin {

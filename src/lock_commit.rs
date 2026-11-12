@@ -5,7 +5,7 @@
 use crate::diagnosis::Report;
 use crate::entry_report::{between, entries_of, MemberChange};
 use crate::lock::{CommitMessage, Relocking, WholeFile};
-use crate::manifest::{LockEntry, LockFile, Manifest, RepoPath, Role};
+use crate::manifest::{History, LockEntry, LockFile, Manifest, RepoPath, Role};
 use crate::member_branch::{BranchEntry, Creation, EntryStep, Loaded};
 use crate::vcs::{project_vcs, vcs_for, RawRevisionId};
 use crate::workspace::WorkspaceContext;
@@ -18,6 +18,7 @@ pub(crate) struct WholeChanges {
     changed: Vec<MemberChange>,
     added: Vec<RepoPath>,
     removed: Vec<RepoPath>,
+    top_level_history: Option<(Option<History>, Option<History>)>,
     other_tables: bool,
 }
 
@@ -26,6 +27,7 @@ fn other_tables(manifest: &Manifest) -> toml::Value {
         toml::Value::try_from(manifest).unwrap_or(toml::Value::Table(Default::default()));
     if let Some(table) = value.as_table_mut() {
         table.remove("repositories");
+        table.remove("history");
     }
     value
 }
@@ -59,13 +61,21 @@ pub(crate) fn plan(
         .cloned()
         .collect();
     let other_tables = other_tables(&head) != other_tables(&working);
-    if changed.is_empty() && added.is_empty() && removed.is_empty() && !other_tables {
+    let top_level_history =
+        (head.history != working.history).then_some((head.history, working.history));
+    if changed.is_empty()
+        && added.is_empty()
+        && removed.is_empty()
+        && top_level_history.is_none()
+        && !other_tables
+    {
         return Ok(None);
     }
     Ok(Some(WholeChanges {
         changed,
         added,
         removed,
+        top_level_history,
         other_tables,
     }))
 }
@@ -316,6 +326,17 @@ fn report(
     changes: &WholeChanges,
     moving: &[Moving],
 ) -> anyhow::Result<()> {
+    if let Some((was, now)) = changes.top_level_history {
+        eprintln!(
+            "{}, committed as the file has it",
+            crate::set_history::change_line(
+                VERB,
+                &crate::set_history::HistoryKey::TopLevel(loaded.project.clone()),
+                was,
+                now
+            )
+        );
+    }
     for change in &changes.changed {
         for field in &change.fields {
             eprintln!(

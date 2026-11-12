@@ -479,6 +479,7 @@ pub fn run_add(
             branch,
             role,
             recurse_submodules,
+            history: None,
         };
         manifest.insert_repo(repo_path.clone(), entry);
         crate::workweave::fetch_member_submodules(
@@ -1242,6 +1243,7 @@ fn run_add_from_local_path(
         branch,
         role,
         recurse_submodules,
+        history: None,
     };
     manifest.insert_repo(repo_path.clone(), entry);
     Ok(Some((manifest, recorded)))
@@ -1931,6 +1933,7 @@ pub fn run_add_new(
             branch,
             role,
             recurse_submodules,
+            history: None,
         };
         manifest.insert_repo(repo_path.clone(), entry);
 

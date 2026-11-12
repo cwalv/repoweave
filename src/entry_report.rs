@@ -56,6 +56,11 @@ pub(crate) fn fields_between(was: &RepoEntry, now: &RepoEntry) -> Vec<FieldChang
         bool::from(was.recurse_submodules).to_string(),
         bool::from(now.recurse_submodules).to_string(),
     );
+    note(
+        "history",
+        crate::set_history::spelled(was.history),
+        crate::set_history::spelled(now.history),
+    );
     fields
 }
 
@@ -236,6 +241,8 @@ pub(crate) fn render(
                 "branch" => (Form::C11SetBranch, "<b>"),
                 "url" => (Form::C11SetUrl, "<url>"),
                 "role" => (Form::C11SetRole, "<role>"),
+                "history" if change.was.history.is_none() => (Form::C11UnsetHistory, "<h>"),
+                "history" => (Form::C11SetHistory, "<h>"),
                 _ => (Form::C11SetRecurseSubmodules, "<bool>"),
             };
             forms.push(form);
