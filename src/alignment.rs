@@ -1173,7 +1173,8 @@ impl Aligner {
     }
 
     /// The lines that say why a member cannot move to where its plan puts it:
-    /// none where it is there already, or may leave where it is.
+    /// none where it is there already, or may leave where it is; only the
+    /// operation in progress where it is stopped in one.
     pub fn blocked(
         &self,
         m: &Member<'_>,
@@ -1192,8 +1193,14 @@ impl Aligner {
         if self.carry_edits {
             dirty = self.overwritten(m, plan, dirty)?;
         }
-        let busy = m.vcs.mid_operation(m.dir).is_some();
-        if dirty.is_empty() && !busy && self.may_leave(m, &off) {
+        if m.vcs.mid_operation(m.dir).is_some() {
+            return Ok(
+                crate::diagnosis::judge_edits(m.vcs, repo, m.dir, dirty, None)
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        if dirty.is_empty() && self.may_leave(m, &off) {
             return Ok(Vec::new());
         }
         let mut judged = vec![self.judge_off(m, &off, repo, &facts)];
@@ -1249,7 +1256,9 @@ impl Aligner {
     }
 
     /// The refusal for a member that is not where its plan puts it, `None`
-    /// where it is, or where the plan leaves it as found.
+    /// where it is, or where the plan leaves it as found. A member stopped in
+    /// a VCS operation is refused for that operation alone: where it stands
+    /// mid-operation is the operation's, not its alignment.
     pub fn refusal(
         &self,
         m: &Member<'_>,
@@ -1258,6 +1267,9 @@ impl Aligner {
     ) -> anyhow::Result<Option<Judged>> {
         if matches!(plan.target, Target::AsFound) || self.is_aligned(m, plan)? {
             return Ok(None);
+        }
+        if let Some(busy) = crate::diagnosis::judge_edits(m.vcs, repo, m.dir, Vec::new(), None) {
+            return Ok(Some(busy));
         }
         let facts: Vec<Fact> = match &plan.target {
             Target::Detached { why, .. } => why.fact().into_iter().collect(),

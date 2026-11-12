@@ -2876,7 +2876,13 @@ pub fn judge_dirty_checkouts(
     deleting: Option<&WorkweaveName>,
 ) -> crate::diagnosis::Report {
     let mut report = crate::diagnosis::Report::default();
+    for busy in judge_mid_operation_checkouts(project_vcs, workweave_dir, project, manifest) {
+        report.add(busy);
+    }
     for dirty in dirty_checkouts(project_vcs, workweave_dir, project, manifest) {
+        if report.lines().iter().any(|line| line.repo() == dirty.repo) {
+            continue;
+        }
         let vcs = dirty.vcs.as_deref().unwrap_or(project_vcs);
         let listed = match dirty.files {
             Ok(files) => files,
@@ -2895,6 +2901,40 @@ pub fn judge_dirty_checkouts(
         report.add(judging.judge(vcs));
     }
     report
+}
+
+/// Each checkout in a workweave stopped in a VCS operation, judged: only that
+/// operation's own continue or abort ends it, so no discard flag lifts it.
+pub fn judge_mid_operation_checkouts(
+    project_vcs: &dyn Vcs,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<crate::diagnosis::Judged> {
+    let mut busy = Vec::new();
+    let project_wt = project_dir(workweave_dir, project);
+    if project_vcs.is_repo(&project_wt) {
+        busy.extend(crate::diagnosis::judge_edits(
+            project_vcs,
+            project_rel_path(project),
+            &project_wt,
+            Vec::new(),
+            None,
+        ));
+    }
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
+        let wt = workweave_dir.join(checkout.repo_path.as_path());
+        if checkout.vcs.is_repo(&wt) {
+            busy.extend(crate::diagnosis::judge_edits(
+                checkout.vcs.as_ref(),
+                &checkout.repo_path,
+                &wt,
+                Vec::new(),
+                None,
+            ));
+        }
+    }
+    busy
 }
 
 /// A checkout in a workweave holding uncommitted changes: its path, whether
@@ -3830,6 +3870,7 @@ pub(crate) fn delete_workweave_for_retire(
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
+    landed_into: crate::records::BranchName,
 ) -> anyhow::Result<WorkweaveDeletion> {
     crate::workspace::require_agreement(&CanonicalPath::of(ws_root), project, workweave_dir)?;
     delete_workweave_inner_at(
@@ -3840,7 +3881,7 @@ pub(crate) fn delete_workweave_for_retire(
         None,
         None,
         &crate::deletion::RemoteDeletes::default(),
-        Deleter::RetiringOp,
+        Deleter::RetiringOp { landed_into },
     )
 }
 
@@ -3848,10 +3889,12 @@ pub(crate) fn delete_workweave_for_retire(
 enum Deleter {
     /// `rwv workweave delete`, which an op record in the workweave refuses.
     Operator,
-    /// The `land --retire` op that has just synced the workweave into its
-    /// target. It holds its record there until its own cleanup phase, after
-    /// the delete.
-    RetiringOp,
+    /// The `land --retire` op that has just landed the workweave's branch
+    /// into `landed_into`, which the deletion rule judges it against. It
+    /// holds its record there until its own cleanup phase, after the delete.
+    RetiringOp {
+        landed_into: crate::records::BranchName,
+    },
 }
 
 /// Delete a workweave whose on-disk path is already known.
@@ -3905,6 +3948,13 @@ fn delete_workweave_inner_at(
 
     // Every refusal is judged before anything changes.
     let mut refusals = crate::diagnosis::Report::default();
+    if discard_uncommitted.is_some() && workweave_dir.exists() {
+        for line in
+            judge_mid_operation_checkouts(project_vcs.as_ref(), &workweave_dir, project, &manifest)
+        {
+            refusals.add(line);
+        }
+    }
     if discard_uncommitted.is_none() && workweave_dir.exists() {
         for line in judge_dirty_checkouts(
             project_vcs.as_ref(),
@@ -3933,11 +3983,14 @@ fn delete_workweave_inner_at(
     refusals.into_result()?;
 
     let rule = match feature_of(ws_root, project, &workweave_dir)? {
-        Some((branch, target)) => Some(crate::deletion::Rule::open(crate::deletion::Request {
+        Some((branch, recorded)) => Some(crate::deletion::Rule::open(crate::deletion::Request {
             primary: ws_root,
             project,
             branch,
-            target,
+            target: match &deleter {
+                Deleter::Operator => recorded,
+                Deleter::RetiringOp { landed_into } => landed_into.clone(),
+            },
             discard_unlanded,
             remote_deletes,
             leaving: Some(&workweave_dir),

@@ -75,7 +75,9 @@ struct Member {
     act: Act,
     /// Commits the receiving branch holds beyond the target's pin.
     beyond_pin: Vec<CommitSummary>,
-    /// For a reset: the work the branch drops, and the tip it leaves.
+    /// For a reset: its new work, every commit the backup holds that the
+    /// branch no longer reaches, and the tip it leaves.
+    new_work: Vec<CommitSummary>,
     dropped: Vec<CommitSummary>,
     was: Option<CommitId>,
 }
@@ -410,23 +412,38 @@ impl Member {
         if let (Act::Reset(_), Some(was)) = (&self.act, &self.was) {
             if !self.dropped.is_empty() {
                 let checkout = self.dir.display().to_string();
-                let ids: Vec<&str> = self.dropped.iter().rev().map(|c| c.id.as_str()).collect();
-                let pick = self
-                    .vcs
-                    .hint(crate::vcs::VcsAction::CherryPick)
-                    .replace("<checkout>", &checkout)
-                    .replace("<ids>", &ids.join(" "));
                 let merge = self
                     .vcs
                     .hint(crate::vcs::VcsAction::MergeNoFastForward)
                     .replace("<checkout>", &checkout)
-                    .replace("<rev>", was.as_str());
-                lines.push(format!(
-                    "{}: new work the reset leaves in the backup: {}\n  copy these commits onto \
-                     the branch: {pick}\n  or merge the backup in as a merge commit: {merge}",
-                    self.path,
-                    listed(&self.dropped),
+                    .replace("<pin>", was.as_str());
+                let mut text = if self.new_work.is_empty() {
+                    format!(
+                        "{}: the reset leaves in the backup only commits a pin of the target's \
+                         history reaches: {}\n  merge",
+                        self.path,
+                        listed(&self.dropped),
+                    )
+                } else {
+                    let ids: Vec<&str> =
+                        self.new_work.iter().rev().map(|c| c.id.as_str()).collect();
+                    let pick = self
+                        .vcs
+                        .hint(crate::vcs::VcsAction::CherryPick)
+                        .replace("<checkout>", &checkout)
+                        .replace("<ids>", &ids.join(" "));
+                    format!(
+                        "{}: new work the reset leaves in the backup: {}\n  copy these commits \
+                         onto the branch: {pick}\n  or merge",
+                        self.path,
+                        listed(&self.new_work),
+                    )
+                };
+                text.push_str(&format!(
+                    " the backup in as a merge commit, bringing {}: {merge}",
+                    listed(&self.dropped)
                 ));
+                lines.push(text);
             }
         }
         lines
@@ -987,6 +1004,7 @@ fn plan_member(
         vcs,
         act: Act::Nothing,
         beyond_pin: Vec::new(),
+        new_work: Vec::new(),
         dropped: Vec::new(),
         was: Some(head.clone()),
     };
@@ -1116,6 +1134,7 @@ fn plan_member(
                     .judge(mvcs),
             );
         }
+        member.new_work = crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &pins)?;
         member.dropped =
             crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &BTreeSet::new())?;
         member.act = Act::Reset(source);

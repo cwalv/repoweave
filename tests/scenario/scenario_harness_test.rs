@@ -482,6 +482,14 @@ every_scenario!(
     land_never_rewrites_a_declared_mode_branch,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
+    dc01_mid_operation(scenarios::Stopped::Rebase),
+    dc01_mid_operation(scenarios::Stopped::Bisect),
+    dc02_c14_keeps_work,
+    land_retire_judges_deletion_against_the_named_target,
+    bump_to_cut_pin,
+    c22_prints_both,
+    dc29_no_bring,
+    concurrent_landing_merge_upstream,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2829,4 +2837,47 @@ fn dc01_a_member_mid_operation_refuses_the_landing_with_its_own_status() {
 #[test]
 fn deletion_offline_unpublished_lands_and_retires_by_local_refs() {
     runner::run(scenarios::deletion_offline_unpublished()).assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_stopped_mid_rebase_is_judged_on_that_alone_by_every_verb_that_moves_it() {
+    runner::run(scenarios::dc01_mid_operation(scenarios::Stopped::Rebase))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_stopped_mid_bisect_is_judged_on_that_alone_by_every_verb_that_moves_it() {
+    runner::run(scenarios::dc01_mid_operation(scenarios::Stopped::Bisect))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn dc02_c14_keeps_detached_work_on_a_branch_through_the_landing() {
+    runner::run(scenarios::dc02_c14_keeps_work()).assert_fully_decided_green();
+}
+
+#[test]
+fn land_retire_with_a_target_judges_the_deletion_against_that_target() {
+    runner::run(scenarios::land_retire_judges_deletion_against_the_named_target())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_hold_bumped_to_the_cuts_pin_is_judged_off_lineage_and_lands_after_c26() {
+    runner::run(scenarios::bump_to_cut_pin()).assert_fully_decided_green();
+}
+
+#[test]
+fn c22s_report_prints_the_copy_with_the_new_work_and_the_merge_with_every_commit() {
+    runner::run(scenarios::c22_prints_both()).assert_fully_decided_green();
+}
+
+#[test]
+fn dc29_work_off_lineage_is_ported_by_cherry_pick_and_lands_with_no_porting_verb() {
+    runner::run(scenarios::dc29_no_bring()).assert_fully_decided_green();
+}
+
+#[test]
+fn concurrent_landings_merge_by_pull_merge_upstream_and_publish() {
+    runner::run(scenarios::concurrent_landing_merge_upstream()).assert_fully_decided_green();
 }

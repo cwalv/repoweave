@@ -4678,6 +4678,26 @@ fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
 // are created in guard_and_mark for verb=Land (this spec's scope); sibling
 // .4 adds HEAD-verification on top of the savepoint restore.
 
+/// The branch the landing went into: the one checked out in the target
+/// workspace, which the op's lease keeps there until the op ends. The
+/// deletion rule judges the retired branches against it, a one-run
+/// `--target` included.
+fn landed_into(
+    ctx: &OpContext<'_>,
+    project: &crate::manifest::ProjectName,
+) -> anyhow::Result<crate::records::BranchName> {
+    let vcs = ctx.project_vcs.as_ref();
+    let dir = project_dir(&ctx.dest_workspace_dir, project);
+    let Some(checked_out) = crate::branch::checked_out(vcs, &dir)? else {
+        return Err(crate::untokened!(
+            InternalInvariant,
+            "the landing's target workspace {} has no branch checked out",
+            dir.display()
+        ));
+    };
+    crate::branch::named(vcs, project, &dir, &checked_out)
+}
+
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
@@ -4692,6 +4712,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 name.require(dir.as_path(), project)?,
                 project,
                 &ctx.cwd_project_dir,
+                landed_into(ctx, project)?,
             )?;
             eprintln!("retired workweave {}", retired.name().as_str());
             if emit_text {
@@ -4814,6 +4835,7 @@ fn retire_workweave_after_landing(
     workweave_name: &WorkweaveName,
     project: &crate::manifest::ProjectName,
     cwd_project_dir: &Path,
+    landed_into: crate::records::BranchName,
 ) -> anyhow::Result<RetiredWorkweave> {
     let resume = op_state::resume_command(op_state::OpVerb::Land);
 
@@ -4841,6 +4863,7 @@ fn retire_workweave_after_landing(
         project,
         workweave_name,
         workweave_dir,
+        landed_into,
     )
     .context("--retire: workweave delete failed")?;
 

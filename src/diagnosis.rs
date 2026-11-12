@@ -2990,8 +2990,11 @@ pub struct Report {
 }
 
 impl Report {
+    /// Add `judged`, unless the report already holds that same line.
     pub fn add(&mut self, judged: Judged) {
-        self.lines.push(judged);
+        if !self.lines.contains(&judged) {
+            self.lines.push(judged);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -3000,7 +3003,9 @@ impl Report {
 
     /// Add `judged` when there is one.
     pub fn extend(&mut self, judged: Option<Judged>) {
-        self.lines.extend(judged);
+        if let Some(judged) = judged {
+            self.add(judged);
+        }
     }
 
     pub fn lines(&self) -> &[Judged] {
@@ -3024,7 +3029,9 @@ impl Report {
         };
         match err.downcast::<Refused>() {
             Ok(Refused(report)) => {
-                self.lines.extend(report.lines);
+                for judged in report.lines {
+                    self.add(judged);
+                }
                 self.notes.extend(report.notes);
                 Ok(())
             }
@@ -3550,6 +3557,31 @@ mod tests {
         assert!(!Form::C15AtCherryPick.printable());
         assert!(Form::C15.printable());
         assert!(Form::C14Keep.printable());
+    }
+
+    #[test]
+    fn a_line_judged_twice_is_printed_once() {
+        let vcs = git();
+        let busy = || {
+            State::EditsMidOperation
+                .of("github/o/lib")
+                .subject("rebase")
+                .checkout(Path::new("/w/github/o/lib"))
+                .judge(vcs.as_ref())
+        };
+        let mut report = Report::default();
+        report.add(busy());
+        report.extend(Some(busy()));
+        assert!(report.absorb(Err(busy().refused())).is_ok());
+        assert_eq!(
+            report.render("land"),
+            "rwv land: github/o/lib: edits mid-operation (rebase)\n\
+             choices:\n\
+             \x20 finish or abandon the operation in progress first\n\
+             \x20   git -C /w/github/o/lib status\n\
+             \n\
+             rwv explain edits\n"
+        );
     }
 
     #[test]

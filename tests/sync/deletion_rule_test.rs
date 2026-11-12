@@ -726,7 +726,7 @@ fn a_recreated_feature_branch_draws_no_doctor_finding() {
 }
 
 #[test]
-fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_landed() {
+fn land_retire_deletes_what_landed_into_the_target_it_names() {
     let w = weave(&[LIB]);
     let ww = create_workweave(&w.workspace, "feat");
     let branch = minted("feat");
@@ -763,22 +763,15 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
 
     let out = run(&["land", "--retire", "--json", "--target", "main"], &ww);
 
-    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    assert!(out.status.success(), "{}", describe(&out));
     let doc = json(&out);
     assert_eq!(doc["retired"], true);
-    assert_eq!(
-        survivor(&doc, "projects/p")["reason"],
-        "unlanded",
-        "judged against the record's target, not against where the work went"
-    );
     assert!(
-        doc["survivors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|s| s["path"] != LIB),
-        "the member's work reached the branch the target declares for it: {doc}"
+        doc.get("survivors").is_none(),
+        "judged against the target it landed into, not the record's: {doc}"
     );
+    assert!(!has_branch(&project_dir(&w.workspace), &later));
+    assert!(!has_branch(&w.workspace.join(LIB), &later));
     assert!(!ww.exists());
 }
 

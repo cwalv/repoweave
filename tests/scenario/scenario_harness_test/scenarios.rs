@@ -5489,3 +5489,375 @@ pub fn deletion_offline_unpublished() -> Scenario {
         ],
     )
 }
+
+/// How `dc01-mid-operation` stops a member.
+#[derive(Debug, Clone, Copy)]
+pub enum Stopped {
+    /// A rebase whose last step failed, leaving the member detached.
+    Rebase,
+    /// A bisect, which leaves the member on its branch.
+    Bisect,
+}
+
+/// `dc01-mid-operation`, for the verbs that align, move or remove a
+/// checkout: a member stopped in a VCS operation is judged on that alone,
+/// offering only the VCS's own status; `update` reports it where it would
+/// move the member and leaves a member it would not, `switch`, `land` and
+/// `workweave delete` refuse it, a discard flag included, and nothing moves.
+pub fn dc01_mid_operation(stopped: Stopped) -> Scenario {
+    let stop = match stopped {
+        Stopped::Rebase => Step::git(&ww("w"), Repo::Lib, &["rebase", "-x", "false", "HEAD~1"])
+            .expect(Exit::Code(1)),
+        Stopped::Bisect => Step::git(&ww("w"), Repo::Lib, &["bisect", "start"]),
+    };
+    let alone = |step: Step| {
+        step.claim(Claim::OutputContains(
+            "finish or abandon the operation in progress first",
+        ))
+        .claim(Claim::OutputLacks("alignment"))
+        .claim(Claim::OutputLacks("commit your edits"))
+        .claim(Claim::LocalStateUnchanged(ww("w")))
+    };
+    let update = Step::rwv(&ww("w"), &["update"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLacks("alignment"))
+        .claim(Claim::LocalStateUnchanged(ww("w")));
+    let update = match stopped {
+        Stopped::Rebase => update
+            .claim(Claim::Judged(Repo::Lib, State::EditsMidOperation))
+            .claim(Claim::OutputContains(
+                "finish or abandon the operation in progress first",
+            )),
+        Stopped::Bisect => update.claim(Claim::OutputLacks("mid-operation")),
+    };
+    scenario(
+        "dc01 a member mid-operation is judged on that alone",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            stop,
+            update,
+            alone(Step::rwv(&ww("w"), &["switch", "--detach", "HEAD"]))
+                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
+            alone(Step::rwv(&ww("w"), &["land"]))
+                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation))
+                .claim(Claim::LocalStateUnchanged(a())),
+            alone(Step::rwv(&a(), &["workweave", "delete", "w"]))
+                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
+            alone(Step::rwv(
+                &a(),
+                &["workweave", "delete", "w", "--discard-uncommitted"],
+            ))
+            .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
+        ],
+    )
+}
+
+/// `dc02-c14-keeps-work`: a member detached with two unpushed commits refuses
+/// the landing with C14, which prints no bare return while they are
+/// unpushed; following it keeps them on a branch, and the landing then
+/// retires the workweave with the commits still on that branch.
+pub fn dc02_c14_keeps_work() -> Scenario {
+    scenario(
+        "dc02 C14 keeps the work",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "--detach"]),
+            Step::commit(&ww("w"), Repo::Lib, "detached-1"),
+            Step::commit(&ww("w"), Repo::Lib, "detached-2"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentDetachedUnpushed))
+                .claim(Claim::OutputContains("branch <name> <sha>"))
+                .claim(Claim::OutputLacks("switch"))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::git(&ww("w"), Repo::Lib, &["branch", "kept", "HEAD"]),
+            Step::rwv(&ww("w"), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: ww("w"),
+                    repo: Repo::Lib,
+                    branch: "proj--w",
+                }),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "kept",
+                    mark: "detached-2",
+                }),
+        ],
+    )
+}
+
+/// `land --retire --target <T>` judges the deletion rule against `<T>`,
+/// the branch it landed into, not the record's target: the retired feature
+/// is landed there, so its branches and record go.
+pub fn land_retire_judges_deletion_against_the_named_target() -> Scenario {
+    scenario(
+        "land --retire --target judges deletion against the named target",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--retire", "--target", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w")))
+                .claim(Claim::OutputLacks("left:"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "proj--w",
+                    record: None,
+                }),
+        ],
+    )
+}
+
+/// `stable` cut from `main` at the commit pinning `cut-lib`, holding `lib`
+/// on its own `stable-lib` one commit behind; a workweave `b` onto it.
+fn lib_held_on_stable() -> Vec<Step> {
+    vec![
+        Step::commit(&a(), Repo::Lib, "cut-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "create",
+                "stable",
+                "--declared",
+                "--set-new-branch",
+                "local/remotes/lib=stable-lib",
+                "--pin",
+                "local/remotes/lib=HEAD~1",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        create("b"),
+    ]
+}
+
+/// The hold's `lib` fast-forwarded in `b` to `main`'s, which the landing
+/// judges off lineage, naming C22.
+fn hold_bumped_by_fast_forward() -> Vec<Step> {
+    vec![
+        Step::git(&ww("b"), Repo::Lib, &["merge", "--ff-only", "main"]),
+        Step::rwv(&ww("b"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("b"), &["land"])
+            .expect(Exit::refuses(Repo::Lib, State::PinOffLineage))
+            .claim(Claim::OutputContains(
+                "rwv sync --reset-to-target local/remotes/lib",
+            ))
+            .claim(Claim::LocalStateUnchanged(a())),
+    ]
+}
+
+fn reset_lib_to_target() -> Step {
+    Step::rwv(
+        &ww("b"),
+        &["sync", "--reset-to-target", "local/remotes/lib"],
+    )
+    .expect(Exit::Succeeds)
+    .may_rewind(&[Repo::Lib])
+    .claim(Claim::BackedUp {
+        repo: Repo::Lib,
+        mark: "cut-lib",
+        marked: None,
+    })
+    .claim(Claim::OutputContains(
+        "merge the backup in as a merge commit, bringing",
+    ))
+    .claim(Claim::OutputLacks("<pin>"))
+}
+
+/// `bump-to-cut-pin`: the hold's `lib` bumped to exactly the cut's pin is
+/// moved and judged, never silently dropped: off lineage, then C22, whose
+/// report holds no new work and offers C26 alone, and after C26's merge the
+/// bump lands.
+pub fn bump_to_cut_pin() -> Scenario {
+    let mut steps = lib_held_on_stable();
+    steps.extend(hold_bumped_by_fast_forward());
+    steps.extend([
+        reset_lib_to_target()
+            .claim(Claim::OutputContains("cut-lib"))
+            .claim(Claim::OutputLacks("cherry-pick")),
+        Step::git(
+            &ww("b"),
+            Repo::Lib,
+            &["merge", "--no-ff", "--no-edit", ":/cut-lib"],
+        ),
+        Step::rwv(&ww("b"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("b"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("b")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "stable-lib",
+                mark: "cut-lib",
+            }),
+    ]);
+    scenario("bump to the cut's pin", steps)
+}
+
+/// `c22-prints-both`: a hold bumped by fast-forward past the cut's pin; C22's
+/// report prints C15 with the new work alone and C26 with every commit the
+/// backup brings.
+pub fn c22_prints_both() -> Scenario {
+    let mut steps = lib_held_on_stable();
+    steps.push(Step::hand_commit(
+        &a(),
+        Repo::Lib,
+        "main",
+        &[("past-cut.txt", "past the cut\n")],
+    ));
+    steps.extend(hold_bumped_by_fast_forward());
+    steps.push(
+        reset_lib_to_target()
+            .claim(Claim::OutputContains(
+                "new work the reset leaves in the backup: ",
+            ))
+            .claim(Claim::OutputContains("hand commit\n  copy these commits"))
+            .claim(Claim::OutputContains("cherry-pick"))
+            .claim(Claim::OutputContains("cut-lib")),
+    );
+    scenario("C22 prints both", steps)
+}
+
+/// `dc29-no-bring`: work left off lineage is ported by the cherry-pick C22's
+/// report prints and recorded by C5; it lands and publishes with no porting
+/// verb.
+pub fn dc29_no_bring() -> Scenario {
+    scenario(
+        "dc29 no bring",
+        vec![
+            Step::git(&a(), Repo::App, &["branch", "other"]),
+            Step::commit(&a(), Repo::App, "cut-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["member", "set-branch", "local/remotes/app", "other"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinOffLineage))
+                .claim(Claim::OutputContains(
+                    "rwv sync --reset-to-target local/remotes/app",
+                )),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "sync",
+                    "--strategy",
+                    "rebase",
+                    "--reset-to-target",
+                    "local/remotes/app",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("copy these commits onto the branch"))
+            .claim(Claim::OutputContains("w-app")),
+            Step::git(&ww("w"), Repo::App, &["cherry-pick", ":/w-app"]),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w"))),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "other"])
+                .claim(Claim::OutputLine("w-app")),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "other")
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// `concurrent-landing-merge-upstream`: two machines each land a workweave
+/// into `release-1` locally, A publishes first; B's push refuses its diverged
+/// branches, `pull --merge-upstream` merges `release-1` and its members with
+/// A's, and B's push then passes with no lock merge left to redo.
+pub fn concurrent_landing_merge_upstream() -> Scenario {
+    let on_release = |at: Place, name: &str| {
+        Step::rwv(&at, &["workweave", "create", "--project", "proj", name]).expect(Exit::Succeeds)
+    };
+    scenario(
+        "concurrent landing, merge upstream",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "release-1", "--declared"])
+                .expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "release-1")
+                .expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["switch", "release-1"]).expect(Exit::Succeeds),
+            on_release(a(), "wa"),
+            on_release(b(), "wb"),
+            Step::commit(&ww("wa"), Repo::App, "a-app"),
+            Step::commit(&b_ww("wb"), Repo::App, "b-app"),
+            Step::rwv(&ww("wa"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("wb"), &["land", "--retire"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "release-1")
+                .expect(Exit::Succeeds),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::Judged(Repo::Proj, State::PushBranchDiverged))
+                .claim(Claim::OutputContains("rwv pull --merge-upstream")),
+            Step::rwv(&b(), &["pull", "--merge-upstream"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: b(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "a-app",
+                })
+                .claim(Claim::Contains {
+                    at: b(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "b-app",
+                }),
+            publishes_records(Step::rwv(&b(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "release-1")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("pin unmerged"))
+                .claim(Claim::OutputLacks("merge --no-ff"))
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "b-app",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "a-app",
+                }),
+        ],
+    )
+}
