@@ -113,12 +113,12 @@ top-level one. `linear`, `merge` and `ff-only` are the values; none is the
 default, and nothing else writes one. `--repo projects/<p>`, this project's
 repo, names the top-level setting.
 
-The change is committed alone, leaving any other edit to `rwv.toml`
-uncommitted. A value the file already holds is committed where the commit
-lacks it, so a hand edit is finished by running it. It refuses, writing
-nothing, a branch with no record that reads, a detached project repo, an
-operation in progress and other uncommitted tracked changes in the project
-repo; a member the manifest does not list is `repo-not-in-manifest`.
+The change is committed alone, leaving any other edit to `rwv.toml`, and to
+the project repo's other tracked files, uncommitted and named. A value the
+file already holds is committed where the commit lacks it, so a hand edit is
+finished by running it. It refuses, writing nothing, a branch with no record
+that reads, a detached project repo and an operation in progress; a member
+the manifest does not list is `repo-not-in-manifest`.
 
 ### `list`
 

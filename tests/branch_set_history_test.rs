@@ -129,6 +129,10 @@ fn set_history_commits_only_its_own_change() {
     );
     std::fs::write(project(&w).join("rwv.toml"), hand).unwrap();
     std::fs::write(project(&w).join("notes.txt"), "untracked\n").unwrap();
+    std::fs::write(project(&w).join("README"), "tracked\n").unwrap();
+    git_in(project(&w), &["add", "README"]);
+    git_in(project(&w), &["commit", "-qm", "readme"]);
+    std::fs::write(project(&w).join("README"), "edited\n").unwrap();
     let before = commits(&project(&w));
 
     let out = succeed(&["branch", "set-history", "merge"], &w.workspace);
@@ -155,8 +159,17 @@ fn set_history_commits_only_its_own_change() {
     assert!(project(&w).join("notes.txt").exists());
     let status = git_in(project(&w), &["status", "--porcelain"]);
     assert!(
-        status.contains("rwv.toml") && status.contains("notes.txt"),
+        status.contains("rwv.toml") && status.contains("notes.txt") && status.contains("README"),
         "{status}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project(&w).join("README")).unwrap(),
+        "edited\n"
+    );
+    assert!(
+        stderr(&out).contains("uncommitted files left as they are: README"),
+        "{}",
+        stderr(&out)
     );
 }
 
