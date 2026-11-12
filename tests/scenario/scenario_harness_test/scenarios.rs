@@ -6018,3 +6018,43 @@ pub fn parallel_retire_fetch() -> Scenario {
     }
     scenario("parallel retire fetch", steps)
 }
+
+/// `dc11-drift-before-dirt`: a member's branch moved under its worktree, so
+/// its index and files describe the old tip. Drift whose every file holds
+/// committed content is refreshed and reported before edits are judged, and
+/// the landing carries the moved tip. Drift beside a live edit is left
+/// undecided: refreshing what is safe leaves files whose content only the
+/// edit holds, which neither `rwv doctor --fix` nor C13 settles without
+/// committing the stale side.
+pub fn dc11_drift_before_dirt() -> Scenario {
+    scenario(
+        "dc11 drift before dirt",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::hand_commit(&ww("w"), Repo::Lib, "proj--w", &[("moved.txt", "moved\n")]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("refreshed drift"))
+                .claim(Claim::OutputContains("moved.txt"))
+                .claim(Claim::OutputLacks("commit your edits"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w-lib",
+                }),
+            Step::git(&a(), Repo::Lib, &["cat-file", "-e", "main:moved.txt"]),
+            Step::git(&ww("w"), Repo::Lib, &["status", "--porcelain"])
+                .claim(Claim::OutputLacks("moved.txt")),
+            Step::hand_edit(&ww("w"), Repo::Lib, "w-lib.txt", "w-lib", "edited"),
+            Step::hand_commit(
+                &ww("w"),
+                Repo::Lib,
+                "proj--w",
+                &[("moved-again.txt", "x\n")],
+            ),
+            Step::rwv(&ww("w"), &["land"]),
+        ],
+    )
+}

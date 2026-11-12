@@ -3299,6 +3299,7 @@ fn judge_edits_target_preflight(
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         if target_repo.exists() {
             let vcs = vcs_for(entry.vcs_type);
+            refresh_drift(vcs.as_ref(), repo_path, &target_repo);
             let tracked = tracked_or_unreadable(vcs.as_ref(), &target_repo);
             judge_edits_in(
                 vcs.as_ref(),
@@ -3319,6 +3320,34 @@ fn judge_edits_target_preflight(
         Some(target_workspace_dir),
         report,
     );
+}
+
+/// Refresh a member checkout whose branch moved under it (shared-ref drift)
+/// where every file it would replace holds content already committed, before
+/// its edits are judged, so that drift is neither refused as edits nor
+/// committed back by the choice that commits edits. Reported per file.
+fn refresh_drift(vcs: &dyn Vcs, repo: impl std::fmt::Display, dir: &Path) {
+    let Ok(before) = vcs.tracked_dirty_file_names(dir) else {
+        return;
+    };
+    if before.is_empty() {
+        return;
+    }
+    vcs.refresh_index_to_head_if_safe(dir);
+    vcs.refresh_working_tree_to_head_if_safe(dir);
+    let after = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
+    let refreshed: Vec<&String> = before.iter().filter(|f| !after.contains(f)).collect();
+    if !refreshed.is_empty() {
+        eprintln!(
+            "rwv land: {repo}: refreshed drift: its branch moved under the checkout, and \
+             these files held only committed content: {}",
+            refreshed
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 }
 
 /// A repo's tracked dirt, or a status that could not be read standing in as
@@ -3391,6 +3420,7 @@ fn judge_edits_source_preflight(
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         if repo.exists() {
             let vcs = vcs_for(entry.vcs_type);
+            refresh_drift(vcs.as_ref(), repo_path, &repo);
             let tracked = tracked_or_unreadable(vcs.as_ref(), &repo);
             judge_edits_in(vcs.as_ref(), repo_path, &repo, tracked, None, report);
         }

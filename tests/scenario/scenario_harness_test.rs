@@ -492,6 +492,7 @@ every_scenario!(
     concurrent_landing_merge_upstream,
     records_local_writers,
     parallel_retire_fetch,
+    dc11_drift_before_dirt,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2898,4 +2899,9 @@ holding_rwv! {
     fn retiring_seats_fetch_one_at_a_time_under_the_store_claim_and_each_deletion_completes() {
         runner::run(scenarios::parallel_retire_fetch()).assert_green();
     }
+}
+
+#[test]
+fn dc11_safe_drift_is_refreshed_before_edits_are_judged_and_the_moved_tip_lands() {
+    runner::run(scenarios::dc11_drift_before_dirt()).assert_green();
 }
