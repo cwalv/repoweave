@@ -544,15 +544,14 @@ impl Carrier<'_> {
                 Some(BackupMark::Rebased),
             )?;
             let backup = kept.backup().name.as_str().to_owned();
-            if !crate::backup::published(vcs.as_ref(), &dir, &branch) {
-                crate::op_state::journal_rebased_backup(
-                    self.workspace,
-                    crate::op_state::KeptBackup {
-                        repo: carrying.repo.clone(),
-                        name: backup.clone(),
-                    },
-                )?;
-            }
+            crate::op_state::journal_rebased_backup(
+                self.workspace,
+                crate::op_state::KeptBackup {
+                    repo: carrying.repo.clone(),
+                    name: backup.clone(),
+                    published: crate::backup::published(vcs.as_ref(), &dir, &branch),
+                },
+            )?;
             crate::op_state::journal_ref_move(
                 self.workspace,
                 RefMove {

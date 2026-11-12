@@ -1793,6 +1793,17 @@ fn integration_now(
             );
         }
     }
+    let manifest = Manifest::from_path(&sync.dir.join(Manifest::FILE_NAME))?;
+    let repos = crate::stack::Repos {
+        root: sync.ctx.active_path(),
+        project: &sync.project,
+        manifest: &manifest,
+    };
+    let branch = crate::records::BranchName::parse(sync.vcs.as_ref(), &sync.branch)
+        .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {e:?}", sync.branch))?;
+    let key = repo.map_or(RepoKey::Project, |path| RepoKey::Member(path.clone()));
+    let stack = crate::stack::walk(&repos, &branch, &[(key, head.clone())])?;
+    crate::stack::judge(&stack, &repos, sync.source_name(), "sync", &mut report);
     report.into_result()?;
     Ok((how, merged))
 }

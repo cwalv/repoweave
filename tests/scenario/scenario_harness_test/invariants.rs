@@ -37,7 +37,11 @@
 //!   its declared branch. A target merged with its own upstream, that tip as
 //!   first parent, takes the upstream's first-parent chain, as a merge of the
 //!   upstream must: the new tip's first parent is the tip the same branch has
-//!   in another of the repo's stores.
+//!   in another of the repo's stores, a tip the old one does not already
+//!   contain (a merge that brought nothing in is no merge of the upstream).
+//!   A target that is itself a feature and lands, then follows the branch it
+//!   landed into, takes that branch's chain: its new tip is the tip, in the
+//!   same store, of a branch it lands into.
 //!
 //! What they read: every ref (`git rev-list --all`, which takes in each linked
 //! worktree's HEAD) of every remote and every machine's canonical clone; the
@@ -365,12 +369,26 @@ impl Snapshot {
 
     pub fn target_branches(&self) -> BTreeMap<Repo, BTreeSet<String>> {
         let mut targets: BTreeMap<Repo, BTreeSet<String>> = BTreeMap::new();
+        for ((repo, _), receiving) in self.lands_into() {
+            targets.entry(repo).or_default().extend(receiving);
+        }
+        targets
+    }
+
+    /// Each feature branch, by repo, and the branches it lands into there:
+    /// the record's target for the project, and for each member the target
+    /// declares, the branch it lands in.
+    pub fn lands_into(&self) -> BTreeMap<(Repo, String), BTreeSet<String>> {
+        let mut lands: BTreeMap<(Repo, String), BTreeSet<String>> = BTreeMap::new();
         for ((project, _), records) in &self.records {
-            for record in records.values() {
+            for (feature, record) in records {
                 let Record::Feature { target, as_mode } = record else {
                     continue;
                 };
-                targets.entry(*project).or_default().insert(target.clone());
+                lands
+                    .entry((*project, feature.clone()))
+                    .or_default()
+                    .insert(target.clone());
                 let target_sites = self.declares.iter().filter(|(site, _)| {
                     matches!(site, LockSite::Branch(_, p, b) if p == project && b == target)
                 });
@@ -383,12 +401,15 @@ impl Snapshot {
                         } else {
                             declaration.branch.clone()
                         };
-                        targets.entry(*member).or_default().insert(receiving);
+                        lands
+                            .entry((*member, feature.clone()))
+                            .or_default()
+                            .insert(receiving);
                     }
                 }
             }
         }
-        targets
+        lands
     }
 }
 
@@ -913,6 +934,10 @@ pub fn first_parents_broken(
     after: &Snapshot,
 ) -> Vec<Violation> {
     let targets = union(before.target_branches(), after.target_branches());
+    let mut lands = before.lands_into();
+    for (key, receiving) in after.lands_into() {
+        lands.entry(key).or_default().extend(receiving);
+    }
     let mut violations = Vec::new();
     for (repo, store, branch, from, to) in moves(before, after, &targets) {
         let dir = sandbox.store_dir(repo, store);
@@ -929,8 +954,24 @@ pub fn first_parents_broken(
             .iter()
             .filter(|((r, s), _)| *r == repo && *s != store)
             .filter_map(|(_, tips)| tips.get(branch))
-            .any(|upstream| upstream != from && upstream == first_parent.trim());
-        if !on_first_parents && !merged_with_its_upstream {
+            .any(|upstream| {
+                upstream != from
+                    && upstream == first_parent.trim()
+                    && !is_ancestor(sandbox, &dir, upstream, from)
+            });
+        let followed_its_landing = lands
+            .get(&(repo, branch.to_owned()))
+            .into_iter()
+            .flatten()
+            .any(|receiving| {
+                after
+                    .branches
+                    .get(&(repo, store))
+                    .and_then(|tips| tips.get(receiving))
+                    .map(String::as_str)
+                    == Some(to)
+            });
+        if !on_first_parents && !merged_with_its_upstream && !followed_its_landing {
             violations.push(Violation::FirstParentsBroken {
                 repo,
                 store,

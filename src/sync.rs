@@ -2793,7 +2793,8 @@ impl OpContext<'_> {
     /// merge; else judged from the repository as it stands, so a resume
     /// re-judges what a stop let the operator change. A source holding the
     /// receiving tip off its first-parent chain, or whose range now holds a
-    /// merge, is merged; one that needs a rebase under `ff-only` refuses.
+    /// merge, is merged; one that needs a rebase under `ff-only` refuses, and
+    /// so does a rebase that would leave a dependent it cannot carry.
     fn composition_now(
         &self,
         repo: &RepoKey,
@@ -2874,6 +2875,22 @@ impl OpContext<'_> {
         } else {
             crate::set_history::integration(history, in_range)
         };
+        if how == Integration::Rebase && !self.retire {
+            let manifest = pre_op_manifest(self)?;
+            let repos = crate::stack::Repos {
+                root: &self.cwd_workspace_dir,
+                project: &self.cwd_project_name,
+                manifest: &manifest,
+            };
+            let stack = crate::stack::walk(
+                &repos,
+                &landing_feature(self)?,
+                &[(repo.clone(), head.clone())],
+            )?;
+            let mut report = Report::default();
+            crate::stack::judge(&stack, &repos, &target, "land", &mut report);
+            report.into_result()?;
+        }
         if let Some(merge) = merged {
             report_landing(
                 self,

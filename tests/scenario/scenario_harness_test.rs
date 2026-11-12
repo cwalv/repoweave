@@ -1936,6 +1936,55 @@ fn first_parent_check_catches_a_target_fast_forwarded_off_its_lineage() {
     );
 }
 
+/// A local `main` at an unpushed commit, and a feature with no commits of
+/// its own sitting at the remote's `main`: the feature merges `main` in and
+/// `main` is fast-forwarded onto that merge. The merge's first parent is the
+/// remote's `main`, which the old local tip already contains, so this is no
+/// merge of the upstream: `main`'s unpushed commit has left its first-parent
+/// chain.
+#[test]
+fn first_parent_check_catches_a_merge_with_an_upstream_that_brought_nothing() {
+    let sandbox = Sandbox::new(Seed::default());
+    let git = |args: &[&str]| Step::git(&a(), Repo::App, args);
+    let report = runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "main fast-forwarded onto a merge of itself into its upstream's tip",
+            seed: Seed::default(),
+            steps: vec![
+                Step::hand_commit(
+                    &a(),
+                    Repo::Proj,
+                    sandbox::RECORDS_BRANCH,
+                    &[("feat-x", FEATURE_ONTO_MAIN)],
+                ),
+                git(&["switch", "-c", "feat-x"]),
+                git(&["switch", "main"]),
+                Step::commit(&a(), Repo::App, "main-1"),
+                git(&["switch", "feat-x"]),
+                git(&["merge", "--no-ff", "--no-edit", "main"]),
+                git(&["switch", "main"]),
+                git(&["merge", "--ff-only", "feat-x"]),
+            ],
+        },
+    );
+    let merge = tip(&sandbox, &sandbox.canonical(Machine::A, Repo::App), "main");
+    assert_eq!(
+        report.violations,
+        vec![(
+            "git -C app merge --ff-only feat-x".to_owned(),
+            Violation::FirstParentsBroken {
+                repo: Repo::App,
+                store: Store::Clone(Machine::A),
+                branch: "main".to_owned(),
+                from: report.marks["main-1"].clone(),
+                to: merge,
+            }
+        )],
+        "{report}"
+    );
+}
+
 #[test]
 fn first_parent_check_watches_only_branches_a_record_targets() {
     let report = bad_steps(

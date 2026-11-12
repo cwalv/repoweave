@@ -12677,11 +12677,11 @@ pub fn stack_transitive() -> Scenario {
 }
 
 /// `stack-merge-setting`: the same stack under a `merge` target; `w1`'s
-/// `sync` rewrites nothing, so `w2` never blocks and is not moved.
+/// landing rewrites nothing, so `w2` never blocks and is not moved.
 pub fn stack_merge_setting() -> Scenario {
     let mut steps = stack_on_a_seat_under("merge");
     steps.extend(main_moves_app("main-app"));
-    steps.extend([Step::rwv(&ww("w1"), &["sync"])
+    steps.extend([Step::rwv(&ww("w1"), &["land"])
         .expect(Exit::Succeeds)
         .claim(Claim::OutputLacks("dependent"))
         .claim(Claim::OutputLacks("carried"))
@@ -12903,7 +12903,7 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
 
 /// `git-below-2.38`: git answers as a release without `merge-tree
 /// --write-tree`. `main` merges its project branch and rebases `app`;
-/// `w1`'s `sync`, with `w2` landing into `w1`, merges the project in the
+/// `w1`'s landing, with `w2` landing into `w1`, merges the project in the
 /// source's checkout and carries `w2` along per dependent, `app` replayed
 /// and `w2`'s project branch re-pinned in place, and nothing refuses for the
 /// git release.
@@ -12932,7 +12932,7 @@ pub fn git_below_2_38() -> Scenario {
     ];
     steps.extend(main_moves_app("main-app"));
     steps.extend([
-        Step::rwv(&ww("w1"), &["sync"])
+        Step::rwv(&ww("w1"), &["land"])
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
