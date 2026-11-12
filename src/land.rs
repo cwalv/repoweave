@@ -98,7 +98,7 @@ pub enum Composing {
 }
 
 /// A range a rebase would replay that holds a merge is never rebased: the
-/// one judgement `sync` makes, made here for the landing so it joins the
+/// one judgment `sync` makes, made here for the landing so it joins the
 /// landing's one report.
 #[allow(clippy::too_many_arguments)]
 fn judge_merge_in_range(
