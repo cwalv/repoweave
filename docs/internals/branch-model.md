@@ -519,8 +519,7 @@ citation base pinned this pair at `:289-323` and `:239-287`, which are the
 `"--hard"` entry and its neighbor — the entries were named correctly and
 located wrongly, and no sweep before this one checked the line against the
 `pattern:` it claimed.) Its clauses no longer consider only
-*working-tree clobber*: they cover `refresh_paths_from_head`,
-`set_detached_head`, `attach_head_to`, and `clone_attached_at` — and the two
+*working-tree clobber*: they cover `set_detached_head`, `attach_head_to`, and `clone_attached_at` — and the two
 attachment-changing ones are reachable only behind `DetachConsent` /
 `ReattachConsent`, which now have real minting callers in the CLI dispatch
 (§4.4). The blind spot behind the entire detach story is closed at the type

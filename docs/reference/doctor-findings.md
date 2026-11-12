@@ -1414,16 +1414,22 @@ at least one path the move changed still has the old tip's index entry, with
 a file holding the old tip's content or already HEAD's.
 
 **What to do:** `rwv doctor --fix` gives those paths HEAD's index entries and
-files, and reports each one.
+files, and reports each one. Git writes them, and refuses where a path changed
+after doctor read it; such paths are named as left in place, the fix reports
+an error, and the next run reads them again.
 
 #### `live-staged`
 
 **Warning. Report-only.** At least one index entry differs from HEAD for a
 reason the branch's move does not account for: a staged change of yours, a
 staged deletion or revert included, or a path both the move and you changed.
-`--fix` does not touch it.
+It can also be drift rwv cannot show: an old commit's content in a checkout
+whose reflog records no move under it, or one that already took part of the
+move. `--fix` does not touch it.
 
-**What to do:** commit or stash it, then re-run.
+**What to do:** commit it if it is your change. If it is not, stash it
+(`git -C <checkout> stash push`): nothing is committed and nothing is lost.
+Committing drift records the move's reverse on the branch. Then re-run.
 
 ### `working-tree-drift`
 
@@ -1444,9 +1450,12 @@ reports each one.
 **Warning. Report-only.** At least one file differs from HEAD for a reason the
 branch's move does not account for: your edit, whatever commit already holds
 its content (a deletion, a file returned to an earlier version, a copy, a mode
-change), or a file both the move and you changed. `--fix` does not touch it.
+change), or a file both the move and you changed. It can also be drift rwv
+cannot show, as for `live-staged`. `--fix` does not touch it.
 
-**What to do:** commit or stash them, then re-run.
+**What to do:** commit them if they are your changes. If they are not, stash
+them (`git -C <checkout> stash push`): nothing is committed and nothing is
+lost. Committing drift records the move's reverse on the branch. Then re-run.
 
 ### `orphaned-savepoint`
 

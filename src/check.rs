@@ -1420,9 +1420,10 @@ pub enum IndexDriftKind {
     /// changed still has the moved-from tip's index entry. `--fix` gives it
     /// HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.
     SafeToFix,
-    /// An index entry differs from HEAD for a reason the move does not
-    /// account for: a staged change, or a path both the move and the user
-    /// changed. `--fix` must not touch it.
+    /// An index entry differs from HEAD for a reason no move under the
+    /// checkout shows: a staged change, a path both the move and the user
+    /// changed, or an old tip's entry nothing records was left behind.
+    /// `--fix` must not touch it.
     LiveStaged,
 }
 
@@ -1434,9 +1435,10 @@ pub enum WorkingTreeDriftKind {
     /// changed, with its index entry, still holds the moved-from tip's
     /// content. `--fix` gives it HEAD's; no work is lost.
     SafeToFix,
-    /// A file differs from HEAD for a reason the move does not account for:
-    /// an edit, whatever commit already holds its content, or a file both the
-    /// move and the user changed. `--fix` must not touch it.
+    /// A file differs from HEAD for a reason no move under the checkout
+    /// shows: an edit, whatever commit already holds its content, a file both
+    /// the move and the user changed, or an old tip's file nothing records was
+    /// left behind. `--fix` must not touch it.
     LiveEdits,
 }
 
@@ -6380,8 +6382,8 @@ impl CheckViolation {
                 let detail = match kind {
                     IndexDriftKind::SafeToFix => "index stale (run `rwv doctor --fix` to reset)",
                     IndexDriftKind::LiveStaged => {
-                        "index has live staged changes (commit or stash first; \
-                             not auto-fixed)"
+                        "index has live staged changes (commit them if they are yours, or \
+                             stash them; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")
@@ -6510,8 +6512,8 @@ impl CheckViolation {
                         "working tree stale (run `rwv doctor --fix` to restore)"
                     }
                     WorkingTreeDriftKind::LiveEdits => {
-                        "working tree has live edits (commit or stash first; \
-                             not auto-fixed)"
+                        "working tree has live edits (commit them if they are yours, or \
+                             stash them; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")

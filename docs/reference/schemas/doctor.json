@@ -427,7 +427,7 @@
           ]
         },
         {
-          "description": "An index entry differs from HEAD for a reason the move does not account for: a staged change, or a path both the move and the user changed. `--fix` must not touch it.",
+          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-staged"
@@ -2550,7 +2550,7 @@
           ]
         },
         {
-          "description": "A file differs from HEAD for a reason the move does not account for: an edit, whatever commit already holds its content, or a file both the move and the user changed. `--fix` must not touch it.",
+          "description": "A file differs from HEAD for a reason no move under the checkout shows: an edit, whatever commit already holds its content, a file both the move and the user changed, or an old tip's file nothing records was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-edits"

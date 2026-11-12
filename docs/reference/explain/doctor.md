@@ -631,7 +631,7 @@ Schema:
           ]
         },
         {
-          "description": "An index entry differs from HEAD for a reason the move does not account for: a staged change, or a path both the move and the user changed. `--fix` must not touch it.",
+          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-staged"
@@ -2754,7 +2754,7 @@ Schema:
           ]
         },
         {
-          "description": "A file differs from HEAD for a reason the move does not account for: an edit, whatever commit already holds its content, or a file both the move and the user changed. `--fix` must not touch it.",
+          "description": "A file differs from HEAD for a reason no move under the checkout shows: an edit, whatever commit already holds its content, a file both the move and the user changed, or an old tip's file nothing records was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-edits"
@@ -3089,8 +3089,10 @@ rwv doctor --fix
   the project loads. `--fix` has no arm: the manifest is hand-authored, and
   the comments and key order in it do not survive a mechanical cross-format
   rewrite. Rewrite it as `rwv.toml` by hand and delete the `rwv.yaml`.
-- *index-drift* with `sub_kind: live-staged` — the user has staged content
-  that doesn't match a known tree. `--fix` will refuse; resolve manually.
+- *index-drift* with `sub_kind: live-staged` — an index entry differs from
+  HEAD for a reason no move under the checkout shows. `--fix` leaves it:
+  commit it if it is your change, or stash it if it is not, which commits
+  nothing and loses nothing.
 - *orphaned-clone* — a directory under a registry path that isn't listed in
   any `rwv.toml`. Only surfaced under `--all`. Either move it to the path its
   remote's URL places it at under the primary weave root and run

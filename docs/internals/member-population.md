@@ -277,8 +277,8 @@ file's permissions while removing its own name for it.
 `tests/vcs/shared_file_conformance_test.rs` proves it per platform. It hardlinks a
 tracked file into two worktrees and runs, in one of them, each update rwv runs
 on a member — a detached and a branch checkout, `reset --hard`, a fast-forward,
-a rebase with nothing to replay, the single-path checkout, the working-tree
-refresh, and `check_out_paths` — with the shared file writable and without
+a rebase with nothing to replay, the working-tree refresh (a two-way
+`read-tree` merge), and `check_out_paths` — with the shared file writable and without
 write bits. It also checks that population leaves every placed file as placed,
 that equal identities check out to equal bytes across workspaces whose
 `core.autocrlf` differs, and that a link or a chmod moves a file's ctime.
