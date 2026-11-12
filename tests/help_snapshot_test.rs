@@ -45,7 +45,7 @@ Commands:
   log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
   abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
   backup       List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
-  sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
+  sync         Take the target's new work into this feature, or merge another weave branch in
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
   pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. A diverged branch is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream

@@ -70,17 +70,12 @@ fn sorted_wire_spellings() -> Vec<String> {
 
 #[test]
 fn every_override_spells_the_consent_flag_that_mints_it() {
-    let flags = consent_flag_names("sync");
+    let flags = consent_flag_names("sync-to");
     assert!(
         flags.len() >= 2,
-        "found {} consent flags on `sync` — the help-text scan matched nothing \
+        "found {} consent flags on `sync-to` — the help-text scan matched nothing \
          useful, so the comparison below would pass vacuously; got {flags:?}",
         flags.len()
-    );
-    assert_eq!(
-        consent_flag_names("sync-to"),
-        flags,
-        "`sync` and `sync-to` record the same consent vocabulary"
     );
     assert_eq!(
         sorted_wire_spellings(),

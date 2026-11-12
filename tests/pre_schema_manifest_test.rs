@@ -457,10 +457,10 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 #[test]
-fn a_sync_from_a_source_whose_tip_names_the_old_keys_reads_its_manifest_as_empty_and_its_lock_as_pins(
+fn a_sync_to_a_target_whose_tip_names_the_old_keys_reads_its_manifest_as_empty_and_its_lock_as_pins(
 ) {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, pinned) = primary_and_workweave(tmp.path());
+    let (primary, ww, _pinned) = primary_and_workweave(tmp.path());
 
     let mut doctor = common::rwv();
     doctor.current_dir(&ww.root).args(["doctor", "--fix"]);
@@ -471,7 +471,7 @@ fn a_sync_from_a_source_whose_tip_names_the_old_keys_reads_its_manifest_as_empty
     );
     assert!(
         Manifest::from_path(&primary.project.join("rwv.toml")).is_err(),
-        "the source was not"
+        "the target was not"
     );
 
     let advanced = commit_all(&ww.server, "change.txt", "workweave change\n", "ww: change");
@@ -481,7 +481,7 @@ fn a_sync_from_a_source_whose_tip_names_the_old_keys_reads_its_manifest_as_empty
 
     let mut sync = common::rwv();
     sync.current_dir(&ww.root).args([
-        "sync",
+        "sync-to",
         &primary.root.to_string_lossy(),
         "--strategy",
         "rebase",
@@ -489,7 +489,7 @@ fn a_sync_from_a_source_whose_tip_names_the_old_keys_reads_its_manifest_as_empty
     ]);
     let assert = sync.assert().success();
     let report: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
-        .unwrap_or_else(|e| panic!("sync --json prints JSON: {e}"));
+        .unwrap_or_else(|e| panic!("sync-to --json prints JSON: {e}"));
     let server = report["outcomes"]
         .as_array()
         .unwrap()
@@ -499,11 +499,11 @@ fn a_sync_from_a_source_whose_tip_names_the_old_keys_reads_its_manifest_as_empty
     assert_eq!(server["kind"], "already-ahead", "{report}");
     assert_eq!(
         server["containment"]["baseline"], "source-lock-entry",
-        "the source's lock still pins the member, though its manifest names nothing: {report}"
+        "the target's lock still pins the member, though its manifest names nothing: {report}"
     );
     assert_eq!(
         common::git_in(&primary.server, &["rev-parse", "main"]),
-        pinned
+        advanced
     );
 }
 

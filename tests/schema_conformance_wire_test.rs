@@ -385,34 +385,6 @@ fn push_json_wire_output_conforms() {
 }
 
 #[test]
-fn sync_json_wire_output_conforms() {
-    let weave = weave();
-    let ww = workweave(&weave);
-
-    // Advance the primary and re-lock, so the workweave has something to
-    // converge onto and the lock-freshness precondition holds.
-    std::fs::write(weave.member().join("NOTES.md"), "advance\n").unwrap();
-    common::git_in(weave.member(), &["add", "-A"]);
-    common::git_in(weave.member(), &["commit", "-m", "primary: advance"]);
-    let out = common::rwv()
-        .args(["lock"])
-        .current_dir(&weave.primary)
-        .output()
-        .expect("rwv runs");
-    assert!(
-        out.status.success(),
-        "rwv lock failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    common::git_in(weave.project(), &["add", "-A"]);
-    common::git_in(weave.project(), &["commit", "-m", "lock: advance"]);
-
-    let primary = weave.primary.to_string_lossy().into_owned();
-    let doc = emit(&ww, &["sync", &primary, "--json", "-j", "1"]);
-    assert_conforms("sync", &doc, "outcomes");
-}
-
-#[test]
 fn sync_to_json_wire_output_conforms() {
     let weave = weave();
     let ww = workweave(&weave);
@@ -713,32 +685,6 @@ fn push_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
     let doc = emit(&weave.primary, &["push", "--json", "-j", "2"]);
     assert_conforms("push", &doc, "outcomes");
-}
-
-#[test]
-fn sync_json_wire_output_conforms_under_two_workers() {
-    let weave = weave();
-    let ww = workweave(&weave);
-
-    std::fs::write(weave.member().join("NOTES.md"), "advance\n").unwrap();
-    common::git_in(weave.member(), &["add", "-A"]);
-    common::git_in(weave.member(), &["commit", "-m", "primary: advance"]);
-    let out = common::rwv()
-        .args(["lock"])
-        .current_dir(&weave.primary)
-        .output()
-        .expect("rwv runs");
-    assert!(
-        out.status.success(),
-        "rwv lock failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    common::git_in(weave.project(), &["add", "-A"]);
-    common::git_in(weave.project(), &["commit", "-m", "lock: advance"]);
-
-    let primary = weave.primary.to_string_lossy().into_owned();
-    let doc = emit(&ww, &["sync", &primary, "--json", "-j", "2"]);
-    assert_conforms("sync", &doc, "outcomes");
 }
 
 /// Under parallel workers the envelope still carries each advance-target
