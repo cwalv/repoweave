@@ -2693,17 +2693,6 @@ fn judge_source_relations(
     }
 }
 
-fn source_lock_class(project: &Project, root: &Path) -> LockClassification {
-    let (resolved, unresolvable) = match project.lock.as_ref() {
-        Some(raw) => {
-            let (resolved, failures) = raw.clone().resolve_versions(root);
-            (Some(resolved), failures)
-        }
-        None => (None, Vec::new()),
-    };
-    classify_lock_relations(root, &project.manifest, resolved.as_ref(), unresolvable)
-}
-
 /// The source's own refusals, which a landing owes whatever its target: edits
 /// in its checkouts and where each stands to the source's lock.
 pub(crate) fn judge_landing_source(
@@ -2716,7 +2705,16 @@ pub(crate) fn judge_landing_source(
     let vcs = project_vcs();
     let source = Project::from_dir(&dir, project)?;
     judge_edits_source_preflight(vcs.as_ref(), &source, root, &dir, report);
-    let class = source_lock_class(&source, root);
+    let class = {
+        let (resolved, unresolvable) = match source.lock.as_ref() {
+            Some(raw) => {
+                let (resolved, failures) = raw.clone().resolve_versions(root);
+                (Some(resolved), failures)
+            }
+            None => (None, Vec::new()),
+        };
+        classify_lock_relations(root, &source.manifest, resolved.as_ref(), unresolvable)
+    };
     judge_source_relations(&class, root, &source.manifest, report);
     Ok(())
 }
@@ -2870,7 +2868,21 @@ fn run_preconditions_after_acquire(
         ClassifySource::Relations,
     )?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
-    let cwd_class = source_lock_class(&cwd_project, cwd_workspace_dir);
+    let cwd_class = {
+        let (resolved, unresolvable) = match cwd_project.lock.as_ref() {
+            Some(raw) => {
+                let (resolved, failures) = raw.clone().resolve_versions(cwd_workspace_dir);
+                (Some(resolved), failures)
+            }
+            None => (None, Vec::new()),
+        };
+        classify_lock_relations(
+            cwd_workspace_dir,
+            &cwd_project.manifest,
+            resolved.as_ref(),
+            unresolvable,
+        )
+    };
     judge_source_relations(
         &cwd_class,
         cwd_workspace_dir,
@@ -4783,9 +4795,31 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     }
     unmerged.into_result()?;
     let mut pins = merged.pins;
-    for path in merged_declared.keys() {
-        if let (false, Some(pin)) = (pins.contains_key(path), first.pins.get(path)) {
+    let named = LockFile::path_in(dir)
+        .read_to_string()
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok());
+    for (path, entry) in manifest.iter_entries() {
+        if pins.contains_key(path) {
+            continue;
+        }
+        if let Some(pin) = first.pins.get(path) {
             pins.insert(path.clone(), pin.clone());
+            continue;
+        }
+        let by_name = named
+            .as_ref()
+            .and_then(|lock| lock.get_entry(path))
+            .and_then(|e| {
+                vcs_for(entry.vcs_type)
+                    .resolve_revision(
+                        &ctx.cwd_workspace_dir.join(path.as_path()),
+                        e.version.as_str(),
+                    )
+                    .ok()
+            });
+        if let Some(pin) = by_name {
+            pins.insert(path.clone(), pin.id().clone());
         }
     }
     let resolved: Vec<(RepoPath, ResolvedRevisionId)> = pins

@@ -80,6 +80,7 @@ fn each_workspace_side_is_classified_once_on_the_sync_path() {
     let expected: BTreeMap<&str, usize> = BTreeMap::from([
         ("pin_source_snapshot", 1),
         ("run_preconditions_after_acquire", 1),
+        ("judge_landing_source", 1),
     ]);
 
     assert_eq!(
@@ -87,7 +88,9 @@ fn each_workspace_side_is_classified_once_on_the_sync_path() {
         "each side of a sync is classified exactly once: the source in \
          `pin_source_snapshot`, whose result the whole path reads back off \
          `SourceSnapshot::source_class`, and the destination in \
-         `run_preconditions_after_acquire`.\n\
+         `run_preconditions_after_acquire`; a landing refused before it has a \
+         target classifies its own workspace once, in `judge_landing_source`, \
+         and never reaches the preconditions.\n\
          \n\
          A second call inside a function that already has one re-reads a \
          workspace this op has already classified, at a later instant — the \

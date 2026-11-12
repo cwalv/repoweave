@@ -47,6 +47,7 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<as>", "declared"),
         ("<target>", "main"),
         ("<dep>", "dep-x"),
+        ("<b-checkout>", "/x/b"),
     ])
 }
 

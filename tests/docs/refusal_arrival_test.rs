@@ -847,11 +847,16 @@ fn a_rejected_member_push_routes_to_publish() {
 
 /// `rwv land` judges both sides it would move before refusing on either:
 /// the source's dirty member and the target's, each named in its own line,
-/// the target's with the workspace it is in, routed once.
+/// the target's with the workspace it is in, routed once. The member holds
+/// work to land, so the landing moves it on both sides.
 #[test]
 fn a_landing_judges_the_edits_of_both_sides_in_one_refusal() {
     let tmp = common::tempdir().unwrap();
     let (primary, workweave) = primary_and_workweave(tmp.path());
+    let source = workweave.join(SERVER_PATH);
+    std::fs::write(source.join("work.txt"), "work\n").unwrap();
+    common::git_in(&source, &["add", "work.txt"]);
+    common::commit_staged(&source, "work to land");
     for side in [&primary, &workweave] {
         std::fs::write(side.join(SERVER_PATH).join("README.md"), "edited\n").unwrap();
     }

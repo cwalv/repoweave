@@ -245,12 +245,12 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     );
 }
 
+/// A member with nothing to land is not moved: the landing composes nothing
+/// for it, so no outcome names it, and the landing completes.
 #[test]
-fn sync_json_no_op_when_already_at_lock() {
+fn sync_json_moves_nothing_for_a_member_already_at_its_lock() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-    // The workweave is at C1 (the lock SHA) like the primary: landing it
-    // should produce no-op for the server repo.
     let assert = rwv()
         .args(["land", "--json"])
         .current_dir(&ww.root)
@@ -262,12 +262,13 @@ fn sync_json_no_op_when_already_at_lock() {
         .get("outcomes")
         .and_then(Value::as_array)
         .expect("outcomes");
-    // Expect at least one `no-op` outcome (server already at C1).
-    let any_no_op = outcomes.iter().any(|o| {
-        o.get("kind").and_then(Value::as_str) == Some("no-op")
-            && o.get("path").and_then(Value::as_str) == Some(SERVER_PATH)
-    });
-    assert!(any_no_op, "expected no-op for server: {stdout}");
+    assert!(
+        !outcomes
+            .iter()
+            .any(|o| o.get("path").and_then(Value::as_str) == Some(SERVER_PATH)),
+        "a member with nothing to land has no outcome: {stdout}"
+    );
+    assert_eq!(parsed["complete"], true, "{stdout}");
 
     // Sanity: c1 actually was the initial SHA.
     let head = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
