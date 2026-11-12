@@ -4,7 +4,8 @@
 
 Land the checked-out feature into the branch its record lands into (its
 target): the work is composed in this workspace, then the target and each
-member's receiving branch fast-forward where the target is checked out. The
+member's receiving branch fast-forward where the target is checked out, or
+move as refs where nothing has it checked out. The
 target is the record's, or `--target <T>`'s for one run; the record is
 unchanged. A declared branch lands nowhere: it refuses as `target`
 `no target`, naming `rwv branch set-mode <W> feature --target <T>`.
@@ -61,13 +62,18 @@ nothing could be landed into. Then, under an op record:
    receiving branch fast-forwards in its checkout, then the target's project
    branch: each the branch the landing planned, to exactly what was composed
    and recorded, never a commit made in this workspace since. Nothing there
-   is ever rebased or merged. The target is then reported `push-branch`
-   `ahead` where its push branch lacks the landing, naming
-   `rwv push --branch <T>`; under `--json` it is in `reports` as
-   `push-branch-ahead`. A resumed landing repeats every report.
+   is ever rebased or merged. Where the target is checked out nowhere, it and
+   each receiving branch move as refs instead, each by compare-and-swap
+   against the tip the landing read; one another verb moved since stops the
+   landing as `target` `moved mid-operation` with the refs already moved left
+   as moved, and `rwv abort` puts each back from its savepoint. The target
+   is then reported `push-branch` `ahead` where its push branch lacks the
+   landing, naming `rwv push --branch <T>`; under `--json` it is in
+   `reports` as `push-branch-ahead`. A resumed landing repeats every report.
 4. **Align.** The workspace with the target checked out aligns its members as
    `rwv update` does, storing the entries without reporting them; then this
-   workspace's members follow the target's new pins. A member alignment leaves
+   workspace's members follow the target's new pins. From the primary, where
+   the target landed as refs, the primary switches to the target first. A member alignment leaves
    where it was is reported: by the state that kept it there, with that
    state's choices, or else with `rwv update --project <project>` there to
    finish it. A member the target's workspace shares with a project it
@@ -128,10 +134,12 @@ receiving branch's checkout, and each member whose pin the landing changes,
 whose checkout aligning moves; `--continue` judges them again before it
 relocks.
 
-A target checked out in no workspace refuses as `target` `checked out
-nowhere`, naming `rwv workweave create <ww> --branch <T>`. A receiving branch
-checked out outside the target's workspace refuses as `checkout` `in another
-workspace`. From the primary, a target a workweave has checked out refuses as
+Where the target is checked out nowhere, a branch it declares for a member the
+landing does not move, holding commits beyond the target's pin that no other
+lock or remote holds, refuses as `pin` `unpinned`, naming
+`rwv workweave create <T> --branch <T>`, which opens a workspace on the
+target, and `rwv lock --commit` there. A receiving branch checked out outside
+the target's workspace refuses as `checkout` `in another workspace`. From the primary, a target a workweave has checked out refuses as
 `checkout` `in another workspace`.
 
 **Member changes.** A landing changes the target's member entries and its
@@ -192,7 +200,6 @@ the landing.
 | `target` | `record changed` | the branch's record changed since this workspace last saw it |
 | `target` | `mode changed` | the target is used another way than the record says |
 | `target` | `gone` | the target exists nowhere, or only as a branch another machine's record does not name |
-| `target` | `checked out nowhere` | no workspace has the target checked out |
 | `target` | `member changes` | the landing would change the target's entries or top-level `history`, unnamed |
 | `target` | `dependents` | another weave branch lands into this one |
 | `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
@@ -239,6 +246,13 @@ claim and the file to delete when no rwv is landing there. The claim and the
 lease on the target's workspace are given up once the target's workspace has
 taken the landing, before `--retire` removes this workspace. `rwv land
 --continue` takes the claim back, and `rwv abort` releases it.
+
+A landing can be undone until it gives up the target. Stopped in its retire,
+it has: another landing may already have read the target or built on it, and
+another operation may hold the target's workspace. `rwv abort` from the
+target's workspace then finds no operation, and from this workspace it ends
+the operation and restores nothing on either side: the landing stands, and
+`rwv land --retire` run again retires the workweave.
 
 A resume recorded at `advance-target` re-enters `relock` first, and says so:
 relock is what makes the lock it lands agree with the tips it lands.
@@ -297,7 +311,7 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 `outcomes` holds one record per composed repo, sorted by repo path. Each
 fast-forward that moved a branch is reported as its repo's `step3_advance`, or
 as `project_repo_advance` for the project repo. `target` is the workspace that
-has the target checked out. `complete` is true once every phase ran and
+has the target checked out, null where it landed as refs. `complete` is true once every phase ran and
 op-state is cleared. `left_behind` holds, for each member whose declared
 branch the landing changes, the commits the target's pin reaches that the new
 branch lacks, newest first, with the copy that ports them; the text output
@@ -327,8 +341,7 @@ Schema:
     "placements",
     "refused",
     "reports",
-    "retired",
-    "target"
+    "retired"
   ],
   "properties": {
     "$schema": {
@@ -432,10 +445,13 @@ Schema:
       }
     },
     "target": {
-      "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it.",
-      "allOf": [
+      "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it; null where the target is checked out nowhere and landed as refs.",
+      "anyOf": [
         {
           "$ref": "#/definitions/WirePath"
+        },
+        {
+          "type": "null"
         }
       ]
     }
