@@ -26,12 +26,6 @@ fn succeed(args: &[&str], dir: &Path) {
     );
 }
 
-fn refuse(args: &[&str], dir: &Path) -> String {
-    let out = run(args, dir);
-    assert!(!out.status.success(), "{args:?} should refuse");
-    String::from_utf8_lossy(&out.stderr).into_owned()
-}
-
 fn declare_lib_on(ws: &Path, line: &str, branch: &str) {
     let project = project_dir(ws);
     common::git_in(&project, &["switch", "-qc", line]);
@@ -66,19 +60,21 @@ fn seat_with_declared_branch() -> (common::PushWorkspace, PathBuf, String) {
 fn delete_remote_refuses_a_member_branch_a_live_weave_branch_declares_and_changes_nothing() {
     let (w, ww, branch) = seat_with_declared_branch();
 
-    let text = refuse(
-        &[
-            "workweave",
-            "delete",
-            "anon",
-            "--project",
-            PROJECT,
-            "--delete-remote",
-        ],
-        &w.workspace,
+    let text = common::cli::refused(
+        &run(
+            &[
+                "workweave",
+                "delete",
+                "anon",
+                "--project",
+                PROJECT,
+                "--delete-remote",
+            ],
+            &w.workspace,
+        ),
+        repoweave::diagnosis::State::ProtectedDeclared,
     );
 
-    assert!(text.contains("protected declared"), "{text}");
     assert!(text.contains("line (projects/p)"), "{text}");
     assert!(ww.exists(), "the workweave was removed");
     assert!(
@@ -165,4 +161,66 @@ fn a_landing_that_would_rebase_a_member_branch_another_branch_declares_is_refuse
         repoweave::diagnosis::State::TargetNoTarget,
     );
     assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
+}
+
+/// The rename `name` declared prints gives the feature its own name: the
+/// declared branch stays where it stands, the member takes the new name at
+/// its tip, and the landing the state refused goes through.
+#[test]
+fn the_printed_rename_of_a_feature_whose_member_branch_is_declared_clears_the_state() {
+    let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
+    succeed(
+        &["workweave", "create", "--project", PROJECT, "anon"],
+        &w.workspace,
+    );
+    let ww = w
+        .workspace
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("p--anon");
+    commit_in(&ww.join(LIB), "theirs");
+    succeed(&["lock", "--commit"], &ww);
+    declare_lib_on(&w.workspace, "line", "p--anon");
+    let declared_before = common::git_in(ww.join(LIB), &["rev-parse", "p--anon"]);
+
+    let text = common::cli::refused(
+        &run(&["land"], &ww),
+        repoweave::diagnosis::State::NameDeclared,
+    );
+    let printed = text
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv branch rename "))
+        .unwrap_or_else(|| panic!("no rename printed:\n{text}"));
+    let args: Vec<&str> = printed
+        .split_whitespace()
+        .skip(1)
+        .map(|word| if word == "<new>" { "renamed" } else { word })
+        .collect();
+    succeed(&args, &ww);
+
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["rev-parse", "p--anon"]),
+        declared_before,
+        "the declared branch moved"
+    );
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["symbolic-ref", "--short", "HEAD"]),
+        "renamed"
+    );
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]),
+        declared_before
+    );
+    assert_eq!(
+        common::git_in(project_dir(&ww), &["symbolic-ref", "--short", "HEAD"]),
+        "renamed"
+    );
+    succeed(&["land"], &ww);
+    assert_eq!(
+        common::git_in(w.workspace.join(LIB), &["rev-parse", "main"]),
+        declared_before,
+        "the feature's work did not land"
+    );
 }

@@ -1430,8 +1430,7 @@ impl State {
                 means: "a member's branch that some live weave branch declares, listed with \
                         the weave branches declaring it; rwv never rewrites, renames or \
                         deletes it",
-                refused_by: "`rwv branch rename`, for a feature's member branch of the \
-                             renamed name; `rwv push --overwrite`, for a member; `rwv branch \
+                refused_by: "`rwv push --overwrite`, for a member; `rwv branch \
                              delete` and `rwv workweave delete` with `--delete-remote` or \
                              `--delete-remote-unlanded`, for a member branch of the deleted \
                              name; `rwv sync` where the target's `history` rebases a member \

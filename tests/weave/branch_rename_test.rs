@@ -6,8 +6,9 @@
 //! - a feature's rename moves its project branch, its owned members' branches,
 //!   its record, its stored entries, every record that lands into it and the
 //!   workspace's aligned branch, and leaves nothing under the old name;
-//! - a member branch some live weave branch declares is protected: the rename
-//!   refuses and changes nothing;
+//! - a member branch some live weave branch declares is not the feature's: the
+//!   rename leaves it where it stands and gives the member the new name at
+//!   its tip;
 //! - a declared-mode project branch is renamed: it is protected only against
 //!   rewrites;
 //! - the new name is refused where it exists, locally or on a remote, unless
@@ -184,26 +185,41 @@ fn declare_lib_on(w: &common::PushWorkspace, line: &str, branch: &str) {
 }
 
 #[test]
-fn a_member_branch_a_live_weave_branch_declares_protects_the_rename_and_nothing_changes() {
+fn a_member_branch_a_live_weave_branch_declares_stays_and_the_rename_branches_off_it() {
     let w = weave(&[LIB]);
     let ww = create_workweave(&w.workspace, "anon");
     let old = minted("anon");
     declare_lib_on(&w, "line", &old);
     let record_before = record_of(&w.workspace, &old);
+    let declared_tip = common::git_in(ww.join(LIB), &["rev-parse", &old]);
 
-    let stderr = refuse(&["branch", "rename", "feat-x"], &ww);
+    let stdout =
+        String::from_utf8_lossy(&succeed(&["branch", "rename", "feat-x"], &ww).stdout).into_owned();
 
     assert!(
-        stderr.contains("protected declared") && stderr.contains("line (projects/p)"),
-        "{stderr}"
+        stdout.contains(&format!("branched {LIB}: feat-x starts at {old}"))
+            && stdout.contains("line (projects/p)"),
+        "{stdout}"
     );
-    assert_routes_to(&stderr, "protected");
-    assert!(has_branch(&ww.join(LIB), &old));
-    assert!(!has_branch(&ww.join(LIB), "feat-x"));
-    assert!(has_branch(&project_dir(&ww), &old));
-    assert!(!has_branch(&project_dir(&ww), "feat-x"));
-    assert_eq!(record_of(&w.workspace, &old), record_before);
-    assert_eq!(record_of(&w.workspace, "feat-x"), None);
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["rev-parse", &old]),
+        declared_tip
+    );
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["branch", "--show-current"]),
+        "feat-x"
+    );
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]),
+        declared_tip
+    );
+    assert!(!has_branch(&project_dir(&ww), &old));
+    assert_eq!(
+        common::git_in(project_dir(&ww), &["branch", "--show-current"]),
+        "feat-x"
+    );
+    assert_eq!(record_of(&w.workspace, &old), None);
+    assert_eq!(record_of(&w.workspace, "feat-x"), record_before);
 }
 
 #[test]
@@ -350,6 +366,32 @@ fn a_rename_that_stopped_after_a_member_is_completed_by_running_it_again() {
     assert!(has_branch(&ww.join(LIB), "feat-x"));
     assert!(record_of(&w.workspace, "feat-x").is_some());
     assert_eq!(record_of(&w.workspace, &old), None);
+}
+
+#[test]
+fn a_rename_that_stopped_after_branching_off_a_declared_member_is_completed_by_running_it_again() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "anon");
+    let old = minted("anon");
+    declare_lib_on(&w, "line", &old);
+    let declared_tip = common::git_in(ww.join(LIB), &["rev-parse", &old]);
+    common::git_in(ww.join(LIB), &["branch", "feat-x"]);
+
+    succeed(&["branch", "rename", "feat-x"], &ww);
+
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["rev-parse", &old]),
+        declared_tip
+    );
+    assert_eq!(
+        common::git_in(ww.join(LIB), &["branch", "--show-current"]),
+        "feat-x"
+    );
+    assert_eq!(
+        common::git_in(project_dir(&ww), &["branch", "--show-current"]),
+        "feat-x"
+    );
+    assert!(record_of(&w.workspace, "feat-x").is_some());
 }
 
 #[test]
@@ -571,7 +613,7 @@ fn a_rename_from_a_detached_project_repo_is_the_detached_state_with_its_choices(
 }
 
 #[test]
-fn a_member_branch_an_unrecorded_live_branch_declares_protects_the_rename() {
+fn a_member_branch_an_unrecorded_live_branch_declares_stays_through_the_rename() {
     let w = weave(&[LIB]);
     let ws = &w.workspace;
     let project = project_dir(ws);
@@ -586,9 +628,6 @@ fn a_member_branch_an_unrecorded_live_branch_declares_protects_the_rename() {
     common::git_in(&project, &["commit", "-qam", "line declares x, unrecorded"]);
     common::git_in(&project, &["switch", "-q", "x"]);
 
-    common::cli::refused(
-        &run(&["branch", "rename", "y"], ws),
-        State::ProtectedDeclared,
-    );
-    assert!(has_branch(&ws.join(LIB), "x") && !has_branch(&ws.join(LIB), "y"));
+    succeed(&["branch", "rename", "y"], ws);
+    assert!(has_branch(&ws.join(LIB), "x") && has_branch(&ws.join(LIB), "y"));
 }

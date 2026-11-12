@@ -37,17 +37,17 @@ impl Departure {
         Self(())
     }
 
-    /// The proof for the project repo's own move to `destination`: a detached
-    /// HEAD that `destination` does not reach keeps what it holds as a backup
+    /// The proof for a checkout's own move to `destination`: a detached HEAD
+    /// that `destination` does not reach keeps what it holds as a backup
     /// first, and a branch keeps its own commits.
-    pub fn of_project_move(
+    pub fn of_move(
         vcs: &dyn Vcs,
-        project_dir: &Path,
+        dir: &Path,
         destination: &ResolvedRevisionId,
     ) -> anyhow::Result<Self> {
-        let head = vcs.head_revision(project_dir)?;
-        if !vcs.is_ancestor(project_dir, &head, destination)? {
-            vcs.backup_unpreserved_head(project_dir)?;
+        let head = vcs.head_revision(dir)?;
+        if !vcs.is_ancestor(dir, &head, destination)? {
+            vcs.backup_unpreserved_head(dir)?;
         }
         Ok(Self(()))
     }

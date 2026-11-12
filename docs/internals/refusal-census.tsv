@@ -53,7 +53,6 @@ src/branch.rs	invalid-ref-name	-	1
 src/branch.rs	name exists	-	3
 src/branch.rs	name no-such-branch	-	2
 src/branch.rs	name reserved	-	1
-src/branch.rs	protected declared	tests/weave/branch_rename_test.rs	1
 src/branch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/branch.rs	target conflict	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/weave/branch_create_switch_test.rs	1
@@ -103,7 +102,7 @@ src/clone.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
 src/deletion.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	-	1
-src/deletion.rs	protected declared	tests/weave/branch_rename_test.rs	1
+src/deletion.rs	protected declared	tests/sync/protection_test.rs	1
 src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
 src/deletion.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
@@ -124,7 +123,7 @@ src/feature_sync.rs	pin not on declared branch	-	1
 src/feature_sync.rs	pin off lineage	-	2
 src/feature_sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
-src/feature_sync.rs	protected declared	tests/weave/branch_rename_test.rs	1
+src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	1
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
 src/feature_sync.rs	target dependents	-	2
@@ -239,7 +238,7 @@ src/push.rs	pin unmerged	tests/sync/push_test.rs	2
 src/push.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	2
 src/push.rs	pin waived	-	1
 src/push.rs	pin would be unreachable	tests/sync/push_test.rs	1
-src/push.rs	protected declared	tests/weave/branch_rename_test.rs	1
+src/push.rs	protected declared	tests/sync/protection_test.rs	1
 src/push.rs	protected declared mode	-	1
 src/push.rs	publish no pin	-	1
 src/push.rs	publish records rejected	-	1

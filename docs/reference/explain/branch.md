@@ -148,6 +148,13 @@ the same-named branch of each `owned` and `fork` member that has one is renamed
 too; a declared-mode project branch's members sit on the branches `rwv.toml`
 declares and are not touched.
 
+A member branch of the old name that some live weave branch declares is not the
+feature's: it is never renamed and stays where it stands. The member's branch
+`<new>` starts at its tip instead, and the member's checkout here moves onto it,
+reported as `branched <repo>: <new> starts at <old>` with the declaring
+branches. This is how a feature whose name became declared (`name` `declared`)
+takes another name.
+
 Each renamed branch stops taking in from the remote branch it did. Every old
 remote branch is reported on stderr as `left: <repo> <old>: <remote> still has
 it`, with the `rwv branch delete <old> --target <new> --delete-remote` that
@@ -155,8 +162,7 @@ deletes it once it has landed on `<new>`.
 
 A declared-mode project branch is protected against rewrites only: it can be
 renamed. A rename made on the forge (the project's `main` renamed `trunk` on the
-remote) is taken up with `rwv branch rename trunk --adopt`. A member branch
-that some live weave branch declares is protected and is never renamed.
+remote) is taken up with `rwv branch rename trunk --adopt`.
 
 - `--adopt` takes up a branch a remote already has under `<new>`: each renamed
   branch whose push target has `<new>` takes in from it, and the project branch
@@ -172,8 +178,7 @@ that some live weave branch declares is protected and is never renamed.
 
 Refused, before anything changes, each as its own line: `<old>` with no record
 that reads (`target` `unrecorded`, `conflict`, `unreadable`), a record that
-lands into it and does not read, a member branch some live weave branch declares
-(`protected` `declared`, listing the weave branches declaring it), a `<new>`
+lands into it and does not read, a `<new>`
 that exists as a local branch of a repo the rename moves or on a remote without
 `--adopt` (`name` `exists`), a feature's `<new>` that a live weave branch
 declares for a member (`name` `declared`) or that another project's feature uses

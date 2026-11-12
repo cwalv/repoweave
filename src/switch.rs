@@ -621,7 +621,7 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     };
     report.into_result()?;
 
-    let departure = Departure::of_project_move(vcs, &dir, &start)?;
+    let departure = Departure::of_move(vcs, &dir, &start)?;
     vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
         .map_err(|e| refused_move(vcs, &project, &dir, e))?;
     crate::alignment::forget_branch(vcs, &dir, new.as_str())?;
@@ -921,7 +921,7 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     report.into_result()?;
 
     if current.as_deref() != Some(branch.as_str()) {
-        let departure = Departure::of_project_move(vcs, &dir, &destination)?;
+        let departure = Departure::of_move(vcs, &dir, &destination)?;
         localize_opened(vcs, &dir, &opening)?;
         vcs.reattach_head(
             vcs.head_attachment(&dir)?,
@@ -1028,7 +1028,7 @@ fn switch_detached(
     judge_members_at(ctx, project, vcs, dir, &destination, None, &mut report)?;
     report.into_result()?;
 
-    let departure = Departure::of_project_move(vcs, dir, &destination)?;
+    let departure = Departure::of_move(vcs, dir, &destination)?;
     match vcs.head_attachment(dir)? {
         HeadAttachment::Attached(on) => vcs.detach_head(&on, &destination, &departure),
         HeadAttachment::Detached(was) => vcs.advance_detached_head(&was, &destination),

@@ -59,7 +59,7 @@ rwv branch rename lib-fix
 rwv push --repo github/chatly/lib
 ```
 
-`rwv branch rename` renames the project branch and each `owned` and `fork` member's branch of the same name, moves the branch's record, and stops each from taking in from a remote branch of the old name. A branch some live weave branch declares is never renamed (`protected`), and a `<new>` that already exists is refused (`name` `exists`); `--adopt` takes up a remote's.
+`rwv branch rename` renames the project branch and each `owned` and `fork` member's branch of the same name, moves the branch's record, and stops each from taking in from a remote branch of the old name. A member branch some live weave branch declares is never renamed: it stays, and the member's branch of the new name starts at its tip. A `<new>` that already exists is refused (`name` `exists`); `--adopt` takes up a remote's.
 
 ## Clean up
 

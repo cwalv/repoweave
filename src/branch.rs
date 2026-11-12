@@ -17,8 +17,8 @@ use crate::records::{
 };
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
-    project_vcs, short_revision, vcs_for, HeadObservation, RawRefName, Relation, RemoteHandle,
-    ResolvedRevisionId, Upstream, Vcs,
+    project_vcs, short_revision, vcs_for, HeadObservation, LocalRefName, RawRefName, Relation,
+    RemoteHandle, ResolvedRevisionId, Upstream, Vcs,
 };
 use crate::workspace::{project_rel_path, WorkspaceContext};
 
@@ -523,6 +523,9 @@ pub(crate) struct Moving {
     url_remote: Option<RemoteHandle>,
     pub(crate) member: Option<RepoPath>,
     adopted: Option<Upstream>,
+    /// The weave branches declaring this member's branch of the old name,
+    /// which the rename leaves where it stands.
+    declared_by: Vec<String>,
 }
 
 impl Moving {
@@ -539,6 +542,7 @@ impl Moving {
             url_remote: None,
             member,
             adopted: None,
+            declared_by: Vec::new(),
         }
     }
 
@@ -567,6 +571,7 @@ fn moving_repos(
         url_remote,
         member: None,
         adopted: None,
+        declared_by: Vec::new(),
     }];
     if !feature {
         return Ok(repos);
@@ -589,6 +594,7 @@ fn moving_repos(
             url_remote,
             member: Some(path.clone()),
             adopted: None,
+            declared_by: Vec::new(),
         });
     }
     Ok(repos)
@@ -649,27 +655,26 @@ fn judge_rename_of(
 ) -> anyhow::Result<()> {
     let old_raw = RawRefName::new(old.as_str());
     let new_raw = RawRefName::new(new.as_str());
-    let recorded = crate::sync::recorded_workweaves(scan.primary)?;
-    for checkout in other_checkouts(repo, &old_raw)? {
-        report.add(crate::sync::judge_checkout(
-            repo.vcs.as_ref(),
-            &repo.label,
-            &checkout,
-            &repo.dir,
-            &recorded,
-            None,
-        ));
-    }
     if let Some(path) = &repo.member {
-        let declarers = scan.accounting.declarers(path, old.as_str());
-        if !declarers.is_empty() {
-            report.add(
-                repo.judging(State::ProtectedDeclared)
-                    .subject(old)
-                    .listing(declarers)
-                    .by_verb("branch rename")
-                    .judge(repo.vcs.as_ref()),
-            );
+        repo.declared_by = scan.accounting.declarers(path, old.as_str());
+    }
+    if repo.declared_by.is_empty() {
+        let recorded = crate::sync::recorded_workweaves(scan.primary)?;
+        for checkout in other_checkouts(repo, &old_raw)? {
+            report.add(crate::sync::judge_checkout(
+                repo.vcs.as_ref(),
+                &repo.label,
+                &checkout,
+                &repo.dir,
+                &recorded,
+                None,
+            ));
+        }
+    }
+    if !repo.declared_by.is_empty() {
+        let tip_of = |name: &RawRefName| repo.vcs.resolve_local_branch_tip(&repo.dir, name);
+        if tip_of(&new_raw)?.is_some() && tip_of(&new_raw)? == tip_of(&old_raw)? {
+            return Ok(());
         }
     }
     if judge_name_taken(repo, new, request.adopt, "branch rename", report)? {
@@ -720,15 +725,17 @@ fn judge_rename_of(
 }
 
 fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Result<()> {
-    if repo.vcs.resolve_local_branch_tip(&repo.dir, old)?.is_none() {
+    let Some(tip) = repo.vcs.resolve_local_branch_tip(&repo.dir, old)? else {
         return Ok(());
+    };
+    if repo.declared_by.is_empty() {
+        repo.vcs.rename_branch(&repo.dir, old, new)?;
+        outln!("renamed {}: {old} -> {new}", repo.label);
+    } else {
+        branch_off_declared(repo, old, new, &tip)?;
     }
-    repo.vcs.rename_branch(&repo.dir, old, new)?;
     if let Some(upstream) = &repo.adopted {
         repo.vcs.set_upstream(&repo.dir, new, upstream)?;
-    }
-    outln!("renamed {}: {old} -> {new}", repo.label);
-    if let Some(upstream) = &repo.adopted {
         outln!(
             "adopted {}: {new} takes in from {}/{}",
             repo.label,
@@ -736,6 +743,38 @@ fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Resul
             upstream.branch
         );
     }
+    Ok(())
+}
+
+/// A member branch of the old name that a weave branch declares is not the
+/// feature's own, so it stays: the feature's branch of the new name starts at
+/// its tip, and a checkout on it here moves to the new one.
+fn branch_off_declared(
+    repo: &Moving,
+    old: &RawRefName,
+    new: &RawRefName,
+    tip: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
+    let on_old = checked_out(repo.vcs.as_ref(), &repo.dir)?.as_deref() == Some(old.as_str());
+    let made = repo.vcs.resolve_local_branch_tip(&repo.dir, new)?.is_some();
+    let departure = || crate::alignment::Departure::of_move(repo.vcs.as_ref(), &repo.dir, tip);
+    match (made, on_old) {
+        (false, true) => repo
+            .vcs
+            .create_branch_and_attach(&repo.dir, new, tip, &departure()?)?,
+        (false, false) => repo.vcs.create_branch(&repo.dir, new, tip, None)?,
+        (true, true) => repo.vcs.reattach_head(
+            repo.vcs.head_attachment(&repo.dir)?,
+            &LocalRefName::of_branch(new),
+            &departure()?,
+        )?,
+        (true, false) => {}
+    }
+    outln!(
+        "branched {}: {new} starts at {old}, which stays as {} declare it",
+        repo.label,
+        repo.declared_by.join(", ")
+    );
     Ok(())
 }
 
@@ -921,7 +960,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         rename_in(project_repo, &old_raw, &new_raw)?;
     }
     crate::alignment::mark_renaming(vcs.as_ref(), &dir, None)?;
-    for repo in &repos {
+    for repo in repos.iter().filter(|repo| repo.declared_by.is_empty()) {
         let copies = repo.vcs.remote_copies(&repo.dir, &old_raw)?;
         if copies.is_empty() {
             continue;
