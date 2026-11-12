@@ -10,7 +10,7 @@
 //!   - May be slow (cargo compile time, uv tool install, etc.)
 //!
 //! Run with:
-//!   RWV_E2E_INSTALL=1 cargo test --test e2e_install_test -- --nocapture
+//!   RWV_E2E_INSTALL=1 cargo test --test integrations -- e2e_install_test:: --nocapture
 
 use std::process::Command;
 

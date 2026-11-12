@@ -7,7 +7,7 @@
 #
 # With no selectors it runs every test target, which is what
 # `scripts/ci-local.sh --stages=windows-wine` invokes. Selectors pass through
-# to cargo (`--test add_remove_test`, `--lib`), and anything after `--` passes
+# to cargo (`--test weave`, `--lib`), and anything after `--` passes
 # to every selected test binary. A whole-suite run takes about as long as that
 # workflow's job; a run of the binaries a Windows red names takes minutes.
 #
@@ -43,25 +43,25 @@ jobs="${WINE_JOBS:-4}"
 # One `<target> <test>` line per test. The indented `windows:` and `reason:`
 # lines after a run of them hold for every test in that run.
 KNOWN_REDS='
-case_equivalence_test a_confusable_sibling_warns_at_mint_and_is_still_created
-case_equivalence_test workweave_reuse_refuses_to_adopt_a_case_twin_directory
+weave case_equivalence_test::a_confusable_sibling_warns_at_mint_and_is_still_created
+weave case_equivalence_test::workweave_reuse_refuses_to_adopt_a_case_twin_directory
     windows: passed on windows-tests.yml at b847d11
     reason: Wine folds case on lookup, so the test takes its folding arm, but
         Wine canonicalizes a path to the spelling it was asked for where NTFS
         gives the spelling on disk. rwv matches a path to the listing of its
         parent by comparing canonical paths, so it never finds an entry listed
         under another spelling. A case-folding directory gets the same answer.
-case_equivalence_test every_arm_this_host_cannot_reach_announces_itself
+weave case_equivalence_test::every_arm_this_host_cannot_reach_announces_itself
     windows: passed on windows-tests.yml at b847d11
     reason: it reruns workweave_reuse_refuses_to_adopt_a_case_twin_directory
         and requires it to pass.
-case_equivalence_test case_drift_between_the_record_and_the_disk_is_reported
+weave case_equivalence_test::case_drift_between_the_record_and_the_disk_is_reported
     windows: passed on windows-tests.yml at b847d11
     reason: Wine reports a rename that changes only case as done and leaves
         the name on disk as it was, so the drift the test makes never happens.
-e2e_ecosystem_constraints_test npm_workspace_checks_version_mismatch
-e2e_ecosystem_constraints_test go_work_catches_version_mismatch
-e2e_ecosystem_constraints_test uv_workspace_silently_allows_version_mismatch
+integrations e2e_ecosystem_constraints_test::npm_workspace_checks_version_mismatch
+integrations e2e_ecosystem_constraints_test::go_work_catches_version_mismatch
+integrations e2e_ecosystem_constraints_test::uv_workspace_silently_allows_version_mismatch
     windows: passed on windows-tests.yml at b847d11
     reason: it measures npm, go or uv itself and fails rather than skips
         where that tool is missing. None of them is installed under Wine,
@@ -283,7 +283,7 @@ cargo test --no-run --target "$TARGET" --features test-pause \
 # runs from that build.
 probe_targets=()
 while IFS=$'\t' read -r name kind src _; do
-    if [ "$kind" = test ] && grep -qw compile_probe "$src"; then
+    if [ "$kind" = test ] && grep -rqw compile_probe "$(dirname "$src")"; then
         probe_targets+=(--test "$name")
     fi
 done < "$run_dir/built"

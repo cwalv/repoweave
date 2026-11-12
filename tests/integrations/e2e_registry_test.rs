@@ -6,7 +6,7 @@
 //! because they require network access and are slower than the other e2e tests.
 //!
 //! Run with:
-//!   RWV_E2E_REGISTRY=1 cargo test --test e2e_registry_test
+//!   RWV_E2E_REGISTRY=1 cargo test --test integrations -- e2e_registry_test::
 //!
 //! Fixture packages published to real registries:
 //!   - Go:     github.com/cwalv/repoweave/tests/fixtures/go/rwv-test-protocol v1.0.0

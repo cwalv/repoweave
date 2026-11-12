@@ -99,7 +99,7 @@ one shape: a citation naming a real document under a wrong or missing path is
 exactly as much a dead end when a test writes it as when `src/` does. So the
 rule reads both trees, and the fixture-path case is carved out by the same
 operated-filename exemption `src/` already had (see "What is mechanized, and
-what is not" below), widened to also look at what `tests/*.rs` code writes as
+what is not" below), widened to also look at what code under `tests/` writes as
 fixture content, matched by basename so a comment naming a bare filename and a
 fixture writing it under a directory are read as the same fact.
 
@@ -168,7 +168,7 @@ Three gates in `src/bin/generate-explain.rs`:
   bare-pointer clause over comments in `src/` and `tests/`, for tokens whose
   last component ends in a document extension. A filename with no `/`
   counts, for `.md`. Two exemptions: a filename this repository's own
-  non-test code operates on, or a `tests/*.rs` file writes as fixture
+  non-test code operates on, or a file under `tests/` writes as fixture
   content, is an artifact the program handles, not a document the comment
   cites — matched by basename, so a slashed fixture path (`notes/shared.md`)
   is exempt on the same terms as a bare one; and a bare filename accompanied

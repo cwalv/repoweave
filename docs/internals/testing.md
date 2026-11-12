@@ -89,6 +89,76 @@ A module that must move takes that scope with it: widen
 own seeded failure, and measure what those checks report once they can see
 it.
 
+## Test binaries
+
+`tests/` builds a handful of test binaries, one per directory: cargo makes
+`tests/<area>/main.rs` a binary named `<area>`, and every test file is a
+module of one of them, declared in that `main.rs`. A file keeps its name as
+its module, so `tests/sync/sync_to_test.rs` is the module `sync_to_test` of
+the `sync` binary and its tests are named `sync_to_test::<fn>`. The shared
+helpers in `tests/common/` are one module tree every binary declares as
+`common` (`#[path = "../common/mod.rs"] mod common;`), and a test file reaches
+them with `use crate::common;`.
+
+An area groups what is edited together, because a change to any file rebuilds
+its whole binary: a binary per area keeps that rebuild to the area's files
+rather than the suite's. `source` holds the structural pins, compile-fail and
+seal probes and the tests of the test tooling; `docs` the doc-claim, explain,
+prime, schema and refusal-entry tests; `process` plugins, `rwv each`, job
+control and concurrent rwv processes; `vcs` the git seam and branch model;
+`doctor` doctor, status and the health and state checks; `sync` sync, sync-to,
+abort, lock, push, pull, fetch and update; `weave` workweaves, branches,
+members, clone, init, activation and project resolution; `integrations` the
+ecosystem integrations, hooks and surfacing; `scenario` the scenario harness.
+`test_pause_build` is a binary of its own because the gate's `no-test-pause`
+stage builds it without the `test-pause` feature, and a binary of one file is
+all that stage should compile.
+
+A file no binary declares never runs, and nothing reddens for it.
+`tests/source/test_binary_layout_test.rs` fails on any `.rs` file under
+`tests/` outside `fixtures/` that no binary's module tree reaches, that two
+binaries reach, or that sits directly under `tests/` (cargo would make it a
+binary of its own); it holds its module walk equal to the dep-info rustc
+writes for its own binary. A new test file goes in the area it is edited
+with, and its `mod` line goes in that area's `main.rs`.
+
+### Running part of the suite
+
+The gate's test stages pass `--release --features test-pause`, and so should
+any run whose result you compare with one; they are left out below.
+
+```sh
+cargo test --test sync                                 # one area
+cargo test --test sync -- sync_to_test::               # one file's tests
+cargo test --test sync -- sync_to_test::a_test --exact # one test
+```
+
+A filter is a substring of the test's name, so `sync_to_test::` also selects a
+file whose name ends in `sync_to_test`; `--exact` takes the whole name.
+
+### Everything in a binary shares one process
+
+libtest runs a binary's tests on threads of one process, so a test owns
+nothing process-wide: not the environment, not the working directory, not a
+signal handler or panic hook, not a fixed temp path or port. A test that needs
+any of those starts a process — usually this binary again, playing a child
+role — and passes what the child needs on its command line and environment.
+Two rules come with that:
+
+- **A child is selected by a derived name.** `common::test_name(f)` takes the
+  `#[test]` function itself and returns the name libtest selects it by,
+  having checked the binary lists that test exactly once; its `selector()`
+  is the argument list. A name typed as a string goes stale when the test
+  moves, and an `--exact` that matches nothing exits 0 having run nothing.
+  `common::rerun_one_test` also requires the child to report one test run.
+- **A program a test runs is written by a child process.** Exec fails with
+  `ETXTBSY` while any process holds the file open for writing, and every
+  child another thread forks inherits the test process's write handles until
+  it execs. A script, hook or stand-in tool goes on disk through
+  `common::write_executable`, `write_program` or `copy_executable`, which
+  write it from a child process, never through `std::fs::write` and a
+  permission change.
+
 ## Behavioral pins and structural pins
 
 A **behavioral pin** asserts an observable outcome through a supported
@@ -185,6 +255,13 @@ defect it guards:
 - **Check which assertion fired.** An older assertion may catch the
   mutation first, leaving the new pin unexercised behind a red that looks
   like proof.
+- **Run each instrument on its own.** To learn which instruments catch a
+  mutation, run one test file per invocation — its binary and its module,
+  `cargo test --release --features test-pause --test <area> -- <file>::` —
+  and record a verdict for each. A whole-binary run reports a red for the
+  binary, not for the instrument, and `cargo test` without `--no-fail-fast`
+  stops at the first failing binary, leaving every later one unrun rather
+  than green.
 
 A mutation that stays green is a finding, not a pass. Green has exactly
 three explanations, and the recorded evidence must say which:
@@ -345,6 +422,12 @@ the full gate in its own checkout, since those are exactly what the landing
 stages catch. A tier run's terminal line names the tier and its stages, so
 its log never reads as a full gate's. `--tier` and `--stages` are refused
 together.
+
+Every stage that runs the suite hands it `RUST_TEST_THREADS`: half the
+host's cores, never fewer than four (or every core, on a smaller host), unless
+the caller set it. A test binary's tests all run in one process, and at one
+thread per core several gates at once oversubscribe the host while one gate
+alone runs no faster; the script's header gives the measurement.
 
 ## The scenario harness
 

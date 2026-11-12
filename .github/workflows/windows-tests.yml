@@ -165,9 +165,9 @@ on:
     inputs:
       tests:
         description: >-
-          Space-separated test targets to run instead of the full suite
-          (e.g. "hand_edit_convergence_test integrations_test"; "lib" runs
-          the unit tests). Empty runs everything.
+          Space-separated test binaries to run instead of the full suite
+          (e.g. "integrations weave", the directories under tests/; "lib"
+          runs the unit tests). Empty runs everything.
         required: false
         default: ""
 

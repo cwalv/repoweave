@@ -770,8 +770,9 @@ Three tiers.
   `#[cfg(test)] mod tests`. The exceptions are `check.rs`, `cli.rs`,
   `explain.rs`, `init.rs`, `integration.rs`, `lock.rs`, `schema_url.rs` and
   `update.rs`, plus `lib.rs` and `main.rs`, which hold no logic.
-- **Integration tests** — `tests/*.rs`, each its own binary, driving the `rwv`
-  executable across the process boundary via `assert_cmd`. `tests/common/mod.rs`
+- **Integration tests** — `tests/<area>/*.rs`, each a module of its area's
+  binary (`tests/<area>/main.rs`), driving the `rwv` executable across the
+  process boundary via `assert_cmd`. `tests/common/mod.rs`
   supplies a `git()` builder that strips every inherited `GIT_*` variable, so a
   subprocess can never reach the outer repository.
 - **Contract helpers** — `tests/common/contract.rs` encodes the hybrid

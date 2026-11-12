@@ -13,8 +13,8 @@
 //!
 //! Why per-verb tests instead of a single loop: a single loop reports
 //! "one of {N} verbs drifted" with no useful diff in the failure
-//! header; per-verb tests let `cargo test --test doc_claims_explain_test
-//! explain_status` work, and the failure name immediately identifies
+//! header; per-verb tests let `cargo test --test docs
+//! doc_claims_explain_test::explain_status` work, and the failure name immediately identifies
 //! the drifting verb. Each test still does the byte-comparison with a
 //! diff-friendly assertion message so the offending lines are
 //! visible.

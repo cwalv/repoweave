@@ -4,7 +4,7 @@
 //
 // Verify() + doctor --fix acceptance tests for cargo-workspace.
 // Named `s7_cargo_doctor_*` per the spec so they are discoverable as
-// a battery: `cargo test --test integrations_test s7_cargo_doctor_`.
+// a battery: `cargo test --test integrations -- s7_cargo_doctor_`.
 //
 // These tests drive the integration directly (verify() / activate()) rather
 // than the full CLI doctor path — that is the C17-aligned style.
