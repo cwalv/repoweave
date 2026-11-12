@@ -1742,8 +1742,9 @@ fn report_dropped_derived(
 /// judged from the repository as it stands, so a `--continue` re-judges what
 /// a stop let the operator change: the target's setting at the tip taken in
 /// (the member's entry, else the top level), else the run's `--history`; a
-/// range holding a merge is merged; a rebase refuses a declared branch and a
-/// branch with dependents. `repo` is the member, `None` for the project.
+/// range holding a merge is merged; a rebase refuses a declared branch, and
+/// carries the branch's dependents along, judging them again as it does.
+/// `repo` is the member, `None` for the project.
 fn integration_now(
     sync: &Sync<'_>,
     op: &Op,
@@ -1791,25 +1792,6 @@ fn integration_now(
                     .judge(vcs),
             );
         }
-    }
-    let dependents =
-        crate::merge_upstream::dependents_of(sync.vcs.as_ref(), &sync.dir, &sync.branch)?;
-    if !dependents.is_empty() {
-        report.add(
-            State::TargetDependents
-                .of(sync.label())
-                .project_repo()
-                .checkout(&sync.dir)
-                .bind("<W>", &sync.branch)
-                .bind("<T>", sync.source_name())
-                .listing(dependents.iter().map(|d| {
-                    format!(
-                        "{d} lands into {}, which this sync would rewrite",
-                        sync.branch
-                    )
-                }))
-                .judge(sync.vcs.as_ref()),
-        );
     }
     report.into_result()?;
     Ok((how, merged))
