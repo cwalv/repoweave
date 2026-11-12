@@ -158,7 +158,7 @@ pub(crate) fn run(
     for change in changes.changed.iter().filter(|c| c.changed("url")) {
         let located = loaded.checkout(ctx, &change.path);
         let vcs = vcs_for(change.now.vcs_type);
-        if let Some(relink) = crate::member_url::judge_relink(
+        let relink = crate::member_url::judge_relink(
             vcs.as_ref(),
             &change.path,
             &located.dir,
@@ -166,14 +166,13 @@ pub(crate) fn run(
             &change.now.url,
             VERB,
             &mut refusals,
-        )? {
-            relinks.push((
-                change.path.clone(),
-                located.dir.clone(),
-                change.now.vcs_type,
-                relink,
-            ));
-        }
+        )?;
+        relinks.push((
+            change.path.clone(),
+            located.dir.clone(),
+            change.now.vcs_type,
+            relink,
+        ));
     }
     for change in changes
         .changed
@@ -272,8 +271,11 @@ pub(crate) fn run(
         }
     }
     for (member, dir, vcs_type, relink) in &relinks {
-        relink.apply(vcs_of(*vcs_type).as_ref(), dir)?;
-        eprintln!("rwv {VERB}: {}", relink.describe(member));
+        let vcs = vcs_of(*vcs_type);
+        relink.apply(vcs.as_ref(), dir)?;
+        if let Some(lines) = relink.describe(vcs.as_ref(), member) {
+            eprintln!("rwv {VERB}: {lines}");
+        }
     }
     for change in changes.changed.iter().filter(|c| c.changed("role")) {
         let located = loaded.checkout(ctx, &change.path);

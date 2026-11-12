@@ -33,12 +33,52 @@ impl Relink {
     }
 }
 
+/// What a url change does to the branch the member sits on.
+#[derive(Debug, Clone)]
+pub(crate) enum Relinking {
+    To(Relink),
+    /// The new url's remote holds no copy of the branch as last fetched: none
+    /// is added and nothing fetched here, so the relink waits for a fetch.
+    Unfetched {
+        branch: RawRefName,
+        url: RepoUrl,
+    },
+    Stays,
+}
+
+impl Relinking {
+    pub(crate) fn apply(&self, vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<()> {
+        match self {
+            Relinking::To(relink) => relink.apply(vcs, dir),
+            Relinking::Unfetched { .. } | Relinking::Stays => Ok(()),
+        }
+    }
+
+    /// The lines saying what the change did to the branch, each beginning
+    /// with `member`; nothing where it leaves the branch as it was for good.
+    pub(crate) fn describe(&self, vcs: &dyn Vcs, member: &RepoPath) -> Option<String> {
+        match self {
+            Relinking::To(relink) => Some(relink.describe(member)),
+            Relinking::Unfetched { branch, url } => Some(format!(
+                "{member}: '{branch}' relinks to {url} once a fetch finds it there\n{}",
+                crate::diagnosis::choices_text(
+                    vcs,
+                    &[crate::diagnosis::Form::C33],
+                    &Default::default()
+                )
+                .trim_end()
+            )),
+            Relinking::Stays => None,
+        }
+    }
+}
+
 fn clone_url(url: &RepoUrl) -> anyhow::Result<CloneUrl> {
     Ok(crate::registry::resolve_to_clone_info(url)?.url)
 }
 
-/// What relinking the branch the member sits on takes: a relink to do, or
-/// nothing, or a refusal added to `refusals`.
+/// What relinking the branch the member sits on takes: a relink to do, one
+/// waiting for a fetch, or nothing, or a refusal added to `refusals`.
 ///
 /// The branch relinks when it takes in from the old url's remote and has no
 /// push remote of its own, and the new url's remote has a branch of its name
@@ -51,9 +91,9 @@ pub(crate) fn judge_relink(
     new: &RepoUrl,
     verb: &'static str,
     refusals: &mut Report,
-) -> anyhow::Result<Option<Relink>> {
+) -> anyhow::Result<Relinking> {
     let HeadAttachment::Attached(attached) = vcs.head_attachment(dir)? else {
-        return Ok(None);
+        return Ok(Relinking::Stays);
     };
     judge_relink_of(
         vcs,
@@ -77,23 +117,27 @@ pub(crate) fn judge_relink_of(
     new: &RepoUrl,
     verb: &'static str,
     refusals: &mut Report,
-) -> anyhow::Result<Option<Relink>> {
+) -> anyhow::Result<Relinking> {
     let Some(upstream) = vcs.upstream_of(dir, branch)? else {
-        return Ok(None);
+        return Ok(Relinking::Stays);
     };
     let Some(old_remote) = crate::url_remote::present(vcs, dir, old)? else {
-        return Ok(None);
+        return Ok(Relinking::Stays);
     };
     if upstream.remote != old_remote || vcs.own_push_remote(dir, branch)?.is_some() {
-        return Ok(None);
+        return Ok(Relinking::Stays);
     }
+    let unfetched = Relinking::Unfetched {
+        branch: branch.clone(),
+        url: new.clone(),
+    };
     let new_remote: RemoteHandle =
         match crate::url_remote::find(vcs, member, verb, dir, &clone_url(new)?)? {
             crate::url_remote::Found::Present(remote) => remote,
-            crate::url_remote::Found::Missing(_) => return Ok(None),
+            crate::url_remote::Found::Missing(_) => return Ok(unfetched),
             crate::url_remote::Found::Taken(judged) => {
                 refusals.add(judged);
-                return Ok(None);
+                return Ok(Relinking::Stays);
             }
         };
     let Some(copy) = vcs
@@ -101,7 +145,7 @@ pub(crate) fn judge_relink_of(
         .into_iter()
         .find(|copy| copy.remote == new_remote)
     else {
-        return Ok(None);
+        return Ok(unfetched);
     };
     if let Some(local) = vcs.resolve_local_branch_tip(dir, branch)? {
         if vcs.relation(dir, &local, &copy.tip)? == crate::vcs::Relation::Diverged {
@@ -117,10 +161,10 @@ pub(crate) fn judge_relink_of(
                     .checkout(dir)
                     .judge(vcs),
             );
-            return Ok(None);
+            return Ok(Relinking::Stays);
         }
     }
-    Ok(Some(Relink {
+    Ok(Relinking::To(Relink {
         branch: branch.clone(),
         upstream: Upstream {
             remote: new_remote,
@@ -170,7 +214,7 @@ pub(crate) fn merge_refusal(refusals: &mut Report, error: anyhow::Error) -> anyh
 
 pub(crate) struct SetUrl {
     was: RepoEntry,
-    relink: Option<Relink>,
+    relink: Relinking,
     same: bool,
 }
 
@@ -200,7 +244,7 @@ fn judge_set_url(
     }
     let same = clone_url(&entry.url)?.names_same_remote(&clone_url(new)?);
     let relink = if same {
-        None
+        Relinking::Stays
     } else {
         if let crate::url_remote::Found::Taken(judged) =
             crate::url_remote::find(vcs.as_ref(), member, VERB, dir, &clone_url(new)?)?
@@ -249,9 +293,7 @@ impl SetUrl {
         if let Some(lock) = &relocked {
             crate::lock::write_lock_in(lock, &loaded.project_dir)?;
         }
-        if let Some(relink) = &self.relink {
-            relink.apply(vcs.as_ref(), &dir)?;
-        }
+        self.relink.apply(vcs.as_ref(), &dir)?;
 
         let authored = crate::manifest_commit::authored_across(
             ctx,
@@ -280,12 +322,8 @@ impl SetUrl {
             message: &format!("member set-url {member}\n\n  - {member}: {}", new),
         })?;
         eprintln!("rwv {VERB}: {member}: url {} -> {}", self.was.url, new);
-        match &self.relink {
-            Some(relink) => eprintln!("rwv {VERB}: {}", relink.describe(member)),
-            None => eprintln!(
-                "rwv {VERB}: {member}: no branch was relinked; the next aligning verb relinks \
-                 the branch the member sits on once the new url's remote has been fetched"
-            ),
+        if let Some(lines) = self.relink.describe(vcs.as_ref(), member) {
+            eprintln!("rwv {VERB}: {lines}");
         }
         Ok(())
     }

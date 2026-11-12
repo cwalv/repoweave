@@ -963,7 +963,7 @@ pub fn run_set_branch(
         crate::member_url::merge_refusal(&mut refusals, e)?;
     }
 
-    let mut relink = None;
+    let mut relink = crate::member_url::Relinking::Stays;
     if let (Some(step), Some(new_url)) = (&step, &new_url) {
         relink = crate::member_url::judge_relink_of(
             vcs,
@@ -1061,13 +1061,9 @@ pub fn run_set_branch(
             &loaded, vcs, &member, &dir, &after, &new_lock, VERB,
         )?);
     }
-    if let Some(relink) = &relink {
-        relink.apply(vcs, &dir)?;
-        notes.push(
-            relink
-                .describe(&member)
-                .replacen(&format!("{member}: "), "", 1),
-        );
+    relink.apply(vcs, &dir)?;
+    if let Some(lines) = relink.describe(vcs, &member) {
+        notes.push(lines.replacen(&format!("{member}: "), "", 1));
     }
 
     let branch_was = entry.branch.clone();

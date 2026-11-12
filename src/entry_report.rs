@@ -293,9 +293,11 @@ fn relink(verb: &'static str, ctx: &WorkspaceContext, standing: &Standing) {
             eprint!("{}", refusals.render(verb));
             continue;
         }
-        if let Ok(Some(relink)) = relink {
+        if let Ok(relink) = relink {
             if relink.apply(vcs.as_ref(), &dir).is_ok() {
-                eprintln!("rwv {verb}: {}", relink.describe(&change.path));
+                if let Some(lines) = relink.describe(vcs.as_ref(), &change.path) {
+                    eprintln!("rwv {verb}: {lines}");
+                }
             }
         }
     }

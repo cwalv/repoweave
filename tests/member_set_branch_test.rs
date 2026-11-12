@@ -554,3 +554,51 @@ fn update_reports_a_declared_branch_that_exists_nowhere_by_the_same_judgement() 
     );
     assert!(update.contains("rwv fetch"), "{update}");
 }
+
+#[test]
+fn set_url_with_no_remote_at_the_new_url_reports_the_relink_waiting_for_a_fetch_until_it_relinks() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    succeeded(&run(&w, &["update"]));
+    let bare = w._tmp.path().join("lib-mirror.git");
+    git_in(
+        w._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            w.manifest_bares
+                .iter()
+                .find(|(p, _)| p == LIB)
+                .unwrap()
+                .1
+                .to_str()
+                .unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let mirror = common::file_url(&bare);
+    let remotes = git_in(&lib, &["remote"]);
+
+    let set = succeeded(&run(&w, &["member", "set-url", LIB, &mirror]));
+
+    let waiting = format!("{LIB}: 'main' relinks to {mirror} once a fetch finds it there");
+    assert!(set.contains(&waiting), "{set}");
+    assert!(set.contains("rwv fetch"), "{set}");
+    assert_eq!(git_in(&lib, &["remote"]), remotes, "set-url added a remote");
+    assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
+
+    let update = succeeded(&run(&w, &["update"]));
+    assert!(update.contains(&waiting), "{update}");
+    assert!(update.contains("rwv fetch"), "{update}");
+    assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
+
+    succeeded(&run(&w, &["fetch"]));
+    let relinked = succeeded(&run(&w, &["update"]));
+    assert!(!relinked.contains(&waiting), "{relinked}");
+    assert_ne!(
+        git_in(&lib, &["config", "branch.main.remote"]),
+        "origin",
+        "{relinked}"
+    );
+}
