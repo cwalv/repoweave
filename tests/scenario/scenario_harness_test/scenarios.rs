@@ -15602,6 +15602,169 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     }
 }
 
+/// How a refused abort of a carried stack someone built on is cleared.
+#[derive(Debug, Clone, Copy)]
+pub enum BuiltOnChoice {
+    /// Everything put back, the commit built on `w2` kept as a backup.
+    Abandon,
+    /// The landing finished, `w2` keeping the commit.
+    Continue,
+}
+
+/// `stack-carried-by-a-landing` killed after its carry moved `w2`, then a
+/// commit on `w2`: `rwv abort` puts nothing back and prints the two
+/// choices, and the one run as printed clears it.
+pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing")
+            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::kill("landing"),
+        Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("more.txt", "more\n")]),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(
+                "rwv abort --abandon-foreign-tip local/remotes/app",
+            ))
+            .claim(Claim::OutputContains("rwv land --continue"))
+            .claim(Claim::OutputContains("'w2' keeps its commits"))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+    ]);
+    match choice {
+        BuiltOnChoice::Abandon => steps.extend([
+            Step::rwv_printed_exactly(
+                &ww("w1"),
+                "rwv abort --abandon-foreign-tip local/remotes/app",
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("abandoned"))
+            .claim(Claim::OnBranch {
+                at: ww("w1"),
+                repo: Repo::App,
+                branch: "proj--w1",
+            }),
+            Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("w2-app")),
+            Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "proj--w1"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("main-app")),
+            Step::rwv(&ww("w1"), &["backup", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("abandoned")),
+            Step::git(&ww("w1"), Repo::App, &["log", "--all", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("hand commit")),
+        ]),
+        BuiltOnChoice::Continue => steps.extend([
+            Step::rwv_printed_exactly(&ww("w1"), "rwv land --continue")
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: ww("w1"),
+                    repo: Repo::App,
+                    rev: "w2",
+                    mark: "main-app",
+                }),
+            Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("hand commit")),
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("lacks")),
+        ]),
+    }
+    scenario("stack: an abort meets a carried dependent built on", steps)
+}
+
+/// How a dependent that moved as its carry was moving it is taken up.
+#[derive(Debug, Clone, Copy)]
+pub enum MovedAsCarried {
+    /// `rwv sync --continue` carries it again with its new commit.
+    CarryAgain,
+    /// `rwv abort`, then `rwv sync`.
+    AbortThenSync,
+    /// The same race in a landing: `rwv land --continue` carries it again.
+    CarryAgainLanding,
+}
+
+/// `stack-carried`, with a commit made on `w2` after its carry composed and
+/// before it moved: the sync moves no dependent and refuses with `target`
+/// dependent moved mid-operation, and each printed choice, run as printed,
+/// carries `w2` with that commit.
+pub fn a_dependent_moved_as_its_carry_moves(then: MovedAsCarried) -> Scenario {
+    let verb = match then {
+        MovedAsCarried::CarryAgainLanding => "land",
+        _ => "sync",
+    };
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &[verb], "carry-move", "carrying"),
+        Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("more.txt", "more\n")]),
+        Step::release("carrying")
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::TargetDependentMovedMidOperation,
+            ))
+            .claim(Claim::OutputContains(if verb == "land" {
+                "rwv land --continue"
+            } else {
+                "rwv sync --continue"
+            }))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::Lacks {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            }),
+    ]);
+    match then {
+        MovedAsCarried::CarryAgain => steps.push(
+            Step::rwv_printed_exactly(&ww("w1"), "rwv sync --continue").expect(Exit::Succeeds),
+        ),
+        MovedAsCarried::CarryAgainLanding => steps.extend([
+            Step::rwv_printed_exactly(&ww("w1"), "rwv land --continue").expect(Exit::Succeeds),
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["merge-base", "--is-ancestor", "proj--w1", "main"],
+            )
+            .expect(Exit::Succeeds),
+        ]),
+        MovedAsCarried::AbortThenSync => steps.extend([
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::rwv(&ww("w1"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("carried 'w2' along")),
+        ]),
+    }
+    steps.extend([
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("hand commit")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario("stack: a dependent moved as its carry moves it", steps)
+}
+
 /// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
 /// third workweave meanwhile: the stopped carry holds `w2` as a landing
 /// would, so the landing refuses naming the carry's op, and once the

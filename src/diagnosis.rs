@@ -560,6 +560,7 @@ pub enum State {
     TargetDependentLacksTip,
     TargetDependentCheckedOut,
     TargetDependentOnAnotherMachine,
+    TargetDependentMovedMidOperation,
     TargetRecordChanged,
     TargetModeChanged,
     TargetMemberChanges,
@@ -611,7 +612,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 81] = [
+    pub const ALL: [State; 82] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -671,6 +672,7 @@ impl State {
         Self::TargetDependentLacksTip,
         Self::TargetDependentCheckedOut,
         Self::TargetDependentOnAnotherMachine,
+        Self::TargetDependentMovedMidOperation,
         Self::HistoryUnset,
         Self::HistoryContradicted,
         Self::HistoryNotFastForward,
@@ -1549,6 +1551,18 @@ impl State {
                 offers: &[Form::C35, Form::C12Feature],
                 verb_offers: &[],
             },
+            Self::TargetDependentMovedMidOperation => &StateRow {
+                axis: Axis::Target,
+                name: "dependent moved mid-operation",
+                means: "a dependent's branch a carry composed moved after the carry read it, \
+                        so what the carry composed no longer holds it: each branch and where \
+                        it now stands, listed. The operation stopped before moving any \
+                        dependent's branch it had not moved already",
+                refused_by: "`rwv sync` and `rwv land` as a carry moves the dependents' \
+                             branches",
+                offers: &[Form::CarryAgain, Form::LostRace],
+                verb_offers: &[],
+            },
             Self::HistoryUnset => &StateRow {
                 axis: Axis::History,
                 name: "unset",
@@ -1801,6 +1815,7 @@ pub enum ChoiceId {
     KeepRecordedHistory,
     MigrateLockDriver,
     LostRace,
+    CarryAgain,
     Republish,
     LandAgain,
 }
@@ -2017,10 +2032,18 @@ impl ChoiceId {
                 phrase: "integrate by the setting the branch records",
                 keeps_work: "nothing changes",
             },
+            Self::CarryAgain => &ChoiceRow {
+                id: None,
+                phrase: "carry each dependent again from where it now stands, its new commits \
+                         with it",
+                keeps_work: "the dependents are judged again before any moves; a replay that \
+                             conflicts stops as the first did",
+            },
             Self::LostRace => &ChoiceRow {
                 id: None,
-                phrase: "put back every ref the landing moved, then land again from the new tips",
-                keeps_work: "`rwv abort` moves only what the landing moved, from the tips it \
+                phrase: "put back every ref the operation moved, then run it again from the new \
+                         tips",
+                keeps_work: "`rwv abort` moves only what the operation moved, from the tips it \
                              wrote; a branch someone else moved stays where they left it",
             },
             Self::LandAgain => &ChoiceRow {
@@ -2209,6 +2232,9 @@ pub enum Form {
     KeepRecordedHistory,
     MigrateLockDriver,
     LostRace,
+    LostRaceSync,
+    CarryAgain,
+    CarryAgainLand,
     Republish,
     DriftLandAgain,
     DriftResolveThenLand,
@@ -2234,7 +2260,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 88] = [
+    pub const ALL: [Form; 91] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2320,6 +2346,9 @@ impl Form {
         Self::KeepRecordedHistory,
         Self::MigrateLockDriver,
         Self::LostRace,
+        Self::LostRaceSync,
+        Self::CarryAgain,
+        Self::CarryAgainLand,
         Self::Republish,
         Self::DriftLandAgain,
         Self::DriftResolveThenLand,
@@ -2862,6 +2891,24 @@ impl Form {
                 at: W::Here,
                 shipped: true,
             },
+            Self::CarryAgain => &FormRow {
+                choice: C::CarryAgain,
+                steps: &[Rwv("rwv sync --continue")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::CarryAgainLand => &FormRow {
+                choice: C::CarryAgain,
+                steps: &[Rwv("rwv land --continue")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::LostRaceSync => &FormRow {
+                choice: C::LostRace,
+                steps: &[Rwv("rwv abort"), Rwv("rwv sync")],
+                at: W::Here,
+                shipped: true,
+            },
             Self::Republish => &FormRow {
                 choice: C::Republish,
                 steps: &[Rwv("rwv push --overwrite <repo>")],
@@ -2917,6 +2964,8 @@ impl Form {
     fn for_verb(self, verb: Option<&str>) -> Self {
         match (self, verb) {
             (Self::C6, Some(ACTIVATE)) => Self::C6Activate,
+            (Self::LostRace, Some("sync")) => Self::LostRaceSync,
+            (Self::CarryAgain, Some("land")) => Self::CarryAgainLand,
             _ => self,
         }
     }

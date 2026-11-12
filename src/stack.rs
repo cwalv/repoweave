@@ -96,16 +96,23 @@ pub(crate) fn walk(
     moved: &[(RepoKey, CommitId)],
     carried: &[Carrying],
 ) -> anyhow::Result<Stack> {
-    let before_carry = |repo: &RepoKey, dependent: &BranchName, now: &CommitId| {
-        carried
-            .iter()
-            .find(|c| {
-                &c.repo == repo
-                    && c.branch == dependent.as_str()
-                    && c.composed.as_ref() == Some(now)
-            })
-            .map_or_else(|| now.clone(), |c| c.from.clone())
-    };
+    let before_carry =
+        |repo: &RepoKey, dependent: &BranchName, now: &CommitId| -> anyhow::Result<CommitId> {
+            let dir = repos.dir(repo);
+            let vcs = repos.vcs(repo);
+            for c in carried
+                .iter()
+                .filter(|c| &c.repo == repo && c.branch == dependent.as_str())
+            {
+                let Some(composed) = &c.composed else {
+                    continue;
+                };
+                if composed == now || vcs.is_ancestor(&dir, &rev(composed), &rev(now))? {
+                    return Ok(c.from.clone());
+                }
+            }
+            Ok(now.clone())
+        };
     let mut stack = Stack::default();
     if moved.is_empty() {
         return Ok(stack);
@@ -150,7 +157,7 @@ pub(crate) fn walk(
                 let Some(now) = vcs.resolve_local_branch_tip(&dir, &name)? else {
                     continue;
                 };
-                let tip = before_carry(repo, &dependent, now.id());
+                let tip = before_carry(repo, &dependent, now.id())?;
                 checked_out.extend(vcs.checkouts_of_branch(&dir, &name)?);
                 if !vcs.is_ancestor(&dir, &rev(old), &rev(&tip))? {
                     lacking.push(repos.label(repo));
@@ -163,7 +170,7 @@ pub(crate) fn walk(
                     checked_out.extend(project_vcs.checkouts_of_branch(&project_dir, &name)?);
                     tips.push((
                         RepoKey::Project,
-                        before_carry(&RepoKey::Project, &dependent, tip.id()),
+                        before_carry(&RepoKey::Project, &dependent, tip.id())?,
                     ));
                 }
             }
@@ -449,6 +456,7 @@ impl Carrier<'_> {
         for carry in &stack.carried {
             let mut tips = carry.tips.clone();
             tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);
+            let mut member_composed = false;
             for (repo, from) in &tips {
                 let Some((base, onto)) = new_tips
                     .get(&(carry.parent.as_str().to_owned(), repo.clone()))
@@ -465,15 +473,20 @@ impl Carrier<'_> {
                     .carries
                     .into_iter()
                     .find(|c| &c.repo == repo && c.branch == carry.dependent.as_str());
+                let pins_composed_members = *repo == RepoKey::Project && member_composed;
                 let tip = match journaled.and_then(|c| c.composed.clone().map(|t| (c, t))) {
                     Some((c, tip))
                         if (c.from == *from || c.composed.as_ref() == Some(from))
                             && c.base == base
-                            && c.onto == onto =>
+                            && c.onto == onto
+                            && !pins_composed_members =>
                     {
                         tip
                     }
-                    _ => self.compose(repo, carry, from, &base, &onto, &record.rebases)?,
+                    _ => {
+                        member_composed |= *repo != RepoKey::Project;
+                        self.compose(repo, carry, from, &base, &onto, &record.rebases)?
+                    }
                 };
                 new_tips.insert(
                     (carry.dependent.as_str().to_owned(), repo.clone()),
@@ -481,7 +494,7 @@ impl Carrier<'_> {
                 );
             }
         }
-        self.move_carried()
+        self.move_carried(verb)
     }
 
     /// Where a dependent's project branch is replayed when its target's is
@@ -557,10 +570,14 @@ impl Carrier<'_> {
     }
 
     /// Move each dependent's branch to what its carry composed, a `rebased`
-    /// backup kept and the move journaled first; one already there is left.
-    fn move_carried(&self) -> anyhow::Result<Vec<Carried>> {
+    /// backup kept and the move journaled first; one already there, or built
+    /// on since, is left. Where any other moved since the carry read it,
+    /// nothing moves.
+    fn move_carried(&self, verb: &'static str) -> anyhow::Result<Vec<Carried>> {
+        crate::test_pause::point("carry-move");
         let record = take_in(self.workspace)?;
-        let mut carried = Vec::new();
+        let mut moving = Vec::new();
+        let mut raced = Vec::new();
         for carrying in &record.carries {
             let Some(to) = &carrying.composed else {
                 continue;
@@ -568,20 +585,40 @@ impl Carrier<'_> {
             let dir = self.repos.dir(&carrying.repo);
             let vcs = self.repos.vcs(&carrying.repo);
             let branch = RawRefName::new(carrying.branch.clone());
-            let now = vcs.resolve_local_branch_tip(&dir, &branch)?;
-            if now.as_ref().map(|n| n.id()) == Some(to) {
-                continue;
-            }
-            if now.as_ref().map(|n| n.id()) != Some(&carrying.from) {
-                return Err(crate::untokened!(
-                    EnvironmentPassthrough,
-                    "{}: '{}' moved since the carry read it at {}; `rwv abort` puts back what \
-                     this operation moved",
-                    self.repos.label(&carrying.repo),
+            let now = vcs
+                .resolve_local_branch_tip(&dir, &branch)?
+                .map(|n| n.id().clone());
+            match &now {
+                Some(now) if now == to || vcs.is_ancestor(&dir, &rev(to), &rev(now))? => {}
+                Some(now) if now == &carrying.from => moving.push((carrying, to)),
+                _ => raced.push(format!(
+                    "'{}' in {} is {}, not at {}, where the carry read it",
                     carrying.branch,
+                    self.repos.label(&carrying.repo),
+                    now.as_ref()
+                        .map_or_else(|| "gone".to_owned(), |now| format!("at {}", now.short())),
                     carrying.from.short()
-                ));
+                )),
             }
+        }
+        if !raced.is_empty() {
+            let mut report = Report::default();
+            report.add(
+                State::TargetDependentMovedMidOperation
+                    .of(self.repos.label(&RepoKey::Project))
+                    .project_repo()
+                    .subject("a dependent's branch the carry moves moved after the carry read it")
+                    .listing(raced)
+                    .by_verb(verb)
+                    .judge(self.repos.vcs(&RepoKey::Project).as_ref()),
+            );
+            report.into_result()?;
+        }
+        let mut carried = Vec::new();
+        for (carrying, to) in moving {
+            let dir = self.repos.dir(&carrying.repo);
+            let vcs = self.repos.vcs(&carrying.repo);
+            let branch = RawRefName::new(carrying.branch.clone());
             let kept = vcs.create_backup(
                 &dir,
                 &BackupSource::Branch(branch.clone()),

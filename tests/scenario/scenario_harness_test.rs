@@ -725,6 +725,11 @@ every_scenario!(
     stack_carry_conflict(scenarios::AfterHandContinue::Continue),
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::SyncRelocked),
+    abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Abandon),
+    abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
+    a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgain),
+    a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::AbortThenSync),
+    a_dependent_moved_as_its_carry_moves(scenarios::MovedAsCarried::CarryAgainLanding),
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::FinishedByHand),
     stack_at_the_tip_under_update_refs,
     stack_carry_stopped_under_update_refs,
@@ -5137,6 +5142,46 @@ fn an_abort_after_a_landing_merged_its_project_reads_the_merge_as_its_own() {
 fn an_abort_after_a_carry_finished_by_hand_reads_its_tip_as_its_own() {
     runner::run(scenarios::abort_after_a_carry_stop(
         scenarios::BeforeTheCarry::FinishedByHand,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_of_a_carried_stack_built_on_abandons_as_printed() {
+    runner::run(scenarios::abort_a_carried_stack_built_on(
+        scenarios::BuiltOnChoice::Abandon,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_of_a_carried_stack_built_on_continues_as_printed() {
+    runner::run(scenarios::abort_a_carried_stack_built_on(
+        scenarios::BuiltOnChoice::Continue,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependent_moved_as_its_carry_moves_is_carried_again() {
+    runner::run(scenarios::a_dependent_moved_as_its_carry_moves(
+        scenarios::MovedAsCarried::CarryAgain,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependent_moved_as_a_landing_carries_it_is_carried_again() {
+    runner::run(scenarios::a_dependent_moved_as_its_carry_moves(
+        scenarios::MovedAsCarried::CarryAgainLanding,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependent_moved_as_its_carry_moves_aborts_then_syncs() {
+    runner::run(scenarios::a_dependent_moved_as_its_carry_moves(
+        scenarios::MovedAsCarried::AbortThenSync,
     ))
     .assert_fully_decided_green();
 }

@@ -263,10 +263,11 @@ src/set_history.rs	history contradicted	-	1
 src/set_history.rs	history unset	-	1
 src/set_history.rs	repo-not-in-manifest	tests/weave/branch_set_history_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
-src/stack.rs	(untokened:environment-passthrough)	-	2
+src/stack.rs	(untokened:environment-passthrough)	-	1
 src/stack.rs	op-parked	-	1
 src/stack.rs	target dependent checked out elsewhere	-	1
 src/stack.rs	target dependent lacks the tip	-	1
+src/stack.rs	target dependent moved mid-operation	-	1
 src/stack.rs	target dependent on another machine	-	1
 src/status.rs	alignment project moved	-	1
 src/status.rs	alignment project unaligned	-	1
@@ -288,7 +289,7 @@ src/sync.rs	clone-topology	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
 src/sync.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
-src/sync.rs	foreign-tip	tests/sync/abort_hardening_test.rs	3
+src/sync.rs	foreign-tip	tests/sync/abort_hardening_test.rs	4
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	5

@@ -8247,6 +8247,16 @@ fn abort_op(
             return refuse_moved_target(record, standing, target_label, abandon);
         }
     }
+    if let op_state::OwnerReading::Whole(record) = &reading {
+        let moved = judge_carried(record, &owner_workspace);
+        if !moved.is_empty()
+            && !moved
+                .iter()
+                .all(|m| abandon.covers(&m.carry.repo, &op_project_name))
+        {
+            return refuse_moved_carried(record, &moved);
+        }
+    }
     if header.verb == OpVerb::Land {
         *retaken = Some(retake_target(&reading, &owner_workspace, &cwd_project_dir)?);
     }
@@ -9284,6 +9294,123 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
         }
     }
     standing
+}
+
+/// A dependent's branch the op carried and moved, standing somewhere other
+/// than the tip the carry wrote.
+struct MovedCarry<'a> {
+    carry: &'a op_state::Carrying,
+    to: &'a CommitId,
+    now: Option<CommitId>,
+    built_on: bool,
+}
+
+/// Each dependent's branch the op moved by a carry that has moved since:
+/// read in the source's store, where the carry moved it.
+fn judge_carried<'a>(
+    record: &'a op_state::OwnerRecord,
+    source: &CanonicalPath,
+) -> Vec<MovedCarry<'a>> {
+    let Some(take_in) = &record.take_in else {
+        return Vec::new();
+    };
+    let vcs = crate::vcs::probe_vcs();
+    take_in
+        .carries
+        .iter()
+        .filter_map(|carry| {
+            let to = carry.composed.as_ref()?;
+            take_in
+                .ref_moves
+                .iter()
+                .find(|m| m.repo == carry.repo && m.branch == carry.branch && &m.to == to)?;
+            let dir = match &carry.repo {
+                RepoKey::Project => project_dir(source.as_path(), &record.project),
+                RepoKey::Member(path) => source.as_path().join(path.as_path()),
+            };
+            let now = vcs
+                .resolve_local_branch_tip(&dir, &crate::vcs::RawRefName::new(carry.branch.clone()))
+                .ok()
+                .flatten()
+                .map(|tip| tip.id().clone());
+            if now.as_ref() == Some(to) {
+                return None;
+            }
+            let built_on = now.as_ref().is_some_and(|now| {
+                vcs.is_ancestor(
+                    &dir,
+                    &ResolvedRevisionId::from(to.clone()),
+                    &ResolvedRevisionId::from(now.clone()),
+                )
+                .unwrap_or(false)
+            });
+            Some(MovedCarry {
+                carry,
+                to,
+                now,
+                built_on,
+            })
+        })
+        .collect()
+}
+
+/// Refuse to put back a stack a carried dependent moved on from, before
+/// anything moves: give up what was built on it, or, where each was only
+/// built on, finish the op.
+fn refuse_moved_carried(
+    record: &op_state::OwnerRecord,
+    moved: &[MovedCarry<'_>],
+) -> anyhow::Result<()> {
+    let project = &record.project;
+    for one in moved {
+        let named = RepoOperand::of(&one.carry.repo, project);
+        match &one.now {
+            Some(now) => eprintln!(
+                "  {named}: '{}' is at {}, not at {}, where this operation carried it",
+                one.carry.branch,
+                now.short(),
+                one.to.short()
+            ),
+            None => eprintln!(
+                "  {named}: '{}' is gone, where this operation carried it to {}",
+                one.carry.branch,
+                one.to.short()
+            ),
+        }
+    }
+    eprintln!("\nnothing is restored: abort puts back a carried stack whole or not at all");
+    let abandons = moved
+        .iter()
+        .map(|m| RepoOperand::of(&m.carry.repo, project))
+        .collect::<std::collections::BTreeSet<_>>()
+        .iter()
+        .map(|named| format!("--abandon-foreign-tip {named}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut lines = vec![format!(
+        "  put back everything this operation moved, giving up what was built on each carried \
+         branch, each moved tip kept as an `abandoned` backup that `rwv backup list` shows and \
+         `rwv backup drop` drops:\n\trwv abort {abandons}"
+    )];
+    if moved.iter().all(|m| m.built_on) {
+        let dependents = moved
+            .iter()
+            .map(|m| format!("'{}'", m.carry.branch))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "  finish the operation, in {}; {dependents} keeps its commits:\n\t{}",
+            record.source.as_path().display(),
+            op_state::resume_command(record.verb)
+        ));
+    }
+    eprintln!("\nrecovery options:\n{}", lines.join("\n"));
+    crate::refuse!(
+        RefusalKind::ForeignTip,
+        "abort refused: a dependent this operation carried has moved since"
+    )
 }
 
 /// Refuse to restore a target something other than the landing moved,
