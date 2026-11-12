@@ -387,21 +387,19 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
 
     let op_id = "20991231T000003Z";
 
-    // Savepoint at original HEAD; manufacture a mid-rebase wreckage.
-    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
-
-    // Two diverging commits that touch the same line so the rebase stalls.
+    // Two diverging commits that touch the same line so the rebase stalls;
+    // the savepoint is the tip the rebase starts from, as the op's own
+    // rebase starts from the tip it savepointed.
+    let base = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     make_commit(
         &ws.server_dir,
         "conflict.txt",
         "main version\n",
         "main: conflict base",
     );
-    common::git_in(
-        &ws.server_dir,
-        &["checkout", "-b", "diverge", &server_savepoint],
-    );
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+    common::git_in(&ws.server_dir, &["checkout", "-b", "diverge", &base]);
     make_commit(
         &ws.server_dir,
         "conflict.txt",
@@ -1208,8 +1206,8 @@ fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("rwv abort --abandon-foreign-tip <repo>"),
-        "the recovery options must name the verb that does this.\nstderr:\n{stderr}"
+        stderr.contains(&format!("`rwv abort --abandon-foreign-tip {SERVER_PATH}`")),
+        "the recovery options must name the verb that does this, for the repo refused.\nstderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("git update-ref"),

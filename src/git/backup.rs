@@ -57,7 +57,7 @@ fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
 }
 
 impl GitVcs {
-    fn ref_tip(repo: &Path, refname: &str) -> Result<Option<ResolvedRevisionId>, VcsError> {
+    pub(super) fn ref_tip(repo: &Path, refname: &str) -> Result<Option<ResolvedRevisionId>, VcsError> {
         let spec = format!("{refname}^{{commit}}");
         match Self::run_trimmed(["rev-parse", "--verify", "--quiet", &spec], repo) {
             Ok(out) => Ok(ResolvedRevisionId::from_rev_parse_output(&out)),
@@ -292,7 +292,7 @@ impl GitVcs {
 mod tests {
     use super::*;
     use crate::op_state::SavepointKey;
-    use crate::vcs::{ForeignTipPolicy, Vcs, VerifiedRestoreOutcome};
+    use crate::vcs::{Attribution, ForeignTipPolicy, Vcs, VerifiedRestoreOutcome};
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = git_command()
@@ -653,7 +653,7 @@ mod tests {
         let (p, key, savepoint, foreign) = foreign_tip_fixture();
 
         let outcome = GitVcs
-            .verified_restore_savepoint(p.path(), &key, None, None, ForeignTipPolicy::Refuse)
+            .verified_restore_savepoint(p.path(), &key, &Attribution::default(), ForeignTipPolicy::Refuse)
             .unwrap();
 
         assert!(matches!(outcome, VerifiedRestoreOutcome::ForeignTip { .. }));
@@ -667,7 +667,7 @@ mod tests {
         let (p, key, savepoint, foreign) = foreign_tip_fixture();
 
         let outcome = GitVcs
-            .verified_restore_savepoint(p.path(), &key, None, None, ForeignTipPolicy::Abandon)
+            .verified_restore_savepoint(p.path(), &key, &Attribution::default(), ForeignTipPolicy::Abandon)
             .unwrap();
 
         let VerifiedRestoreOutcome::AbandonedForeignTip { backup, .. } = outcome else {

@@ -26,7 +26,7 @@ fn the_harness_can_file_a_savepoint_under_a_key() {
     let (compiled, stderr) = compile(
         r#"
         use repoweave::op_state::{OpId, SavepointKey};
-        use repoweave::vcs::{ForeignTipPolicy, Vcs};
+        use repoweave::vcs::{Attribution, ForeignTipPolicy, Vcs};
         use std::path::Path;
         pub fn file(vcs: &dyn Vcs, repo: &Path, op: &OpId) {
             let key = SavepointKey::LandTarget(op.clone());
@@ -34,7 +34,7 @@ fn the_harness_can_file_a_savepoint_under_a_key() {
             let _ = vcs.savepoint_label(&key);
             let _ = vcs.resolve_savepoint(repo, &key);
             vcs.drop_savepoint(repo, &key);
-            let _ = vcs.verified_restore_savepoint(repo, &key, None, None, ForeignTipPolicy::Refuse);
+            let _ = vcs.verified_restore_savepoint(repo, &key, &Attribution::default(), ForeignTipPolicy::Refuse);
             let _ = vcs.create_savepoint_ref(repo, &key);
             let _ = vcs.resolve_savepoint_ref(repo, &key);
         }
@@ -50,14 +50,14 @@ fn no_savepoint_method_takes_text() {
         7,
         "each savepoint method takes a SavepointKey, not a string",
         r#"
-        use repoweave::vcs::{ForeignTipPolicy, Vcs};
+        use repoweave::vcs::{Attribution, ForeignTipPolicy, Vcs};
         use std::path::Path;
         pub fn file(vcs: &dyn Vcs, repo: &Path) {
             let _ = vcs.create_savepoint(repo, "x");
             let _ = vcs.savepoint_label("x");
             let _ = vcs.resolve_savepoint(repo, "x");
             vcs.drop_savepoint(repo, "x");
-            let _ = vcs.verified_restore_savepoint(repo, "x", None, None, ForeignTipPolicy::Refuse);
+            let _ = vcs.verified_restore_savepoint(repo, "x", &Attribution::default(), ForeignTipPolicy::Refuse);
             let _ = vcs.create_savepoint_ref(repo, "x");
             let _ = vcs.resolve_savepoint_ref(repo, "x");
         }

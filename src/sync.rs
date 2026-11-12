@@ -22,8 +22,8 @@ use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, CommitId, ConflictOp, DerivedContentPolicy,
-    ForeignTipPolicy, HeadAttachment, RemoteTracking, ResolvedRevisionId, Vcs, VcsError,
-    VcsErrorOutput, VerifiedRestoreOutcome,
+    Attribution, ForeignTipPolicy, HeadAttachment, Integrates, RemoteTracking, ResolvedRevisionId,
+    Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::wire_token::wire_token;
 use crate::workspace::{
@@ -6733,6 +6733,11 @@ struct AbortTally {
     noise: AbortNoiseSummary,
     any_foreign: bool,
     any_failure: bool,
+    /// The repos left at a tip `--abandon-foreign-tip` restores over.
+    abandonable: Vec<RepoOperand>,
+    /// The repos left stopped in an operation abort may not cancel unasked,
+    /// with the VCS action that shows how to end it there.
+    stopped: Vec<(RepoOperand, ConflictOp, String)>,
 }
 
 impl AbortTally {
@@ -6776,7 +6781,8 @@ pub fn run_abort(
         eprintln!(
             "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
              No tips it recorded are read: a repo is restored only where it sits at its \
-             savepoint or mid-op, and any other tip is refused as foreign.",
+             savepoint; one stopped in a rebase, merge or copy begun there is canceled once its \
+             edits are kept as a backup; any other tip is refused as foreign.",
             op_state::OwnerRecord::path_in(owner_workspace.as_path()),
             header.id,
         );
@@ -6831,6 +6837,13 @@ pub fn run_abort(
         op_state::OwnerReading::Whole(record) => record.operates_in(),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
+    let source_tip = match &reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .as_ref()
+            .and_then(|take_in| take_in.source_tip.as_ref()),
+        op_state::OwnerReading::HeaderOnly { .. } => None,
+    };
 
     let mut members = OpMembers::default();
     members.take_project(
@@ -6848,6 +6861,7 @@ pub fn run_abort(
         tips,
         moved_in_target,
         operates_in.as_ref(),
+        source_tip,
         abandon,
         &mut tally,
     );
@@ -6879,6 +6893,7 @@ pub fn run_abort(
                             tips,
                             moved_in_target,
                             operates_in.as_ref(),
+                            source_tip,
                             abandon,
                             &mut tally,
                         );
@@ -6958,7 +6973,7 @@ pub fn run_abort(
     // evidence (savepoint, tip, blocking commits); this block tells the
     // operator what to do about it.
     if tally.any_foreign {
-        print_abort_recovery_options();
+        print_abort_recovery_options(&tally);
     }
 
     // Clear op-state from CWD workspace only on a fully clean abort. If any
@@ -7014,6 +7029,7 @@ fn restore_abort_workspace(
     tips: Option<&op_state::PhaseTips>,
     moved_in_target: Option<&[RepoKey]>,
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
+    source_tip: Option<&CommitId>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -7072,25 +7088,23 @@ fn restore_abort_workspace(
         if let Some(head) = &head {
             moved_from.insert(abs.clone(), head.clone());
         }
-        let someone_elses = match side {
-            AbortSide::LandTarget => true,
-            AbortSide::Replay => operates_in.is_some_and(|ours| !ours.contains(&repo_key)),
-        };
-        if let (true, Some(stopped)) = (someone_elses, vcs.mid_op(&abs)) {
-            let left_alone =
-                unmoved_target || (matches!(side, AbortSide::Replay) && operates_in.is_some());
-            if left_alone {
-                outln!(
-                    "  {label}{named}: left stopped in a {stopped}, which this operation never starts there"
-                );
-                let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
-            } else {
-                eprintln!(
-                    "  {label}{named}: stopped in a {stopped}, which this operation never starts there, \
-                     so it is left as it is; finish or abort that {stopped} there, then rerun `rwv abort`"
-                );
-                tally.any_foreign = true;
+        if let (true, Some(stopped)) = (unmoved_target, vcs.mid_op(&abs)) {
+            outln!(
+                "  {label}{named}: left stopped in a {stopped}, which this operation never starts there"
+            );
+            if let Some(saved) = vcs.resolve_savepoint(&abs, &restore_key) {
+                let source = vcs
+                    .head_backup_source(&abs)
+                    .unwrap_or(crate::vcs::BackupSource::DetachedHead);
+                if let Err(e) =
+                    keep_unreached(vcs.as_ref(), &abs, &source, saved.id(), &named)
+                {
+                    eprintln!("  {label}{named}: {e:#}");
+                    tally.any_failure = true;
+                    continue;
+                }
             }
+            let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
             continue;
         }
         if unmoved_target {
@@ -7098,14 +7112,7 @@ fn restore_abort_workspace(
                 let source = vcs
                     .head_backup_source(&abs)
                     .unwrap_or(crate::vcs::BackupSource::DetachedHead);
-                if let Err(e) = keep_unreached(
-                    vcs.as_ref(),
-                    &abs,
-                    &source,
-                    saved.id(),
-                    head.as_ref(),
-                    &named,
-                ) {
+                if let Err(e) = keep_unreached(vcs.as_ref(), &abs, &source, saved.id(), &named) {
                     eprintln!("  {label}{named}: {e:#}");
                     tally.any_failure = true;
                     continue;
@@ -7125,21 +7132,29 @@ fn restore_abort_workspace(
             let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
             continue;
         }
-        match abort_one_repo(
-            vcs.as_ref(),
-            &abs,
-            &restore_key,
-            advanced_tips.get(&repo_key),
-            converged_tips.get(&repo_key),
-            consented,
-        ) {
+        let integrates = match (side, operates_in) {
+            (AbortSide::LandTarget, _) => Integrates::No,
+            (AbortSide::Replay, None) => Integrates::Unknown,
+            (AbortSide::Replay, Some(ours)) if ours.contains(&repo_key) => Integrates::Yes,
+            (AbortSide::Replay, Some(_)) => Integrates::No,
+        };
+        let attribution = Attribution {
+            intent: advanced_tips.get(&repo_key),
+            converged: converged_tips.get(&repo_key),
+            started_from: match (side, &repo_key) {
+                (AbortSide::Replay, RepoKey::Project) => source_tip,
+                _ => None,
+            },
+            integrates,
+        };
+        match abort_one_repo(vcs.as_ref(), &abs, &restore_key, &attribution, consented) {
             Ok(outcome) => report_abort_outcome(
                 vcs.as_ref(),
                 &format!("{label}{named}"),
+                &named,
                 &outcome,
-                Some(abs.as_path()),
-                &mut tally.noise,
-                &mut tally.any_foreign,
+                &abs,
+                tally,
             ),
             Err(e) => {
                 eprintln!("  {label}{named}: {e:#}");
@@ -7156,25 +7171,25 @@ fn restore_abort_workspace(
 }
 
 /// Keep `saved`, a savepoint's tip abort is about to drop, as a backup when
-/// `now` does not reach it, so dropping a savepoint someone else's move left
+/// no branch reaches it, so dropping a savepoint someone else's move left
 /// behind leaves no commit on no ref.
 fn keep_unreached(
     vcs: &dyn Vcs,
     dir: &Path,
     source: &crate::vcs::BackupSource,
     saved: &CommitId,
-    now: Option<&ResolvedRevisionId>,
     named: &RepoOperand,
 ) -> anyhow::Result<()> {
     let saved = ResolvedRevisionId::from(saved.clone());
-    if let Some(now) = now {
-        if vcs.is_ancestor(dir, &saved, now)? {
-            return Ok(());
-        }
+    if vcs
+        .reached_by_no_branch(dir, &saved, crate::vcs::RemoteTracking::Counted)?
+        .is_empty()
+    {
+        return Ok(());
     }
     let kept = vcs.create_backup(dir, source, &saved, None)?;
     outln!(
-        "  {named}: {} it held before this landing is kept as backup {}",
+        "  {named}: {} it held before this operation is kept as backup {}",
         saved.id().short(),
         kept.backup().name
     );
@@ -7295,7 +7310,6 @@ fn restore_landing_refs(
                     &dir,
                     &crate::vcs::BackupSource::Branch(branch.clone()),
                     &saved.at,
-                    now.as_ref(),
                     &named,
                 )
                 .and_then(|()| Ok(vcs.drop_ref_savepoint(&dir, &key, branch)?))
@@ -7366,26 +7380,14 @@ fn restore_landing_refs(
     }
 }
 
-/// Restore a single repo as part of `rwv abort`.
-///
-/// The destructive `reset --hard` to the savepoint is gated on the current tip
-/// being attributable to the op (== savepoint, == recorded intent tip,
-/// == recorded converged tip, or mid-op). Anything else is reported as
-/// foreign, not reset.
-///
-/// `recorded_intent_tip` is the SHA from the owner record's `advanced_tips`
-/// map for this repo (source/owner side only — target side passes `None`).
-/// `recorded_converged_tip` is from `converged_tips` (written at relock).
-///
-/// `abandon_foreign_tip` is whether the operator named THIS repo on
-/// `--abandon-foreign-tip`: a foreign tip is then kept as an `abandoned`
-/// backup and the repo restored over it.
+/// Restore a single repo as part of `rwv abort`, through the verified
+/// restore's classification. `abandon_foreign_tip` is whether the operator
+/// named THIS repo on `--abandon-foreign-tip`.
 fn abort_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
     key: &SavepointKey,
-    recorded_intent_tip: Option<&CommitId>,
-    recorded_converged_tip: Option<&CommitId>,
+    attribution: &Attribution<'_>,
     abandon_foreign_tip: bool,
 ) -> anyhow::Result<VerifiedRestoreOutcome> {
     let policy = if abandon_foreign_tip {
@@ -7393,14 +7395,8 @@ fn abort_one_repo(
     } else {
         ForeignTipPolicy::Refuse
     };
-    vcs.verified_restore_savepoint(
-        repo,
-        key,
-        recorded_intent_tip,
-        recorded_converged_tip,
-        policy,
-    )
-    .context("verified restore failed")
+    vcs.verified_restore_savepoint(repo, key, attribution, policy)
+        .context("verified restore failed")
 }
 
 /// Accumulated counts for non-actionable per-repo abort outcomes. Gathered
@@ -7412,30 +7408,23 @@ struct AbortNoiseSummary {
     untouched: usize,
 }
 
-/// Record a per-repo abort outcome into `summary`/`any_foreign`, printing
-/// actionable lines immediately and deferring non-actionable counts to the
-/// summary. The recovery-options block is NOT printed here — callers print
-/// it once after all repos are processed.
-///
-/// `repo_abs` is the absolute path to the repo on disk, used only for the
-/// read-only `git log` lookup on foreign-tip refusals; pass `None` when the
-/// path is unavailable (e.g. the repo does not exist on disk).
+/// Record a per-repo abort outcome into `tally`, printing actionable lines
+/// immediately and deferring non-actionable counts to the summary. The
+/// recovery block is printed once, after every repo.
 fn report_abort_outcome(
     vcs: &dyn Vcs,
     label: &str,
+    named: &RepoOperand,
     outcome: &VerifiedRestoreOutcome,
-    repo_abs: Option<&Path>,
-    summary: &mut AbortNoiseSummary,
-    any_foreign: &mut bool,
+    repo_abs: &Path,
+    tally: &mut AbortTally,
 ) {
     match outcome {
         VerifiedRestoreOutcome::NoSavepoint => {
-            // Demoted to the noise summary — printed as one aggregate line.
-            summary.no_savepoint += 1;
+            tally.noise.no_savepoint += 1;
         }
         VerifiedRestoreOutcome::Untouched => {
-            // Demoted to the noise summary — printed as one aggregate line.
-            summary.untouched += 1;
+            tally.noise.untouched += 1;
         }
         VerifiedRestoreOutcome::RestoredFromIntent => {
             outln!("  {label}: restored (from recorded intent tip)");
@@ -7443,15 +7432,68 @@ fn report_abort_outcome(
         VerifiedRestoreOutcome::RestoredFromConverged => {
             outln!("  {label}: restored (from recorded converged tip)");
         }
-        VerifiedRestoreOutcome::RestoredFromMidOp => {
-            outln!("  {label}: restored (from mid-op state)");
+        VerifiedRestoreOutcome::Canceled { stopped, then } => match then.as_ref() {
+            VerifiedRestoreOutcome::Untouched
+            | VerifiedRestoreOutcome::RestoredFromIntent
+            | VerifiedRestoreOutcome::RestoredFromConverged => {
+                outln!("  {label}: restored (from mid-op state)");
+            }
+            then => {
+                outln!("  {label}: canceled the {stopped} in progress");
+                report_abort_outcome(vcs, label, named, then, repo_abs, tally);
+            }
+        },
+        VerifiedRestoreOutcome::LeftStopped { stopped } => {
+            outln!(
+                "  {label}: left stopped in a {stopped}, which this operation never starts there"
+            );
+        }
+        VerifiedRestoreOutcome::StoppedForeign {
+            stopped,
+            returns_to,
+            savepoint,
+        } => {
+            tally.any_foreign = true;
+            let status = vcs
+                .hint(crate::vcs::VcsAction::Status)
+                .replace("<checkout>", &repo_abs.display().to_string());
+            tally.stopped.push((named.clone(), *stopped, status));
+            let begun = if returns_to == savepoint {
+                format!("begun at the savepoint {}", savepoint.short())
+            } else {
+                format!(
+                    "begun at {}, not the savepoint {}",
+                    returns_to.short(),
+                    savepoint.short()
+                )
+            };
+            eprintln!(
+                "  {label}: stopped in a {stopped} {begun}, which abort cannot attribute to this \
+                 operation, so it is left as it is"
+            );
+        }
+        VerifiedRestoreOutcome::Kept { kept, then } => {
+            for work in kept {
+                match work {
+                    crate::vcs::KeptWork::Edits(backup) => outln!(
+                        "  {label}: its uncommitted edits are kept as backup {} (`rwv backup list`)",
+                        backup.backup().name
+                    ),
+                    crate::vcs::KeptWork::Commits(backup) => outln!(
+                        "  {label}: the commits its detached HEAD held are kept as backup {} \
+                         (`rwv backup list`)",
+                        backup.backup().name
+                    ),
+                }
+            }
+            report_abort_outcome(vcs, label, named, then, repo_abs, tally);
         }
         VerifiedRestoreOutcome::SwitchedBack { off, then } => {
             let off = off
                 .as_ref()
                 .map_or_else(|| "a detached HEAD".to_owned(), |b| format!("'{b}'"));
             outln!("  {label}: switched back off {off}, which is left where it stands");
-            report_abort_outcome(vcs, label, then, repo_abs, summary, any_foreign);
+            report_abort_outcome(vcs, label, named, then, repo_abs, tally);
         }
         VerifiedRestoreOutcome::AbandonedForeignTip {
             abandoned_tip,
@@ -7470,70 +7512,71 @@ fn report_abort_outcome(
             savepoint,
             recorded_converged_tip,
         } => {
-            *any_foreign = true;
+            tally.any_foreign = true;
+            tally.abandonable.push(named.clone());
             let converged_text = match recorded_converged_tip {
                 Some(c) => format!("recorded converged tip: {c}"),
                 None => "no converged tip recorded (op crashed before relock)".to_string(),
             };
-
-            // Determine the commit-graph shape and fetch blocking commits.
-            let shape_and_commits = if let Some(repo) = repo_abs {
-                let (ahead, behind) = vcs.ahead_behind(repo, savepoint, observed_tip);
-                let shape = if behind == 0 && ahead > 0 {
-                    format!("tip is {ahead} commit(s) ahead of savepoint (strictly ahead — common recoverable case)")
-                } else if ahead > 0 && behind > 0 {
-                    format!("tip and savepoint have diverged ({ahead} ahead, {behind} behind — requires manual reconciliation)")
-                } else {
-                    // ahead == 0 && behind == 0: equal — shouldn't reach ForeignTip, but be safe.
-                    "tip equals savepoint (unexpected ForeignTip state)".to_string()
-                };
-                let (commits, total) =
-                    vcs.commits_in_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
-                let commit_block = if commits.is_empty() {
-                    "\t  (no commits in range or range unresolvable)".to_string()
-                } else {
-                    let mut block = commits
-                        .iter()
-                        .map(|c| format!("\t  {} {}", c.id.short(), c.subject))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if total > BLOCKING_COMMITS_CAP {
-                        block.push_str(&format!(
-                            "\n\t  ... and {} more",
-                            total - BLOCKING_COMMITS_CAP
-                        ));
-                    }
-                    block
-                };
-                format!("\tblocking commits ({shape}):\n{commit_block}")
+            let (ahead, behind) = vcs.ahead_behind(repo_abs, savepoint, observed_tip);
+            let shape = if behind == 0 && ahead > 0 {
+                format!("tip is {ahead} commit(s) ahead of savepoint (strictly ahead — common recoverable case)")
+            } else if ahead > 0 && behind > 0 {
+                format!("tip and savepoint have diverged ({ahead} ahead, {behind} behind — requires manual reconciliation)")
             } else {
-                "\tblocking commits: (repo path unavailable)".to_string()
+                "tip equals savepoint (unexpected ForeignTip state)".to_string()
             };
-
+            let (commits, total) =
+                vcs.commits_in_range(repo_abs, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
+            let commit_block = if commits.is_empty() {
+                "\t  (no commits in range or range unresolvable)".to_string()
+            } else {
+                let mut block = commits
+                    .iter()
+                    .map(|c| format!("\t  {} {}", c.id.short(), c.subject))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if total > BLOCKING_COMMITS_CAP {
+                    block.push_str(&format!(
+                        "\n\t  ... and {} more",
+                        total - BLOCKING_COMMITS_CAP
+                    ));
+                }
+                block
+            };
             eprintln!(
                 "  {label}: foreign-tip violation — refusing to reset.\n\
                  \tobserved tip:  {observed_tip} (left in place)\n\
                  \texpected one of: savepoint {savepoint}, {converged_text}, or a VCS-native mid-op state\n\
-                 {shape_and_commits}",
+                 \tblocking commits ({shape}):\n{commit_block}",
             );
         }
     }
 }
 
-/// Print the one-time recovery-options block. Called exactly once at the end
-/// of `run_abort` when `any_foreign` is true. Kept separate so the per-repo
-/// loop in `run_abort` stays free of repeated options text.
-fn print_abort_recovery_options() {
-    eprintln!(
-        "\nrecovery options (apply to each refused repo above):\n\
-         \t- if the foreign commits are wanted, move the branch back to them yourself \
-           and re-run `rwv abort`.\n\
-         \t- if they are not, re-run naming the repo: \
-           `rwv abort --abandon-foreign-tip <repo>` (repeat per repo; `projects/<name>` \
-           names the project repo). The branch returns to the savepoint and the \
-           abandoned commits are kept as an `abandoned` backup that `rwv backup list` \
-           shows and `rwv backup drop` drops."
-    );
+/// Print, once, the choices that clear each repo abort left at a foreign
+/// tip or stopped in an operation it may not cancel unasked. Abort keeps the
+/// op until each clears.
+fn print_abort_recovery_options(tally: &AbortTally) {
+    let mut lines = Vec::new();
+    for (named, stopped, status) in &tally.stopped {
+        lines.push(format!(
+            "\t- {named}: finish or abandon the {stopped} in progress first (`{status}` names \
+             how), then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip {named}`, which \
+             keeps its edits and its commits as backups, then cancels it"
+        ));
+    }
+    for named in &tally.abandonable {
+        lines.push(format!(
+            "\t- {named}: `rwv abort --abandon-foreign-tip {named}` returns it to the savepoint, \
+             keeping the abandoned commits as an `abandoned` backup that `rwv backup list` shows \
+             and `rwv backup drop` drops"
+        ));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    eprintln!("\nrecovery options:\n{}", lines.join("\n"));
 }
 
 /// Emit a one-line summary of non-actionable (noise) outcomes. Suppressed

@@ -1003,6 +1003,49 @@ pub enum ForeignTipPolicy {
     Abandon,
 }
 
+/// Whether an op's own steps run in a checkout, so an operation stopped there
+/// may be one it started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Integrates {
+    /// The op rebases, merges or copies here.
+    Yes,
+    /// The op never starts an operation here.
+    No,
+    /// The record that would say could not be read.
+    #[default]
+    Unknown,
+}
+
+/// What an op recorded about one checkout: the tips it wrote there, and
+/// whether its own steps run there.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Attribution<'a> {
+    /// The tip the op's replay last moved it to.
+    pub intent: Option<&'a CommitId>,
+    /// The tip the op converged it on.
+    pub converged: Option<&'a CommitId>,
+    /// The tip the op committed before it began composing here.
+    pub started_from: Option<&'a CommitId>,
+    pub integrates: Integrates,
+}
+
+impl Attribution<'_> {
+    /// Whether `tip` is one the op wrote here, the savepoint aside.
+    pub fn wrote(&self, tip: &CommitId) -> bool {
+        [self.intent, self.converged, self.started_from].contains(&Some(tip))
+    }
+}
+
+/// Work an abort kept as a backup before a step that would have left it
+/// unpreserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeptWork {
+    /// The checkout's uncommitted edits.
+    Edits(BackupWitness),
+    /// The commits a detached HEAD held that no branch reaches.
+    Commits(BackupWitness),
+}
+
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
 ///
 /// Encodes the classification of the repo's current tip *before* any
@@ -1025,10 +1068,31 @@ pub enum VerifiedRestoreOutcome {
     /// the repo during replay before crashing; the repo was reset back to
     /// the savepoint. Exact-match only — no heuristic.
     RestoredFromIntent,
-    /// The repo was in a VCS-native mid-op state (rebase/merge/cherry-
-    /// pick). The mid-op was canceled and the repo was reset back to
-    /// the savepoint.
-    RestoredFromMidOp,
+    /// The checkout was stopped in an operation the op started, or one the
+    /// operator gave up by name: it was canceled, and `then` is the outcome
+    /// of judging the tip it returned to.
+    Canceled {
+        stopped: ConflictOp,
+        then: Box<VerifiedRestoreOutcome>,
+    },
+    /// The checkout is stopped in an operation the op never starts there,
+    /// begun at the savepoint: it is left as it is and the savepoint dropped.
+    LeftStopped { stopped: ConflictOp },
+    /// The checkout is stopped in an operation the op cannot attribute to
+    /// itself: one it never starts there begun on a tip it moved, or one
+    /// begun on a tip it never wrote. Nothing was touched.
+    StoppedForeign {
+        stopped: ConflictOp,
+        /// Where canceling the operation would leave HEAD.
+        returns_to: CommitId,
+        savepoint: CommitId,
+    },
+    /// Work was kept as backups before the steps that would have discarded
+    /// it; `then` is what the restore did.
+    Kept {
+        kept: Vec<KeptWork>,
+        then: Box<VerifiedRestoreOutcome>,
+    },
     /// The repo's tip is not attributable to the op — it is neither the
     /// savepoint, nor the recorded converged tip, nor a mid-op state.
     /// Restore was REFUSED and the tip left where it is. The caller is
@@ -3419,63 +3483,54 @@ pub trait Vcs: Send + Sync {
     fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError>;
 
     /// HEAD-verified restore: classify the repo's current tip and restore
-    /// to the savepoint ONLY when the tip is attributable to the op.
+    /// to the savepoint ONLY when the tip is attributable to the op: the
+    /// savepoint itself, or a tip `attribution` says the op wrote.
     ///
     /// Classification (evaluated in order):
-    /// - no savepoint exists for `key` → [`VerifiedRestoreOutcome::NoSavepoint`].
-    /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
-    ///   → mid-op is canceled and restore proceeds, returning
-    ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
+    /// - no savepoint exists for `key` → [`VerifiedRestoreOutcome::NoSavepoint`],
+    ///   or [`VerifiedRestoreOutcome::LeftStopped`] where it is stopped in an
+    ///   operation, which the op cannot have started where it saved nothing.
+    /// - the checkout is stopped in a rebase, merge or copy: it is the op's
+    ///   own when `attribution` says the op integrates here and canceling it
+    ///   returns to an attributable tip; it is then canceled and the tip it
+    ///   returns to classified in turn ([`VerifiedRestoreOutcome::Canceled`]).
+    ///   One the op never starts here, begun at the savepoint, is left
+    ///   ([`VerifiedRestoreOutcome::LeftStopped`]). Where the record that
+    ///   would say is unread, one begun at the savepoint, the one tip such
+    ///   a record still attributes, is canceled once its edits are kept.
+    ///   Any other is [`VerifiedRestoreOutcome::StoppedForeign`], untouched.
     /// - the checkout is on another branch than the savepoint names, or
-    ///   detached where it was attached or the reverse → when its tip is one
-    ///   of the attributable ones below, it is put back where the savepoint
-    ///   was taken without moving the branch it leaves, and the restored
-    ///   checkout is classified in turn
-    ///   ([`VerifiedRestoreOutcome::SwitchedBack`]). A dirty checkout cannot
-    ///   be put back and errors.
-    /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
-    ///   restore is a no-op (HEAD is not touched).
-    /// - `tip ==` `recorded_intent_tip` → the op advanced this repo during
-    ///   replay before crashing; restore proceeds and returns
-    ///   [`VerifiedRestoreOutcome::RestoredFromIntent`]. Exact-match only.
-    /// - `tip ==` `recorded_converged_tip` → the op moved this repo to
-    ///   convergence; restore proceeds and returns
-    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`].
-    /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`] is
-    ///   returned without touching HEAD. The caller is responsible for
-    ///   surfacing the named violation and continuing with other repos.
-    ///   The destructive primitive is fenced behind this enumerable set
-    ///   of attributable states.
+    ///   detached where it was attached or the reverse → when its tip is
+    ///   attributable, it is put back where the savepoint was taken without
+    ///   moving the branch it leaves, and the restored checkout is
+    ///   classified in turn ([`VerifiedRestoreOutcome::SwitchedBack`]).
+    /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`].
+    /// - the tip the op's replay last wrote →
+    ///   [`VerifiedRestoreOutcome::RestoredFromIntent`]; the tip it
+    ///   converged on, or the one it committed before composing →
+    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`]. Exact match only.
+    /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`], HEAD
+    ///   untouched.
     ///
-    /// `foreign_tip_policy` widens that last case and nothing else. Under
-    /// [`ForeignTipPolicy::Abandon`] a foreign tip is first kept as an
-    /// `abandoned` backup, then restored over, and reported as
-    /// [`VerifiedRestoreOutcome::AbandonedForeignTip`] carrying the backup.
-    /// The consent never buys a restore over a tip nothing else names.
+    /// `foreign_tip_policy` widens the two refusals and nothing else. Under
+    /// [`ForeignTipPolicy::Abandon`] a stopped operation is canceled and a
+    /// foreign tip restored over, each only after what it would discard is
+    /// kept as a backup ([`VerifiedRestoreOutcome::AbandonedForeignTip`]).
     ///
-    /// `recorded_intent_tip` is the SHA the owner record's `advanced_tips`
-    /// map holds for this repo (written at replay entry), or `None` when no
-    /// entry exists (op predates the field, or the op had not yet reached
-    /// replay). `recorded_converged_tip` is the SHA the owner record's
-    /// `converged_tips` map holds for this repo (relock-completed), or
-    /// `None` when the op crashed before relock recorded any converged tips.
-    /// The caller looks the repo up in the tip tables by its
-    /// [`RepoKey`](crate::manifest::RepoKey).
-    ///
-    /// For git: when restoring, runs `git reset --hard` to the checkout's
-    /// savepoint on the branch it names and drops that savepoint,
-    /// gated by the classification above. This is the only remaining way
-    /// to reach that reset: the unverified `restore_savepoint` it
-    /// superseded was deleted with the rest of the old surface, so the
-    /// destructive path is reachable only for tips the op itself created.
+    /// No step that discards uncommitted edits, or commits a detached HEAD
+    /// holds, runs before they are kept as backups
+    /// ([`VerifiedRestoreOutcome::Kept`]).
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
         key: &SavepointKey,
-        recorded_intent_tip: Option<&CommitId>,
-        recorded_converged_tip: Option<&CommitId>,
+        attribution: &Attribution<'_>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
+
+    /// Where canceling the operation `repo` is stopped in would leave HEAD;
+    /// `None` when none is in progress.
+    fn cancel_returns_to(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError>;
 
     /// Return the in-flight operation with a conflict-resume path that
     /// `repo` is currently mid-way through, if any.

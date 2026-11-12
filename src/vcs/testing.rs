@@ -650,11 +650,14 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _key: &SavepointKey,
-        _recorded_intent_tip: Option<&CommitId>,
-        _recorded_converged_tip: Option<&CommitId>,
+        _attribution: &crate::vcs::Attribution<'_>,
         _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         unsupported("verified_restore_savepoint")
+    }
+
+    fn cancel_returns_to(&self, _repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        unsupported("cancel_returns_to")
     }
 
     fn write_backup(

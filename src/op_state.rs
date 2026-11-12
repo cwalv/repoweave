@@ -526,6 +526,9 @@ pub struct TakeInRecord {
     /// which go when it completes.
     #[serde(default)]
     pub rebased_backups: Vec<KeptBackup>,
+    /// Each repo the op started a merge in, written before it starts.
+    #[serde(default)]
+    pub integrating: Vec<RepoKey>,
 }
 
 /// One move a landing reports as it makes it.
@@ -1008,16 +1011,18 @@ impl OwnerRecord {
     }
 
     /// The repos of the workspace the op runs in where its own step can
-    /// stop in a VCS operation (a rebase, merge or cherry-pick): the project
-    /// repo, and each member it plans to integrate. A repo stopped in one
-    /// anywhere else is someone else's. `None` for a `pull` or `update
-    /// --remote`, whose record does not plan its members before it merges
-    /// them.
+    /// stop in a VCS operation (a rebase, merge or cherry-pick): those its
+    /// plan integrates, and each it journaled starting a merge in. A repo
+    /// stopped in one anywhere else is someone else's.
     pub fn operates_in(&self) -> Option<std::collections::BTreeSet<RepoKey>> {
-        if matches!(self.verb, OpVerb::Pull | OpVerb::UpdateRemote) {
-            return None;
+        let mut repos = std::collections::BTreeSet::new();
+        if let Some(take_in) = &self.take_in {
+            repos.extend(take_in.integrating.iter().cloned());
         }
-        let mut repos = std::collections::BTreeSet::from([RepoKey::Project]);
+        if matches!(self.verb, OpVerb::Pull | OpVerb::UpdateRemote) {
+            return Some(repos);
+        }
+        repos.insert(RepoKey::Project);
         if let Some(take_in) = &self.take_in {
             repos.extend(take_in.upstream_tips.keys().cloned());
             repos.extend(
@@ -1375,6 +1380,25 @@ pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyho
     })?;
     if let Some(advanced) = record.tips.advanced_mut() {
         advanced.insert(repo, tip.clone());
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal that the op is about to start a merge in `repo`, so `rwv abort`
+/// knows a merge stopped there may be the op's own.
+pub fn journal_integrating(workspace_dir: &Path, repo: RepoKey) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        if take_in.integrating.contains(&repo) {
+            return Ok(());
+        }
+        take_in.integrating.push(repo);
     }
     write_owner(workspace_dir, &record)
 }

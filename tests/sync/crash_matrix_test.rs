@@ -665,20 +665,20 @@ fn cell_e_replay_quiescent_sync_to_abort_restores_to_pre_op() {
 #[test]
 fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, sha) = make_shared_workspaces(tmp.path());
+    let (primary, ww, _) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-m-replay-sync-abort";
 
-    // Plant savepoint at original tip.
-    plant_savepoint(&ww.project_dir, op_id);
-    plant_savepoint(&ww.server_dir, op_id);
-
-    // Manufacture a mid-rebase wreckage on the server repo (conflicting line).
+    // Manufacture a mid-rebase wreckage on the server repo (conflicting line),
+    // started from the savepoint as the op's own rebase is.
     // The ww workspace's server worktree is on branch `ww/main` (see
     // `make_shared_workspaces`); we cannot `checkout main` because the
     // primary's worktree holds that branch.
     let pre_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     advance_one(&ww.server_dir, "conflict.txt", "main\n", "main: c-base");
+    let sha = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    plant_savepoint(&ww.project_dir, op_id);
+    plant_savepoint(&ww.server_dir, op_id);
     common::git_in(&ww.server_dir, &["checkout", "-b", "diverge", &pre_tip]);
     advance_one(&ww.server_dir, "conflict.txt", "diverge\n", "div: c");
     common::git_in(&ww.server_dir, &["checkout", "ww/main"]);
@@ -2479,15 +2479,15 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 
     let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    // Simulate Phase 1' completing: advance project to T1.
-    let t1 = advance_one(
-        &ww.project_dir,
-        "rebased-one-write-window.txt",
-        "T1 — rebase landed here\n",
-        "phase1prime: rebased (one-write-window crash)",
-    );
-
     let op_id = "crash-matrix-cell4-one-write-window";
+    let t1_after_record = || {
+        advance_one(
+            &ww.project_dir,
+            "rebased-one-write-window.txt",
+            "T1 — rebase landed here\n",
+            "phase1prime: rebased (one-write-window crash)",
+        )
+    };
     plant_owner_record(
         &ww.root,
         &OwnerRecordFixture {
@@ -2508,6 +2508,8 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
         &common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
+    // Phase 1' completes after the record holds the tip it started from.
+    let t1 = t1_after_record();
 
     // Abort must REFUSE: T1 is not attributable.
     let out = rwv()

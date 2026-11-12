@@ -264,6 +264,7 @@ pub(crate) fn merge_member(
             report.into_result().expect_err("a judged edit refuses"),
         ));
     }
+    op_state::journal_integrating(workspace, crate::manifest::RepoKey::Member(repo.clone()))?;
     let paths = vcs.start_merge(dir, source)?;
     if !paths.is_empty() {
         return Err(MemberStop::Conflict(Conflicted {
@@ -610,6 +611,10 @@ impl ProjectMerge<'_> {
         }
 
         if matches!(merged, Merged::Tree(_)) {
+            op_state::journal_integrating(
+                self.ctx.active_path(),
+                crate::manifest::RepoKey::Project,
+            )?;
             let paths = vcs.start_merge(&dir, sides.incoming(self.head))?;
             if !paths.iter().all(|path| path == LockFile::FILE_NAME) {
                 return Err(crate::untokened!(
@@ -716,6 +721,7 @@ impl ProjectMerge<'_> {
                 TreeMerge::Conflicted { .. } => {}
             }
         }
+        op_state::journal_integrating(self.ctx.active_path(), crate::manifest::RepoKey::Project)?;
         let paths: Vec<String> = vcs
             .start_merge(dir, sides.incoming(self.head))?
             .into_iter()

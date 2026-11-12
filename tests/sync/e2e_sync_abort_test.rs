@@ -797,7 +797,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     let sha = common::git_in(project_dir, &["rev-parse", "HEAD"]);
 
     // Make a second commit so we have something to rebase onto.
-    let sha2 = make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
+    make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
 
     // Write a v2 owner record so `rwv abort` thinks an op is in progress —
     // through the real serializer, so a field the type gains later can't
@@ -813,8 +813,6 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     let op_id = owner.id.clone();
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
-    // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
-    common::savepoint::plant_at(project_dir, &op_id.to_string(), &sha2);
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
     // branch, then start a rebase that will conflict.
@@ -833,6 +831,10 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         "main version\n",
         "main: conflict base",
     );
+    // The savepoint is the tip the rebase starts from, as the op's own
+    // rebase starts from the tip it savepointed.
+    let sha2 = common::git_in(project_dir, &["rev-parse", "HEAD"]);
+    common::savepoint::plant_at(project_dir, &op_id.to_string(), &sha2);
 
     // Step 2: create branch `diverge` starting from sha (before sha2), add conflicting file.
     common::git_in(project_dir, &["checkout", "-b", "diverge", &sha]);

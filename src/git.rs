@@ -18,6 +18,7 @@ use crate::vcs::{
     TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
     VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
+use crate::vcs::{Attribution, Integrates, KeptWork};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
@@ -3034,131 +3035,44 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         key: &SavepointKey,
-        recorded_intent_tip: Option<&CommitId>,
-        recorded_converged_tip: Option<&CommitId>,
+        attribution: &Attribution<'_>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        let Some((on, savepoint)) = self.checkout_savepoint(repo, key)? else {
-            return Ok(VerifiedRestoreOutcome::NoSavepoint);
-        };
-        let savepoint = ResolvedRevisionId::from(savepoint);
-
-        // VCS-native mid-op state is wreckage attributable to the op
-        // (replay's strategy ops move tips through these states). Cancel
-        // the mid-op first, then restore.
-        let mid_op = self.mid_op(repo).is_some();
-        if mid_op {
-            self.cancel_in_flight_op(repo);
-        }
-
-        let head = self.head_revision(repo)?;
-        let head_id = head.id();
-        let attributable = mid_op
-            || head_id == savepoint.id()
-            || recorded_intent_tip == Some(head_id)
-            || recorded_converged_tip == Some(head_id);
-
-        let off = match (&on, self.observe_head(repo)?) {
-            (SavedCheckout::Unnamed, _) => None,
-            (SavedCheckout::On(b), HeadObservation::Attached { name }) if &name == b => None,
-            (SavedCheckout::Detached, HeadObservation::Detached { .. }) => None,
-            (_, HeadObservation::Attached { name }) => Some(Some(name)),
-            (_, HeadObservation::Detached { .. } | HeadObservation::Unborn { .. }) => Some(None),
-        };
-        if let Some(off) = off {
-            if !attributable && foreign_tip_policy == ForeignTipPolicy::Refuse {
-                return Ok(VerifiedRestoreOutcome::ForeignTip {
-                    observed_tip: head_id.clone(),
-                    savepoint: savepoint.id().clone(),
-                    recorded_converged_tip: recorded_converged_tip.cloned(),
-                });
+        let mut kept = Vec::new();
+        let outcome =
+            self.restore_checkout_savepoint(repo, key, attribution, foreign_tip_policy, &mut kept)?;
+        Ok(if kept.is_empty() {
+            outcome
+        } else {
+            VerifiedRestoreOutcome::Kept {
+                kept,
+                then: Box::new(outcome),
             }
-            if !attributable && off.is_none() {
-                self.create_backup(
-                    repo,
-                    &BackupSource::DetachedHead,
-                    &head,
-                    Some(BackupMark::Abandoned),
-                )?;
-            }
-            match &on {
-                SavedCheckout::On(b) => self.attach_head_to(repo, &LocalRefName::of_branch(b))?,
-                SavedCheckout::Detached | SavedCheckout::Unnamed => {
-                    self.set_detached_head(repo, &savepoint)?
-                }
-            }
-            let then = self.verified_restore_savepoint(
+        })
+    }
+
+    fn cancel_returns_to(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        let started_at = |state_file: &str| -> Result<Option<ResolvedRevisionId>, VcsError> {
+            let path = Self::run_trimmed(
+                ["rev-parse", "--path-format=absolute", "--git-path", state_file],
                 repo,
-                key,
-                recorded_intent_tip,
-                recorded_converged_tip,
-                foreign_tip_policy,
             )?;
-            return Ok(VerifiedRestoreOutcome::SwitchedBack {
-                off,
-                then: Box::new(then),
-            });
-        }
-
-        if mid_op {
-            return self.reset_and_drop_savepoint(
-                repo,
-                key,
-                &savepoint,
-                VerifiedRestoreOutcome::RestoredFromMidOp,
-            );
-        }
-
-        if head_id == savepoint.id() {
-            // Untouched — restore is a no-op. Still drop the savepoint so
-            // abort's cleanup leaves no stale refs.
-            self.drop_checkout_savepoint(repo, key)?;
-            return Ok(VerifiedRestoreOutcome::Untouched);
-        }
-
-        // Intent tip: the op advanced this repo during replay (before relock).
-        // Exact-match only: a descendant check would accept a tip the op
-        // never recorded advancing to.
-        if recorded_intent_tip == Some(head_id) {
-            return self.reset_and_drop_savepoint(
-                repo,
-                key,
-                &savepoint,
-                VerifiedRestoreOutcome::RestoredFromIntent,
-            );
-        }
-
-        if recorded_converged_tip == Some(head_id) {
-            return self.reset_and_drop_savepoint(
-                repo,
-                key,
-                &savepoint,
-                VerifiedRestoreOutcome::RestoredFromConverged,
-            );
-        }
-
-        // Foreign tip: the reset is refused unless the operator named this
-        // repo, and then only after the tip is kept as a backup, so the
-        // consent buys moving off the commits and never losing them.
-        if foreign_tip_policy == ForeignTipPolicy::Abandon {
-            let source = self.head_backup_source(repo)?;
-            let backup = self.create_backup(repo, &source, &head, Some(BackupMark::Abandoned))?;
-            return self.reset_and_drop_savepoint(
-                repo,
-                key,
-                &savepoint,
-                VerifiedRestoreOutcome::AbandonedForeignTip {
-                    abandoned_tip: head_id.clone(),
-                    savepoint: savepoint.id().clone(),
-                    backup,
-                },
-            );
-        }
-
-        Ok(VerifiedRestoreOutcome::ForeignTip {
-            observed_tip: head_id.clone(),
-            savepoint: savepoint.id().clone(),
-            recorded_converged_tip: recorded_converged_tip.cloned(),
+            match std::fs::read_to_string(path) {
+                Ok(id) => Self::ref_tip(repo, id.trim()),
+                Err(_) => Ok(None),
+            }
+        };
+        Ok(match self.mid_op(repo) {
+            None => None,
+            Some(ConflictOp::Rebase) => match started_at("rebase-merge/orig-head")? {
+                Some(tip) => Some(tip),
+                None => started_at("rebase-apply/orig-head")?,
+            },
+            Some(ConflictOp::CherryPick | ConflictOp::Revert) => match started_at("sequencer/head")? {
+                Some(tip) => Some(tip),
+                None => Some(self.head_revision(repo)?),
+            },
+            Some(ConflictOp::Merge) => Some(self.head_revision(repo)?),
         })
     }
 
@@ -4691,10 +4605,201 @@ impl GitVcs {
         key: &SavepointKey,
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
+        kept: &mut Vec<KeptWork>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
+        self.keep_before_discarding(repo, savepoint, kept)?;
         Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
         self.drop_checkout_savepoint(repo, key)?;
         Ok(outcome)
+    }
+
+    /// Before a hard move of `repo`'s checkout to `to`: keep its uncommitted
+    /// edits as a backup where the move would discard any (a tracked change,
+    /// or an untracked file at a path `to` tracks), once per restore, and the
+    /// commits a detached HEAD holds that no branch reaches.
+    fn keep_before_discarding(
+        &self,
+        repo: &Path,
+        to: &ResolvedRevisionId,
+        kept: &mut Vec<KeptWork>,
+    ) -> Result<(), VcsError> {
+        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_)))
+            && Self::hard_move_discards(repo, to)?
+        {
+            if let Some(edits) = self.backup_edits(repo)? {
+                kept.push(KeptWork::Edits(edits));
+            }
+        }
+        if let Some(commits) = self.backup_unpreserved_head(repo)? {
+            kept.push(KeptWork::Commits(commits));
+        }
+        Ok(())
+    }
+
+    fn hard_move_discards(repo: &Path, to: &ResolvedRevisionId) -> Result<bool, VcsError> {
+        if !Self::dirty_file_names_inner(repo, StatusReach::Tracked)?.is_empty() {
+            return Ok(true);
+        }
+        let untracked = Self::run(["ls-files", "--others", "--exclude-standard", "-z"], repo)?;
+        let untracked: BTreeSet<&str> = untracked.split('\0').filter(|p| !p.is_empty()).collect();
+        if untracked.is_empty() {
+            return Ok(false);
+        }
+        let tracked = Self::run(["ls-tree", "-r", "-z", "--name-only", to.id().as_str()], repo)?;
+        Ok(tracked
+            .split('\0')
+            .any(|path| untracked.contains(path)))
+    }
+
+    fn restore_checkout_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        attribution: &Attribution<'_>,
+        foreign_tip_policy: ForeignTipPolicy,
+        kept: &mut Vec<KeptWork>,
+    ) -> Result<VerifiedRestoreOutcome, VcsError> {
+        let Some((on, savepoint)) = self.checkout_savepoint(repo, key)? else {
+            return Ok(match self.mid_op(repo) {
+                Some(stopped) => VerifiedRestoreOutcome::LeftStopped { stopped },
+                None => VerifiedRestoreOutcome::NoSavepoint,
+            });
+        };
+        let savepoint = ResolvedRevisionId::from(savepoint);
+        let attributable = |tip: &CommitId| tip == savepoint.id() || attribution.wrote(tip);
+
+        if let Some(stopped) = self.mid_op(repo) {
+            let returns_to = self.cancel_returns_to(repo)?;
+            let own = attribution.integrates == Integrates::Yes
+                && returns_to.as_ref().is_some_and(|r| attributable(r.id()));
+            let at_savepoint = returns_to.as_ref().map(|r| r.id()) == Some(savepoint.id());
+            if !own {
+                if attribution.integrates == Integrates::No && at_savepoint {
+                    self.drop_checkout_savepoint(repo, key)?;
+                    return Ok(VerifiedRestoreOutcome::LeftStopped { stopped });
+                }
+                let unread_but_at_savepoint =
+                    attribution.integrates == Integrates::Unknown && at_savepoint;
+                if !unread_but_at_savepoint && foreign_tip_policy == ForeignTipPolicy::Refuse {
+                    return Ok(VerifiedRestoreOutcome::StoppedForeign {
+                        stopped,
+                        returns_to: returns_to.map_or_else(
+                            || self.head_revision(repo).map(|h| h.id().clone()),
+                            |r| Ok(r.id().clone()),
+                        )?,
+                        savepoint: savepoint.id().clone(),
+                    });
+                }
+            }
+            if !own {
+                let to = match returns_to {
+                    Some(to) => to,
+                    None => self.head_revision(repo)?,
+                };
+                self.keep_before_discarding(repo, &to, kept)?;
+            }
+            self.cancel_in_flight_op(repo);
+            if self.mid_op(repo).is_some() {
+                return Err(VcsError::CommandFailed {
+                    args: vec![stopped.to_string(), "--abort".to_owned()],
+                    repo: repo.to_path_buf(),
+                    stderr: format!("the {stopped} in progress could not be canceled"),
+                });
+            }
+            let then =
+                self.restore_checkout_savepoint(repo, key, attribution, foreign_tip_policy, kept)?;
+            return Ok(VerifiedRestoreOutcome::Canceled {
+                stopped,
+                then: Box::new(then),
+            });
+        }
+
+        let head = self.head_revision(repo)?;
+        let head_id = head.id();
+
+        let off = match (&on, self.observe_head(repo)?) {
+            (SavedCheckout::Unnamed, _) => None,
+            (SavedCheckout::On(b), HeadObservation::Attached { name }) if &name == b => None,
+            (SavedCheckout::Detached, HeadObservation::Detached { .. }) => None,
+            (_, HeadObservation::Attached { name }) => Some(Some(name)),
+            (_, HeadObservation::Detached { .. } | HeadObservation::Unborn { .. }) => Some(None),
+        };
+        if let Some(off) = off {
+            if !attributable(head_id) && foreign_tip_policy == ForeignTipPolicy::Refuse {
+                return Ok(VerifiedRestoreOutcome::ForeignTip {
+                    observed_tip: head_id.clone(),
+                    savepoint: savepoint.id().clone(),
+                    recorded_converged_tip: attribution.converged.cloned(),
+                });
+            }
+            if !attributable(head_id) && off.is_none() {
+                self.create_backup(
+                    repo,
+                    &BackupSource::DetachedHead,
+                    &head,
+                    Some(BackupMark::Abandoned),
+                )?;
+            }
+            match &on {
+                SavedCheckout::On(b) => self.attach_head_to(repo, &LocalRefName::of_branch(b))?,
+                SavedCheckout::Detached | SavedCheckout::Unnamed => {
+                    self.set_detached_head(repo, &savepoint)?
+                }
+            }
+            let then =
+                self.restore_checkout_savepoint(repo, key, attribution, foreign_tip_policy, kept)?;
+            return Ok(VerifiedRestoreOutcome::SwitchedBack {
+                off,
+                then: Box::new(then),
+            });
+        }
+
+        if head_id == savepoint.id() {
+            self.drop_checkout_savepoint(repo, key)?;
+            return Ok(VerifiedRestoreOutcome::Untouched);
+        }
+
+        if attribution.intent == Some(head_id) {
+            return self.reset_and_drop_savepoint(
+                repo,
+                key,
+                &savepoint,
+                VerifiedRestoreOutcome::RestoredFromIntent,
+                kept,
+            );
+        }
+
+        if attribution.wrote(head_id) {
+            return self.reset_and_drop_savepoint(
+                repo,
+                key,
+                &savepoint,
+                VerifiedRestoreOutcome::RestoredFromConverged,
+                kept,
+            );
+        }
+
+        if foreign_tip_policy == ForeignTipPolicy::Abandon {
+            let source = self.head_backup_source(repo)?;
+            let backup = self.create_backup(repo, &source, &head, Some(BackupMark::Abandoned))?;
+            return self.reset_and_drop_savepoint(
+                repo,
+                key,
+                &savepoint,
+                VerifiedRestoreOutcome::AbandonedForeignTip {
+                    abandoned_tip: head_id.clone(),
+                    savepoint: savepoint.id().clone(),
+                    backup,
+                },
+                kept,
+            );
+        }
+
+        Ok(VerifiedRestoreOutcome::ForeignTip {
+            observed_tip: head_id.clone(),
+            savepoint: savepoint.id().clone(),
+            recorded_converged_tip: attribution.converged.cloned(),
+        })
     }
 
     /// Every savepoint filed under `key` in `repo`'s store.
