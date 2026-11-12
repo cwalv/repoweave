@@ -42,7 +42,7 @@ rwv explain op-parked
 
 `--continue` reads all original parameters — the branch taken in or the target, `--strategy`, `--reset-to-target`, `--retire`, and any consent flags — from the saved op-state record. Do not pass the original flags again alongside `--continue`; any other flag is rejected as a usage error (exit 2), except `--project`, which must name the project the op started for, and `--json` on `rwv sync-to`.
 
-If you step through a multi-commit rebase manually with `git rebase --continue`, the repository's `merge.rwv-ours.driver` configuration keeps `rwv.lock` conflict-free across picks. Once the manual rebase finishes, run `rwv sync --continue` (or `rwv sync-to --continue`) so `rwv` regenerates `rwv.lock` and clears the op-state record.
+If you step through a multi-commit rebase manually with `git rebase --continue`, the lock merge driver merges `rwv.lock` in each remaining pick; a pick whose pins it cannot settle stops with `rwv.lock` conflicted, which you resolve to either side, since `rwv` relocks afterwards. Once the manual rebase finishes, run `rwv sync --continue` (or `rwv sync-to --continue`) so `rwv` regenerates `rwv.lock` and clears the op-state record.
 
 ## Common conflict cases
 

@@ -64,6 +64,7 @@ included, on [Doctor findings](./doctor-findings.md):
 - [`history-disagreement`](./doctor-findings.md#history-disagreement)
 - [`alignment`](./doctor-findings.md#alignment)
 - [`legacy-workweave-index`](./doctor-findings.md#legacy-workweave-index)
+- [`missing-lock-merge-driver`](./doctor-findings.md#missing-lock-merge-driver)
 
 The others follow.
 
@@ -80,6 +81,7 @@ The others follow.
 | `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv pull`, for project-repo files its fast-forward would overwrite; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave; `rwv activate`, for a member the project shares with the project the weave root presents; `rwv update` and `rwv pull`, for such a member that is not aligned for a project the weave root does not present |
 | `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a shared member as `dirty` is |
 | `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push`; `rwv switch`, and `rwv branch create` for an `rwv.lock` where the branch starts at another commit than the checked-out one. In a detached project repo the choice is `rwv branch create`, which carries both files |
+| `lock unresolved` | the project repo's `rwv.lock` is unmerged: a merge, rebase or copy the lock merge driver could not settle left it conflicted with both pins marked, or a driver that could not run left one side in the working file with the conflict recorded only by the VCS. Resolve it to the pins you mean and stage it | every verb resolved for a project, until it is resolved; `rwv doctor` and `rwv abort` run |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -93,6 +95,7 @@ The others follow.
 | `rwv.toml or rwv.lock uncommitted` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
 | `rwv.toml or rwv.lock uncommitted`, for `rwv switch` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
 | `rwv.toml or rwv.lock uncommitted`, for `rwv branch create` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
+| `lock unresolved` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md); [Sync semantics](../explanation/joints/sync-semantics.md).
 

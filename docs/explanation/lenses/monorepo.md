@@ -92,7 +92,7 @@ repoweave's sync surface is a direction-explicit verb pair:
 
 `rwv sync-to` runs a phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the member repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips; a final step fast-forwards the target workspace to CWD's converged tips.
 
-`rwv.lock` is never merged. It is recomputed fresh every time. Lock-file conflicts are prevented by a per-project-repo `rwv.lock merge=rwv-ours` invariant in `.gitattributes` that `rwv doctor --fix` installs; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry the committed attribute. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
+`rwv.lock` is never merged as text. rwv's own merges and replays recompute it fresh every time, and a `git merge` you run by hand merges it through the lock merge driver `rwv init` and `rwv clone` set up, pin by pin, leaving a conflict rather than picking a side when pins diverge. A project repo not set up that way is refused by every verb that writes it, naming `rwv doctor --fix`. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
 For the common case — work in a feature workweave, bring it home — the one-liner is:
 

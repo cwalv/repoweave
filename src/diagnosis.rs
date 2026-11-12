@@ -381,10 +381,10 @@ impl Axis {
 }
 
 const LOCK_DRIVER_REFUSED_BY: &str = "every verb that writes the project repo or its lock, \
-before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a \
-rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, \
-`delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports \
-it instead";
+before it writes anything: `rwv lock`, `rwv sync` and `rwv sync-to` (under `--strategy rebase`, \
+for the project checkout replayed onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
+verbs, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and \
+`delete`; `rwv doctor` reports it instead";
 
 const BEFORE_RECEIPTS_ENTRY: &str = "The old file has no `receipts` key: an earlier release \
 wrote it before that key was kept. `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` \
@@ -3522,10 +3522,10 @@ mod tests {
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::HistoryDisagreement, history), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index)] =
+        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::HistoryDisagreement, history), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index), (Axis::MissingLockMergeDriver, driver)] =
             &entries[..]
         else {
-            panic!("the five axes with a finding yield the five entries: {entries:?}");
+            panic!("each axis with a finding yields its entry, in order: {entries:?}");
         };
         assert!(
             history.starts_with("### `history-disagreement`\n"),
@@ -3536,6 +3536,10 @@ mod tests {
             "{history}"
         );
         assert!(!history.contains("\n#### "), "{history}");
+        assert!(
+            driver.contains("\n#### `config-legacy`\n\n**Warning. Auto-fixable.** "),
+            "{driver}"
+        );
         assert!(pin.starts_with("### `pin`\n"), "{pin}");
         assert!(
             pin.contains("\n#### `behind`\n\n**Error. Report-only.** "),

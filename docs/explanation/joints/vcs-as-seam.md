@@ -25,7 +25,7 @@ Vcs impl (inner).
 - Command names (`git push`, `git rebase`, `hg pull`, `jj rebase`).
 - Remote conventions (`origin`, `upstream`).
 - File conventions (`.gitattributes`, `.gitignore`, `.hgrc`).
-- Configuration mechanisms (`merge=rwv-ours`, `[core] sparseCheckout`).
+- Configuration mechanisms (`merge=rwv-lock`, `[core] sparseCheckout`).
 - Error message text and recovery instructions ("git rebase --continue",
   "hg resolve --mark").
 - In-flight state names ("mid-rebase", "mid-merge", "in-progress
@@ -184,64 +184,39 @@ full bail message. Surrounding context — which repo, how to re-run sync,
 how to abort — is composed by the verb. The seam carries the
 VCS-specific noun phrases, not the entire prose.
 
-### (c) `Vcs::set_replay_exclusion`
+### (c) The lock merge driver and derived content
 
-**Concept:** configure a repo such that during replay (rebase) any
-changes to a specified path are silently overridden by the replay
-target's version. For git this is a three-layer mechanism, and the
-layers do different jobs:
+**Concept:** a project repo declares how `rwv.lock` merges, and a repo may
+declare paths whose content is derived. For git each declaration is a
+`.gitattributes` line naming a merge driver, and a name resolves to nothing
+until some config git can see defines `merge.<name>.driver`. The line is
+committed and travels with a clone; the definition does not, and that
+asymmetry is the whole shape of the thing.
 
-1. A namespaced `merge=rwv-ours` entry in committed `.gitattributes`
-   **assigns** the driver to the path.
-2. An inline `-c merge.rwv-ours.driver=true` flag, carried by whatever
-   derived-content policy the replay states, **defines** the driver for
-   that one git process.
-3. A durable `merge.rwv-ours.*` repo-local config **defines** it for
-   every later git process in that repo, including ones rwv did not
-   start. rwv plants it wherever it establishes or repairs a project
-   repo's replay-exclusion setup, so the definition is in place before
-   any replay can stop.
+- **The lock.** `rwv.lock merge=rwv-lock` names the lock merge driver, and
+  `rwv init` and `rwv clone` define it in the clone's config as `rwv lock
+  --merge-driver %O %A %B`. git finds `rwv` on `PATH` and runs it in every
+  merge rwv does not make, where it merges pins three-way; a merge it cannot
+  settle, or a driver git cannot run, leaves `rwv.lock` conflicted, and every
+  verb refuses it until it is resolved. A project repo set up any other way
+  is refused by every verb that writes it, as `missing-lock-merge-driver`,
+  and `rwv doctor --fix` migrates it. The seam states this as
+  `Vcs::lock_driver_setup`, `declare_lock_driver_in` and `define_lock_driver`.
+- **Derived content.** `<path> merge=rwv-ours` declares a path derived.
+  Nothing defines `rwv-ours` durably: rwv's own replays define it inline, per
+  git process, as `true` — the shell command that leaves the target side's
+  copy standing — through the derived-content policy the replay states. A
+  merge or rebase run outside rwv resolves the path as an ordinary textual
+  conflict. That is noisy, not dangerous: the content is derived, so
+  regenerate afterwards and the repo's own drift gate judges the result on
+  either route. Repoweave's own tree declares its generated reference pages
+  this way.
 
-Layer 1 is committed and travels with a clone; layers 2 and 3 do not
-travel, and that asymmetry is the whole shape of the thing. A
-`.gitattributes` line *names* a resolution, it does not carry one —
-whoever runs the command has to supply the definition. The namespaced
-name `rwv-ours` keeps that supply from colliding with an unrelated
-global `merge.ours.driver` config or a third-party `merge=ours` line in
-the same repo.
-
-Rebase replays each commit as a 3-way merge, which is why the driver
-is needed although sync offers no `merge` strategy.
-
-**Layer 3 is project-repo-only, which sharpens the caveat considerably
-outside a project repo.** rwv plants the durable config in the repos it
-manages the lifecycle of. Any other repo that adopts the same
-declaration for its own derived content gets layers 1 and 2 and no layer
-3 — repoweave's own tree is such a repo, declaring `merge=rwv-ours` over
-its generated reference pages. In a project repo, "manual git has no
-definition" is close to theoretical: a bare `git rebase --continue`
-finds the planted config and is genuinely safe. Everywhere else it is
-the normal case rather than an edge case, and every merge or rebase run
-outside rwv resolves the declared paths as an ordinary textual conflict.
-That is noisy, not dangerous, and which side you pick does not matter:
-the content is derived, so regenerate afterwards and the repo's own
-drift gate judges the result on either route.
-
-For git, `set_replay_exclusion` writes layer 1 and only layer 1: it
-appends `<path> merge=rwv-ours` to the repo's `.gitattributes`,
-idempotently, migrating a legacy `merge=ours` spelling in place when it
-finds one. The assignment has to be committed before it takes effect,
-which is why a sync will not quietly add it on your behalf — `rwv doctor
---fix` is the path that does.
-
-Layers 2 and 3 do not cover each other, which is why both exist. The
-inline flags are stated per call by the replay's derived-content policy,
-and they are the only route in a repo that never gets a plant. The
-durable plant is the only route for a git process rwv did not start —
-bare `git rebase --continue`, the resume path git itself advertises in
-conflict output, which inherits no inline flags. They overlap on exactly
-one case, a project-repo replay driven by rwv; drop either and it
-strands the case the other never covered.
+rwv's own merges and replays hold the lock merge driver at `true` the same
+way, so they neither depend on `rwv` being on `PATH` nor stop on a lock the
+driver would conflict: they settle `rwv.lock` themselves. A rebase replays
+each commit as a three-way merge, which is why the hold matters to `rwv
+sync` although it offers no `merge` strategy.
 
 **Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
 `rwv.lock` out of the merge inputs. The lock is regenerated from
@@ -250,24 +225,12 @@ would only produce noise. See
 [lock-as-derived](./lock-as-derived.md) for why this is structurally
 right.
 
-**Why this is the seam shape.** Before the refactor, sync ran a custom
-cherry-pick loop with per-commit lock-exclusion logic inline. Replacing
-it with a one-shot `set_replay_exclusion` call — made wherever a project
-repo is created, adopted or repaired — and a standard `rebase` call
-collapsed dozens of lines of git-aware loop into one trait call plus one
-rebase call.
-
-The win is not just shorter code — it is that the exclusion mechanism
-is per-VCS. A hg impl can implement `set_replay_exclusion`
-via `[merge-patterns]` in `.hgrc`; a jj impl might do something
-entirely different. Sync neither knows nor cares.
-
-The companion `replay_exclusion_state` query exists so `rwv doctor` can
-detect a project repo missing the entry and offer to add it. The detection logic in core stays VCS-agnostic. It
-answers with a state rather than a bool because doctor asks twice — once
-to report, once to repair — and a pair of bools let those two answers be
-derived independently, which is how a repair came to rewrite and commit
-in a project the report had called clean.
+**Why this is the seam shape.** The declaration, its definition and the
+hold are per-VCS. A hg impl can implement them via `[merge-patterns]` in
+`.hgrc`; a jj impl might do something entirely different. Sync neither
+knows nor cares. The setup query answers with a state per half rather than
+a bool, because doctor asks twice — once to report, once to repair — and
+both answers come from one read.
 
 ### (d) `Vcs::push_ref`
 
@@ -477,7 +440,7 @@ records the choice made rather than leaving it implicit.
 - [sync-semantics](./sync-semantics.md) — phase model that depends on
   examples (b) and (c).
 - [lock-as-derived](./lock-as-derived.md) — the property that
-  motivates `set_replay_exclusion` (example (c)) in the first place.
+  motivates the lock merge driver (example (c)) in the first place.
 - [clone-topology](./clone-topology.md) — the tier-0 spec is
   VCS-neutral by design (canonical store, linked workspace, branch
   ownership); the git mapping there is the worked example, in the same

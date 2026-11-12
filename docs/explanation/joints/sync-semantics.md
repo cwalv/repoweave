@@ -162,13 +162,14 @@ under the same `--strategy`:
 | `ff` | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
 | `rebase` (default) | Replay CWD's unique commits onto the target's tip; lock excluded | Advance CWD's repos to the target's lock targets |
 
-`--strategy=rebase` requires the line `rwv.lock merge=rwv-ours` in the
-project repo's **committed** `.gitattributes`: a rebase replays each commit
-as a three-way merge, and that driver keeps a lock-only commit from
-conflicting on `rwv.lock`. `rwv doctor --fix` adds the line. rwv also defines
-the driver on each rebase it runs and in the project repo's local git config,
-so a bare `git rebase --continue` there is safe; [vcs-as-seam](./vcs-as-seam.md)
-covers member repos that declare it. `--strategy=ff` needs no precondition.
+A rebase replays each commit as a three-way merge; rwv holds the lock merge
+driver for the replay, so a lock-only commit replays as an empty patch rather
+than a conflict, and Phase 3 relocks. The replay reads the attribute line the
+source's project checkout commits, so under `--strategy=rebase` sync refuses
+`missing-lock-merge-driver` for the source as well as for the workspace it
+writes; `rwv doctor --fix`, run where the refusal names, migrates it. A bare
+`git rebase --continue` runs the clone's lock merge driver instead, which
+merges pins three-way; [vcs-as-seam](./vcs-as-seam.md) covers the mechanism.
 
 ### Why no `merge` strategy
 
@@ -261,5 +262,5 @@ another branch for one run.
   machine underpins.
 - [shared-refs-drift](./shared-refs-drift.md) — the post-Phase-2
   reconciliation interacts with shared-refs drift in workweaves.
-- [vcs-as-seam](./vcs-as-seam.md) — replay exclusion, conflict hint
+- [vcs-as-seam](./vcs-as-seam.md) — the lock merge driver, conflict hint
   text, and the conflict-bail surface are all Vcs-trait responsibilities.

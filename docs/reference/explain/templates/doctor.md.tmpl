@@ -68,8 +68,8 @@ question the classes answer is whether the weave you invoked doctor from
 determines what gets repaired.
 
 **Weave-scoped arms — the invoking weave sets the scope.** Integration
-content regeneration, surfacing symlinks, the `rwv.lock` replay-exclusion and
-its paired merge-driver config, and the index / working-tree / state-hygiene
+content regeneration, surfacing symlinks, the lock merge driver's attribute
+line and config, and the index / working-tree / state-hygiene
 drift arms all repair state that
 exists once *per weave*. Run inside a workweave, they repair that workweave
 and nothing else: primary's copy of the same file is left alone, including
@@ -242,15 +242,13 @@ rwv doctor --fix
 
 ## Common errors
 
-- *missing-replay-exclusion* on a project repo — the project repo lacks
-  `rwv.lock merge=rwv-ours` in `.gitattributes`, or still carries the
-  legacy `rwv.lock merge=ours` spelling (renamed to close an
-  accidental-collision hazard with an unrelated global
-  `merge.ours.driver` during bare `git rebase --continue`), or carries
-  both lines at once, which leaves the legacy name live whichever way
-  git's reading order resolves them. Run `rwv doctor --fix` to add,
-  migrate, or drop the line — those paths also commit the change
-  (skipping the commit when the repo has other staged work).
+- *missing-lock-merge-driver* on a project repo — the checked-out commit's
+  `.gitattributes` lacks `rwv.lock merge=rwv-lock` or names a driver an
+  earlier release wrote (`merge=rwv-ours`, `merge=ours`), or the clone's
+  config does not name `rwv lock --merge-driver %O %A %B` or still defines
+  `merge.rwv-ours.driver`. Run `rwv doctor --fix`: it rewrites the line,
+  committing only that (declining while another file is staged or an
+  operation is in progress), and replaces the config.
 - *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
   an `rwv-`-prefixed merge driver rwv does not define. Git resolves
   `merge=<name>` through `merge.<name>.driver` config and falls back to a

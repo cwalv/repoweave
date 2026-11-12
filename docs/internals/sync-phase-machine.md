@@ -107,8 +107,10 @@ moved rather than publishing it.
 ## guard
 
 Runs all preconditions before any mutation. Covers: no-op-in-progress
-check on every workspace the op will touch, replay-exclusion invariant
-(`rwv.lock merge=rwv-ours` in committed `.gitattributes`), lock freshness,
+check on every workspace the op will touch, the lock merge driver's setup
+(dispatch judges the workspace; under `--strategy=rebase` the guard judges
+the source's project checkout, whose committed `.gitattributes` governs the
+replay), lock freshness,
 Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
 preflight (`rwv sync-to`). Refusals here leave no trace.
 
@@ -435,7 +437,7 @@ mechanism is:
 | Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
 | Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip, mid-op} |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
-| Lock replay-exclusion (rebase) | `rwv.lock merge=rwv-ours` in `.gitattributes`; `-c merge.rwv-ours.driver=true` per invocation; durable `merge.rwv-ours.driver` repo-local config planted before each sync (project repo only) |
+| Lock held through a replay (rebase) | `rwv.lock merge=rwv-lock` in `.gitattributes`; `-c merge.rwv-lock.driver=true` per invocation, overriding the clone's `rwv lock --merge-driver` definition |
 
 All of these are intent-named `Vcs` trait methods; the phase machine
 contains no VCS-specific spellings.

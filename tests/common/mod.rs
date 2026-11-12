@@ -524,15 +524,64 @@ pub const LOCK_DRIVER_ATTRIBUTE: &str = "rwv.lock merge=rwv-lock\n";
 pub const LOCK_DRIVER_COMMAND: &str = "rwv lock --merge-driver %O %A %B";
 
 /// Set the lock merge driver up in a fixture's project repo as `rwv init`
-/// does: `.gitattributes` holding [`LOCK_DRIVER_ATTRIBUTE`], for the caller to
-/// commit, and the driver's command in the clone's config.
+/// does: [`LOCK_DRIVER_ATTRIBUTE`]'s line in `.gitattributes`, any line an
+/// earlier release wrote for the lock dropped and every other line kept, for
+/// the caller to commit; and the driver's command in the clone's config.
 pub fn set_up_lock_driver(project_dir: impl AsRef<std::path::Path>) {
     let project_dir = project_dir.as_ref();
-    std::fs::write(project_dir.join(".gitattributes"), LOCK_DRIVER_ATTRIBUTE).unwrap();
+    let path = project_dir.join(".gitattributes");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut text: String = existing
+        .lines()
+        .filter(|line| {
+            !matches!(
+                line.trim(),
+                "rwv.lock merge=rwv-ours" | "rwv.lock merge=ours" | "rwv.lock merge=rwv-lock"
+            )
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    text.push_str(LOCK_DRIVER_ATTRIBUTE);
+    std::fs::write(&path, text).unwrap();
     git_in(
         project_dir,
         &["config", "merge.rwv-lock.driver", LOCK_DRIVER_COMMAND],
     );
+}
+
+/// [`set_up_lock_driver`], with the line folded into the checked-out commit
+/// when there is one, so the fixture's project holds what a project `rwv
+/// init` made holds without a commit of its own.
+pub fn set_up_lock_driver_committed(project_dir: impl AsRef<std::path::Path>) {
+    let project_dir = project_dir.as_ref();
+    let committed = git()
+        .args(["show", "HEAD:.gitattributes"])
+        .current_dir(project_dir)
+        .output()
+        .unwrap();
+    if committed.status.success()
+        && String::from_utf8_lossy(&committed.stdout)
+            .lines()
+            .any(|line| line.trim() == LOCK_DRIVER_ATTRIBUTE.trim())
+    {
+        git_in(
+            project_dir,
+            &["config", "merge.rwv-lock.driver", LOCK_DRIVER_COMMAND],
+        );
+        return;
+    }
+    set_up_lock_driver(project_dir);
+    git_in(project_dir, &["add", ".gitattributes"]);
+    let born = git()
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .current_dir(project_dir)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if born {
+        git_in(project_dir, &["commit", "-q", "--amend", "--no-edit"]);
+    }
 }
 
 /// [`git_in`], with each of `settings` given as [`git_config_env`] gives it.
@@ -565,13 +614,15 @@ pub fn git_in_configured(
 }
 
 /// Record the branch the project repo at `project_dir` is on as `declared`,
-/// as `rwv init` and `rwv clone` do for a project they make.
+/// and set up the lock merge driver ([`set_up_lock_driver_committed`]), as
+/// `rwv init` and `rwv clone` do for a project they make.
 ///
 /// A fixture that builds its project repo with git has no record until it
 /// says so, and the verbs that align, lock, land or publish refuse a branch
 /// with none. The record is written by the code those verbs run, so the
 /// fixture holds exactly what a weave made by `rwv init` holds.
 pub fn record_trunk(project_dir: &std::path::Path) {
+    set_up_lock_driver_committed(project_dir);
     let name = project_dir
         .file_name()
         .and_then(|name| name.to_str())

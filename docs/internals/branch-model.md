@@ -633,7 +633,7 @@ Worked examples for verbs *not* in the consequences table below, to show the
 procedure is total:
 
 - **`rwv doctor --fix`'s `.gitattributes` auto-commit**
-  (`commit_replay_exclusion_migration`, `check.rs:1994-2112`) `[R]` — commits
+  (`lock_driver::migrate`, `src/lock_driver.rs`) `[R]` — commits
   onto the project repo's current branch. Ref write: the branch advances.
   HEAD's symbolic target is unchanged. → **MOVE**. Legal, no new consent.
 - **`rwv abort`'s savepoint restore** (`abort_one_repo`, `sync.rs:4975-5003`,

@@ -74,12 +74,14 @@ in Phase 3 from the now-aligned manifest tips. `rwv sync` records its lock
 once every member has taken in: each pin merged three ways against the
 merge base's lock, with every member it moved at its new tip. Any lock-only commit on
 the source side becomes an empty patch on the target side and is
-dropped automatically. The phase model and the `merge=rwv-ours`
-replay-exclusion mechanism are described in
+dropped automatically. The phase model is described in
 [sync-semantics](./sync-semantics.md).
 
-Setting up the exclusion is the VCS layer's job; the principle that owns
-this is documented in [vcs-as-seam](./vcs-as-seam.md).
+A merge rwv does not make — a `git merge` or `git pull` run by hand — merges
+the lock through the lock merge driver, which `rwv init` and `rwv clone` set
+up: pins merge three-way, and a merge whose pins it cannot settle is left
+conflicted with both locks marked, so no side is taken silently. The VCS
+layer owns the mechanism; [vcs-as-seam](./vcs-as-seam.md) documents it.
 
 ## Implications for everyday workflow
 

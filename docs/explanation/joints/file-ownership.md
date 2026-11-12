@@ -242,4 +242,4 @@ file (rule 6, tracked in `.rwv-owned-digests`) is a separate mechanism; see
 - [sync-semantics](./sync-semantics.md) — how project-repo commits and workweave syncing interact with the files
   hybrid integrations write.
 - [lock-as-derived](./lock-as-derived.md) — why lockfiles are fully owned, not hybrid.
-- [vcs-as-seam](./vcs-as-seam.md) — the VCS-layer abstraction that owns symlink mechanics and replay exclusion.
+- [vcs-as-seam](./vcs-as-seam.md) — the VCS-layer abstraction that owns symlink mechanics and the lock merge driver.

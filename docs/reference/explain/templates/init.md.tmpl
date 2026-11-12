@@ -46,9 +46,10 @@ project directory inside the existing workspace.
 4. Creates `projects/<name>/`.
 5. Runs `git init` in the new directory.
 6. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).
-7. Configures replay-exclusion for `rwv.lock` (`.gitattributes`) and
-   plants the durable `merge.rwv-ours.*` git config so `rwv sync` rebases
-   correctly from the first commit.
+7. Sets up the lock merge driver: `rwv.lock merge=rwv-lock` in
+   `.gitattributes`, and `merge.rwv-lock.driver` naming `rwv lock
+   --merge-driver %O %A %B` in the project repo's config. `--adopt` rewrites
+   an adopted repo's line, committing only that.
 8. If `--provider` is given, adds a git remote using the registry's clone URL
    pattern and records it as the project repo's url remote, the remote `rwv
    push` publishes the project repo to.

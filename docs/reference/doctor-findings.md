@@ -39,7 +39,7 @@ rwv doctor --json | jq -r '.issues[] |
 
 Seventeen kinds carry a `sub_kind` — `alignment`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`,
-`missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`,
+`missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`,
 `stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
 `weave-root-identity-conflict`,
 `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
@@ -77,10 +77,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`projects-dir-unreadable`](#projects-dir-unreadable) | Error | Report-only |
 | [`projectless-dir`](#projectless-dir) | Warning | Report-only |
 | [`unnameable-project`](#unnameable-project) | Warning | Report-only |
-| [`missing-replay-exclusion`](#missing-replay-exclusion) (`absent`, `legacy-spelling`, `legacy-alongside-current`) | Warning | Auto-fixable |
-| [`replay-exclusion-unreadable`](#replay-exclusion-unreadable) | Warning | Report-only |
-| [`missing-merge-driver-config`](#missing-merge-driver-config) | Warning | Auto-fixable |
-| [`merge-driver-config-unreadable`](#merge-driver-config-unreadable) | Warning | Report-only |
+| [`missing-lock-merge-driver`](#missing-lock-merge-driver) (`attribute-absent`, `attribute-legacy`, `config-absent`, `config-legacy`) | Warning | Auto-fixable |
+| [`lock-merge-driver-unreadable`](#lock-merge-driver-unreadable) | Warning | Report-only |
 | [`phantom-merge-driver`](#phantom-merge-driver) | Warning | Report-only |
 | [`dangling-active-project`](#dangling-active-project) | Error | Auto-fixable |
 | [`unreadable-active-project`](#unreadable-active-project) | Error | Auto-fixable |
@@ -474,58 +472,64 @@ The character policy behind the refusal is documented in
 **What to do:** rename the directory to a name that validates. Nothing inside
 it needs to change — the name is the weave's, not the project repo's.
 
-### `missing-replay-exclusion`
+### `missing-lock-merge-driver`
 
-**Warning. Auto-fixable.** A project repo's `.gitattributes` lacks the
-`rwv.lock merge=rwv-ours` entry. Without it, `rwv sync`'s rebase carries your
-lock edits through the merge inputs instead of letting the lock be
-regenerated from the result.
+A project repo's lock merge driver is not set up as this release sets it up: the checked-out branch's committed attribute line for `rwv.lock` is absent or names a driver an earlier release wrote, or the clone's config does not define the driver's command or still defines the earlier one.
 
-The `sub_kind` says which repair applies. `absent` — no entry for `rwv.lock`
-at all. `legacy-spelling` — the entry is there under the pre-rename
-`merge=ours`, which reads as satisfied to a human and satisfies nothing:
-sync's check matches the current name, and `ours` collides with a driver a
-global git config may define for something else entirely.
-`legacy-alongside-current` — both lines are present, which is not the
-current one plus harmless residue: two `merge=` assignments on one path
-resolve by reading order, and the legacy name stays bound to whatever
-`merge.ours.driver` the operator's global config defines.
+**Why.** A merge rwv does not make merges `rwv.lock` through the lock merge driver: pins merge three-way, and a merge the driver cannot settle is left conflicted with both pins marked. Without the attribute line git merges the lock as text; without the config it falls back to text, or fails into a conflict. The driver an earlier release set up kept one side of every lock merge silently, so its line and config are migrated, never honored. Every verb that writes the project repo or its lock refuses until `rwv doctor --fix` migrates it, and `rwv doctor` reports it instead.
 
-**What to do:** `rwv doctor --fix` appends the line — or migrates the legacy
-spelling in place, dropping it where the current line is already there — and
-commits it when the repo has no other staged changes. The committed form is
-what sync's invariant reads, so the commit is the part that makes it take
-effect.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: missing-lock-merge-driver <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
-### `replay-exclusion-unreadable`
+| State | Means | Refused by |
+|---|---|---|
+| `attribute absent` | the checked-out branch's committed `.gitattributes` assigns `rwv.lock` no merge driver, so a merge rwv does not make merges the lock as text | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
+| `attribute legacy` | the checked-out branch's committed `.gitattributes` assigns `rwv.lock` `merge=rwv-ours` or `merge=ours`, a driver an earlier release wrote that kept one side of every lock merge | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
+| `config absent` | the clone's config does not define the lock merge driver's command, so git merges the lock as text | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
+| `config legacy` | the clone's config defines a driver that keeps one side: the `merge.rwv-ours` entry an earlier release wrote, or `merge.rwv-lock` naming a command other than `rwv lock --merge-driver %O %A %B` | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (for the source too, under a rebase), `rwv push`, `rwv pull`, `rwv update`, the `rwv member` setters, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
 
-**Warning. Report-only.** Reading the project repo's `.gitattributes` failed,
-so the replay exclusion is neither confirmed present nor confirmed missing.
-Reported rather than swallowed: an unevaluated invariant that stays silent
-reads exactly like one that holds.
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
-**What to do:** the `error` field carries what git said. Once the file is
-readable, re-run `rwv doctor` to get the real answer.
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `attribute absent` | set up the lock merge driver: rewrite the attribute line, committing only that, and replace the config | `rwv doctor --fix` | the checkout | commits only the rewritten line; other edits stay uncommitted |
+| `attribute legacy` | set up the lock merge driver: rewrite the attribute line, committing only that, and replace the config | `rwv doctor --fix` | the checkout | commits only the rewritten line; other edits stay uncommitted |
+| `config absent` | set up the lock merge driver: rewrite the attribute line, committing only that, and replace the config | `rwv doctor --fix` | the checkout | commits only the rewritten line; other edits stay uncommitted |
+| `config legacy` | set up the lock merge driver: rewrite the attribute line, committing only that, and replace the config | `rwv doctor --fix` | the checkout | commits only the rewritten line; other edits stay uncommitted |
 
-### `missing-merge-driver-config`
+**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Upgrade rwv](../how-to/upgrade-rwv.md).
 
-**Warning. Auto-fixable.** The project repo does not define the `rwv-ours`
-merge driver in its own git config. `rwv sync` passes the definition per
-invocation, so its own rebase is unaffected — but a bare `git rebase
---continue` you run afterwards is not, and git treats an undefined driver as
-`merge=binary`: conflict markers in `rwv.lock` where the lock was supposed to
-be regenerated.
+#### `attribute-absent`
 
-**What to do:** `rwv doctor --fix` plants the config. `config_key` names the
-key it writes.
+**Warning. Auto-fixable.** The checked-out branch's committed `.gitattributes` has no `rwv.lock merge=rwv-lock` line, so a merge rwv does not make merges the lock as text.
 
-### `merge-driver-config-unreadable`
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the line to the working file and to the checked-out commit's file and commits only that line; any other edit to `.gitattributes` stays uncommitted. It declines, changing nothing, while another file is staged or a merge, rebase or cherry-pick is in progress in the project repo. Another branch carries its own file and is migrated where it is checked out.
 
-**Warning. Report-only.** Reading the project repo's git config for the
-merge-driver definition failed, so the definition is neither confirmed present
-nor confirmed missing.
+#### `attribute-legacy`
 
-**What to do:** the `error` field carries what git said.
+**Warning. Auto-fixable.** The checked-out branch's committed `.gitattributes` assigns `rwv.lock` `merge=rwv-ours` or `merge=ours`, the driver an earlier release wrote, which kept one side of every lock merge. It is not honored.
+
+**What to do:** `rwv doctor --fix`, as above: it rewrites the line to `rwv.lock merge=rwv-lock`, committing only that.
+
+#### `config-absent`
+
+**Warning. Auto-fixable.** The clone's config does not define `merge.rwv-lock.driver`. Config does not travel with a clone, so a clone rwv did not make has none; every workweave shares its clone's.
+
+**What to do:** `rwv doctor --fix`. It sets `merge.rwv-lock.driver` to `rwv lock --merge-driver %O %A %B`, which git runs by finding `rwv` on `PATH`.
+
+#### `config-legacy`
+
+**Warning. Auto-fixable.** The clone's config still defines `merge.rwv-ours.driver`, the driver an earlier release planted, or defines `merge.rwv-lock.driver` as a command other than `rwv lock --merge-driver %O %A %B`.
+
+**What to do:** `rwv doctor --fix`. It replaces the config: the earlier entries are removed and `merge.rwv-lock.driver` names rwv's command.
+
+### `lock-merge-driver-unreadable`
+
+**Warning. Report-only.** Reading the project repo's lock merge driver setup —
+the checked-out commit's `.gitattributes` or the clone's config — failed, so it
+is neither confirmed nor reported missing.
+
+**What to do:** the `error` field carries what git said. Once it reads, re-run
+`rwv doctor` to get the real answer.
 
 ### `phantom-merge-driver`
 
