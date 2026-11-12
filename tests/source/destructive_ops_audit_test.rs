@@ -562,6 +562,16 @@ const ALLOWLIST: &[Allowed] = &[
             current tips into what they write.",
     },
     Allowed {
+        file: "git/replay.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "copy_with_changes: removes the temporary index file \
+            it named under the checkout's private git directory for this \
+            process, after the copy is built. The checkout's real index and \
+            working tree are never opened for writing.",
+    },
+    Allowed {
         file: "git/records.rs",
         pattern: "remove_file",
         count: 1,

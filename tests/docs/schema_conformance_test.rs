@@ -1941,6 +1941,11 @@ fn landing_reports() -> Vec<LandingReportOutput> {
             was: id('f'),
             backup: "proj--feat/rebased-ffffffffffff".to_owned(),
         },
+        LandingReportOutput::Remapped {
+            path: "local/remotes/app".to_owned(),
+            was: id('a'),
+            now: id('b'),
+        },
         LandingReportOutput::Refreshed {
             path: "local/remotes/lib".to_owned(),
             absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
