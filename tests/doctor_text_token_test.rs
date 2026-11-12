@@ -134,6 +134,7 @@ fn every_token_the_text_report_prints_is_one_explain_serves() {
 fn every_finding_prints_a_token_explain_serves() {
     let mut unserved = Vec::new();
     let mut tokens = Vec::new();
+    let mut sampled_kinds = std::collections::BTreeSet::new();
     for violation in corpus() {
         let expected = case_token(&violation);
         let token = repoweave::check::ViolationOutput::from_violation(
@@ -143,6 +144,7 @@ fn every_finding_prints_a_token_explain_serves() {
         )
         .token();
         assert_eq!(token, expected, "the token is the wire's kind and sub_kind");
+        sampled_kinds.insert(token.split('/').next().unwrap().to_owned());
         tokens.push(token);
     }
     for issue in issue_corpus() {
@@ -150,12 +152,19 @@ fn every_finding_prints_a_token_explain_serves() {
         assert_eq!(token, issue_kind_token(&issue.kind));
         tokens.push(token);
     }
+    assert_eq!(
+        sampled_kinds,
+        repoweave::check::ViolationKind::ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        "the corpus samples a different set of finding kinds from ViolationKind::ALL"
+    );
     assert!(
-        tokens.len() > 90
-            && tokens.iter().any(|t| t == "index-drift/safe-to-fix")
-            && tokens.iter().any(|t| t == "working-tree-drift/safe-to-fix"),
-        "the corpus walk read {} findings: it has stopped reading the corpus",
-        tokens.len()
+        tokens.iter().any(|t| t == "index-drift/safe-to-fix")
+            && tokens.iter().any(|t| t == "working-tree-drift/safe-to-fix")
+            && tokens.iter().any(|t| t == "tool-missing"),
+        "the corpus walk lost a finding it is known to hold: {tokens:?}"
     );
     for token in &tokens {
         match repoweave::explain::entry_for_token(token) {

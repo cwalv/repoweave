@@ -17,7 +17,7 @@
 //!   anything when the parent's branch has no record;
 //! - `status` shows the checked-out branch's record without writing one.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod common;
 

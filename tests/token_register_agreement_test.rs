@@ -251,7 +251,10 @@ fn conflict_op_tokens() -> BTreeSet<String> {
 /// [`the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout`]. An entry
 /// that goes stale cannot pass quietly — `serde_enum_tokens` panics on a
 /// declaration it cannot find.
-const SERDE_ENUM_DECLARATIONS: &[(&str, &str)] = &[("vcs.rs", "pub enum ConflictOp {")];
+const SERDE_ENUM_DECLARATIONS: &[(&str, &str)] = &[
+    ("vcs.rs", "pub enum ConflictOp {"),
+    ("refusal.rs", "pub enum RefusalKind {"),
+];
 
 fn kebab(name: &str) -> String {
     let mut out = String::new();
@@ -294,39 +297,40 @@ fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
     ])
 }
 
-/// Every register is read and none of them came back empty or implausibly
-/// small. A parser that quietly stopped matching would make every assertion
-/// below vacuous while leaving them green.
-///
-/// **What a floor does not do**: it catches a register going dark wholesale,
-/// not one going partially blind, because it is by construction below the
-/// register's real size. `refusal` is read from its derived schema, which
-/// lists every variant by construction; the others are types' `ALL`, held to
-/// their wire mirrors' schemas by
+/// Every register is read: each holds a token it is known to hold, and the
+/// two read from a derived schema agree with the enum they derive from. A
+/// parser that quietly stopped matching would make every assertion below
+/// vacuous while leaving them green. The registers read from a type's `ALL`
+/// are held to their wire mirrors' schemas by
 /// [`the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare`].
 #[test]
 fn the_register_walk_is_not_vacuous() {
     let regs = registers();
-    let floors = [
-        ("refusal", 90usize),
-        ("kind", 4),
-        ("doctor", 30),
-        ("issue", 8),
-        // Lowered from 10 when three variants nothing constructed were retired
-        // off the wire. A floor tracks how many tokens a register is known to
-        // have, so it moves when the register does; it is not a claim that the
-        // register may not shrink.
-        ("vcs", 8),
-        ("sync", 3),
-    ];
-    for (name, floor) in floors {
-        let found = regs[name].len();
+    for (name, witness) in [
+        ("refusal", "op-in-progress"),
+        ("kind", "edits"),
+        ("doctor", "orphaned-clone"),
+        ("issue", "tool-missing"),
+        ("vcs", "not-a-repo"),
+        ("sync", "ff-impossible"),
+    ] {
         assert!(
-            found >= floor,
-            "the {name} register walk yielded {found} tokens, below the floor of {floor}; \
-             it has stopped reading that register"
+            regs[name].contains(witness),
+            "the {name} register walk did not read `{witness}`; it has stopped reading that \
+             register: {:?}",
+            regs[name]
         );
     }
+    assert_eq!(
+        regs["refusal"],
+        serde_enum_tokens(&source("refusal.rs"), "pub enum RefusalKind {"),
+        "the schema derived for RefusalKind and its declaration name different tokens"
+    );
+    assert_eq!(
+        regs["kind"],
+        Axis::ALL.iter().map(|a| a.token()).collect::<BTreeSet<_>>(),
+        "the schema derived for Axis and Axis::ALL name different kinds"
+    );
 }
 
 /// [`serde_enum_tokens`] reads a declaration the same way whatever a checkout
@@ -490,11 +494,6 @@ fn no_two_conditions_sit_one_edit_apart() {
     let regs = registers();
     let recorded: BTreeSet<&str> = INTENDED_REUSE.iter().map(|(t, _, _)| *t).collect();
     let universe: BTreeSet<String> = regs.values().flatten().cloned().collect();
-    assert!(
-        universe.len() >= 130,
-        "the universe walk yielded {} tokens; it has stopped reading",
-        universe.len()
-    );
 
     let tokens: Vec<&String> = universe.iter().collect();
     let mut near = Vec::new();
@@ -589,11 +588,12 @@ fn every_published_token_is_servable_or_a_recorded_exception() {
         })
         .filter(|t| !t.contains(' '))
         .collect();
-    assert!(
-        served.len() >= 90,
-        "the entry walk yielded {} headings; it has stopped reading the pages",
-        served.len()
-    );
+    for witness in ["op-in-progress", "orphaned-clone", "command-failed"] {
+        assert!(
+            served.contains(witness),
+            "the entry walk did not read `{witness}`; it has stopped reading the pages"
+        );
+    }
 
     let published: BTreeSet<String> = registers().values().flatten().cloned().collect();
     let recorded: BTreeSet<&str> = NOT_EXPLAIN_SERVABLE.iter().copied().collect();
@@ -644,7 +644,7 @@ fn single_value_enum(prop: &Value) -> Option<&str> {
 /// Three shapes, because schemars uses a different one depending on whether a
 /// variant carries a doc comment and whether it carries fields: a flat
 /// `{"enum": [...]}` for a run of undocumented fieldless variants
-/// (`FetchOutcomeStatus`); a single-key `{"enum": [x]}` for one documented
+/// (`MemberOutcomeStatus`); a single-key `{"enum": [x]}` for one documented
 /// fieldless variant (`UpdateKind`'s arms) or as an internally-tagged
 /// variant's discriminant property alongside its other fields
 /// (`PushOutcomeOutput`'s `kind`, `ContainmentVerdictOutput`'s `relation`);
@@ -758,14 +758,88 @@ const ALREADY_WALKED: &[&str] = &[
     "ConflictOp",
 ];
 
-/// (vocabulary count, token count) the residue census reads today. Re-derived
-/// directly from `docs/reference/schemas/*.json` for this file, not carried
-/// over from any earlier count — an earlier count of this same residue
-/// (20 vocabularies, 55 tokens) undercounted several externally-tagged doctor
-/// sub-kinds and missed four vocabularies outright; this file's own walk is
-/// the source of truth for the number below, and a mismatch here means the
-/// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (46, 177);
+/// Every kebab token a definition holds, read without regard to how schemars
+/// shaped it: each string member of an `enum` at any depth, and the one
+/// required key of any `oneOf` arm whose sole property is not a string
+/// literal. A second derivation of [`kebab_vocabularies`]'s population, so a
+/// shape that walk stops reading shows as a difference between the two.
+fn shape_blind_tokens(node: &Value, out: &mut BTreeSet<String>) {
+    match node {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match (key.as_str(), value) {
+                    ("enum", Value::Array(members)) => out.extend(
+                        members
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .filter(|s| is_kebab_token(s))
+                            .map(str::to_owned),
+                    ),
+                    ("oneOf", Value::Array(arms)) => {
+                        for arm in arms {
+                            let props = arm.get("properties").and_then(Value::as_object);
+                            let required = arm.get("required").and_then(Value::as_array);
+                            if let (Some(props), Some([Value::String(tag)])) =
+                                (props, required.map(Vec::as_slice))
+                            {
+                                let payload = props.get(tag);
+                                if props.len() == 1
+                                    && is_kebab_token(tag)
+                                    && payload.is_some_and(|p| p.get("enum").is_none())
+                                {
+                                    out.insert(tag.clone());
+                                }
+                            }
+                            shape_blind_tokens(arm, out);
+                        }
+                    }
+                    _ => shape_blind_tokens(value, out),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|i| shape_blind_tokens(i, out)),
+        _ => {}
+    }
+}
+
+fn shape_blind_vocabularies() -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for verb in json_schema::committed_verbs() {
+        let schema = json_schema::committed_schema(&verb);
+        let Some(definitions) = schema.get("definitions").and_then(Value::as_object) else {
+            continue;
+        };
+        for (name, def) in definitions {
+            let mut tokens = BTreeSet::new();
+            shape_blind_tokens(def, &mut tokens);
+            if !tokens.is_empty() {
+                out.entry(name.clone()).or_default().extend(tokens);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_vocabulary_walk_reads_every_shape_the_schemas_hold() {
+    let walked = kebab_vocabularies();
+    assert_eq!(
+        walked,
+        shape_blind_vocabularies(),
+        "the shape-aware walk and the shape-blind scan of docs/reference/schemas/*.json \
+         disagree: a vocabulary arrived in a shape collect_arm_tokens does not read"
+    );
+    for (vocabulary, token) in [
+        ("MemberOutcomeStatus", "skipped"),
+        ("PushOutcomeOutput", "records-published"),
+        ("WorkweaveTreeIntegrityKind", "dangling-parent"),
+    ] {
+        assert!(
+            walked.get(vocabulary).is_some_and(|t| t.contains(token)),
+            "the walk no longer reads `{token}` in `{vocabulary}`"
+        );
+    }
+}
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than
@@ -823,14 +897,8 @@ const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
 /// output and are drift-gated by `scripts/ci-local.sh`'s final stage, so a
 /// stale artifact here is a stale artifact everywhere else that reads one.
 ///
-/// Pinned to [`UNWALKED_KEBAB_CENSUS`], an exact count rather than a floor —
-/// a floor catches the walk going dark wholesale and misses it losing one
-/// vocabulary, which is the more likely drift. Both directions are the alarm:
-/// a shrink means a vocabulary this test relied on vanished or renamed out
-/// from under the pin, a growth means a new one arrived unrecorded, and either
-/// way the fix is to re-read `docs/reference/schemas/*.json`, confirm the new
-/// number by hand, and move the pin — never to adjust it to make the run
-/// green without reading what moved.
+/// That the walk reads every vocabulary is
+/// [`the_vocabulary_walk_reads_every_shape_the_schemas_hold`]'s to hold.
 #[test]
 fn every_unwalked_kebab_vocabulary_is_disjoint_from_conditions() {
     let vocabs = kebab_vocabularies();
@@ -845,14 +913,6 @@ fn every_unwalked_kebab_vocabulary_is_disjoint_from_conditions() {
         .iter()
         .filter(|(name, _)| !ALREADY_WALKED.contains(&name.as_str()))
         .collect();
-    let residue_tokens: usize = residue.values().map(|v| v.len()).sum();
-    assert_eq!(
-        (residue.len(), residue_tokens),
-        UNWALKED_KEBAB_CENSUS,
-        "the unwalked kebab-vocabulary census has moved — a vocabulary arrived, left, or \
-         changed size in docs/reference/schemas/*.json; re-derive the count by hand before \
-         moving the pin:\n{residue:#?}"
-    );
 
     let conditions: BTreeSet<String> = registers().values().flatten().cloned().collect();
     let collided: BTreeSet<(&str, &str)> = residue

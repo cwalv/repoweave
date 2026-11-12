@@ -8763,7 +8763,18 @@ mod tests {
             HashSet::from(["version-is-a-pin".to_owned(), "spelled-out".to_owned()])
         );
         let real = refusal_tokens(&fs::read_to_string(repo_root().join("src/refusal.rs")).unwrap());
-        assert!(real.len() > 85, "read {} refusal tokens", real.len());
+        let schema = serde_json::to_value(schema_for!(repoweave::refusal::RefusalKind)).unwrap();
+        let derived: HashSet<String> = schema["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|arm| arm["enum"].as_array().unwrap())
+            .map(|token| token.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            real, derived,
+            "the declaration and the derived schema disagree"
+        );
         assert!(real.contains(&repoweave::refusal::RefusalKind::InvalidRefName.token()));
     }
 

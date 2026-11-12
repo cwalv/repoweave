@@ -62,9 +62,10 @@ fn names_the_cargo_command(line: &str) -> bool {
 }
 
 /// Structural license: a prohibition over an enumerable population — the
-/// hook's own non-comment lines. The behavioral sibling below
-/// (`stub_cargo_count == gate runs * CARGO_RUNS_PER_GATE`) sees only invocations on a path the
-/// fixture drives whose output reaches the hook's stdout, and both of those
+/// hook's own non-comment lines. The behavioral sibling below, which holds
+/// the hook's cargo invocations to one direct gate run's per gated commit,
+/// sees only invocations on a path the fixture drives whose output reaches the
+/// hook's stdout, and both of those
 /// are escapable: a `cargo` call in the CI-not-green refusal arm, which the
 /// `gh` stub makes unreachable, and a `cargo` call whose output is redirected
 /// both leave that count unchanged. Neither is escapable here, because this
@@ -204,7 +205,8 @@ fn fixture_repo() -> tempfile::TempDir {
 
 /// Run the real hook in `cwd` with the given stdin lines and the stub
 /// toolchain first on PATH.
-fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
+/// A `PATH` with the stub toolchain first, and the directory holding it.
+fn stub_path() -> (tempfile::TempDir, String) {
     let stub_dir = common::tempdir().expect("tempdir");
     for (name, body) in [
         ("cargo", STUB_CARGO),
@@ -213,10 +215,13 @@ fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
     ] {
         write_executable(&stub_dir.path().join(name), body);
     }
-
     let real_path = std::env::var("PATH").unwrap_or_default();
     let path = format!("{}:{real_path}", stub_dir.path().display());
+    (stub_dir, path)
+}
 
+fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
+    let (_stubs, path) = stub_path();
     let mut child = Command::new(pre_push_hook())
         .current_dir(cwd)
         .env("PATH", &path)
@@ -235,10 +240,40 @@ fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
     child.wait_with_output().expect("hook should exit")
 }
 
-/// What one `scripts/ci-local.sh` run invokes `cargo` for: once per default
-/// stage, and twice for the windows stage, which checks and lints, and for
-/// clippy, which lints the build releases make and the one the suite runs.
-const CARGO_RUNS_PER_GATE: usize = 11;
+/// The `cargo` invocations one run of `scripts/ci-local.sh` makes, read by
+/// running it directly in a fresh fixture with the stub toolchain.
+fn cargo_runs_of_one_gate() -> &'static [String] {
+    static RUNS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    RUNS.get_or_init(|| {
+        let fixture = fixture_repo();
+        let (_stubs, path) = stub_path();
+        let out = Command::new(fixture.path().join("scripts/ci-local.sh"))
+            .current_dir(fixture.path())
+            .env("PATH", &path)
+            .output()
+            .expect("the gate script runs");
+        assert!(
+            out.status.success(),
+            "the gate script, run directly, failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let runs = stub_cargo_lines(&out);
+        assert!(
+            runs.iter()
+                .any(|r| r == "test --release --no-fail-fast --features test-pause"),
+            "one gate run did not reach the test stage: {runs:?}"
+        );
+        runs
+    })
+}
+
+fn stub_cargo_lines(out: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("STUB_CARGO: "))
+        .map(str::to_owned)
+        .collect()
+}
 
 fn stub_cargo_count(out: &std::process::Output) -> usize {
     String::from_utf8_lossy(&out.stdout)
@@ -255,9 +290,12 @@ fn assert_green(out: &std::process::Output, expected_gate_runs: usize) {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
-        stub_cargo_count(out),
-        expected_gate_runs * CARGO_RUNS_PER_GATE,
-        "expected {CARGO_RUNS_PER_GATE} cargo invocations per gated commit:\n{stdout}"
+        stub_cargo_lines(out),
+        std::iter::repeat_n(cargo_runs_of_one_gate(), expected_gate_runs)
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>(),
+        "expected one whole gate's cargo invocations per gated commit:\n{stdout}"
     );
     assert!(stdout.contains("pre-push: all checks passed"));
 }

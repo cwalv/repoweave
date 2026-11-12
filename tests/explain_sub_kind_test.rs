@@ -105,16 +105,23 @@ fn served(name: &str) -> Option<String> {
 #[test]
 fn every_entry_is_reachable_through_some_spelling() {
     let entries = page_entries();
-    let sub_kind_entries = entries
-        .iter()
-        .filter(|e| e.page == "doctor-findings.md" && e.kind.is_some())
-        .count();
-    assert!(
-        entries.len() > 150 && sub_kind_entries > 40,
-        "the page walk read {} entries, {sub_kind_entries} of them sub-kinds: it has \
-         stopped reading the pages",
-        entries.len()
-    );
+    for (page, kind, token) in [
+        ("refusals.md", None, "op-in-progress"),
+        ("doctor-findings.md", None, "orphaned-clone"),
+        (
+            "doctor-findings.md",
+            Some("workweave-tree-integrity"),
+            "dangling-parent",
+        ),
+        ("vcs-errors.md", None, "command-failed"),
+    ] {
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.page == page && e.kind.as_deref() == kind && e.token == token),
+            "the page walk did not read `{token}` on {page}: it has stopped reading the pages"
+        );
+    }
 
     let missing = unreachable(&entries, &served);
     assert!(
@@ -286,9 +293,10 @@ fn heading_token(entry: &str) -> &str {
 fn every_finding_sub_kind_resolves_by_its_qualified_spelling() {
     let spellings = qualified_spellings();
     assert!(
-        spellings.len() > 50 && spellings.contains(&("index-drift".into(), "live-staged".into())),
-        "the register walk read {} sub-kinds: it has stopped reading the schema",
-        spellings.len()
+        spellings.contains(&("index-drift".into(), "live-staged".into()))
+            && spellings.contains(&("workweave-tree-integrity".into(), "dangling-parent".into())),
+        "the register walk lost a sub-kind it is known to hold: it has stopped reading the \
+         schema: {spellings:?}"
     );
     let unserved: Vec<String> = spellings
         .iter()

@@ -46,9 +46,10 @@ fn pages_text() -> String {
 fn every_minted_token_has_an_entry() {
     let tokens = minted_tokens();
     assert!(
-        tokens.len() > 85,
-        "the register walk yielded {} tokens, too few to be the whole enum",
-        tokens.len()
+        tokens
+            .iter()
+            .any(|t| *t == RefusalKind::OpInProgress.token()),
+        "the register walk did not read `op-in-progress`: {tokens:?}"
     );
 
     let missing: Vec<&String> = tokens
@@ -68,11 +69,12 @@ fn every_entry_names_a_minted_token() {
     let minted: std::collections::BTreeSet<String> =
         minted_tokens().into_iter().chain(kind_tokens()).collect();
     let documented = repoweave::explain::documented_tokens();
-    assert!(
-        documented.len() > 90,
-        "the page walk yielded {} tokens, too few to have read both pages",
-        documented.len()
-    );
+    for witness in ["op-in-progress", "orphaned-clone"] {
+        assert!(
+            documented.contains(&witness),
+            "the page walk did not read `{witness}`; it has stopped reading a page"
+        );
+    }
 
     // Doctor findings and issue kinds are documented on the same page and are
     // not refusal tokens; the register is the subset this direction is about.
@@ -226,11 +228,18 @@ fn misplaced_shared_entries(
 #[test]
 fn every_token_has_one_entry_per_condition_across_the_pages() {
     let pages = entry_pages();
-    let documented = entry_locations(&pages).len();
-    assert!(
-        documented > 150,
-        "the page walk yielded {documented} tokens, too few to have read every page"
-    );
+    let documented = entry_locations(&pages);
+    for (page, witness) in [
+        ("refusals.md", "op-in-progress"),
+        ("doctor-findings.md", "orphaned-clone"),
+        ("vcs-errors.md", "command-failed"),
+    ] {
+        assert_eq!(
+            documented.get(witness).map(Vec::as_slice),
+            Some(&[page][..]),
+            "the page walk did not read `{witness}` on {page}"
+        );
+    }
     let duplicated = duplicated_entries(&pages);
     assert!(
         duplicated.is_empty(),
@@ -248,12 +257,10 @@ fn every_token_has_one_entry_per_condition_across_the_pages() {
 fn a_token_shared_with_a_finding_keeps_its_one_entry_on_the_findings_page() {
     let shared = tokens_shared_with_a_finding();
     assert!(
-        shared.len() >= 15
-            && shared.contains("dangling-active-project")
+        shared.contains("dangling-active-project")
             && shared.contains("pin")
             && shared.contains("unparseable-project"),
-        "the shared set read {} tokens, too few to be the whole overlap: {shared:?}",
-        shared.len()
+        "the shared set lost a token it is known to hold: {shared:?}"
     );
     let pages = entry_pages();
     let misplaced = misplaced_shared_entries(&pages, &shared);
