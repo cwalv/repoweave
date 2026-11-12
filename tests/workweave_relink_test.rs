@@ -34,8 +34,6 @@ impl Weave {
         rwv(&primary, &["member", "add", &common::file_url(&origin)]);
         rwv(&primary, &["lock"]);
         let project = primary.join("projects").join("demo");
-        common::git_in(&project, &["add", "-A"]);
-        common::git_in(&project, &["commit", "--quiet", "-m", "init"]);
         rwv(
             &primary,
             &["workweave", "create", "--project", "demo", "feat"],

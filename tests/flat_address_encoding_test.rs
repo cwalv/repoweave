@@ -263,8 +263,6 @@ fn make_nested_project_weave(tmp: &Path) -> (PathBuf, PathBuf) {
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "t@t"]);
     common::git_in(&project_dir, &["config", "user.name", "T"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
         .args([

@@ -83,7 +83,7 @@ impl Weave {
             .collect();
         rwv(&self.primary, &args);
         git(&self.project_dir(), &["add", "-A"]);
-        git(&self.project_dir(), &["commit", "-m", "lock"]);
+        common::commit_staged(self.project_dir(), "lock");
     }
 
     /// The canonical clone as an add before this behavior left it: no

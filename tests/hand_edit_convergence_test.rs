@@ -92,8 +92,6 @@ impl Weave {
         common::git_in(&project, &["config", "user.email", "test@test.com"]);
         common::git_in(&project, &["config", "user.name", "Test"]);
         succeed(&["lock"], &ws);
-        common::git_in(&project, &["add", "-A"]);
-        common::git_in(&project, &["commit", "-qm", "alpha"]);
         Weave { tmp, ws }
     }
 

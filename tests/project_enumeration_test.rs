@@ -318,8 +318,6 @@ fn make_deep_project_weave(tmp: &Path) -> PathBuf {
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "t@t"]);
     common::git_in(&project_dir, &["config", "user.name", "T"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let created = common::rwv()
         .args(["workweave", "create", "--project", "a/b/c", "wtest"])

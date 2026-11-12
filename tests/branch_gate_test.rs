@@ -52,8 +52,6 @@ impl Weave {
         let project = weave.project();
         common::git_in(&project, &["config", "user.email", "test@test.com"]);
         common::git_in(&project, &["config", "user.name", "Test"]);
-        common::git_in(&project, &["add", "-A"]);
-        common::git_in(&project, &["commit", "-qm", "init"]);
         let bare = weave.origin();
         common::git_in(
             weave.tmp.path(),

@@ -61,8 +61,6 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
     let project_dir = ws.join("projects/acme/console");
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let bare = tmp.path().join("remote.git");
     init_bare_repo_with_commit(&bare);

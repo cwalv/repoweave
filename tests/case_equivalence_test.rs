@@ -297,8 +297,6 @@ fn minting_a_workweave_over_a_foreign_directory_refuses() {
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "t@t"]);
     common::git_in(&project_dir, &["config", "user.name", "T"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     // A directory already sitting where the workweave would be minted, with
     // no marker: not this workweave, and not rwv's to adopt.
@@ -344,8 +342,6 @@ fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "t@t"]);
     common::git_in(&project_dir, &["config", "user.name", "T"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&container).unwrap();
@@ -674,8 +670,6 @@ fn case_drift_between_the_record_and_the_disk_is_reported() {
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "t@t"]);
     common::git_in(&project_dir, &["config", "user.name", "T"]);
-    common::git_in(&project_dir, &["add", "-A"]);
-    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
         .args(["workweave", "create", "--project", "web-app", "feat"])

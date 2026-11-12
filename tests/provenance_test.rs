@@ -872,7 +872,7 @@ fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_th
 fn commit_project(ws: &Path, message: &str) {
     let project = ws.join("projects").join("demo");
     common::git_in(&project, &["add", "-A"]);
-    common::git_in(&project, &["commit", "--quiet", "-m", message]);
+    common::commit_staged(&project, message);
 }
 
 fn create_workweave(ws: &Path, name: &str) -> PathBuf {

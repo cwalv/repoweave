@@ -186,11 +186,6 @@ fn removing_the_orphan_clears_the_finding() {
 fn a_workweave_orphan_moved_to_its_placement_in_the_primary_and_adopted_clears_the_finding() {
     let tmp = common::tempdir().unwrap();
     let ws = bare_weave(&tmp);
-    common::git_in(ws.join("projects").join("demo"), &["add", "."]);
-    common::git_in(
-        ws.join("projects").join("demo"),
-        &["commit", "--quiet", "-m", "init"],
-    );
     common::rwv()
         .args(["workweave", "create", "--project", "demo", "feat"])
         .current_dir(&ws)
