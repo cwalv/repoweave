@@ -246,9 +246,10 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
 }
 
 /// A member with nothing to land is not moved: the landing composes nothing
-/// for it, so no outcome names it, and the landing completes.
+/// for it, and its outcome names it as `no-op`, since `outcomes` carries every
+/// repo the replay covers.
 #[test]
-fn sync_json_moves_nothing_for_a_member_already_at_its_lock() {
+fn sync_json_names_a_member_already_at_its_lock_as_no_op() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
     let assert = rwv()
@@ -263,10 +264,11 @@ fn sync_json_moves_nothing_for_a_member_already_at_its_lock() {
         .and_then(Value::as_array)
         .expect("outcomes");
     assert!(
-        !outcomes
-            .iter()
-            .any(|o| o.get("path").and_then(Value::as_str) == Some(SERVER_PATH)),
-        "a member with nothing to land has no outcome: {stdout}"
+        outcomes.iter().any(|o| {
+            o.get("kind").and_then(Value::as_str) == Some("no-op")
+                && o.get("path").and_then(Value::as_str) == Some(SERVER_PATH)
+        }),
+        "a member with nothing to land is named as no-op: {stdout}"
     );
     assert_eq!(parsed["complete"], true, "{stdout}");
 
