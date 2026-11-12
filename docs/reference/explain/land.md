@@ -1120,6 +1120,7 @@ Schema:
       "required": [
         "choices",
         "commits",
+        "feature_pin",
         "now",
         "path",
         "was"
@@ -1133,11 +1134,15 @@ Schema:
           }
         },
         "commits": {
-          "description": "The commits the target's pin reaches that `now` lacks, newest first.",
+          "description": "The commits that side's pin reaches that `now` lacks, newest first.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/LeftCommitOutput"
           }
+        },
+        "feature_pin": {
+          "description": "Whether the commits listed are those this feature's pin reaches, the landing keeping the target's declared branch; else the target's pin's.",
+          "type": "boolean"
         },
         "now": {
           "description": "The receiving branch the landing declares.",
