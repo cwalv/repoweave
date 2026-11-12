@@ -1066,11 +1066,7 @@ impl Aligner {
 
     fn notes(&self, m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Vec<Judged> {
         if let Some(branch) = &plan.unfound {
-            return vec![declared_nowhere(repo, m.dir, branch)
-                .member()
-                .bind("<m>", m.path)
-                .bind("<b>", branch)
-                .judge(m.vcs)];
+            return vec![declared_nowhere(repo, m.dir, branch).judge(m.vcs)];
         }
         match &plan.target {
             Target::Detached {

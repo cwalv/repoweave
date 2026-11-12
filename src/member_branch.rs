@@ -743,11 +743,7 @@ pub(crate) fn judge_entries(
         steps.push(step);
     }
     if moves && !steps.is_empty() {
-        let authored =
-            crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
-        if let Err(e) =
-            crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored)
-        {
+        if let Err(e) = crate::manifest_commit::judge(&loaded.project_dir) {
             crate::member_url::merge_refusal(refusals, e)?;
         }
     }

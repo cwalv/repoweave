@@ -43,10 +43,10 @@ src/alignment.rs	alignment unaligned	-	1
 src/alignment.rs	name no-such-branch	-	1
 src/alignment.rs	pin none	-	1
 src/alignment.rs	pin not on declared branch	-	1
-src/alignment.rs	pin unreachable	-	1
+src/alignment.rs	pin unreachable	tests/push_test.rs	1
 src/alignment.rs	push-branch foreign upstream	-	1
 src/backup.rs	(untokened:owed)	-	2
-src/backup.rs	pin would be unreachable	-	1
+src/backup.rs	pin would be unreachable	tests/push_test.rs	1
 src/branch.rs	(untokened:environment-passthrough)	-	1
 src/branch.rs	head-not-on-branch	tests/branch_gate_test.rs	3
 src/branch.rs	invalid-ref-name	-	1
@@ -56,7 +56,7 @@ src/branch.rs	name feature	-	1
 src/branch.rs	name no-such-branch	-	2
 src/branch.rs	name reserved	-	1
 src/branch.rs	protected declared	-	1
-src/branch.rs	push-branch diverged	-	1
+src/branch.rs	push-branch diverged	tests/push_test.rs	1
 src/branch.rs	target conflict	tests/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/branch_gate_test.rs	1
 src/branch.rs	target no target	-	1
@@ -79,7 +79,7 @@ src/cli/dispatch.rs	stale-registry-entry	tests/workweave_topology_parent_test.rs
 src/cli/dispatch.rs	wrong-address-flag	-	4
 src/cli/dispatch.rs	wrong-checkout-kind	-	1
 src/clone.rs	pin none	-	1
-src/clone.rs	pin unreachable	-	1
+src/clone.rs	pin unreachable	tests/push_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
 src/clone.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
@@ -119,8 +119,8 @@ src/lock_commit.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/log.rs	name no-such-branch	-	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
 src/manifest_commit.rs	(untokened:owed)	-	1
-src/member_branch.rs	(untokened:owed)	-	4
-src/member_branch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	(untokened:owed)	-	2
+src/member_branch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	5
 src/member_branch.rs	name a revision	-	2
 src/member_branch.rs	name exists	-	1
 src/member_branch.rs	name feature	-	1
@@ -128,7 +128,7 @@ src/member_branch.rs	name no-such-branch	-	2
 src/member_branch.rs	name reserved	-	1
 src/member_branch.rs	pin none	-	2
 src/member_branch.rs	pin not on declared branch	-	1
-src/member_branch.rs	push-branch diverged	-	1
+src/member_branch.rs	push-branch diverged	tests/push_test.rs	1
 src/member_branch.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/member_pin.rs	(untokened:owed)	-	1
 src/member_pin.rs	alignment detached with unpushed commits	-	1
@@ -138,7 +138,7 @@ src/member_pin.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/member_settings.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/member_settings.rs	repo-not-in-manifest	tests/role_verb_test.rs	2
 src/member_url.rs	(untokened:owed)	-	1
-src/member_url.rs	push-branch diverged	-	1
+src/member_url.rs	push-branch diverged	tests/push_test.rs	1
 src/member_url.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/merge_upstream.rs	resume-contradicts-record	-	1
 src/merge_upstream.rs	target dependents	-	1
@@ -164,11 +164,9 @@ src/project_merge.rs	op-parked	-	1
 src/pull.rs	(untokened:owed)	-	1
 src/pull.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/pull.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
-src/pull.rs	push-branch diverged	-	1
-src/push.rs	(untokened:environment-passthrough)	-	3
-src/push.rs	(untokened:internal-invariant)	-	1
+src/pull.rs	push-branch diverged	tests/push_test.rs	1
+src/push.rs	(untokened:environment-passthrough)	-	2
 src/push.rs	(untokened:tally)	-	1
-src/push.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	-	1
 src/push.rs	head-not-on-branch	tests/branch_gate_test.rs	2
 src/push.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
@@ -176,19 +174,20 @@ src/push.rs	name minted	-	1
 src/push.rs	name no-such-branch	-	1
 src/push.rs	pin ahead	-	1
 src/push.rs	pin none	-	1
-src/push.rs	pin unmerged	-	2
-src/push.rs	pin unreachable	-	2
+src/push.rs	pin unmerged	tests/push_test.rs	2
+src/push.rs	pin unreachable	tests/push_test.rs	2
 src/push.rs	pin waived	-	1
-src/push.rs	pin would be unreachable	-	1
+src/push.rs	pin would be unreachable	tests/push_test.rs	1
 src/push.rs	protected declared	-	1
 src/push.rs	protected declared mode	-	1
 src/push.rs	publish no pin	-	1
 src/push.rs	publish records rejected	-	1
-src/push.rs	publish withheld	-	2
+src/push.rs	publish withheld	-	3
+src/push.rs	push-branch diverged	tests/push_test.rs	1
 src/push.rs	push-branch unconfirmed	-	1
 src/push_branch.rs	push-branch ahead	-	1
 src/push_branch.rs	push-branch behind	-	1
-src/push_branch.rs	push-branch diverged	-	1
+src/push_branch.rs	push-branch diverged	tests/push_test.rs	1
 src/push_branch.rs	push-branch foreign upstream	-	1
 src/push_branch.rs	push-branch gone	-	1
 src/push_branch.rs	push-branch no push target	-	1
@@ -197,14 +196,14 @@ src/setup.rs	claude-settings-missing	-	1
 src/status.rs	alignment project moved	-	1
 src/status.rs	alignment project unaligned	-	1
 src/status.rs	pin none	-	1
-src/status.rs	pin unreachable	-	1
+src/status.rs	pin unreachable	tests/push_test.rs	1
 src/status.rs	push-branch ahead	-	1
 src/switch.rs	edits rwv.toml or rwv.lock uncommitted	-	1
 src/switch.rs	head-not-on-branch	tests/branch_gate_test.rs	1
 src/switch.rs	invalid-ref-name	-	1
 src/switch.rs	name no-such-branch	-	2
 src/switch.rs	name reserved	-	1
-src/switch.rs	push-branch diverged	-	1
+src/switch.rs	push-branch diverged	tests/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	3
 src/sync.rs	(untokened:internal-invariant)	-	10
@@ -235,7 +234,7 @@ src/sync.rs	untracked-collision	-	1
 src/update.rs	partial-run-aborted	tests/refusal_arrival_test.rs	3
 src/update_remote.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/update_remote.rs	partial-run-aborted	tests/refusal_arrival_test.rs	2
-src/update_remote.rs	push-branch diverged	-	1
+src/update_remote.rs	push-branch diverged	tests/push_test.rs	1
 src/url_remote.rs	name taken	-	1
 src/workspace.rs	(untokened:owed)	-	2
 src/workspace.rs	cwd-in-inactive-project	tests/project_and_source_spelling_test.rs	1
@@ -254,7 +253,6 @@ src/workweave.rs	(untokened:hook-input)	-	4
 src/workweave.rs	(untokened:owed)	-	1
 src/workweave.rs	(untokened:tally)	-	2
 src/workweave.rs	alignment detached with unpushed commits	-	1
-src/workweave.rs	dirty-project-dir	-	1
 src/workweave.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/workweave.rs	health-floor-too-low	-	1
 src/workweave.rs	missing-canonical-clone	-	1
@@ -263,12 +261,10 @@ src/workweave.rs	name taken	-	1
 src/workweave.rs	no-active-project	tests/project_and_source_spelling_test.rs	1
 src/workweave.rs	no-such-workweave	-	1
 src/workweave.rs	registry-path-disagreement	-	1
-src/workweave.rs	replace-target-holds-work	-	2
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	tests/workweave_topology_parent_test.rs	5
 src/workweave.rs	standalone-in-workweave	-	3
-src/workweave.rs	target-dir-occupied	-	2
-src/workweave.rs	unreadable-status	-	1
+src/workweave.rs	target-dir-occupied	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	3
 src/workweave_index.rs	legacy-workweave-index old path	-	1
