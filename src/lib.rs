@@ -160,7 +160,6 @@ pub mod switch;
 pub mod symlink;
 pub mod sync;
 pub(crate) mod test_pause;
-pub(crate) mod tip_of;
 pub(crate) mod tool_program;
 pub mod unmerged;
 pub mod update;

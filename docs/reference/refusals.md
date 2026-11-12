@@ -155,6 +155,7 @@ The others follow.
 | `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `gone` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
 | `gone` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `gone` | C22: squashed, rebase-merged or on another lineage: reset yours to the target's here | `rwv sync --reset-to-target <m>` | the workspace with that feature | backup kept; local only |
 | `gone` | C9: delete what is landed | `rwv branch delete <W> --discard-unlanded` | a workspace where `<W>` is not checked out | deletes only what is landed elsewhere; local only |
 | `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `foreign upstream` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
@@ -798,9 +799,8 @@ looks like a workweave but is not recorded in the project clone's workweave inde
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name. A source for `rwv sync`
-or `rwv sync-to` that is a bare word names a workweave; to name a directory,
-write `./<dir>`.
+in the recorded container under the expected name. A target for `rwv sync-to`
+that is a bare word names a workweave; to name a directory, write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
 
@@ -841,8 +841,10 @@ nothing. Where a fast-forward is impossible, honoring that promise means
 stopping rather than quietly doing something else.
 
 **Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
-reconcile the repos by hand first. Past replay the exit is different — see
-`target-diverged-mid-op`.
+reconcile the repos by hand first. Where the commits a rebase would replay hold
+a merge, `rwv sync` names `rwv sync --from <target>` instead, which takes the
+target in by a merge rather than flattening it. Past replay the exit is
+different — see `target-diverged-mid-op`.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -1069,11 +1071,11 @@ it there.
 
 ### `stale-lock`
 
-**Condition.** `rwv sync` or `rwv sync-to` found a member whose checkout is not
-at the commit the lock it reads pins for it, or for which the lock has no entry.
+**Condition.** `rwv sync-to` found a member whose checkout is not at the commit
+the lock it reads pins for it, or for which the lock has no entry.
 
-**Why.** Sync takes in another workspace's committed lock and relocks from its
-own checkouts. A tip that differs from its pin means the lock the replay reads
+**Why.** sync-to replays against another workspace's committed lock and relocks
+from its own checkouts. A tip that differs from its pin means the lock the replay reads
 and the commits the replay carries disagree: a primary source whose lock is
 behind its HEAD would hand on commits no pin records, and a checkout behind or
 diverged from its pin would be moved or relocked over commits nobody chose to
@@ -1084,7 +1086,7 @@ a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
 `rwv lock --commit` records a checkout that is ahead of its pin;
 `rwv member pin <repo> HEAD --commit` pins one that is behind or has diverged, by
 name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
-for one. `--allow-stale-lock` skips the check.
+for one. `rwv sync-to --allow-stale-lock` skips the check.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
 [Lock as derived](../explanation/joints/lock-as-derived.md).

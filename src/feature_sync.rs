@@ -18,7 +18,6 @@ use crate::parallel::OutputMode;
 use crate::project_merge::{MemberMerging, MemberStop, Order, ProjectMerge, Sides};
 use crate::records::{Mode, Record};
 use crate::refusal::RefusalKind;
-use crate::tip_of::{tip_of, TipOf};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, BackupMark, BackupSource, CommitId, CommitSummary,
     ConflictOp, DerivedContentPolicy, HeadAttachment, RawRefName, Relation, ResolvedRevisionId,
@@ -108,6 +107,36 @@ impl Sync<'_> {
     fn merging(&self) -> bool {
         matches!(self.from, SyncFrom::From(_))
     }
+}
+
+/// The branch and its upstream each hold commits the other lacks.
+struct DivergedTips {
+    local: ResolvedRevisionId,
+    upstream: ResolvedRevisionId,
+}
+
+/// The newer of `branch` and its upstream; `None` where it is nowhere.
+fn newer(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    home: Option<&crate::vcs::RemoteHandle>,
+) -> Result<Result<Option<ResolvedRevisionId>, DivergedTips>, VcsError> {
+    use crate::push_branch::NewerOfBranchAndUpstream as Newer;
+    Ok(
+        match crate::push_branch::newer_of_branch_and_upstream(vcs, repo, branch, home)? {
+            Newer::Tip(tip) => Ok(Some(tip)),
+            Newer::Nowhere => Ok(None),
+            Newer::Diverged {
+                local,
+                upstream_tip,
+                ..
+            } => Err(DivergedTips {
+                local,
+                upstream: upstream_tip,
+            }),
+        },
+    )
 }
 
 fn rev(commit: &CommitId) -> ResolvedRevisionId {
@@ -499,8 +528,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let mut report = Report::default();
     let url_remote = vcs.project_url_remote(dir).ok().flatten();
     let source_branch = RawRefName::new(sync.source_name());
-    let source_tip = tip_of(vcs, dir, &source_branch, url_remote.as_ref())?;
-    let source = match source_tip.newer() {
+    let source = match newer(vcs, dir, &source_branch, url_remote.as_ref())? {
         Ok(Some(tip)) => tip.id().clone(),
         Ok(None) => {
             let state = match sync.from {
@@ -1021,8 +1049,9 @@ fn plan_member(
             crate::vcs::UrlRemote::Present(remote) => Some(remote),
             _ => None,
         });
-    let u = tip_of(mvcs, &mdir, &receiving, home.as_ref())?;
-    let source = match receiving_source(&u, &pin) {
+    let source = match newer(mvcs, &mdir, &receiving, home.as_ref())?
+        .map(|tip| tip.map(|t| t.id().clone()).unwrap_or_else(|| pin.clone()))
+    {
         Ok(source) => source,
         Err(diverged) => {
             let (ahead, behind) =
@@ -1127,14 +1156,6 @@ fn plan_member(
         judge_member_moves(&member, &attached, report)?;
     }
     Ok(Some(member))
-}
-
-/// The tip of the branch a member lands on, or the target's pin where that
-/// branch exists nowhere.
-fn receiving_source(u: &TipOf, pin: &CommitId) -> Result<CommitId, crate::tip_of::Diverged> {
-    Ok(u.newer()?
-        .map(|tip| tip.id().clone())
-        .unwrap_or_else(|| pin.clone()))
 }
 
 /// The `patch-equivalent` fact for a member's unlanded commits, where the
@@ -1811,13 +1832,13 @@ pub(crate) fn feature_lineage(
         return Ok(None);
     };
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
-    let tip = tip_of(
+    let Ok(Some(tip)) = newer(
         vcs.as_ref(),
         &dir,
         &RawRefName::new(target.to_string()),
         url_remote.as_ref(),
-    )?;
-    let Ok(Some(tip)) = tip.newer() else {
+    )?
+    else {
         return Ok(None);
     };
     Ok(Some(FeatureLineage {
@@ -1858,12 +1879,10 @@ impl FeatureLineage {
             None,
         );
         let on_receiving = match (their_base, receiving) {
-            (Some(their_base), Some(receiving)) => {
-                match tip_of(vcs, dir, &receiving, None)?.newer() {
-                    Ok(Some(u)) => vcs.is_ancestor(dir, &rev(&their_base), u)?,
-                    _ => false,
-                }
-            }
+            (Some(their_base), Some(receiving)) => match newer(vcs, dir, &receiving, None)? {
+                Ok(Some(u)) => vcs.is_ancestor(dir, &rev(&their_base), &u)?,
+                _ => false,
+            },
             _ => false,
         };
         let choice = if on_receiving {

@@ -439,7 +439,6 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
     let weave = unmigrated_weave(tmp.path());
     let remedy = format!("rwv -C {} doctor --fix", weave.seat.display());
     let primary_arg = weave.primary.to_string_lossy().into_owned();
-    let seat_arg = weave.seat.to_string_lossy().into_owned();
     let linked_before = canonical_state(&weave.linked_canonical);
 
     let refusals: Vec<(&Path, Vec<&str>)> = vec![

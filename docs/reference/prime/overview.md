@@ -16,7 +16,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
   - `rwv lock` records local HEAD SHAs over their pins in `rwv.lock`, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included, and `rwv member pin` moves it by name; `rwv member add`, `rwv member pin` and `rwv update --remote` give a member its first pin (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update --remote` fetches from remotes, fast-forwards checkouts, and records the advanced tips in `rwv.lock`; `rwv update` clones the members missing on disk and aligns the rest to `rwv.lock` without advancing pins or writing the lock; `rwv clone` brings up a project at the commits its `rwv.lock` pins; `rwv fetch` downloads and moves no branch, checkout or lock; `rwv pull` fetches, fast-forwards the project branch to its upstream, then runs `rwv update`.
-  - `rwv sync <source>` pulls another workspace's committed state into CWD and regenerates CWD's `rwv.lock` after replay completes; `rwv sync-to` lands CWD's work into its target workspace (auto-relocking CWD at op start when repo tips have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
+  - `rwv sync` takes the target's new work into a feature (`--from <branch>` merges another weave branch in instead), refusing before anything moves where a member's work is built on another lineage, then relocks and aligns the members; `rwv sync-to` lands CWD's work into its target workspace (auto-relocking CWD at op start when repo tips have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
 
 ## Common pitfalls
 
@@ -69,7 +69,7 @@ rwv push
 | `rwv workweave create NAME` | Create an isolated workweave on branch `PROJECT--NAME` and run its install hooks |
 | `rwv workweave list` | List active workweaves for a project |
 | `rwv workweave delete NAME` | Delete a workweave (refuses on uncommitted or unmerged work) |
-| `rwv sync <SOURCE>` | Pull another workspace's committed state into CWD (`--continue` to resume) |
+| `rwv sync` | Take the target's new work into this feature, or `--from BRANCH` to merge a weave branch in (`--continue` to resume) |
 | `rwv sync-to [TARGET]` | Land CWD's work into target workspace (`--retire` deletes workweave after) |
 | `rwv abort` | Roll an in-progress `sync` or `sync-to` back to its savepoints, from either workspace it touched |
 | `rwv backup <list\|drop\|prune>` | List, drop or prune the backups kept before a discard (`--json` on `list`); `drop` and `prune` refuse where a live lock pins a commit only the backup reaches |
@@ -82,10 +82,10 @@ Global addressing flags (placed before the subcommand): `-C <path>` / `--cwd <pa
 
 ```
 primary weave  <── rwv sync-to [--retire] ──  workweave (.workweaves/<project>--<name>)
-               ─── rwv sync primary ───────>
+               ─── rwv sync ───────────────>
 ```
 
-- `rwv sync <source>` — pull `source`'s committed state into CWD (`<source>` is required, e.g. `rwv sync primary`; it does not default to `primary`).
+- `rwv sync` — take the new work of the branch this feature lands into (its target) into the feature: members first, then the project branch, then the relock. `--strategy rebase` rebases members holding new work; `--from <branch>` merges another weave branch's history in instead.
 - `rwv sync-to [target]` — land CWD's state into `target` (rebases CWD onto `target`, auto-relocks, then fast-forwards `target`; `target` defaults to the recorded `parent` inside a workweave). Pass `--retire` to delete the workweave once the landing succeeds.
 - `rwv abort` — roll every repo the op touched, in both workspaces, back to its pre-operation savepoint if a `sync` or `sync-to` stops on a conflict or a refusal. Run it from either workspace.
 
@@ -95,6 +95,6 @@ Run `rwv --help` or `rwv <command> --help` for full flag details.
 
 Machine-readable `--json` output is supported on `rwv status --json`, `rwv doctor --json`, `rwv sync --json`, `rwv sync-to --json`, `rwv clone --json`, `rwv fetch --json`, `rwv pull --json`, `rwv update --json`, `rwv update --remote --json`, `rwv push --json`, `rwv log --json`, `rwv backup list`, and `rwv branch list` (with `--json`). Each emits one JSON envelope; on the multi-worker verbs (`clone`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`) `-j` changes only how many repos run at once:
 - `rwv status --json` — per-repo records carry `path` (manifest-relative) and `absolute_path` (fully resolved on disk), plus `lock_pinned_by_name` when an older lock entry holds a ref name instead of a commit SHA; status records are flat and have no `kind` field.
-- `rwv sync --json` / `rwv sync-to --json` — per-repo outcome records carry `kind` (kebab-case discriminant), `path`, and `absolute_path`; the envelope's `complete` is `true` when the op finished and cleared op-state. Both exit 1 when a checkout replay could not prune is left on disk, even though the op completed.
+- `rwv sync --json` / `rwv sync-to --json` — one envelope whose `complete` is `true` when the op finished and cleared op-state; `refused` carries each judged line of a refusal with its choices. `sync-to`'s per-repo outcome records carry `kind` (kebab-case discriminant), `path`, and `absolute_path`. Both exit 1 when a checkout the op could not prune is left on disk, even though the op completed.
 - `rwv doctor --json` — violations carry a kebab-case `kind` discriminant (and optional `sub_kind`); path fields are per-variant: per-repo variants carry `path` + `absolute_path`, `weave-root-identity-conflict` carries `root`, and `workweave-tree-integrity` carries `workweave_dir`. Integration findings appear on the `issues` array.
 - `rwv explain <verb>` — emits a self-contained markdown reference (purpose, invocation, output shape, exit codes, examples, and embedded JSON Schema for `--json` verbs). `rwv explain <token>` looks up any refusal token, doctor finding kind, or VCS error kind. Committed schemas live under `docs/reference/schemas/`.
