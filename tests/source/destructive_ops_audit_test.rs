@@ -394,7 +394,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"--hard\"",
         count: 2,
-        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 1)],
+        callers: &[("reset_and_drop_savepoint", 3), ("hard_reset", 1)],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait: \
             its one caller is Vcs::reset_attached_ref_keeping, which takes \
@@ -405,16 +405,19 @@ const ALLOWLIST: &[Allowed] = &[
             the commits it leaves stay reachable from the backup. \
             (2) reset_and_drop_savepoint(): \
             shared helper factored from verified_restore_savepoint(); called \
-            from the mid-op, intent, and converged branches — each gated on \
-            their respective attributable-tip precondition before the helper \
-            is reached (design § 5) — and from the foreign-tip branch under \
+            from the intent branch and the branch for any other tip the op \
+            wrote — each gated on the tip being one the record attributes to \
+            the op — and from the foreign-tip branch under \
             ForeignTipPolicy::Abandon, which is the operator's \
-            --abandon-foreign-tip naming that one repo. That fourth branch \
+            --abandon-foreign-tip naming that one repo. That third branch \
             waives the attributability precondition and no other: it keeps \
             the observed tip as an `abandoned` backup first (a \
             BackupWitness it holds before the reset), so the commits it \
             moves the branch off remain reachable and the flag consents to \
-            abandonment rather than loss. The unverified \
+            abandonment rather than loss. Before every reset the helper \
+            keeps, as a backup, the uncommitted edits the reset would \
+            discard. A checkout stopped mid-operation is never reset \
+            directly: it is canceled and its tip classified again. The unverified \
             restore_savepoint() that used to sit between these two — a bare \
             `reset --hard` on the public trait, gated by nothing — was \
             deleted, so verified_restore_savepoint is the only way to reach \
