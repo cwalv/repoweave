@@ -9385,6 +9385,49 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop() -> Scenario {
     )
 }
 
+/// A landing fast-forwarded `app` in the target's workspace, then was
+/// killed; someone starts a merge there on the landing's tip. Abort never
+/// cancels an operation in the target: it refuses, keeping the op; once
+/// that merge is given up, the printed rerun restores everything.
+pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+        Step::kill("landing"),
+    ];
+    steps.extend(own_merge_at_the_savepoint(&a(), Repo::App));
+    steps.extend([
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::Proj])
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/app: stopped in a merge begun at",
+            )),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        ),
+        Step::git(&a(), Repo::App, &["merge", "--abort"]),
+        Step::rwv_printed(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_restore(&[Repo::App])
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/app: restored (from recorded converged tip)",
+            )),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+    ]);
+    scenario(
+        "abort refuses a merge in a target repo the landing moved",
+        steps,
+    )
+}
+
 /// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
 /// the operator edits the copied file in `app`: abort resets `app` to its
 /// savepoint, keeping the edit as a backup first.

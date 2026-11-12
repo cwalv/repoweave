@@ -697,6 +697,7 @@ every_scenario!(
     pull_abort_leaves_a_merge_in_a_member_it_never_merges,
     update_remote_abort_leaves_a_merge_in_a_member_it_never_merges,
     abort_keeps_edits_made_in_the_target_after_the_stop,
+    abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
@@ -2384,6 +2385,13 @@ holding_rwv! {
     /// made there before `rwv abort` resets it are kept as a backup first.
     fn abort_keeps_edits_made_in_the_target_after_the_stop() {
         runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop())
+            .assert_fully_decided_green();
+    }
+
+    /// A merge someone started in the target's workspace on a tip the
+    /// landing wrote is never canceled by `rwv abort`.
+    fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() {
+        runner::run(scenarios::abort_refuses_a_merge_in_a_target_repo_the_landing_moved())
             .assert_fully_decided_green();
     }
 }
