@@ -3189,10 +3189,6 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let relocked = cwd_lock_behind
-        .iter()
-        .filter_map(|r| Some((r.repo_path.clone(), r.tip.as_ref()?.id().clone())))
-        .collect();
     let plan = match crate::land::judge(
         landing,
         cwd_workspace_dir,
@@ -3200,7 +3196,6 @@ fn run_preconditions_after_acquire(
             SyncStrategy::Rebase => crate::land::Composing::Rebase,
             SyncStrategy::Ff => crate::land::Composing::FastForwardOnly,
         },
-        relocked,
         &mut report,
     ) {
         Ok(plan) => plan,

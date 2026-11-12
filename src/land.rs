@@ -496,8 +496,7 @@ fn target_checkout(
 
 /// The inputs a landing judges its members against: `W`'s `rwv.toml` and
 /// lock, `T`'s at its tip, and their merge base's, `None` where it cannot be
-/// read. `relocked` holds the pins the lock `W` lands with holds where its
-/// committed lock does not.
+/// read.
 pub(crate) struct Sides {
     pub(crate) ours: Manifest,
     pub(crate) theirs: Manifest,
@@ -505,7 +504,6 @@ pub(crate) struct Sides {
     pub(crate) our_lock: Option<LockFile>,
     pub(crate) their_lock: Option<LockFile>,
     pub(crate) base_lock: Option<LockFile>,
-    pub(crate) relocked: BTreeMap<RepoPath, CommitId>,
     pub(crate) history: PinHistory,
 }
 
@@ -519,7 +517,6 @@ impl Sides {
         head: &CommitId,
         target_tip: &CommitId,
         theirs: Manifest,
-        relocked: BTreeMap<RepoPath, CommitId>,
     ) -> anyhow::Result<Self> {
         let base_commit = vcs.merge_bases(dir, head, target_tip)?.into_iter().next();
         Ok(Self {
@@ -529,16 +526,12 @@ impl Sides {
             our_lock: lock_at(vcs, dir, head),
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
-            relocked,
             history: PinHistory::of(vcs, dir, target_tip)?,
         })
     }
 
     fn our_pin(&self, path: &RepoPath) -> Option<CommitId> {
-        self.relocked
-            .get(path)
-            .cloned()
-            .or_else(|| pin_of(self.our_lock.as_ref(), path))
+        pin_of(self.our_lock.as_ref(), path)
     }
 
     fn their_pin(&self, path: &RepoPath) -> Option<CommitId> {
@@ -655,7 +648,6 @@ pub fn judge(
     landing: &Landing,
     source_root: &Path,
     composing: Composing,
-    relocked: BTreeMap<RepoPath, CommitId>,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
     let vcs = project_vcs();
@@ -686,7 +678,6 @@ pub fn judge(
         &head,
         &landing.target_tip,
         theirs,
-        relocked,
     )?;
     let inapplicable = judge_entry_changes(landing, &sides, source_root, report)?;
     judge_merge_in_range(

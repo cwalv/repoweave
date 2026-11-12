@@ -7844,6 +7844,43 @@ pub fn a_followed_receiving_branch_that_exists_nowhere_is_created() -> Scenario 
     )
 }
 
+/// A `dependency` checkout moved off its pin in a feature's workspace is
+/// refused by alignment before its pin is judged, so the op-start relock
+/// never records a carried pin the guard did not see.
+pub fn a_dependency_moved_off_its_pin_is_refused_before_the_relock() -> Scenario {
+    Scenario {
+        name: "a dependency moved off its pin is refused before the relock",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "side",
+                mark: "lib-side",
+            }),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-b5",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["checkout", "-q", "--detach", "origin/side"],
+            ),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentDetachedElsewhere))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    }
+}
+
 /// A landing leaves the target ahead of its push branch and says so, naming
 /// the push that publishes it; running it publishes the landing.
 pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {
