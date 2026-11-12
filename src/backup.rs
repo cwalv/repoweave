@@ -750,7 +750,10 @@ mod tests {
             .to_owned()
         };
         let name = backup_old();
-        git(&app, &["commit", "-q", "--amend", "--allow-empty", "-m", "new"]);
+        git(
+            &app,
+            &["commit", "-q", "--amend", "--allow-empty", "-m", "new"],
+        );
         let new = vcs.head_revision(&app).unwrap();
         init(&proj);
         std::fs::write(proj.join("rwv.toml"), "").unwrap();
