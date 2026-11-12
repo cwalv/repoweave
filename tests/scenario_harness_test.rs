@@ -471,6 +471,15 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    land_into_a_target_checked_out_nowhere,
+    land_reports_every_refusal_together,
+    land_refuses_a_dependent,
+    target_mode_changed,
+    land_refuses_a_record_retargeted_elsewhere,
+    push_withholds_a_feature_whose_target_is_unpublished,
+    land_never_resolves_a_published_record_to_an_unrelated_branch,
+    land_refuses_work_built_on_another_lineage,
+    land_never_rewrites_a_declared_mode_branch,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2738,4 +2747,54 @@ fn a_record_written_in_this_workspace_is_never_reported_to_it() {
 #[test]
 fn sync_stores_the_record_silently_where_none_is_stored() {
     runner::run(scenarios::record_unstored_is_stored_by_sync()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_target_checked_out_nowhere_refuses_the_landing_naming_the_workweave_that_opens_it() {
+    runner::run(scenarios::land_into_a_target_checked_out_nowhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_reports_every_refusal_together_before_anything_moves() {
+    runner::run(scenarios::land_reports_every_refusal_together()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_refuses_a_dependent() {
+    runner::run(scenarios::land_refuses_a_dependent()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_target_whose_mode_changed_refuses_the_landing_until_rebound_or_restored() {
+    runner::run(scenarios::target_mode_changed()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_refuses_a_record_retargeted_on_another_machine() {
+    runner::run(scenarios::land_refuses_a_record_retargeted_elsewhere())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn push_withholds_a_feature_whose_target_has_no_push_branch() {
+    runner::run(scenarios::push_withholds_a_feature_whose_target_is_unpublished())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_published_record_never_lands_into_an_unrelated_local_branch() {
+    runner::run(scenarios::land_never_resolves_a_published_record_to_an_unrelated_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_refuses_work_built_on_another_lineage() {
+    runner::run(scenarios::land_refuses_work_built_on_another_lineage())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_never_rewrites_a_declared_mode_branch() {
+    runner::run(scenarios::land_never_rewrites_a_declared_mode_branch())
+        .assert_fully_decided_green();
 }

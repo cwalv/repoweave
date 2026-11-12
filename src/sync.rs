@@ -5700,7 +5700,10 @@ fn target_moved_line_for(
 ) -> crate::diagnosis::Judged {
     State::TargetMovedMidOperation
         .of(label)
-        .subject(format!("{} moved after the landing read it", repo.display()))
+        .subject(format!(
+            "{} moved after the landing read it",
+            repo.display()
+        ))
         .listing([format!(
             "now at {}, which does not fast-forward to {}",
             now.id().short(),

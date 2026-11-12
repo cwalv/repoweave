@@ -4998,3 +4998,252 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
         ],
     )
 }
+
+/// A landing that would run into nothing moves nothing: the target checked out
+/// in no workspace refuses until the landing as refs exists, naming the
+/// workweave that opens it.
+pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
+    scenario(
+        "land into a target checked out nowhere",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::git(&a(), Repo::Proj, &["switch", "--detach"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut))
+                .claim(Claim::OutputContains(
+                    "rwv workweave create <ww> --branch main",
+                ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
+/// Every refusal a landing owes is reported in one run before anything moves:
+/// an edit in a repo it composes, and a change to the target's entry, which
+/// no landing makes until it is named.
+pub fn land_reports_every_refusal_together() -> Scenario {
+    scenario(
+        "land reports every refusal together",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(
+                &ww("w"),
+                &["member", "set-role", "local/remotes/lib", "reference"],
+            )
+            .expect(Exit::Succeeds),
+            Step::hand_edit(&ww("w"), Repo::App, "w-app.txt", "w-app", "uncommitted"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::Judged(Repo::App, State::EditsDirty))
+                .claim(Claim::OutputContains("role: owned → reference"))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// A weave branch that lands into the feature refuses its landing until
+/// dependents are carried along.
+pub fn land_refuses_a_dependent() -> Scenario {
+    scenario(
+        "land refuses a dependent",
+        vec![
+            create("w1"),
+            Step::rwv(
+                &ww("w1"),
+                &["workweave", "create", "--project", "proj", "w2"],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv(&ww("w1"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+                .claim(Claim::OutputContains("proj--w2 lands into proj--w1"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// `target-mode-changed`: the record says the target was `declared`, and the
+/// target is now a feature. The landing refuses, never redirects, and offers
+/// the rebind and the restore; it lands after either.
+pub fn target_mode_changed() -> Scenario {
+    let refused = |step: Step, feature: &'static str| {
+        step.expect(Exit::refuses(Repo::Proj, State::TargetModeChanged))
+            .claim(Claim::OutputContains(feature))
+            .claim(Claim::OutputContains("rwv branch set-mode stable declared"))
+    };
+    let to_feature = || {
+        Step::rwv(
+            &a(),
+            &[
+                "branch", "set-mode", "stable", "feature", "--target", "main",
+            ],
+        )
+        .expect(Exit::Succeeds)
+    };
+    scenario(
+        "target mode changed",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            to_feature(),
+            refused(
+                Step::rwv(&ww("w1"), &["land"]),
+                "rwv branch set-mode proj--w1 feature --target stable",
+            ),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w1-app",
+                }),
+            to_feature(),
+            refused(
+                Step::rwv(&ww("w2"), &["land"]),
+                "rwv branch set-mode proj--w2 feature --target stable",
+            ),
+            Step::rwv(
+                &ww("w2"),
+                &[
+                    "branch", "set-mode", "proj--w2", "feature", "--target", "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "stable",
+                    mark: "w2-lib",
+                }),
+        ],
+    )
+}
+
+/// `land` refuses a record that changed on another machine since this
+/// workspace last saw it, before anything moves, with every other refusal of
+/// the same run.
+pub fn land_refuses_a_record_retargeted_elsewhere() -> Scenario {
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend(feat_x_retargeted_on_b());
+    let refused = |step: Step| {
+        step.expect(Exit::refuses(Repo::Proj, State::TargetRecordChanged))
+            .claim(Claim::Judged(Repo::Proj, State::TargetNotCheckedOut))
+            .claim(Claim::OutputContains("rwv update"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode feat-x feature --target main",
+            ))
+    };
+    steps.extend([
+        refused(Step::rwv(&a(), &["land"])),
+        refused(Step::rwv(&a(), &["land"])).claim(Claim::LocalStateUnchanged(a())),
+    ]);
+    scenario("land refuses a record retargeted elsewhere", steps)
+}
+
+/// A record is published only with its target: a feature onto a branch with
+/// no push branch on the push target is withheld, naming the push of the
+/// target first and the rebind.
+pub fn push_withholds_a_feature_whose_target_is_unpublished() -> Scenario {
+    scenario(
+        "push withholds a feature whose target is unpublished",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "stable"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "create", "feat-x", "--target", "stable"])
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "feat-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::refuses(Repo::Proj, State::PublishTargetUnpublished))
+                .claim(Claim::OutputContains("rwv push --branch stable"))
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "feat-x",
+                }),
+        ],
+    )
+}
+
+/// A record another machine published names its target as that remote's
+/// branch: a local branch of that name that does not take in from there is
+/// another branch, and the landing refuses it as the target gone rather than
+/// landing into it.
+pub fn land_never_resolves_a_published_record_to_an_unrelated_branch() -> Scenario {
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    steps.extend(feature_branch_in_primary());
+    steps.extend([
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds),
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["branch", "--unset-upstream", "main"]),
+        Step::rwv(
+            &b(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "r",
+                "--branch",
+                "feat-x",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&b_ww("r"), &["land"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+            .claim(Claim::OutputContains("does not take in"))
+            .claim(Claim::LocalStateUnchanged(b())),
+    ]);
+    scenario(
+        "land never resolves a published record to an unrelated branch",
+        steps,
+    )
+}
+
+/// The lineage rule at landing: work built on a pin the branch it lands on
+/// no longer holds is refused before anything moves.
+pub fn land_refuses_work_built_on_another_lineage() -> Scenario {
+    scenario(
+        "land refuses work built on another lineage",
+        vec![
+            Step::commit(&a(), Repo::App, "cut-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::git(&a(), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_rewind(&[Repo::App])
+                .may_rewrite(&[Repo::App]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinOffLineage))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// A landing lands a feature only: a declared-mode project branch is never
+/// rebased onto another, `--target` or not.
+pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
+    scenario(
+        "land never rewrites a declared-mode branch",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "stable-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["land", "--target", "main"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetNoTarget))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
