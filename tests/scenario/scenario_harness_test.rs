@@ -3036,8 +3036,8 @@ fn a_landing_takes_in_an_upstream_change_of_a_declared_branch() {
 /// `main`'s workspace holds an unpushed commit of its own and its upstream
 /// moved: the landing refuses the diverged target before anything moves,
 /// and after the merge it names, run where `main` is checked out, it lands.
-/// That merge takes the upstream as its first parent, as it says, so `main`
-/// leaves its own first-parent chain there and nowhere else.
+/// That merge takes the upstream as its first parent, as it says, which the
+/// first-parents check holds as `main` merged with its own upstream.
 #[test]
 fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
     let report = bad_steps(
@@ -3056,11 +3056,11 @@ fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
                 .expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Proj, "a-notes"),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
                 .claim(Claim::OutputContains("rwv pull --merge-upstream")),
             Step::rwv(&a(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),
@@ -3084,16 +3084,7 @@ fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
         report.unmet.is_empty() && report.pending.is_none(),
         "{report}"
     );
-    for (label, violation) in &report.violations {
-        assert!(
-            label == "rwv pull --merge-upstream"
-                && matches!(
-                    violation,
-                    Violation::FirstParentsBroken { repo: Repo::Proj, branch, .. } if branch == "main"
-                ),
-            "an unexpected violation after `{label}`: {violation}\n{report}"
-        );
-    }
+    assert!(report.violations.is_empty(), "{report}");
 }
 
 /// A landing never rebases a member range holding a merge: under `linear` it
