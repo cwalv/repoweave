@@ -451,7 +451,13 @@ puts back what it retook (`Retaken::put_back`): the claim and each lease the op
 did not hold when the abort began. It then restores ref by ref;
 a ref another landing built on since is a foreign tip. Typed in the target's
 workspace after the release, it finds the landing by the record that names
-that workspace as its target (`landing_released_into`).
+that workspace as its target (`landing_released_into`), and takes it up only
+when there is one and its record shows its process ended: at `retire`, with
+`retire_stopped` set by the retire that refused (a `--continue` at retire
+clears it first). It names that landing before it moves anything. With more
+than one, or with one whose retire may still be running (killed, or running
+now), it refuses `abort-in-its-workspace` and prints `rwv -C <workspace>
+abort` for each (`released_landing_to_abort`).
 
 ## cleanup
 
