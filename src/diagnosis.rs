@@ -2562,6 +2562,28 @@ impl Report {
     }
 }
 
+/// The choices `forms` print as a report's tail, in the shape a refusal prints
+/// them: each phrase once, its lines beneath. Forms whose verb has not shipped
+/// are left out, as everywhere.
+pub fn choices_text(
+    vcs: &dyn Vcs,
+    forms: &[Form],
+    bindings: &BTreeMap<&'static str, String>,
+) -> String {
+    let mut out = String::new();
+    for form in forms.iter().filter(|form| form.printable()) {
+        let phrase = form.row().choice.row().phrase;
+        out.push_str(&format!("  {phrase}\n"));
+        for line in form.lines(vcs, None) {
+            out.push_str(&format!("    {}\n", fill(&line, bindings)));
+        }
+    }
+    if out.is_empty() {
+        return out;
+    }
+    format!("choices:\n{out}")
+}
+
 /// `dir`'s edits, judged: an operation in progress is the state whether or
 /// not it left files dirty, since only its own continue or abort ends it;
 /// otherwise `dirty`'s files, when there are any. `elsewhere` is the

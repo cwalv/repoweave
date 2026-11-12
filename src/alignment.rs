@@ -512,6 +512,11 @@ impl Aligner {
         self
     }
 
+    /// The branch the project repo has checked out.
+    pub fn checked_out(&self) -> Option<&str> {
+        self.checked_out.as_deref()
+    }
+
     /// The aligned branch as a choice spells it: its name, or `detached`.
     pub fn state_aligned_text(&self) -> String {
         match &self.state.aligned {
@@ -1106,18 +1111,27 @@ impl Aligner {
     /// The pointer state after members were aligned for the checked-out
     /// branch.
     pub fn next_state(&self, manifest: &Manifest) -> WorkspaceState {
+        self.next_state_storing(manifest, true)
+    }
+
+    /// [`Self::next_state`], keeping the entries stored for the branch as they
+    /// are where `store_entries` is false: a change that is still reported
+    /// stays reported.
+    pub fn next_state_storing(&self, manifest: &Manifest, store_entries: bool) -> WorkspaceState {
         let mut next = self.state.clone();
         match (&self.mode, &self.checked_out) {
             (Mode::Detached, _) => next.aligned = Some(Aligned::Detached),
             (_, Some(branch)) => {
                 next.aligned = Some(Aligned::Branch(branch.clone()));
-                next.entries.insert(
+                if store_entries {
+                    next.entries.insert(
                     branch.clone(),
-                    manifest
-                        .iter_entries()
-                        .map(|(path, entry)| (path.to_string(), entry.clone()))
-                        .collect(),
-                );
+                        manifest
+                            .iter_entries()
+                            .map(|(path, entry)| (path.to_string(), entry.clone()))
+                            .collect(),
+                    );
+                }
             }
             (_, None) => {}
         }

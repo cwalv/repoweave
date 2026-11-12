@@ -99,6 +99,7 @@ pub mod cli;
 pub mod clone;
 pub mod deletion;
 pub mod diagnosis;
+pub mod entry_report;
 pub mod durable_file;
 pub mod exit_status;
 pub mod explain;

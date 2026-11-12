@@ -278,6 +278,18 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
             .map_err(|e| json_refusal(&nothing_reported, e))?;
     }
 
+    if pushed.checked_out && request.mode == PushMode::Publish {
+        let project_aligner = Aligner::open(ctx.active_path(), &pushed.project, Accounting::default())?;
+        crate::entry_report::report(
+            "push",
+            ctx,
+            &project_aligner,
+            &pushed.project_dir,
+            &pushed.manifest,
+            false,
+        );
+    }
+
     let members = members_of(ctx, &request, &pushed);
     let acting_roles = request.filter.is_empty();
     let push_project = acting_roles || request.filter.names_text(&project_label(&pushed.project));

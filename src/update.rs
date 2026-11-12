@@ -395,10 +395,12 @@ fn update_members_for(
     }
     if aligned.failures.is_empty() && created.is_ok() && selection.names_every_member() {
         let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+        let standing =
+            crate::entry_report::report("update", ctx, &aligner, &project_dir, &manifest, true);
         crate::alignment::store_state(
             crate::vcs::project_vcs().as_ref(),
             &project_dir,
-            &aligner.next_state(&manifest),
+            &aligner.next_state_storing(&manifest, standing.store),
         )?;
     }
     // In a workweave the only clones update changes are canonical clones it

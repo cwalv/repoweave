@@ -226,3 +226,197 @@ fn the_commit_holds_only_the_entry_and_the_pin_and_other_edits_to_the_file_stay(
     assert!(on_disk.contains("role = \"dependency\""), "{on_disk}");
     assert!(on_disk.contains("branch = \"dev\""), "{on_disk}");
 }
+
+fn mirror_of_lib(w: &PushWorkspace) -> PathBuf {
+    let bare = w._tmp.path().join("lib-mirror.git");
+    git_in(
+        w._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            w.manifest_bares
+                .iter()
+                .find(|(p, _)| p == LIB)
+                .unwrap()
+                .1
+                .to_str()
+                .unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    git_in(
+        member(w, LIB),
+        &["remote", "add", "mirror", &common::file_url(&bare)],
+    );
+    git_in(member(w, LIB), &["fetch", "-q", "mirror"]);
+    bare
+}
+
+#[test]
+fn set_url_relinks_only_the_branch_the_member_sits_on_and_commits_the_entry_and_the_lock_url() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    let bare = mirror_of_lib(&w);
+    git_in(&lib, &["branch", "other", "--track", "origin/main"]);
+    let before = commits(&w);
+
+    let text = succeeded(&run(
+        &w,
+        &["member", "set-url", LIB, &common::file_url(&bare)],
+    ));
+
+    assert_eq!(
+        git_in(&lib, &["config", "branch.main.remote"]),
+        "mirror",
+        "the branch the member sits on takes in from the new url's remote:\n{text}"
+    );
+    assert_eq!(
+        git_in(&lib, &["config", "branch.other.remote"]),
+        "origin",
+        "a branch the member does not sit on was relinked"
+    );
+    assert!(manifest_text(&w).contains(&common::file_url(&bare)));
+    assert_eq!(commits(&w), before + 1);
+    let lock = std::fs::read_to_string(project(&w).join("rwv.lock")).unwrap();
+    assert!(lock.contains(&common::file_url(&bare)), "{lock}");
+    assert_eq!(git_in(project(&w), &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn set_url_leaves_a_branch_with_a_push_remote_of_its_own() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    let bare = mirror_of_lib(&w);
+    git_in(&lib, &["config", "branch.main.pushRemote", "origin"]);
+
+    succeeded(&run(&w, &["member", "set-url", LIB, &common::file_url(&bare)]));
+
+    assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
+}
+
+#[test]
+fn set_url_refuses_a_diverged_branch_and_changes_nothing() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    let bare = mirror_of_lib(&w);
+    let seed = w._tmp.path().join("seed");
+    git_in(
+        w._tmp.path(),
+        &["clone", "-q", bare.to_str().unwrap(), seed.to_str().unwrap()],
+    );
+    git_in(&seed, &["config", "user.email", "t@t"]);
+    git_in(&seed, &["config", "user.name", "T"]);
+    commit_in(&seed, "theirs");
+    git_in(&seed, &["push", "-q", "origin", "main"]);
+    git_in(&lib, &["fetch", "-q", "mirror"]);
+    commit_in(&lib, "ours");
+    let before = (commits(&w), manifest_text(&w));
+
+    let text = refused(&run(&w, &["member", "set-url", LIB, &common::file_url(&bare)]));
+
+    assert!(text.contains("push-branch diverged"), "{text}");
+    assert_eq!((commits(&w), manifest_text(&w)), before);
+    assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
+}
+
+fn stdout_of(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn an_entry_change_is_reported_with_both_values_verb_after_verb_until_the_push_branch_carries_it() {
+    let w = two_members();
+    lib_with_dev(&w);
+    succeeded(&run(&w, &["update"]));
+    let lib = member(&w, LIB);
+    commit_in(&lib, "main-unpushed");
+    git_in(&lib, &["switch", "-q", "main"]);
+    succeeded(&run(&w, &["member", "set-branch", LIB, "dev"]));
+    git_in(&lib, &["switch", "-q", "dev"]);
+
+    let update = succeeded(&run(&w, &["update"]));
+    assert!(
+        update.contains(&format!("{LIB}: member-changed branch: main -> dev")),
+        "{update}"
+    );
+    assert!(update.contains("not yet published"), "{update}");
+    assert!(update.contains("unpushed on main"), "{update}");
+    assert!(update.contains("main-unpushed"), "{update}");
+    let (keep, restore) = (
+        update.find("rwv member pin").expect("C25 is printed"),
+        update
+            .find(&format!("rwv member set-branch {LIB} main"))
+            .expect("C11 restores the previous value"),
+    );
+    assert!(keep < restore, "C25 is listed before C11:\n{update}");
+
+    for verb in [&["update"][..], &["lock"][..]] {
+        let again = succeeded(&run(&w, verb));
+        assert!(
+            again.contains("member-changed branch: main -> dev"),
+            "{verb:?} stopped reporting before the change was published:\n{again}"
+        );
+    }
+    let status = stdout_of(&run(&w, &["status"]));
+    assert!(status.contains("member-changed branch: main -> dev"), "{status}");
+
+    git_in(&lib, &["push", "-q", "origin", "main"]);
+    succeeded(&run(&w, &["lock", "--commit"]));
+    succeeded(&run(&w, &["push"]));
+    let after = succeeded(&run(&w, &["update"]));
+    assert!(
+        !after.contains("member-changed"),
+        "still reported once the push branch carries it:\n{after}"
+    );
+}
+
+#[test]
+fn a_change_restored_is_no_longer_reported() {
+    let w = two_members();
+    lib_with_dev(&w);
+    succeeded(&run(&w, &["update"]));
+    succeeded(&run(&w, &["member", "set-branch", LIB, "dev"]));
+    assert!(succeeded(&run(&w, &["update"])).contains("member-changed"));
+
+    succeeded(&run(&w, &["member", "set-branch", LIB, "main"]));
+
+    let after = succeeded(&run(&w, &["update"]));
+    assert!(!after.contains("member-changed"), "{after}");
+}
+
+#[test]
+fn a_url_change_a_raw_merge_carried_is_reported_and_relinks_at_the_next_aligning_verb() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    let proj = project(&w);
+    succeeded(&run(&w, &["update"]));
+    let bare = mirror_of_lib(&w);
+    let mirror = common::file_url(&bare);
+    let original = w
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == LIB)
+        .map(|(_, b)| common::file_url(b))
+        .unwrap();
+
+    git_in(&proj, &["switch", "-q", "-c", "mirror-url"]);
+    let moved = manifest_text(&w).replace(&original, &mirror);
+    std::fs::write(proj.join("rwv.toml"), moved).unwrap();
+    git_in(&proj, &["commit", "-qam", "lib: mirror url"]);
+    git_in(&proj, &["switch", "-q", "main"]);
+    commit_in(&proj, "elsewhere");
+    git_in(&proj, &["merge", "-q", "--no-ff", "-m", "merge mirror-url", "mirror-url"]);
+    assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
+
+    let update = succeeded(&run(&w, &["update"]));
+
+    assert!(update.contains("member-changed url:"), "{update}");
+    assert_eq!(
+        git_in(&lib, &["config", "branch.main.remote"]),
+        "mirror",
+        "the merge carried the url change but nothing relinked:\n{update}"
+    );
+    let again = succeeded(&run(&w, &["update"]));
+    assert!(again.contains("member-changed url:"), "reported until published:\n{again}");
+}

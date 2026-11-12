@@ -801,6 +801,14 @@ pub(crate) fn relock(
 
     eprintln!("Wrote {lock_path}");
     report_recorded(relocking, ctx, &project_name, &recorded);
+    crate::entry_report::report(
+        relocking.verb,
+        ctx,
+        &aligner,
+        &project_dir,
+        &project.manifest,
+        false,
+    );
     if !lines.is_empty() {
         let mut report = Report::default();
         for line in lines {

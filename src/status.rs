@@ -326,6 +326,7 @@ pub fn run_status(
     let mut entries: Vec<RepoStatus> = Vec::new();
     let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
     let mut judged = crate::diagnosis::Report::default();
+    let mut entry_changes = String::new();
     let mut records: Vec<crate::branch::BranchRecordStatus> = Vec::new();
     let mut aligned: Vec<AlignedStatus> = Vec::new();
     let mut operator_branches: Vec<OperatorBranch> = Vec::new();
@@ -365,6 +366,17 @@ pub fn run_status(
         };
         if let Some(aligner) = aligner.as_ref().filter(|_| filter.is_empty()) {
             aligned.push(aligned_status(&pname, aligner));
+            if !output.is_json() {
+                let standing = crate::entry_report::standing(
+                    crate::vcs::project_vcs().as_ref(),
+                    &project_dir,
+                    aligner,
+                    &project.manifest,
+                );
+                entry_changes.push_str(&crate::entry_report::render(
+                    "status", ctx, aligner, &standing,
+                ));
+            }
             if let Some(line) = project_line(&pname, &project_dir, aligner) {
                 judged.add(line);
             }
@@ -640,6 +652,10 @@ pub fn run_status(
             for line in lines {
                 outln!("{line}");
             }
+        }
+        if !entry_changes.is_empty() {
+            outln!();
+            outln!("{}", entry_changes.trim_end_matches('\n'));
         }
         if !judged.is_empty() {
             outln!();
