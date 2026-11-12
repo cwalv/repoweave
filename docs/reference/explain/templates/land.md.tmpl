@@ -107,8 +107,9 @@ feature's, then the rebind onto each live weave branch whose entries match the
 feature's, the setter that keeps the target's value here, and last the
 consent, which says it changes the target. Adding a member is no change, and
 the other top-level tables (`[integrations]`, `[workweave]`) land as content.
-Each named change is reported as it lands, with the target's value and the
-landed one. A named backward pin is reported `re-pinned`, and the lock commit
+Each named change is reported, with the target's value and the landed one, at
+the start and again on each `--continue`, and under `--json` in `reports` as
+`entry-changed` or `entry-removed`. A named backward pin is reported `re-pinned`, and the lock commit
 records each named re-pin by name. A name the landing changes nothing for
 refuses as `inapplicable-flag`.
 
