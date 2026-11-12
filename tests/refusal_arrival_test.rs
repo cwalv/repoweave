@@ -619,17 +619,17 @@ fn parked_resume_stderr(tmp: &tempfile::TempDir, prepare: impl FnOnce(&Path)) ->
     prepare(&primary);
 
     let record = format!(
-        "{{\"id\": \"parked-op-1\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"parked-op-1\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
          \"project\": \"web-app\", \"source\": \"{src}\", \"target\": \"{tgt}\", \
          \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
-        src = common::json_escaped(&primary),
-        tgt = common::json_escaped(&workweave),
+        src = common::json_escaped(&workweave),
+        tgt = common::json_escaped(&primary),
     );
     std::fs::write(workweave.join(".rwv-op"), record).unwrap();
 
-    let stderr = refusal_stderr(&["sync", "--continue"], &workweave);
+    let stderr = refusal_stderr(&["sync-to", "--continue"], &workweave);
     assert!(
         stderr.contains("still parked at its recorded phase"),
         "precondition: this is the parked-op decorator's refusal:\n{stderr}"
@@ -722,7 +722,7 @@ fn a_resume_with_no_recorded_op_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let (_primary, workweave) = primary_and_workweave(tmp.path());
 
-    let stderr = refusal_stderr(&["sync", "--continue"], &workweave);
+    let stderr = refusal_stderr(&["sync-to", "--continue"], &workweave);
     assert!(
         stderr.contains("no sync/sync-to op in progress")
             || stderr.contains("no operation in progress"),
@@ -749,11 +749,11 @@ fn a_dirty_repo_at_lock_time_routes_to_its_token() {
     assert_routes_to(&stderr, "edits");
 }
 
-/// `rwv sync` over a destination carrying uncommitted tracked changes. A
+/// `rwv sync-to` from a workweave carrying uncommitted tracked changes. A
 /// different producer from the lock preflight above and the same token: this
 /// one assembles its body from two conditions and picks the kind itself.
 #[test]
-fn a_dirty_destination_at_sync_time_routes_to_its_token() {
+fn a_dirty_workweave_at_sync_to_time_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let (primary, workweave) = primary_and_workweave(tmp.path());
 
@@ -763,10 +763,10 @@ fn a_dirty_destination_at_sync_time_routes_to_its_token() {
     )
     .unwrap();
 
-    let stderr = refusal_stderr(&["sync", &primary.to_string_lossy()], &workweave);
+    let stderr = refusal_stderr(&["sync-to", &primary.to_string_lossy()], &workweave);
     assert!(
-        stderr.contains("rwv sync: projects/web-app: edits dirty\n    rwv.toml\n"),
-        "precondition: the sync dirt preflight fired:\n{stderr}"
+        stderr.contains("rwv sync-to: projects/web-app: edits dirty\n    rwv.toml\n"),
+        "precondition: the sync-to dirt preflight fired:\n{stderr}"
     );
     assert_routes_to(&stderr, "edits");
 }
@@ -821,7 +821,7 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
     let original = std::fs::metadata(&server).unwrap().permissions();
     std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o000)).unwrap();
     let output = common::rwv()
-        .args(["sync", &primary.to_string_lossy()])
+        .args(["sync-to", &primary.to_string_lossy()])
         .current_dir(&workweave)
         .output()
         .expect("rwv should run");
@@ -830,14 +830,16 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(
         !output.status.success(),
-        "sync was expected to refuse:\n{stderr}"
+        "sync-to was expected to refuse:\n{stderr}"
     );
     assert!(
-        stderr.contains("rwv sync: projects/web-app: edits dirty\n    .gitattributes\n"),
+        stderr.contains("rwv sync-to: projects/web-app: edits dirty\n    .gitattributes\n"),
         "precondition: the actionable half is present:\n{stderr}"
     );
     assert!(
-        stderr.contains(&format!("status could not be read in:\n  {SERVER_PATH}\n")),
+        stderr.contains(&format!(
+            "rwv sync-to: {SERVER_PATH}: edits dirty\n    (status unreadable)\n"
+        )),
         "precondition: the unreadable half is present too:\n{stderr}"
     );
     assert_routes_to(&stderr, "edits");
@@ -981,7 +983,7 @@ fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
     .unwrap();
 
     let out = common::rwv()
-        .args(["sync", &primary.to_string_lossy(), "--json"])
+        .args(["sync-to", &primary.to_string_lossy(), "--json"])
         .current_dir(&workweave)
         .output()
         .unwrap();
