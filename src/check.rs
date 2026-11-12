@@ -4162,6 +4162,37 @@ fn placement_convergence(
     PlacementConvergence::Here { retire_first }
 }
 
+/// The url the member's entry has on `D`, the branch a fresh clone of the
+/// project checks out: the url it was added with. `None` where `D` cannot be
+/// read or does not list the member.
+fn url_on_default_branch(
+    workspace_dir: &Path,
+    project: &crate::manifest::ProjectName,
+    repo_path: &crate::manifest::RepoPath,
+) -> Option<crate::manifest::RepoUrl> {
+    let vcs = crate::vcs::project_vcs();
+    let dir = crate::workspace::project_dir(workspace_dir, project);
+    if !vcs.is_repo(&dir) {
+        return None;
+    }
+    let remote = vcs.project_url_remote(&dir).ok()??;
+    let default = vcs.remote_default_branch(&dir, &remote).ok()??;
+    let branch = crate::vcs::TrackingRef::try_from(&default).ok()?;
+    let raw = crate::vcs::RawRefName::new(branch.local_counterpart().as_str());
+    let tip = vcs.resolve_local_branch_tip(&dir, &raw).ok()?.or_else(|| {
+        vcs.remote_copies(&dir, &raw)
+            .ok()?
+            .into_iter()
+            .find(|copy| copy.remote == remote)
+            .map(|copy| copy.tip)
+    })?;
+    let text = vcs
+        .read_file_at_revision(&dir, &tip, Path::new(crate::manifest::Manifest::FILE_NAME))
+        .ok()?;
+    let manifest = crate::manifest::Manifest::from_other_commit(&text).ok()?;
+    manifest.get_entry(repo_path).map(|entry| entry.url.clone())
+}
+
 /// Scan all repos in `projects` for provenance violations.
 ///
 /// Checks performed:
@@ -4210,7 +4241,9 @@ pub fn scan_provenance(
             if matches!(entry.role, Role::Reference | Role::Fork) {
                 continue;
             }
-            let Some(expected) = crate::registry::placement(&entry.url) else {
+            let on_default = url_on_default_branch(workspace_dir, &project.name, repo_path);
+            let Some(expected) = crate::registry::placement(on_default.as_ref().unwrap_or(&entry.url))
+            else {
                 continue;
             };
             if &expected != repo_path {

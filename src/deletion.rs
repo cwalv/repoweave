@@ -298,6 +298,8 @@ impl<'a> Rule<'a> {
 
         if let Some(manifest) = manifest_at(repos[0].vcs.as_ref(), &project_path, &w_tip) {
             let declared = declared_branches(request.primary);
+            let accounting = crate::alignment::Accounting::scan(request.primary);
+            let mut protected = Report::default();
             for (path, entry) in manifest.iter_entries() {
                 let dir = request.primary.join(path.as_path());
                 let vcs = vcs_for(entry.vcs_type);
@@ -308,6 +310,23 @@ impl<'a> Rule<'a> {
                     .get(path.as_str())
                     .is_some_and(|set| set.contains(request.branch.as_str()))
                 {
+                    let named = request
+                        .remote_deletes
+                        .unlanded
+                        .contains(&RepoOperand::Member(path.clone()));
+                    if request.remote_deletes.landed || named {
+                        let declarers = accounting.declarers(path, request.branch.as_str());
+                        protected.add(
+                            State::ProtectedDeclared
+                                .of(path)
+                                .member()
+                                .subject(&request.branch)
+                                .listing(declarers)
+                                .bind("<m>", path)
+                                .by_verb(request.verb)
+                                .judge(vcs.as_ref()),
+                        );
+                    }
                     continue;
                 }
                 let mut names: Vec<RawRefName> = Vec::new();
@@ -341,6 +360,7 @@ impl<'a> Rule<'a> {
                     names_in_target: names,
                 });
             }
+            protected.into_result()?;
         }
 
         let rule = Self {

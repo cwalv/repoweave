@@ -2700,6 +2700,53 @@ pub enum SyncRequest {
     },
 }
 
+/// Refuse a rebase that would rewrite a member branch some live weave branch
+/// declares: the member is on it with commits the source's pin does not reach.
+fn judge_rebase_protection(
+    ctx: &WorkspaceContext,
+    project: &Project,
+    workspace: &Path,
+    source_lock: &crate::manifest::ResolvedLockFile,
+) -> anyhow::Result<()> {
+    let accounting = crate::alignment::Accounting::scan(ctx.primary_path());
+    let mut report = Report::default();
+    for (path, entry) in project.manifest.iter_entries() {
+        let Some(pinned) = source_lock.get_entry(path) else {
+            continue;
+        };
+        let dir = workspace.join(path.as_path());
+        let vcs = vcs_for(entry.vcs_type);
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let Ok(HeadAttachment::Attached(attached)) = vcs.head_attachment(&dir) else {
+            continue;
+        };
+        let branch = attached.to_string();
+        let declarers = accounting.declarers(path, &branch);
+        if declarers.is_empty() {
+            continue;
+        }
+        let Ok(head) = vcs.head_revision(&dir) else {
+            continue;
+        };
+        if vcs.relation(&dir, &head, &pinned.version).ok() != Some(crate::vcs::Relation::Diverged) {
+            continue;
+        }
+        report.add(
+            State::ProtectedDeclared
+                .of(path)
+                .member()
+                .subject(&branch)
+                .listing(declarers)
+                .bind("<m>", path)
+                .by_verb("sync")
+                .judge(vcs.as_ref()),
+        );
+    }
+    report.into_result()
+}
+
 /// Execute `rwv sync <source>`.
 ///
 /// `request.source` is required; there is no bare `rwv sync` that absorbs
@@ -3144,6 +3191,14 @@ fn run_preconditions_after_acquire(
     let cwd_project = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
+    if strategy == SyncStrategy::Rebase {
+        judge_rebase_protection(
+            cwd_ctx,
+            &cwd_project,
+            cwd_workspace_dir,
+            &snapshot.source_lock,
+        )?;
+    }
 
     // === Benign-staleness classification ===
     //

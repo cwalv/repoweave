@@ -779,9 +779,10 @@ impl State {
                 means: "a feature would take a name that another project's feature of that \
                         name already uses for a member both list, the project and the member \
                         named: one member branch would serve two features",
-                refused_by: "`rwv branch rename`, for a feature",
+                refused_by: "`rwv branch rename`, for a feature; `rwv member set-branch`, \
+                             for a branch a feature of that name uses",
                 offers: &[Form::C10],
-                verb_offers: &[],
+                verb_offers: &[("member set-branch", Form::C11SetBranch)],
             },
             Self::PublishWithheld => &StateRow {
                 axis: Axis::Publish,
@@ -1089,7 +1090,11 @@ impl State {
                         the weave branches declaring it; rwv never rewrites, renames or \
                         deletes it",
                 refused_by: "`rwv branch rename`, for a feature's member branch of the \
-                             renamed name; `rwv push --overwrite`, for a member",
+                             renamed name; `rwv push --overwrite`, for a member; `rwv branch \
+                             delete` and `rwv workweave delete` with `--delete-remote` or \
+                             `--delete-remote-unlanded`, for a member branch of the deleted \
+                             name; `rwv sync` and `rwv sync-to` with `--strategy rebase`, for \
+                             a member on the branch that has commits to replay",
                 offers: &[Form::C2UpdateRemote],
                 verb_offers: &[],
             },

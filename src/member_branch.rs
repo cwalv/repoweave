@@ -269,6 +269,37 @@ pub(crate) fn judge_entry(
             ChoiceId::C11,
         ));
     }
+    if let Ok(name) = crate::records::BranchName::parse(project_vcs().as_ref(), tracking.local_counterpart().as_str()) {
+        let mut features = crate::branch::other_projects_with_feature(
+            ctx.primary_path(),
+            &loaded.project,
+            &name,
+            member,
+        );
+        let pvcs = project_vcs();
+        if let Ok(store) = crate::records::Store::open(pvcs.as_ref(), &loaded.project_dir) {
+            if let Ok(view) = store.view() {
+                if matches!(
+                    view.lookup(&name),
+                    crate::records::Lookup::Value(crate::records::Record::Feature { .. })
+                ) {
+                    features.push(crate::workspace::project_rel_path(&loaded.project).to_string());
+                }
+            }
+        }
+        if !features.is_empty() {
+            return Ok(refused_name(
+                refusals,
+                vcs,
+                member,
+                verb,
+                State::NameFeature,
+                tracking.local_counterpart().as_str(),
+                &features.iter().map(String::as_str).collect::<Vec<_>>(),
+                ChoiceId::C11,
+            ));
+        }
+    }
     let raw = RawRefName::new(tracking.local_counterpart().as_str());
     let tip = branch_tip(vcs, dir, entry, &raw)?;
     let already_declared = entry.branch == tracking;
@@ -852,6 +883,32 @@ pub fn run_set_branch(
                 pin.id().short()
             );
         }
+    }
+    let own = loaded.aligner.checked_out().map(|branch| {
+        format!(
+            "{branch} ({})",
+            crate::workspace::project_rel_path(&loaded.project)
+        )
+    });
+    let others: Vec<String> = loaded
+        .aligner
+        .accounting
+        .declarers(&member, branch_now.local_counterpart().as_str())
+        .into_iter()
+        .filter(|declarer| Some(declarer) != own.as_ref())
+        .collect();
+    if !others.is_empty() {
+        eprintln!(
+            "rwv {VERB}: {member}: {}",
+            crate::diagnosis::fact_text(&crate::diagnosis::Fact {
+                kind: crate::diagnosis::FactKind::Shared,
+                about: Some(format!(
+                    "{} is also declared by {}; a landing into any of them moves it",
+                    branch_now.local_counterpart().as_str(),
+                    others.join(", ")
+                )),
+            })
+        );
     }
     if step.ahead_of_rev {
         eprintln!(

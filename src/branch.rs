@@ -479,7 +479,7 @@ fn other_checkouts(repo: &Moving, old: &RawRefName) -> anyhow::Result<Vec<PathBu
         .collect())
 }
 
-fn other_projects_with_feature(
+pub(crate) fn other_projects_with_feature(
     primary: &Path,
     project: &ProjectName,
     new: &BranchName,
