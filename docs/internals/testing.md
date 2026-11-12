@@ -129,6 +129,25 @@ Obligations that come with the license:
   pin instead of silently extending past it. A hand-written count is the
   weakest form: it misses new callers of an already-counted site, and its
   justification prose rots into a false enumeration.
+- **Guard a walk with a second derivation and a witness, never a number.**
+  A walk that has gone blind passes every assertion over what it found, so
+  it needs a guard — but an exact count is edited to whatever the tree
+  produced by every change that adds a member, and a floor is lowered by
+  every change that removes one, and neither sees one member lost. Hold the
+  walk equal to a second derivation of the same population (the schema
+  schemars derives against the enum's declaration, a shape-blind scan
+  against a shape-aware one, one direct run of a script against the runs a
+  wrapper makes), and name one member the walk must contain. Where the walk
+  has no second derivation, the named member is the guard.
+- **A finding a structural pin records, it generates.** A census whose
+  finding is a list — the refusal sites no test reads — is an artifact
+  `cargo run --example generate-explain` writes and the gate's drift stage
+  compares, not a fixture a test holds to a number. A change to the list
+  shows in review as a diff, and a change that adds a member regenerates
+  rather than hand-editing a table. The judgment a list cannot derive
+  belongs at the site that owns it, in a form the scan reads: the class of
+  an untokened error is `untokened!`'s first argument, not a column beside
+  it.
 - **Suppression scope equals naming scope.** If findings are reported
   per-file, exemptions are per-file too. A global exemption fed by a local
   mention widens the blind spot beyond the file that earned it.
@@ -264,6 +283,21 @@ never a gap between them.
 A deletion or replacement records, in the change that performs it: the
 measured vacuity or the surviving coverage, and — only for
 live-but-contested capacity — the trigger that would justify reversal.
+
+## Asserting a refusal
+
+`tests/common/cli.rs` holds `run`, `succeed` and `refused`. A test that
+expects a refusal asserts it with `refused(&out, State::<Variant>)` for a
+judged state or `refused(&out, RefusalKind::<Variant>)` for a token: exit 1,
+the judged line or the token's route, and the route lines last. A failure
+any other way — a panic, a usage error, a different state of the same axis —
+does not satisfy it.
+
+It is also what the refusal census reads. `docs/internals/refusal-census.tsv`
+credits a site as read only by a test that names the site's own state or
+token in a `refused` call (or a token in a route assertion), so a test that
+checks a refusal by substring, or by its axis alone, leaves the site unread
+there.
 
 ## Prohibitions get a red test
 

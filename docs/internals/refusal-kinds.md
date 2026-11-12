@@ -41,8 +41,32 @@ Out of the class:
   deliberately not written, the decline is real and carries a token.
 
 Totality within the class is what makes the absence of a route line
-informative. A new `bail!` that declines on purpose and carries no kind is a
+informative. A refusal that declines on purpose and carries no kind is a
 defect even when its message is good.
+
+**The class is written at the site.** An error rwv mints outside the refusal
+constructors goes through `crate::untokened!(<Class>, …)`, which renders
+exactly as `anyhow!` does and names why it has no token: an `Untokened`
+variant in `src/refusal.rs`, one per bullet above (integration failures, which
+an operator reads as that integration's report, and malformed hook input from
+the harness that invoked it, are classes of their own). `Owed` is the one
+inside the class: rwv declined and the refusal has no token yet, and giving it
+one is the fix. `tests/refusal_census_test.rs` refuses a bare `bail!`,
+`anyhow!`, `ensure!` or `Error::msg` in production `src/`, so no site arrives
+without the judgment.
+
+## The census
+
+`docs/internals/refusal-census.tsv` lists every refusal site in `src/` — each
+judged state, each token, each `untokened!` class, per file — and the test
+that reads it: the first test, by path, that asserts that site's own state or
+token through `common::cli::refused` (or a token through a route assertion).
+A judged state is read only through its own state; a test that reaches its
+axis reads nothing. A `-` is a site whose wrong-but-valid token nothing would
+notice. `cargo run --example generate-explain` writes it and the gate's drift
+stage compares it, so a change that adds a site or a read regenerates it, and
+the diff shows what moved. What counts as a site and as a read, and what
+neither sees, is stated in `tests/common/refusal_census.rs`.
 
 ## One producer
 
