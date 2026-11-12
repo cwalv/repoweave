@@ -2605,7 +2605,7 @@ impl Form {
             },
             Self::C31 => &FormRow {
                 choice: C::C31,
-                steps: &[Rwv("rwv land --allow-member-change <m>")],
+                steps: &[Rwv("rwv land --allow-member-change <changed>")],
                 at: W::WithFeature,
                 shipped: true,
             },
@@ -2945,6 +2945,22 @@ impl Judging {
         self
     }
 
+    /// Several values for `placeholder`: the flag the template writes
+    /// before it is repeated, once with each.
+    pub fn bind_each<V: fmt::Display>(
+        mut self,
+        placeholder: &'static str,
+        values: impl IntoIterator<Item = V>,
+    ) -> Self {
+        let joined = values
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(EACH);
+        self.bindings.insert(placeholder, joined);
+        self
+    }
+
     pub fn checkout(self, dir: &Path) -> Self {
         self.bind("<checkout>", dir.display())
     }
@@ -3035,16 +3051,38 @@ impl Judging {
 
 /// `template` with every bound `<placeholder>` replaced by its value, quoted
 /// where it holds whitespace. An unbound one stays for the operator to fill.
+/// What separates the values [`Judging::bind_each`] binds.
+const EACH: &str = "\u{1f}";
+
 fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
+    let quoted = |value: &str| {
+        if value.contains(char::is_whitespace) {
+            format!("\"{value}\"")
+        } else {
+            value.to_owned()
+        }
+    };
     bindings
         .iter()
         .fold(template.to_owned(), |text, (placeholder, value)| {
-            let value = if value.contains(char::is_whitespace) {
-                format!("\"{value}\"")
-            } else {
-                value.clone()
+            if !value.contains(EACH) {
+                return text.replace(placeholder, &quoted(value));
+            }
+            let Some(at) = text.find(placeholder) else {
+                return text;
             };
-            text.replace(placeholder, &value)
+            let flag_at = text[..at].trim_end().rfind(' ').map_or(0, |i| i + 1);
+            let flag = text[flag_at..at].trim_end();
+            let repeated = value
+                .split(EACH)
+                .map(|v| format!("{flag} {}", quoted(v)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "{}{repeated}{}",
+                &text[..flag_at],
+                &text[at + placeholder.len()..]
+            )
         })
 }
 
@@ -3924,6 +3962,13 @@ mod tests {
         assert_eq!(
             fill("cd <dir>", &BTreeMap::from([("<dir>", "a b".into())])),
             "cd \"a b\""
+        );
+        assert_eq!(
+            fill(
+                "rwv land --allow-member-change <m> --retire",
+                &BTreeMap::from([("<m>", ["a", "b c"].join(EACH))])
+            ),
+            "rwv land --allow-member-change a --allow-member-change \"b c\" --retire"
         );
     }
 

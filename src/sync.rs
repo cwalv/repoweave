@@ -681,7 +681,10 @@ pub struct LeftBehindOutput {
     pub was: String,
     /// The receiving branch the landing declares.
     pub now: String,
-    /// The commits the target's pin reaches that `now` lacks, newest first.
+    /// The side whose pin reaches the commits listed: the target's, or this
+    /// feature's where the merge keeps the target's declared branch.
+    pub pin_of: op_state::PinOf,
+    /// The commits that side's pin reaches that `now` lacks, newest first.
     pub commits: Vec<LeftCommitOutput>,
     /// The copy that ports them onto `now`, in the order the text prints it.
     pub choices: Vec<crate::diagnosis::ChoiceOutput>,
@@ -2466,13 +2469,20 @@ fn left_behind_choices(
     (&[crate::diagnosis::Form::C15], bindings)
 }
 
-/// A named declared-branch change's report: the commits the target's pin
-/// reaches that the new receiving branch lacks, and the copy that ports them.
+/// A declared-branch change's report: the commits one side's pin reaches
+/// that the receiving branch lacks, and the copy that ports them.
 fn left_behind_text(left: &op_state::LeftBehind) -> String {
     let vcs = vcs_for(left.vcs_type);
     let mut out = format!(
-        "rwv land: {}: branch {} -> {}: the target's pin reaches commits '{}' lacks:\n",
-        left.repo, left.was, left.now, left.now
+        "rwv land: {}: branch {} -> {}: {} pin reaches commits '{}' lacks:\n",
+        left.repo,
+        left.was,
+        left.now,
+        match left.pin_of {
+            op_state::PinOf::Target => "the target's",
+            op_state::PinOf::Feature => "this feature's",
+        },
+        left.now
     );
     for commit in &left.commits {
         out.push_str(&format!("    {} {}\n", commit.id.short(), commit.subject));
@@ -2493,6 +2503,7 @@ impl LeftBehindOutput {
             path: left.repo.to_string(),
             was: left.was.clone(),
             now: left.now.clone(),
+            pin_of: left.pin_of,
             commits: left
                 .commits
                 .iter()
@@ -3178,15 +3189,26 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let plan = crate::land::judge(
+    let relocked = cwd_lock_behind
+        .iter()
+        .filter_map(|r| Some((r.repo_path.clone(), r.tip.as_ref()?.id().clone())))
+        .collect();
+    let plan = match crate::land::judge(
         landing,
         cwd_workspace_dir,
         match strategy {
             SyncStrategy::Rebase => crate::land::Composing::Rebase,
             SyncStrategy::Ff => crate::land::Composing::FastForwardOnly,
         },
+        relocked,
         &mut report,
-    )?;
+    ) {
+        Ok(plan) => plan,
+        Err(e) => {
+            hold(Err(e), &mut report);
+            crate::land::Plan::default()
+        }
+    };
     judge_edits_target_preflight(
         &cwd_project,
         plan.receiving.keys(),
@@ -5623,6 +5645,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
         Some(ctx.handler),
     );
+    prune_dropped_in_target(ctx, &target_ctx, &cwd_project_final.manifest);
 
     align_after_landing(ctx, &target_ctx);
     if !ctx.retire {
@@ -5821,6 +5844,48 @@ fn report_target_ahead(ctx: &OpContext<'_>) {
             .judge(vcs),
     );
     eprint!("{}", report.render("land"));
+}
+
+/// Prune each checkout in `T`'s workspace of a member `T` listed before the
+/// landing and `landed` drops, once every member has merged.
+fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed: &Manifest) {
+    let emit_text = op.handler.emit_text();
+    let Some(before) = op
+        .take_in
+        .receiving
+        .get(&RepoKey::Project)
+        .and_then(|project| {
+            manifest_at_revision(
+                op.project_vcs.as_ref(),
+                &op.dest_project_dir,
+                &ResolvedRevisionId::from(project.tip.clone()),
+            )
+            .ok()
+        })
+    else {
+        return;
+    };
+    for (repo_path, entry) in before.iter_entries() {
+        let checkout = op.dest_workspace_dir.join(repo_path.as_path());
+        if landed.contains_repo(repo_path) || !checkout.exists() {
+            continue;
+        }
+        let member = match prune_dropped_repo(vcs_for(entry.vcs_type).as_ref(), target, repo_path) {
+            Ok(()) => {
+                if emit_text {
+                    outln!("  {repo_path}: pruned in the target's workspace (dropped from lock)");
+                }
+                MemberOutput::pruned(repo_path, &checkout)
+            }
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {repo_path}: prune in the target's workspace skipped: {e:#}");
+                }
+                MemberOutput::prune_refused(repo_path, &checkout, &e)
+            }
+        };
+        op.handler.record_member(member);
+    }
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.

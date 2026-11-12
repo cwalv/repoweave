@@ -1835,6 +1835,7 @@ fn left_behind() -> Vec<LeftBehindOutput> {
         path: "local/remotes/lib".to_owned(),
         was: "main".to_owned(),
         now: "dev".to_owned(),
+        pin_of: repoweave::op_state::PinOf::Target,
         commits: vec![LeftCommitOutput {
             sha: repoweave::vcs::CommitId::parse(&sha('d')).expect("a full commit id"),
             subject: "fix".to_owned(),

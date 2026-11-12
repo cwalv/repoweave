@@ -6569,7 +6569,8 @@ pub fn member_change_choice_order() -> Scenario {
                     "rwv member set-branch local/remotes/lib main",
                     "land these changes too (this changes the target's entries, or its \
                      top-level setting)",
-                    "rwv land --allow-member-change local/remotes/lib",
+                    "rwv land --allow-member-change local/remotes/app --allow-member-change \
+                     local/remotes/docs --allow-member-change local/remotes/lib",
                 ]))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(
@@ -6597,23 +6598,39 @@ pub fn member_change_choice_order() -> Scenario {
 }
 
 /// `removal-is-member-change`: a feature removing a member its target lists
-/// refuses to land until `--allow-member-change` names the member, run as the
-/// refusal prints it; then the target no longer lists it.
+/// refuses to land until `--allow-member-change` names the member, before
+/// anything lands; the consent, run as the refusal prints it, lands it, and
+/// the target's checkout of the member is pruned once the members have
+/// merged; then the target no longer lists it.
 pub fn removal_is_member_change() -> Scenario {
     scenario(
         "removal is a member change",
         vec![
             create("w"),
-            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "remove", LIB, "--delete"]).expect(Exit::Succeeds),
             Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", DOCS])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains(
+                    "`--allow-member-change local/remotes/docs` names no change",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
                 .claim(Claim::OutputContains("removed"))
                 .claim(Claim::OutputContains("rwv member add "))
                 .claim(Claim::LocalStateUnchanged(ww("w")))
                 .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--allow-member-change", LIB],
+                "advance-target",
+                "landing",
+            )
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/lib")),
+            Step::release("landing")
                 .expect(Exit::Succeeds)
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/lib"))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::App,
@@ -6624,8 +6641,32 @@ pub fn removal_is_member_change() -> Scenario {
                 .claim(Claim::OutputLacks(LIB))
                 .claim(Claim::OutputContains(DOCS)),
             Step::git(&a(), Repo::Proj, &["show", "main:rwv.lock"]).claim(Claim::OutputLacks(LIB)),
-            Step::rwv(&ww("w"), &["land", "--allow-member-change", DOCS])
-                .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag)),
+        ],
+    )
+}
+
+/// The re-add a removal's refusal prints, run as printed, clears the
+/// refusal: the feature lists the member again as the target does.
+pub fn the_printed_re_add_clears_a_removal() -> Scenario {
+    scenario(
+        "the printed re-add clears a removal",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges)),
+            Step::rwv_printed(&ww("w"), "rwv member add ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputContains(LIB)),
         ],
     )
 }
@@ -6633,7 +6674,8 @@ pub fn removal_is_member_change() -> Scenario {
 /// `dc06-member-set-from-merge`: `main` adds `docs` while the feature
 /// removes `lib` and adds a `[workweave]` table. Landing, with `lib` named,
 /// leaves `main` listing exactly the merged set, pinning exactly it, the
-/// `[workweave]` table landed unnamed, and the relock as the last commit.
+/// `[workweave]` table landed unnamed, `main`'s checkout of `lib` pruned once
+/// the members have merged, and the relock as the last commit.
 pub fn dc06_member_set_from_merge() -> Scenario {
     scenario(
         "dc06 member set from merge",
@@ -6641,7 +6683,7 @@ pub fn dc06_member_set_from_merge() -> Scenario {
             Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
             create("w"),
             Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "remove", LIB, "--delete"]).expect(Exit::Succeeds),
             Step::hand_edit(
                 &ww("w"),
                 Repo::Proj,
@@ -6669,7 +6711,8 @@ pub fn dc06_member_set_from_merge() -> Scenario {
                     repo: Repo::App,
                     rev: "main",
                     mark: "w-app",
-                }),
+                })
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/lib")),
             Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
                 .claim(Claim::OutputLacks(LIB))
                 .claim(Claim::OutputContains(DOCS))
@@ -7376,6 +7419,388 @@ pub fn land_reports_what_it_pins_beyond_the_target() -> Scenario {
                 }),
         ],
     )
+}
+
+/// Two forward bumps of a `dependency`, one in the feature and a later one
+/// on the target, land unnamed: the merge keeps the target's pin, which
+/// contains the feature's, so nothing moves backward.
+pub fn forward_bumps_on_both_sides_land_unnamed() -> Scenario {
+    Scenario {
+        name: "forward bumps on both sides land unnamed",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-b4",
+            }),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-b5",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-b5",
+                }),
+        ],
+    }
+}
+
+/// A backward pin offers no rebind onto a live branch whose entries match
+/// but whose pin the landing would move backward too; the pin it does print,
+/// run as printed, restores the target's pin and the landing passes unnamed.
+pub fn a_backward_pin_offers_only_a_rebind_that_lands_it_unchanged() -> Scenario {
+    Scenario {
+        name: "a backward pin offers only a rebind that lands it unchanged",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up-2",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            create("back"),
+            Step::rwv(&ww("back"), &["member", "pin", LIB, "HEAD~2", "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::commit(&ww("back"), Repo::App, "back-app"),
+            Step::rwv(&ww("back"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputLacks("--target stable"))
+                .claim(Claim::OutputContains("rwv member pin local/remotes/lib "))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed(&ww("back"), "rwv member pin local/remotes/lib ")
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("back"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-up-2",
+                }),
+        ],
+    }
+}
+
+/// A feature's pin of a `dependency` that contains the target's newer pin
+/// but sits off the receiving branch is refused, though the target changed
+/// the pin too: the landing would take the feature's pin, which `main` of the
+/// member does not reach.
+pub fn a_containing_pin_off_the_receiving_branch_is_refused() -> Scenario {
+    Scenario {
+        name: "a containing pin off the receiving branch is refused",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-b5",
+            }),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "side",
+                mark: "lib-side",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/side", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    }
+}
+
+/// A `dependency` the feature declares on another branch, which the target
+/// re-pinned meanwhile, lands by name at the feature's pin: the two sides
+/// declare it differently, so the target's pin is not unmerged, and the
+/// commits it added that the kept branch lacks are listed with the copy.
+pub fn a_dependency_declared_differently_lands_and_lists_what_it_leaves() -> Scenario {
+    Scenario {
+        name: "a dependency declared differently lands and lists what it leaves",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "stable-lib",
+                mark: "lib-stable",
+            }),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-b5",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "stable-lib"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::OutputInOrder(&[
+                    "branch main -> stable-lib",
+                    "lib-b5",
+                    "copy these commits onto `stable-lib`",
+                ]))
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-stable",
+                }),
+        ],
+    }
+}
+
+/// Where the merge base's `rwv.toml` does not read under the schema, a
+/// removal is still a change the landing names: the safe side.
+pub fn a_removal_over_an_unreadable_merge_base_is_named() -> Scenario {
+    scenario(
+        "a removal over an unreadable merge base is named",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                "[integrations.vscode-workspace]\n",
+                "unreadable = true\n\n[integrations.vscode-workspace]\n",
+            ),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "unreadable"]),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "-q", "--no-edit", "main"]),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", "unreadable = true\n\n", ""),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "readable again"]),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                "unreadable = true\n\n",
+                "",
+            ),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-qam", "readable again here"],
+            ),
+            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("removed"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// The refusal lists only the fields the landing changes: one the target
+/// changed alone is the target's, kept by the merge, and not listed.
+pub fn member_changes_are_judged_per_field() -> Scenario {
+    scenario(
+        "member changes are judged per field",
+        vec![
+            create("w"),
+            Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "false"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("branch: main → dev"))
+                .claim(Claim::OutputLacks("recurse-submodules:"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// A consent naming no change joins the landing's one report: the dirt
+/// judged beside it is reported on the same run.
+pub fn an_inapplicable_consent_joins_the_report() -> Scenario {
+    scenario(
+        "an inapplicable consent joins the report",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::hand_edit(&ww("w"), Repo::App, "w-app.txt", "w-app", "edited"),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", DOCS])
+                .expect(Exit::refuses(Repo::App, State::EditsDirty))
+                .claim(Claim::OutputContains(
+                    "`--allow-member-change local/remotes/docs` names no change",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// The member-change steps every field change of `landing-names-every-field`
+/// starts from: a seat that changes `lib`'s role, `app`'s url and history,
+/// `docs`'s `recurse-submodules` and the top-level history, and adds a
+/// `[workweave]` table.
+fn every_field_changed() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "branch",
+                "set-history",
+                "merge",
+                "--repo",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "member",
+                "set-url",
+                "local/remotes/app",
+                "url:mirror-keeping:app",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w"),
+            &["member", "set-recurse-submodules", DOCS, "false"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
+             [\"notes.txt\"]\n",
+        ),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+    ]
+}
+
+/// `landing-names-every-field`: a seat changing `role`, `url`, `history`,
+/// `recurse-submodules` and the top-level `history` is refused, listing each
+/// field with both values, until every repo is named, the top-level setting
+/// as `projects/proj`; the one consent printed, run as printed, lands them,
+/// and the `[workweave]` table lands unnamed.
+pub fn landing_names_every_field() -> Scenario {
+    let mut steps = every_field_changed();
+    steps.extend([
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+            .claim(Claim::OutputContains("role: owned → fork"))
+            .claim(Claim::OutputContains("history: unset → merge"))
+            .claim(Claim::OutputContains("url: "))
+            .claim(Claim::OutputContains("recurse-submodules: true → false"))
+            .claim(Claim::OutputContains("'main''s top-level history"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "land",
+                "--allow-member-change",
+                LIB,
+                "--allow-member-change",
+                "local/remotes/app",
+                "--allow-member-change",
+                DOCS,
+            ],
+        )
+        .expect(Exit::refuses(Repo::Proj, State::TargetMemberChanges))
+        .claim(Claim::OutputContains(
+            "rwv land --allow-member-change local/remotes/app --allow-member-change \
+             local/remotes/docs --allow-member-change local/remotes/lib --allow-member-change \
+             projects/proj",
+        ))
+        .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&ww("w"), "rwv land --allow-member-change ")
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            }),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .claim(Claim::OutputContains("role = \"fork\""))
+            .claim(Claim::OutputContains("recurse-submodules = false"))
+            .claim(Claim::OutputContains("copy = [\"notes.txt\"]")),
+    ]);
+    scenario("landing names every field", steps)
+}
+
+/// Each setter a member-change refusal prints, run as printed, restores the
+/// target's value, until the landing passes with nothing named and the
+/// `[workweave]` table lands as content.
+pub fn every_printed_setter_restores_the_target_value() -> Scenario {
+    let mut steps = every_field_changed();
+    for (repo, prefix) in [
+        (Repo::Lib, "rwv member set-role local/remotes/lib "),
+        (
+            Repo::App,
+            "rwv branch set-history --unset --repo local/remotes/app",
+        ),
+        (Repo::App, "rwv member set-url local/remotes/app "),
+        (
+            Repo::Docs,
+            "rwv member set-recurse-submodules local/remotes/docs ",
+        ),
+        (Repo::Proj, "rwv branch set-history --unset"),
+    ] {
+        steps.push(
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(repo, State::TargetMemberChanges))
+                .claim(Claim::LocalStateUnchanged(a())),
+        );
+        steps.push(Step::rwv_printed(&ww("w"), prefix).expect(Exit::Succeeds));
+    }
+    steps.extend([
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            }),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .claim(Claim::OutputLacks("role = \"fork\""))
+            .claim(Claim::OutputContains("copy = [\"notes.txt\"]")),
+    ]);
+    scenario("every printed setter restores the target value", steps)
 }
 
 /// A landing leaves the target ahead of its push branch and says so, naming

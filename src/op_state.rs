@@ -630,6 +630,8 @@ pub struct LeftBehind {
     pub vcs_type: crate::manifest::VcsType,
     pub was: String,
     pub now: String,
+    /// The side whose pin reaches the commits listed.
+    pub pin_of: PinOf,
     pub commits: Vec<crate::vcs::CommitSummary>,
     /// Where the new branch is checked out once the landing aligns the
     /// target's workspace.
@@ -673,6 +675,14 @@ impl MemberPick {
     pub fn remaining(&self) -> &[CommitId] {
         &self.commits[(self.copied.len() + self.dropped.len()).min(self.commits.len())..]
     }
+}
+
+/// One side of a landing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PinOf {
+    Target,
+    Feature,
 }
 
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as

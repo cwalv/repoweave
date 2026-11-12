@@ -141,6 +141,12 @@ pub enum Action {
         at: Place,
         args: Vec<String>,
     },
+    /// The choice line the last rwv step printed that begins `prefix`, run
+    /// at `at` word for word as the terminal shows it.
+    RwvPrinted {
+        at: Place,
+        prefix: &'static str,
+    },
     DropLockEntry {
         at: Place,
         project: Repo,
@@ -197,6 +203,7 @@ impl Action {
         matches!(
             self,
             Action::Rwv { .. }
+                | Action::RwvPrinted { .. }
                 | Action::RwvPaused { .. }
                 | Action::Release(_)
                 | Action::NewMachine(_)
@@ -765,6 +772,19 @@ impl Step {
         )
     }
 
+    /// The choice the previous rwv step printed beginning `prefix`, run as
+    /// printed.
+    pub fn rwv_printed(at: &Place, prefix: &'static str) -> Step {
+        Step::new(
+            format!("the printed `{prefix}...`"),
+            Action::RwvPrinted {
+                at: at.clone(),
+                prefix,
+            },
+            Expect::undecided(),
+        )
+    }
+
     pub fn new_machine(machine: Machine) -> Step {
         Step::new(
             format!("fresh clone on {machine:?}"),
@@ -1025,6 +1045,7 @@ impl Report {
 struct Run<'a> {
     sandbox: &'a Sandbox,
     last_code: Option<i32>,
+    last_rwv_output: String,
     marks: BTreeMap<&'static str, String>,
     held: BTreeMap<&'static str, Paused>,
     offline: BTreeMap<Remote, Unreachable<'a>>,
@@ -1043,6 +1064,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     let mut run = Run {
         sandbox,
         last_code: None,
+        last_rwv_output: String::new(),
         marks: BTreeMap::new(),
         held: BTreeMap::new(),
         offline: BTreeMap::new(),
@@ -1070,6 +1092,9 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             .collect();
         run.last_code = None;
         let (succeeded, output) = run.perform(&step.action);
+        if step.action.runs_rwv() {
+            run.last_rwv_output = output.clone();
+        }
         let after = invariants::snapshot(sandbox);
         for violation in invariants::check(sandbox, &before, &after, &step.allow) {
             report.violations.push((step.label.clone(), violation));
@@ -1241,6 +1266,30 @@ impl Run<'_> {
                 let out = sb.rwv(&sb.place_root(at), &args);
                 self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
+            }
+            Action::RwvPrinted { at, prefix } => {
+                let Some(line) = self
+                    .last_rwv_output
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| line.starts_with(prefix))
+                else {
+                    return (
+                        false,
+                        format!(
+                            "no `{prefix}...` line was printed:\n{}",
+                            self.last_rwv_output
+                        ),
+                    );
+                };
+                let line = line.to_owned();
+                let args: Vec<&str> = line.split_whitespace().skip(1).collect();
+                let out = sb.rwv(&sb.place_root(at), &args);
+                self.last_code = out.status.code();
+                (
+                    out.status.success(),
+                    format!("ran: {line}\n{}", rendered(&out)),
+                )
             }
             Action::DropLockEntry {
                 at,

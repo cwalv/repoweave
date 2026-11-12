@@ -119,6 +119,61 @@ fn update_remote_in_a_feature_repins_a_named_dependency_and_reference_on_their_d
 }
 
 #[test]
+fn forward_bumps_of_a_dependency_on_both_sides_land_unnamed() {
+    runner::run(scenarios::forward_bumps_on_both_sides_land_unnamed()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_backward_pin_offers_only_a_rebind_that_lands_it_unchanged_and_its_pin_runs_as_printed() {
+    runner::run(scenarios::a_backward_pin_offers_only_a_rebind_that_lands_it_unchanged())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_carried_pin_containing_the_targets_but_off_the_receiving_branch_is_refused() {
+    runner::run(scenarios::a_containing_pin_off_the_receiving_branch_is_refused())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependency_declared_differently_lands_by_name_and_lists_what_it_leaves() {
+    runner::run(scenarios::a_dependency_declared_differently_lands_and_lists_what_it_leaves())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_removal_over_an_unreadable_merge_base_is_a_named_change() {
+    runner::run(scenarios::a_removal_over_an_unreadable_merge_base_is_named())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_member_change_refusal_lists_only_the_fields_the_landing_changes() {
+    runner::run(scenarios::member_changes_are_judged_per_field()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_consent_naming_no_change_is_reported_with_the_rest() {
+    runner::run(scenarios::an_inapplicable_consent_joins_the_report()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_re_add_a_removal_prints_clears_it_as_printed() {
+    runner::run(scenarios::the_printed_re_add_clears_a_removal()).assert_fully_decided_green();
+}
+
+#[test]
+fn landing_names_every_field_and_the_one_printed_consent_lands_them() {
+    runner::run(scenarios::landing_names_every_field()).assert_fully_decided_green();
+}
+
+#[test]
+fn every_setter_a_member_change_prints_restores_the_target_value_as_printed() {
+    runner::run(scenarios::every_printed_setter_restores_the_target_value())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -567,6 +622,16 @@ every_scenario!(
     raw_merge_member_change,
     roles_in_feature,
     update_remote_repins_dependency_and_reference_in_a_feature,
+    forward_bumps_on_both_sides_land_unnamed,
+    a_backward_pin_offers_only_a_rebind_that_lands_it_unchanged,
+    a_containing_pin_off_the_receiving_branch_is_refused,
+    a_dependency_declared_differently_lands_and_lists_what_it_leaves,
+    a_removal_over_an_unreadable_merge_base_is_named,
+    member_changes_are_judged_per_field,
+    an_inapplicable_consent_joins_the_report,
+    the_printed_re_add_clears_a_removal,
+    landing_names_every_field,
+    every_printed_setter_restores_the_target_value,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,
