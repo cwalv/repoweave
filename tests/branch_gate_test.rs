@@ -94,7 +94,13 @@ impl Weave {
     }
 
     fn entry(&self, branch: &str) -> String {
-        common::git_in(self.project(), &["show", &format!("{RECORDS}:{}", common::records::path(branch))])
+        common::git_in(
+            self.project(),
+            &[
+                "show",
+                &format!("{RECORDS}:{}", common::records::path(branch)),
+            ],
+        )
     }
 
     fn state(&self) -> String {

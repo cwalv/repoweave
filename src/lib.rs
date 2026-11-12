@@ -124,6 +124,7 @@ pub mod member_selection;
 pub mod member_settings;
 pub mod member_url;
 pub mod merge_upstream;
+pub(crate) mod names;
 pub mod naming;
 pub mod op_state;
 pub mod owned_state;

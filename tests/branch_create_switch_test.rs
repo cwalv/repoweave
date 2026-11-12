@@ -116,7 +116,10 @@ fn tip(repo: &Path, rev: &str) -> String {
 
 fn record_of(ws: &Path, branch: &str) -> Option<String> {
     let out = common::git()
-        .args(["show", &format!("rwv-records:{}", common::records::path(branch))])
+        .args([
+            "show",
+            &format!("rwv-records:{}", common::records::path(branch)),
+        ])
         .current_dir(project_dir(ws))
         .output()
         .unwrap();
@@ -902,7 +905,9 @@ fn opening_or_recording_a_feature_whose_name_a_live_branch_declares_is_refused()
     assert!(record_of(ws, "feat-d").is_none());
 
     let recorded = refuse(
-        &["branch", "set-mode", "feat-d", "feature", "--target", "main"],
+        &[
+            "branch", "set-mode", "feat-d", "feature", "--target", "main",
+        ],
         ws,
     );
     assert!(recorded.contains("name declared"), "{recorded}");

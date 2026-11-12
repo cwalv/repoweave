@@ -83,7 +83,12 @@ pub struct Renaming {
 
 /// Whether the workspace at `project_dir` holds a rename of `from` to `to`
 /// begun and not finished.
-pub fn is_renaming(vcs: &dyn Vcs, project_dir: &Path, from: &str, to: &str) -> anyhow::Result<bool> {
+pub fn is_renaming(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    from: &str,
+    to: &str,
+) -> anyhow::Result<bool> {
     let wanted = Renaming {
         from: from.to_owned(),
         to: to.to_owned(),

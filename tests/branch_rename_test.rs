@@ -104,7 +104,10 @@ fn has_branch(repo: &Path, name: &str) -> bool {
 
 fn record_of(ws: &Path, branch: &str) -> Option<String> {
     let out = common::git()
-        .args(["show", &format!("rwv-records:{}", common::records::path(branch))])
+        .args([
+            "show",
+            &format!("rwv-records:{}", common::records::path(branch)),
+        ])
         .current_dir(project_dir(ws))
         .output()
         .unwrap();
@@ -492,8 +495,14 @@ fn a_rename_that_would_close_a_target_cycle_is_refused_before_any_branch_moves()
     common::records::edit_by_hand(
         &project,
         &[
-            ("old", "mode = \"feature\"\ntarget = \"x\"\nas = \"feature\"\n"),
-            ("x", "mode = \"feature\"\ntarget = \"new\"\nas = \"declared\"\n"),
+            (
+                "old",
+                "mode = \"feature\"\ntarget = \"x\"\nas = \"feature\"\n",
+            ),
+            (
+                "x",
+                "mode = \"feature\"\ntarget = \"new\"\nas = \"declared\"\n",
+            ),
         ],
         &[],
         "a target that is gone",

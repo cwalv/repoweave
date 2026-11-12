@@ -117,7 +117,13 @@ impl Weave {
     }
 
     fn entry(&self, branch: &str) -> String {
-        common::git_in(self.project(), &["show", &format!("{RECORDS}:{}", common::records::path(branch))])
+        common::git_in(
+            self.project(),
+            &[
+                "show",
+                &format!("{RECORDS}:{}", common::records::path(branch)),
+            ],
+        )
     }
 
     /// A branch of the project repo with the same files as `main`.
@@ -826,7 +832,11 @@ fn entries_changed_on_both_sides_are_stored_as_a_conflict_that_set_mode_settles(
 impl Weave {
     fn has_entry(&self, branch: &str) -> bool {
         common::git()
-            .args(["cat-file", "-e", &format!("{RECORDS}:{}", common::records::path(branch))])
+            .args([
+                "cat-file",
+                "-e",
+                &format!("{RECORDS}:{}", common::records::path(branch)),
+            ])
             .current_dir(self.project())
             .output()
             .unwrap()
@@ -1022,7 +1032,11 @@ fn a_record_and_a_record_below_its_name_are_both_kept() {
     common::git_in(&project, &["push", "-q", "origin", "fix"]);
     common::git_in(&project, &["branch", "-D", "fix"]);
     let base = weave.records_tip().unwrap();
-    weave.remote_records("origin", Some(&base), &[("fix", &feature("main", "declared"))]);
+    weave.remote_records(
+        "origin",
+        Some(&base),
+        &[("fix", &feature("main", "declared"))],
+    );
 
     weave.branch("fix/part2");
     succeed(&["branch", "set-mode", "fix/part2", "declared"], &weave.ws);
@@ -1042,7 +1056,10 @@ fn a_remote_forked_from_another_merges_against_their_shared_history() {
     let weave = Weave::new();
     weave.with_origin();
     let project = weave.project();
-    common::git_in(&project, &["remote", "add", "fork", "file:///nowhere/fork.git"]);
+    common::git_in(
+        &project,
+        &["remote", "add", "fork", "file:///nowhere/fork.git"],
+    );
     common::git_in(&project, &["config", "branch.main.pushRemote", "fork"]);
     weave.branch("x");
     weave.branch("one");
@@ -1050,9 +1067,18 @@ fn a_remote_forked_from_another_merges_against_their_shared_history() {
     let base = weave.records_tip().unwrap();
     let o0 = weave.remote_records("origin", Some(&base), &[("x", DECLARED)]);
     succeed(&["branch", "set-mode", "one", "declared"], &weave.ws);
-    let o1 = common::records::commit(&project, Some(&o0), &[("x", &feature("a", "declared"))], &[], "o1");
+    let o1 = common::records::commit(
+        &project,
+        Some(&o0),
+        &[("x", &feature("a", "declared"))],
+        &[],
+        "o1",
+    );
     let f1 = common::records::commit(&project, Some(&o1), &[("y", DECLARED)], &[], "f1");
-    common::git_in(&project, &["update-ref", &format!("refs/remotes/fork/{RECORDS}"), &f1]);
+    common::git_in(
+        &project,
+        &["update-ref", &format!("refs/remotes/fork/{RECORDS}"), &f1],
+    );
     weave.remote_records("origin", Some(&o1), &[("x", &feature("b", "declared"))]);
 
     succeed(&["branch", "set-mode", "two", "declared"], &weave.ws);
