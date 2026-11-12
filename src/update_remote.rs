@@ -1056,6 +1056,77 @@ fn divergences(items: &[WorkItem], fetched: &[Fetched]) -> Vec<Divergence> {
     found
 }
 
+/// A member branch other than the one this workspace expects that a commit
+/// of the project branch's unpushed range declares, diverged from its
+/// upstream and checked out nowhere: what `push` publishes and only a merge
+/// or reset as refs can settle.
+struct DeclaredElsewhere {
+    idx: usize,
+    branch: RawRefName,
+    local: ResolvedRevisionId,
+    upstream: ResolvedRevisionId,
+}
+
+fn declared_elsewhere(
+    items: &[WorkItem],
+    project_dir: &Path,
+) -> anyhow::Result<Vec<DeclaredElsewhere>> {
+    if items.iter().any(|item| item.feature) {
+        return Ok(Vec::new());
+    }
+    let pvcs = crate::vcs::project_vcs();
+    let HeadAttachment::Attached(attached) = pvcs.head_attachment(project_dir)? else {
+        return Ok(Vec::new());
+    };
+    let raw = RawRefName::new(attached.to_string());
+    let tip = pvcs.head_revision(project_dir)?;
+    let url_remote = pvcs.project_url_remote(project_dir)?;
+    let declared = crate::push::declared_by_unpushed_range(
+        pvcs.as_ref(),
+        project_dir,
+        &raw,
+        &tip,
+        url_remote.as_ref(),
+    )?;
+    let mut found = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        let dir = item.checkout.path();
+        let owned = matches!(
+            item.entry.role,
+            crate::manifest::Role::Owned | crate::manifest::Role::Fork
+        );
+        let Some(names) = declared
+            .get(&item.repo_path)
+            .filter(|_| owned && dir.exists())
+        else {
+            continue;
+        };
+        let vcs = item.vcs.as_ref();
+        for name in names.iter().filter(|name| *name != item.expected.as_str()) {
+            let branch = RawRefName::new(name.clone());
+            let Some(local) = vcs.resolve_local_branch_tip(dir, &branch)? else {
+                continue;
+            };
+            if !vcs.checkouts_of_branch(dir, &branch)?.is_empty() {
+                continue;
+            }
+            let Some((_, upstream)) = crate::push_branch::upstream_copy(vcs, dir, &branch, None)?
+            else {
+                continue;
+            };
+            if vcs.relation(dir, &local, &upstream)? == Relation::Diverged {
+                found.push(DeclaredElsewhere {
+                    idx,
+                    branch,
+                    local,
+                    upstream,
+                });
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Refuse, all together and before anything moves, each member that has
 /// diverged and no flag takes in; then reset and merge the ones a flag names,
 /// under the op record.
@@ -1084,6 +1155,11 @@ fn settle_diverged(
     let found = divergences(items, fetched);
     let project_vcs = crate::vcs::project_vcs();
     let project_dir = crate::workspace::project_dir(ctx.active_path(), project);
+    let elsewhere = if state.flags.merge_upstream || !state.flags.reset_to_upstream.is_empty() {
+        declared_elsewhere(items, &project_dir)?
+    } else {
+        Vec::new()
+    };
     let mut report = crate::diagnosis::Report::default();
     let mut acting: Vec<(&Divergence, bool)> = Vec::new();
     let lineage = if state.flags.merge_upstream && !found.is_empty() {
@@ -1202,8 +1278,42 @@ fn settle_diverged(
         }
         acting.push((d, reset));
     }
+    let mut settling: Vec<(&DeclaredElsewhere, bool)> = Vec::new();
+    for e in &elsewhere {
+        let item = &items[e.idx];
+        let dir = item.checkout.path();
+        let vcs = item.vcs.as_ref();
+        let reset = state.flags.resets(&crate::manifest::RepoOperand::Member(
+            item.repo_path.clone(),
+        ));
+        if reset {
+            crate::merge_upstream::judge_reset(
+                item.repo_path.as_str(),
+                dir,
+                vcs,
+                Some(&e.upstream),
+                &[],
+                None,
+                &mut report,
+            );
+        } else if state.flags.merge_upstream {
+            if let crate::vcs::RefMerge::Conflicted { paths } =
+                vcs.merge_as_refs(dir, e.upstream.id(), e.local.id(), "probe")?
+            {
+                report.note(format!(
+                    "{}: '{}' is checked out nowhere and its merge conflicts in {}",
+                    item.repo_path,
+                    e.branch,
+                    paths.join(", ")
+                ));
+            }
+        } else {
+            continue;
+        }
+        settling.push((e, reset));
+    }
     report.into_result()?;
-    if acting.is_empty() && state.resumed.is_none() {
+    if acting.is_empty() && settling.is_empty() && state.resumed.is_none() {
         return Ok(settled);
     }
 
@@ -1311,6 +1421,57 @@ fn settle_diverged(
                     settled.as_refs.insert(d.idx);
                 }
             }
+            Err(MemberStop::Conflict(conflicted)) => {
+                return Err(conflict_stop(
+                    "update --remote",
+                    &crate::op_state::resume_command(OpVerb::UpdateRemote),
+                    &conflicted,
+                    item.vcs.as_ref(),
+                    &[],
+                ));
+            }
+            Err(MemberStop::Refused(error)) => return Err(error),
+        }
+    }
+    for (e, reset) in &settling {
+        let item = &items[e.idx];
+        let dir = item.checkout.path();
+        if *reset {
+            let backup = crate::merge_upstream::reset_to_upstream(
+                workspace,
+                RepoKey::Member(item.repo_path.clone()),
+                item.vcs.as_ref(),
+                dir,
+                &e.branch,
+                None,
+                &e.upstream,
+            )?;
+            eprintln!(
+                "rwv update --remote: {}: reset '{}' to its upstream {}, keeping {} in backup {backup}",
+                item.repo_path,
+                e.branch,
+                e.upstream.id().short(),
+                e.local.id().short()
+            );
+            continue;
+        }
+        let message = format!("Merge the upstream of {} into it", e.branch);
+        match crate::project_merge::merge_branch_as_refs(
+            workspace,
+            &item.repo_path,
+            item.vcs.as_ref(),
+            dir,
+            &e.branch,
+            e.upstream.id(),
+            Order::SourceFirst,
+            &message,
+        ) {
+            Ok(_) => eprintln!(
+                "rwv update --remote: {}: merged the upstream {} into '{}'",
+                item.repo_path,
+                e.upstream.id().short(),
+                e.branch
+            ),
             Err(MemberStop::Conflict(conflicted)) => {
                 return Err(conflict_stop(
                     "update --remote",

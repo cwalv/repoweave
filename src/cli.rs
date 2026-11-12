@@ -530,10 +530,10 @@ pub enum Commands {
         /// Advance each repo to its branch HEAD on the remote and record the advanced tips in the lock
         #[arg(long)]
         remote: bool,
-        /// With --remote, merge each acted-on member branch that has diverged from its upstream, first parent the upstream. A branch no checkout has attached merges as refs and touches no working tree. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
+        /// With --remote, merge each acted-on member branch that has diverged from its upstream, first parent the upstream. A branch no checkout has attached merges as refs and touches no working tree; so does each member branch a commit of the project branch's unpushed range declares, which `push` publishes. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
         #[arg(long, requires = "remote", conflicts_with = "do_continue")]
         merge_upstream: bool,
-        /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
+        /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup, and each branch of it a commit of the project branch's unpushed range declares that no checkout holds. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(
             long,
             value_name = "REPO",

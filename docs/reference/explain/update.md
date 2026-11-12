@@ -236,9 +236,13 @@ rwv update --remote --continue
 - `--remote` — advance each repo to its branch HEAD on the remote and
   record the advanced tips in the lock, instead of aligning to the lock.
 - `--merge-upstream` — with `--remote`: merge each acted-on member branch that
-  has diverged from its upstream.
+  has diverged from its upstream. A member branch that a commit of the project
+  branch's unpushed range declares, which `push` publishes, is merged too, as
+  refs, where it is checked out nowhere; the lock records nothing of it.
 - `--reset-to-upstream <repo>` — with `--remote`: move that member's branch to
-  its upstream, keeping the tip it leaves in a backup. Repeat per repo.
+  its upstream, keeping the tip it leaves in a backup, and likewise each branch
+  of it that a commit of the unpushed range declares and no checkout holds.
+  Repeat per repo.
 - `--continue` — with `--remote`: resume the update a conflict stopped.
 - `--dirty` — with `--remote`: allow recording the lock with uncommitted
   changes in repos.

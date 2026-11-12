@@ -6806,45 +6806,113 @@ pub fn member_change_race_listing() -> Scenario {
     )
 }
 
-/// `main-diverged-after-member-change`: a seat lands `lib`'s move from
-/// `main` to `dev` while `main` holds a commit its push branch lacks, and the
-/// push branch then moves elsewhere with a conflicting change. The push
-/// publishing the range that declared `main` refuses `main` diverged.
+/// A seat lands `lib`'s move from `main` to `dev` while `main` holds
+/// `alpha`, a commit its push branch lacks and `dev` does not hold.
+fn member_change_leaves_main_unpushed() -> Vec<Step> {
+    vec![
+        Step::new_machine(Machine::B),
+        create("seat"),
+        Step::hand_edit(&a(), Repo::Lib, "README", "lib", "alpha"),
+        Step::git(&a(), Repo::Lib, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("seat"), &["sync"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("seat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+        Step::commit(&ww("seat"), Repo::App, "feat-app"),
+        Step::rwv(
+            &ww("seat"),
+            &["land", "--history", "linear", "--allow-member-change", LIB],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::Lib]),
+    ]
+}
+
+/// The push publishing the range that declared `main` refuses `main`
+/// diverged from its push branch, naming it.
+fn push_refuses_main_diverged() -> Step {
+    Step::rwv(&a(), &["push"])
+        .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
+        .claim(Claim::OutputContains(
+            "'main' is declared by a commit being pushed",
+        ))
+        .claim(Claim::OutputContains(
+            "rwv update --remote --merge-upstream --repo local/remotes/lib",
+        ))
+        .claim(Claim::OutputContains(
+            "rwv update --remote --reset-to-upstream local/remotes/lib",
+        ))
+}
+
+/// `main-diverged-after-member-change`, its push branch moved on elsewhere
+/// without a conflict: the printed merge merges `main` as refs, checked out
+/// nowhere, and the push then publishes it.
 pub fn main_diverged_after_member_change() -> Scenario {
-    scenario(
-        "main diverged after member change",
-        vec![
-            Step::new_machine(Machine::B),
-            create("seat"),
-            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "alpha"),
-            Step::git(&a(), Repo::Lib, &["commit", "-qam", "alpha"]),
-            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("seat"), &["sync"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("seat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
-            Step::commit(&ww("seat"), Repo::App, "feat-app"),
-            Step::rwv(
-                &ww("seat"),
-                &["land", "--history", "linear", "--allow-member-change", LIB],
-            )
+    let mut steps = member_change_leaves_main_unpushed();
+    steps.extend([
+        Step::forge(Forge::Commit {
+            repo: Repo::Lib,
+            branch: "main",
+            mark: "lib-remote",
+        }),
+        push_refuses_main_diverged(),
+        Step::rwv_printed(&a(), "rwv update --remote --merge-upstream")
             .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::Lib]),
-            Step::hand_edit(&b(), Repo::Lib, "README", "lib", "beta"),
-            Step::git(&b(), Repo::Lib, &["commit", "-qam", "beta"]),
-            Step::git(&b(), Repo::Lib, &["push", "origin", "main"])
-                .pushes(Remote::origin(Repo::Lib), "main"),
-            Step::rwv(&a(), &["push"])
-                .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
-                .claim(Claim::OutputContains(
-                    "'main' is declared by a commit being pushed",
-                ))
-                .claim(Claim::OutputContains(
-                    "rwv update --remote --merge-upstream --repo local/remotes/lib",
-                ))
-                .claim(Claim::OutputContains(
-                    "rwv update --remote --reset-to-upstream local/remotes/lib",
-                )),
-        ],
-    )
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "dev",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "lib-remote",
+            }),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .may_rewind(&[Repo::Lib])
+            .expect(Exit::Succeeds),
+        Step::git(
+            &a(),
+            Repo::Lib,
+            &["grep", "-q", "alpha", "origin/main", "--", "README"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario("main diverged after member change", steps)
+}
+
+/// The same, settled by the printed reset: `main` takes its upstream, `alpha`
+/// kept in a backup, and the push publishes nothing of `main`.
+pub fn main_diverged_after_member_change_reset() -> Scenario {
+    let mut steps = member_change_leaves_main_unpushed();
+    steps.extend([
+        Step::forge(Forge::Commit {
+            repo: Repo::Lib,
+            branch: "main",
+            mark: "lib-remote",
+        }),
+        push_refuses_main_diverged(),
+        Step::rwv_printed(&a(), "rwv update --remote --reset-to-upstream")
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::Lib])
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "lib-remote",
+            }),
+        Step::git(&a(), Repo::Lib, &["diff", "--quiet", "main", "origin/main"])
+            .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .pushes(Remote::origin(Repo::App), "main")
+            .may_rewind(&[Repo::Lib])
+            .expect(Exit::Succeeds),
+    ]);
+    scenario("main diverged after member change, reset", steps)
 }
 
 /// The member change race under `--json`: the envelope lists the fix as a

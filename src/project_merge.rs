@@ -246,7 +246,17 @@ pub(crate) fn merge_member(
         _ => None,
     };
     let Some(attached) = attached else {
-        return merge_member_as_refs(workspace, repo, entry, dir, source, order, message);
+        let branch = RawRefName::new(entry.branch.local_counterpart().as_str());
+        return merge_branch_as_refs(
+            workspace,
+            repo,
+            vcs.as_ref(),
+            dir,
+            &branch,
+            source,
+            order,
+            message,
+        );
     };
     let head = vcs.head_revision(dir)?;
     let source_rev = ResolvedRevisionId::from(source.clone());
@@ -299,17 +309,20 @@ fn parents(order: Order, head: &CommitId, source: &CommitId) -> (CommitId, Commi
     }
 }
 
-fn merge_member_as_refs(
+/// Merge `source` into the member branch `branch`, which no checkout has
+/// attached, without touching a working tree.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn merge_branch_as_refs(
     workspace: &Path,
     repo: &RepoPath,
-    entry: &RepoEntry,
+    vcs: &dyn Vcs,
     dir: &Path,
+    branch: &RawRefName,
     source: &CommitId,
     order: Order,
     message: &str,
 ) -> Result<Joined, MemberStop> {
-    let vcs = vcs_for(entry.vcs_type);
-    let branch = RawRefName::new(entry.branch.local_counterpart().as_str());
+    let branch = branch.clone();
     let refuse = |why: String| MemberStop::Refused(crate::untokened!(Owed, "{repo}: {why}"));
     let Some(tip) = vcs.resolve_local_branch_tip(dir, &branch)? else {
         return Err(refuse(format!(

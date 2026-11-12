@@ -1183,28 +1183,55 @@ fn holds_commits_beyond_target_pin(
 }
 
 /// The commits a push of the project branch publishes, oldest first.
-fn pushed_project_range(
-    pushed: &Pushed,
+/// The commits of the project branch `raw`, at `tip`, that its push branch
+/// lacks.
+fn unpushed_project_range(
     pvcs: &dyn Vcs,
+    project_dir: &Path,
+    raw: &RawRefName,
+    tip: &ResolvedRevisionId,
     project_url_remote: Option<&RemoteHandle>,
-) -> anyhow::Result<(Vec<crate::vcs::RangeCommit>, Option<ResolvedRevisionId>)> {
-    let tip = pushed.tip.clone();
-    let (standing, target) = crate::push_branch::standing_of_branch(
-        pvcs,
-        &pushed.project_dir,
-        &pushed.raw,
-        project_url_remote,
-    )?;
+) -> anyhow::Result<Vec<crate::vcs::RangeCommit>> {
+    let (standing, target) =
+        crate::push_branch::standing_of_branch(pvcs, project_dir, raw, project_url_remote)?;
     let on_target = match (&standing, &target) {
         (Standing::Unpublished | Standing::Gone { .. }, _) | (_, None) => None,
         (_, Some(target)) => pvcs
-            .remote_copies(&pushed.project_dir, &pushed.raw)?
+            .remote_copies(project_dir, raw)?
             .into_iter()
             .find(|copy| &copy.remote == target)
             .map(|copy| copy.tip),
     };
-    let range = pvcs.pushed_range(&pushed.project_dir, &tip, on_target.as_ref())?;
-    Ok((range, Some(tip)))
+    Ok(pvcs.pushed_range(project_dir, tip, on_target.as_ref())?)
+}
+
+/// Every branch a commit of the project branch `raw` its push branch lacks
+/// declares, per member.
+pub(crate) fn declared_by_unpushed_range(
+    pvcs: &dyn Vcs,
+    project_dir: &Path,
+    raw: &RawRefName,
+    tip: &ResolvedRevisionId,
+    project_url_remote: Option<&RemoteHandle>,
+) -> anyhow::Result<BTreeMap<RepoPath, std::collections::BTreeSet<String>>> {
+    let mut declared: BTreeMap<RepoPath, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for commit in unpushed_project_range(pvcs, project_dir, raw, tip, project_url_remote)? {
+        let at = ResolvedRevisionId::from(commit.id);
+        let Some(manifest) = pvcs
+            .read_file_at_revision(project_dir, &at, Path::new(Manifest::FILE_NAME))
+            .ok()
+            .and_then(|text| Manifest::from_toml_str(&text).ok())
+        else {
+            continue;
+        };
+        for (path, entry) in manifest.iter_entries() {
+            declared
+                .entry(path.clone())
+                .or_default()
+                .insert(entry.branch.local_counterpart().as_str().to_owned());
+        }
+    }
+    Ok(declared)
 }
 
 /// Every branch each member is declared on, by the project branch's tip and,
@@ -1225,22 +1252,14 @@ fn declared_by_pushed_range(
     if pushed.is_feature() {
         return Ok(declared);
     }
-    let (range, _) = pushed_project_range(pushed, pvcs, project_url_remote)?;
-    for commit in range {
-        let at = ResolvedRevisionId::from(commit.id);
-        let Some(manifest) = pvcs
-            .read_file_at_revision(&pushed.project_dir, &at, Path::new(Manifest::FILE_NAME))
-            .ok()
-            .and_then(|text| Manifest::from_toml_str(&text).ok())
-        else {
-            continue;
-        };
-        for (path, entry) in manifest.iter_entries() {
-            declared
-                .entry(path.clone())
-                .or_default()
-                .insert(entry.branch.local_counterpart().as_str().to_owned());
-        }
+    for (path, names) in declared_by_unpushed_range(
+        pvcs,
+        &pushed.project_dir,
+        &pushed.raw,
+        &pushed.tip,
+        project_url_remote,
+    )? {
+        declared.entry(path).or_default().extend(names);
     }
     Ok(declared)
 }
