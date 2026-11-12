@@ -118,7 +118,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
-    crate::branch::require_recorded(ctx)?;
+    crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
     let Some(branch) = crate::branch::checked_out(vcs.as_ref(), &dir)? else {
         return Err(State::AlignmentProjectDetached
             .of(project_rel_path(&project))
@@ -130,6 +130,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
     match run {
         Run::Fresh(args) => {
             crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+            crate::branch::require_recorded(ctx)?;
             fresh(ctx, project, dir, vcs, branch, args, output)
         }
         Run::Continue => {
@@ -569,14 +570,18 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             &mut report,
         )?;
         if let Some(member) = member {
-            if member.act.rewrites() {
-                let declarers = accounting.declarers(path, &sync.branch);
+            let on = match member.vcs.head_attachment(&member.dir)? {
+                HeadAttachment::Attached(attached) => Some(attached.to_string()),
+                _ => None,
+            };
+            if let (true, Some(on)) = (member.act.rewrites(), on) {
+                let declarers = accounting.declarers(path, &on);
                 if !declarers.is_empty() {
                     report.add(
                         State::ProtectedDeclared
                             .of(path)
                             .member()
-                            .subject(&sync.branch)
+                            .subject(&on)
                             .listing(declarers)
                             .bind("<m>", path)
                             .by_verb("sync")
@@ -1196,6 +1201,8 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
         )?;
         let before = vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone());
         if before.as_ref() != Some(&tip) || reset {
+            vcs.refresh_index_to_head_if_safe(&dir);
+            vcs.refresh_working_tree_to_head_if_safe(&dir);
             moved.insert(path.clone(), tip);
         }
     }
@@ -1282,7 +1289,7 @@ fn take_member(
 ) -> anyhow::Result<CommitId> {
     let workspace = &op.workspace;
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
-        vcs.rebase_continue(dir, DerivedContentPolicy::vcs_default())
+        vcs.rebase_continue(dir, DerivedContentPolicy::keep_target_side())
             .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
     }
     let attached = match vcs.head_attachment(dir)? {
@@ -1389,7 +1396,7 @@ fn take_member(
         &head,
         Some(BackupMark::Rebased),
     )?;
-    vcs.rebase(dir, &src, &src, DerivedContentPolicy::vcs_default())
+    vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
     let tip = vcs.head_revision(dir)?.id().clone();
     journal(&tip)?;
