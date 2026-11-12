@@ -89,6 +89,13 @@ the record moves to `retire` and when an op with no retire ends
 abort` by op id, whatever the record holds. A release removes the claim only
 while it names its own op.
 
+A carry takes the same claim on every dependent it moves
+(`Carrier::carry` in `src/stack.rs`), before it composes any of them, so a
+landing into a dependent waits on a stopped carry rather than landing on
+tips the carry is about to move. Those claims are held until the op that
+carries ends (`feature_sync::act`, the landing's `cleanup`) or is aborted, and
+the refusal names the holder's own continue command, read from its record.
+
 The claim names its op and the workspace holding the op's record (JSON). The
 record is written before the claim is taken and cleared only after it is
 released, so a claim whose workspace records no op with its id, or no record

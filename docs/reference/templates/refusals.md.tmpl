@@ -824,11 +824,14 @@ rather than an indefinite hang.
 
 **Exits.** Wait for the other process and re-run. If no rwv is running, the
 claim is stale: delete the claim file the refusal names, then re-run. A
-landing's claim on its target is the exception: it is held by a landing
-operation, not a process, for as long as the operation stands, and the refusal
-names that landing's workspace. End the landing there with `rwv land
---continue` or `rwv abort`; never delete its claim. A landing claim whose
-operation is no longer recorded is taken over by the next landing.
+landing's claim on its target is the exception: it is held by an operation,
+not a process, for as long as the operation stands, and the refusal names
+that operation's workspace and the command that continues it. The holder is
+a landing into the same branch, or a `sync` or landing that carries the
+branch along as a dependent of the branch it rewrites. End it there with the
+printed continue (`rwv land --continue` or `rwv sync --continue`) or `rwv
+abort`; never delete its claim. A landing claim whose operation is no longer
+recorded is taken over by the next landing.
 
 ### `surfacing-path-occupied`
 
