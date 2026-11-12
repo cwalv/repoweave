@@ -313,10 +313,13 @@ pub fn workweave_parent(
         return Ok(None);
     }
     let Some(text) = checked_out(vcs.as_ref(), source_dir)? else {
-        return Err(crate::alignment::project_detached(source_dir, project)?
-            .by_verb("workweave create")
-            .judge(vcs.as_ref())
-            .refused());
+        return Err(refuse_off_branch(
+            vcs.as_ref(),
+            source_dir,
+            project,
+            "workweave create",
+            "the new workweave's branch has no branch to land into; switch it to a branch first",
+        ));
     };
     let parent = named(vcs.as_ref(), project, source_dir, &text)?;
     let store = Store::open(vcs.as_ref(), source_dir)?;
@@ -690,14 +693,43 @@ fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Resul
 }
 
 /// `rwv branch rename <new> [--adopt]`.
+/// The refusal of a verb that needs the project repo on a branch: in a
+/// workspace made detached, that it is one; else the table's detached project
+/// repo, with the commits its HEAD holds.
+pub(crate) fn refuse_off_branch(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    project: &ProjectName,
+    verb: &'static str,
+    why: &str,
+) -> anyhow::Error {
+    let detached_workspace = matches!(
+        crate::alignment::read_state(vcs, dir).map(|reading| reading.state.aligned),
+        Ok(Some(crate::alignment::Aligned::Detached))
+    );
+    if detached_workspace {
+        return refusal(
+            RefusalKind::HeadNotOnBranch,
+            format!("rwv {verb}: this workspace is detached, so {why}"),
+        );
+    }
+    match crate::alignment::project_detached(dir, project) {
+        Ok(judging) => judging.by_verb(verb).judge(vcs).refused(),
+        Err(e) => e,
+    }
+}
+
 pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()> {
     let (project, dir) = find_project(ctx)?;
     let vcs = project_vcs();
     let Some(old_text) = checked_out(vcs.as_ref(), &dir)? else {
-        return Err(crate::alignment::project_detached(&dir, &project)?
-            .by_verb("branch rename")
-            .judge(vcs.as_ref())
-            .refused());
+        return Err(refuse_off_branch(
+            vcs.as_ref(),
+            &dir,
+            &project,
+            "branch rename",
+            "there is no branch to rename",
+        ));
     };
     let old = named(vcs.as_ref(), &project, &dir, &old_text)?;
     let new = named(vcs.as_ref(), &project, &dir, &request.new)?;

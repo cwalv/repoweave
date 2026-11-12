@@ -48,7 +48,7 @@ src/alignment.rs	push-branch foreign upstream	-	1
 src/backup.rs	(untokened:owed)	-	2
 src/backup.rs	pin would be unreachable	tests/push_test.rs	1
 src/branch.rs	(untokened:environment-passthrough)	-	1
-src/branch.rs	head-not-on-branch	-	1
+src/branch.rs	head-not-on-branch	-	2
 src/branch.rs	invalid-ref-name	-	1
 src/branch.rs	name exists	-	3
 src/branch.rs	name no-such-branch	-	2
