@@ -181,8 +181,10 @@ fn the_parent_does_not_switch_and_its_uncommitted_files_stay_where_they_are_repo
     assert!(out.contains("stay there"), "{out}");
     let seat = project_dir(&workweave_of(ws, "ww"));
     assert_eq!(
-        std::fs::read_to_string(seat.join("rwv.toml")).unwrap(),
-        committed_manifest,
+        std::fs::read_to_string(seat.join("rwv.toml"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        committed_manifest.replace("\r\n", "\n"),
         "the new workweave starts from the committed manifest"
     );
     assert!(!seat.join("notes.txt").exists());
