@@ -529,6 +529,46 @@ fn a_role_changed_to_reference_by_sync_is_settled_read_only() {
     );
 }
 
+/// A landing stopped after the target took a manifest that made a member a
+/// reference leaves the primary's member read-only; `rwv abort`, restoring
+/// the manifest naming it owned, makes it writable again.
+#[cfg(feature = "test-pause")]
+#[test]
+fn abort_restoring_an_older_manifest_resettles_the_target() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let seat = weave.create("seat");
+    weave.commit_manifest(
+        &seat.join("projects").join(PROJECT),
+        "reference",
+        "reference",
+    );
+    succeed(&["update"], &seat);
+    succeed(&["lock", "--commit"], &seat);
+
+    let mut land = common::rwv_std();
+    land.args(["land", "--retire", "--allow-member-change", OWNED_PATH])
+        .current_dir(&seat);
+    let held = common::pause::Paused::spawn(land, "retire", &tmp.path().join("pause"))
+        .expect("the landing reaches its retire step");
+    drop(held);
+    assert!(
+        seat.join(".rwv-op").exists(),
+        "fixture: the landing stopped before retiring keeps its op record"
+    );
+    assert_read_only(
+        &weave.owned,
+        "the primary's member once the landed manifest made it a reference",
+    );
+
+    succeed(&["abort"], &seat);
+
+    assert_writable(
+        &weave.owned,
+        "the primary's member once abort restored the manifest naming it owned",
+    );
+}
+
 #[test]
 fn doctor_fix_settles_a_reference_member_made_writable_by_hand() {
     let tmp = common::tempdir().unwrap();

@@ -78,10 +78,36 @@ checked out outside the target's workspace refuses as `checkout` `in another
 workspace`. From the primary, a target a workweave has checked out refuses as
 `checkout` `in another workspace`.
 
-A landing changes none of the target's member entries and not its top-level
-`history`: any change it would make refuses as `target` `member changes`,
-listing each changed field with the target's value and the feature's. Adding a
-member is no change. Another weave branch that lands into this one refuses as
+**Member changes.** A landing changes the target's member entries and its
+top-level `history` only where `--allow-member-change` names them: any field
+of the entry of a member the target lists, its removal, or a `dependency` or
+`reference` member's pin moved backward refuses as `target` `member changes`
+until the member is named, and the top-level `history` until `projects/<p>` is.
+The refusal lists each changed field with the target's value and the
+feature's, then the rebind onto each live weave branch whose entries match the
+feature's, the setter that keeps the target's value here, and last the
+consent, which says it changes the target. Adding a member is no change, and
+the other top-level tables (`[integrations]`, `[workweave]`) land as content.
+A named backward pin is reported `re-pinned`, and the lock commit records each
+named re-pin by name. A name the landing changes nothing for refuses as
+`inapplicable-flag`.
+
+A `dependency` or `reference` member takes the feature's pin where the feature
+changed it since the merge base, which the branch it sits on in the target must
+reach (`pin` `not on declared branch`); where the target changed it too, one
+of the two pins must contain the other (`pin` `unmerged`).
+
+**Receiving branches.** One that exists nowhere is created at the target's pin
+(at the feature's, for a member the target does not pin), reported `created`.
+Where the landing changes a member's declared branch, the new branch moves as a
+branch no checkout holds, the commits the target's pin reaches that it lacks
+are listed with the copy that ports them, and the target's workspace switches
+to it. Such a member holding no new work takes the new branch's tip as its pin,
+merging nothing; its branch here moves there, the tip it leaves kept in a
+backup. `rwv abort` deletes a branch the landing created where it still sits
+where it was created and another branch reaches it.
+
+Another weave branch that lands into this one refuses as
 `target` `dependents`, one line per dependent, before anything moves.
 
 **A target that moved.** The fast-forward compares each branch against what
@@ -101,12 +127,13 @@ the landing.
 | `target` | `mode changed` | the target is used another way than the record says |
 | `target` | `gone` | the target exists nowhere, or only as a branch another machine's record does not name |
 | `target` | `checked out nowhere` | no workspace has the target checked out |
-| `target` | `member changes` | the landing would change the target's entries or top-level `history` |
+| `target` | `member changes` | the landing would change the target's entries or top-level `history`, unnamed |
 | `target` | `dependents` | another weave branch lands into this one |
 | `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
 | `pin` | `off lineage` | a member's base is not on its receiving branch |
 | `pin` | `unreachable` | the target pins a commit this clone lacks |
-| `pin` | `not on declared branch` | a receiving branch does not reach the target's pin |
+| `pin` | `not on declared branch` | a receiving branch does not reach the target's pin, or a `dependency` or `reference` member's branch does not reach the feature's pin |
+| `pin` | `unmerged` | the feature and the target changed a `dependency` or `reference` member's pin, neither containing the other |
 | `pin` | `unpinned` | a receiving branch holds commits nothing records |
 | `pin` | `backwards` | the source's relock would move a pin backward |
 | `pin` | `none` | the source's lock has no pin for a member |
@@ -142,11 +169,14 @@ relock is what makes the lock it lands agree with the tips it lands.
 ## Invocation
 
 ```
-rwv land [--target <T>] [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
+rwv land [--target <T>] [--allow-member-change <repo>]... [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
 rwv land --continue [--json] [--project <name>]
 ```
 
 - `--target <T>` — land into `T` instead of the record's target, for one run.
+- `--allow-member-change <repo>` — let the landing change the target's entry
+  for this member, or with `projects/<p>` its top-level `history`. Repeat per
+  repo.
 - `--strategy` — how a member holding work its receiving branch lacks is
   composed: `rebase` (the default) replays it onto that branch's tip; `ff`
   refuses unless the feature already contains the target's tip. The
@@ -217,6 +247,12 @@ Land, and remove the workweave in one step:
 
 ```
 rwv land --retire
+```
+
+Land a feature that moves `lib` onto another declared branch:
+
+```
+rwv land --allow-member-change github/o/lib
 ```
 
 Land into another branch for one run:

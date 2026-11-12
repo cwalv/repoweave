@@ -87,6 +87,18 @@ fn roles_in_a_feature_carry_pins_and_a_role_or_backward_pin_change_is_named() {
 }
 
 #[test]
+fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
+    runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_creates_a_receiving_branch_that_exists_nowhere_and_composes_an_unpinned_member() {
+    runner::run(scenarios::landing_creates_a_receiving_branch_that_exists_nowhere())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn solo_workweave_lands_and_pushes() {
     runner::run(scenarios::solo_workweave()).assert_fully_decided_green();
 }
@@ -335,8 +347,8 @@ fn a_pin_left_unresolved_is_reported_unless_the_step_names_its_member() {
 }
 
 #[test]
-fn permanent_seat_lands_twice_then_needs_the_landing_verb() {
-    runner::run(scenarios::permanent_seat()).assert_pending_on(MissingVerb::Land);
+fn permanent_seat_lands_twice_then_lands_its_declaration_change_by_name() {
+    runner::run(scenarios::permanent_seat()).assert_fully_decided_green();
 }
 
 #[test]
@@ -506,6 +518,8 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    carried_pin_judged_against_the_receiving_branch,
+    landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
     member_change_race_listing,
     member_change_choice_order,

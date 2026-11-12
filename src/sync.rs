@@ -3863,12 +3863,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
-    for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
-        let Some(source) = ctx
-            .take_in
-            .upstream_tips
-            .get(&RepoKey::Member(repo_path.clone()))
-        else {
+    for (key, source) in &ctx.take_in.upstream_tips {
+        let RepoKey::Member(repo_path) = key else {
             continue;
         };
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
@@ -4468,6 +4464,33 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             manifest,
         },
     );
+    let mut unmerged = Report::default();
+    for finding in &merged.findings {
+        if let crate::lock_merge::PinFinding::Unmerged {
+            member,
+            first,
+            second,
+        } = finding
+        {
+            unmerged.add(
+                State::PinUnmerged
+                    .of(member)
+                    .member()
+                    .bind("<m>", member)
+                    .bind("<pin>", second)
+                    .bind("<rev>", second)
+                    .subject(format!(
+                        "this feature pins {} and the target pins {}, neither containing the \
+                         other",
+                        first.short(),
+                        second.short()
+                    ))
+                    .by_verb("land")
+                    .judge(vcs),
+            );
+        }
+    }
+    unmerged.into_result()?;
     let mut pins = merged.pins;
     for path in merged_declared.keys() {
         if let (false, Some(pin)) = (pins.contains_key(path), first.pins.get(path)) {
@@ -4480,16 +4503,37 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         .collect();
     let lock = crate::lock::with_pins(manifest, None, resolved.iter().map(|(p, c)| (p, c)));
     crate::lock::write_lock_in(&lock, dir)?;
-    let named =
-        crate::repin::Naming::by_name(
-            "land",
-            ctx.take_in.allow_member_change.iter().filter_map(|named| {
-                match named.parse::<crate::manifest::RepoOperand>() {
-                    Ok(crate::manifest::RepoOperand::Member(path)) => Some(path),
-                    _ => None,
-                }
-            }),
-        );
+    let named_members: Vec<RepoPath> = ctx
+        .take_in
+        .allow_member_change
+        .iter()
+        .filter_map(
+            |named| match named.parse::<crate::manifest::RepoOperand>() {
+                Ok(crate::manifest::RepoOperand::Member(path)) => Some(path),
+                _ => None,
+            },
+        )
+        .collect();
+    if ctx.handler.emit_text() {
+        let reach = SourceReach {
+            root: &ctx.cwd_workspace_dir,
+            manifest,
+        };
+        for path in &named_members {
+            let (Some(was), Some(now)) = (second.pins.get(path), pins.get(path)) else {
+                continue;
+            };
+            if was != now && crate::lock_merge::Reach::reaches(&reach, path, was, now) != Some(true)
+            {
+                eprintln!(
+                    "  {path}: re-pinned {} -> {} (backward, named by --allow-member-change)",
+                    was.short(),
+                    now.short()
+                );
+            }
+        }
+    }
+    let named = crate::repin::Naming::by_name("land", named_members);
     if commit_lock_file_with_message(
         vcs,
         dir,
@@ -4968,6 +5012,7 @@ fn landed_into(
 }
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    crate::test_pause::point("retire");
     let emit_text = ctx.handler.emit_text();
 
     match &ctx.cwd_ctx.checkout {

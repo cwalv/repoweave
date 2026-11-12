@@ -477,6 +477,7 @@ pub fn judge(
             continue;
         }
         if !matches!(entry.role, Role::Owned | Role::Fork) {
+            judge_carried_pin(landing, &sides, &member, as_mode, report)?;
             continue;
         }
         let judging = Judging {
@@ -822,6 +823,105 @@ fn home_remote(entry: &RepoEntry, vcs: &dyn Vcs, dir: &Path) -> Option<crate::vc
         })
 }
 
+/// A `dependency` or `reference` member is never moved: it takes `W`'s pin
+/// where `W` changed it since the merge base, which its receiving branch must
+/// reach; where `T` changed it too, one of the two pins must contain the
+/// other.
+fn judge_carried_pin(
+    landing: &Landing,
+    sides: &Sides,
+    member: &Member<'_>,
+    as_mode: Mode,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let Member {
+        path,
+        entry,
+        dir,
+        vcs,
+        ..
+    } = *member;
+    let Some(mine) = pin_of(sides.our_lock.as_ref(), path) else {
+        return Ok(());
+    };
+    let base = pin_of(sides.base_lock.as_ref(), path);
+    if base.as_ref() == Some(&mine) {
+        return Ok(());
+    }
+    let theirs = pin_of(sides.their_lock.as_ref(), path);
+    if let Some(theirs) = theirs.filter(|t| Some(t) != base.as_ref() && *t != mine) {
+        let contains = |a: &CommitId, b: &CommitId| vcs.is_ancestor(dir, &rev(a), &rev(b));
+        if !contains(&theirs, &mine)? && !contains(&mine, &theirs)? {
+            report.add(
+                State::PinUnmerged
+                    .of(path)
+                    .member()
+                    .checkout(dir)
+                    .bind("<m>", path)
+                    .bind("<pin>", &theirs)
+                    .bind("<rev>", &theirs)
+                    .subject(format!(
+                        "this feature pins {} and '{}' pins {}, neither containing the other",
+                        mine.short(),
+                        landing.target,
+                        theirs.short()
+                    ))
+                    .by_verb("land")
+                    .judge(vcs),
+            );
+        }
+        return Ok(());
+    }
+    let declared = |m: &Manifest| {
+        m.get_entry(path)
+            .map(|e| e.branch.local_counterpart().as_str().to_owned())
+    };
+    let Some(receiving) = (match as_mode {
+        Mode::Feature => declared(&sides.ours),
+        Mode::Declared => crate::feature_sync::receiving_branch(
+            path,
+            landing.target.as_str(),
+            Some(as_mode),
+            &sides.ours,
+            Some(&sides.theirs),
+            sides.base.as_ref(),
+        )
+        .map(|b| b.as_str().to_owned()),
+    }) else {
+        return Ok(());
+    };
+    let receiving = RawRefName::new(receiving);
+    let crate::push_branch::NewerOfBranchAndUpstream::Tip(tip) =
+        crate::push_branch::newer_of_branch_and_upstream(
+            vcs,
+            dir,
+            &receiving,
+            home_remote(entry, vcs, dir).as_ref(),
+        )?
+    else {
+        return Ok(());
+    };
+    if !vcs.is_ancestor(dir, &rev(&mine), &tip)? {
+        report.add(
+            State::PinNotOnDeclaredBranch
+                .of(path)
+                .member()
+                .checkout(dir)
+                .bind("<m>", path)
+                .bind("<b>", &receiving)
+                .bind("<T>", &landing.target)
+                .subject(format!(
+                    "this feature pins {}, which '{receiving}' ({}) does not reach",
+                    mine.short(),
+                    tip.id().short()
+                ))
+                .by_verb("land")
+                .judge(vcs),
+        );
+    }
+    Ok(())
+}
+
 /// What every member of one landing is judged against.
 struct Judging<'a> {
     landing: &'a Landing,
@@ -882,8 +982,11 @@ fn judge_member(
         home_remote(entry, vcs, dir).as_ref(),
     )? {
         Newer::Tip(tip) => (tip.id().clone(), false),
-        Newer::Nowhere => match &pin {
-            Some(pin) if vcs.resolve_revision(dir, pin.as_str()).is_ok() => (pin.clone(), true),
+        Newer::Nowhere => match pin
+            .clone()
+            .or_else(|| pin_of(sides.our_lock.as_ref(), path))
+        {
+            Some(at) if vcs.resolve_revision(dir, at.as_str()).is_ok() => (at, true),
             _ => return Ok(()),
         },
         Newer::Diverged {

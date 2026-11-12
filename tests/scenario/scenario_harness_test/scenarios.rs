@@ -629,10 +629,14 @@ pub fn permanent_seat() -> Scenario {
             .claim(Claim::OutputContains(
                 "local/remotes/lib: branch main -> dev",
             )),
-            Step::pending(
-                "land the declaration change with --allow-member-change lib",
-                MissingVerb::Land,
-            ),
+            Step::rwv(&ww("seat"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                }),
         ],
     )
 }
@@ -6490,4 +6494,89 @@ pub fn roles_in_feature() -> Scenario {
                 .claim(Claim::OutputContains("role = \"fork\"")),
         ],
     }
+}
+
+/// A `dependency` member's pin a feature changed lands only where its
+/// receiving branch reaches it, and only where the target, having changed it
+/// too, pins a commit one of the two contains.
+pub fn carried_pin_judged_against_the_receiving_branch() -> Scenario {
+    Scenario {
+        name: "carried pin judged against the receiving branch",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "side",
+                mark: "lib-side",
+            }),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/side", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PinUnmerged))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    }
+}
+
+/// A receiving branch that exists nowhere is created by the landing, at the
+/// target's pin, and the member's work lands on it; a member the target lists
+/// without a pin is composed and pinned at its landed tip.
+pub fn landing_creates_a_receiving_branch_that_exists_nowhere() -> Scenario {
+    scenario(
+        "landing creates a receiving branch that exists nowhere",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "lib-next"),
+            ),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-qam", "lib onto lib-next"],
+            ),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::drop_lock_entry(&a(), Repo::Proj, Repo::Docs),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "docs unpinned"]),
+            Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("created 'lib-next'"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "lib-next",
+                    mark: "w-lib",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "lib-next",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Docs,
+                    mark: "w-docs",
+                }),
+        ],
+    )
 }

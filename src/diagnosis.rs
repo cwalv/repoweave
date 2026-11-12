@@ -1369,8 +1369,10 @@ impl State {
                         reaching neither pin the merge left unmerged, waives it (`pin` \
                         waived); a commit made outside rwv records none, and a record that \
                         disagrees with what its commit's lock changed waives nothing and is \
-                        listed",
-                refused_by: "`rwv push`",
+                        listed. At a landing: the feature and the target each changed a \
+                        `dependency` or `reference` member's pin since their merge base, and \
+                        neither pin contains the other",
+                refused_by: "`rwv push`; `rwv land`, before anything moves",
                 offers: &[Form::C26, Form::C25],
                 verb_offers: &[],
             },

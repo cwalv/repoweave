@@ -49,8 +49,9 @@ Add `--json` for a machine-readable envelope. To read a workweave from outside i
 - In the target's workspace, a receiving branch holding commits its lock does
   not record, and no other lock or remote holds, refuses (`pin` `unpinned`):
   run `rwv lock --commit` there first.
-- The landing changes none of the target's member entries: an entry the
-  feature changed refuses (`target` `member changes`).
+- The landing changes the target's member entries only where named: an
+  entry the feature changed refuses (`target` `member changes`) until
+  `rwv land --allow-member-change <repo>` names it.
 
 ## Keep the workweave or land in two steps
 
