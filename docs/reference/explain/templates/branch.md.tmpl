@@ -75,7 +75,9 @@ edits, and the members are aligned.
 ### `set-mode`
 
 Writes the record of `<W>` (the project repo's checked-out branch when no
-branch is named) and nothing else: no branch moves, no checkout changes.
+branch is named). Where this workspace has `<W>` checked out, its members
+re-align to the new record as `rwv update` aligns them; another workspace on
+`<W>` is not touched.
 `<W>` must exist locally or on a remote as last fetched.
 
 - `feature` needs `--target <T>`, which must itself have a record that reads as

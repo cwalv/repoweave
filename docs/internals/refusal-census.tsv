@@ -52,7 +52,7 @@ src/branch.rs	invalid-ref-name	-	1
 src/branch.rs	name exists	-	3
 src/branch.rs	name no-such-branch	-	2
 src/branch.rs	name reserved	-	1
-src/branch.rs	protected declared	-	1
+src/branch.rs	protected declared	tests/branch_rename_test.rs	1
 src/branch.rs	push-branch diverged	tests/push_test.rs	1
 src/branch.rs	target conflict	tests/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/branch_create_switch_test.rs	1
@@ -81,9 +81,10 @@ src/clone.rs	pin unreachable	tests/push_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
 src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	-	1
-src/deletion.rs	protected declared	-	1
+src/deletion.rs	protected declared	tests/branch_rename_test.rs	1
 src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
+src/deletion.rs	unparseable-project at	tests/deletion_rule_test.rs	1
 src/diagnosis.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/diagnosis.rs	edits mid-operation	-	1
 src/diagnosis.rs	unparseable-project here	-	1
@@ -178,13 +179,14 @@ src/push.rs	pin unmerged	tests/push_test.rs	2
 src/push.rs	pin unreachable	tests/push_test.rs	2
 src/push.rs	pin waived	-	1
 src/push.rs	pin would be unreachable	tests/push_test.rs	1
-src/push.rs	protected declared	-	1
+src/push.rs	protected declared	tests/branch_rename_test.rs	1
 src/push.rs	protected declared mode	-	1
 src/push.rs	publish no pin	-	1
 src/push.rs	publish records rejected	-	1
 src/push.rs	publish withheld	-	3
 src/push.rs	push-branch diverged	tests/push_test.rs	1
 src/push.rs	push-branch unconfirmed	-	1
+src/push.rs	unparseable-project at	tests/deletion_rule_test.rs	1
 src/push_branch.rs	push-branch ahead	-	1
 src/push_branch.rs	push-branch behind	-	1
 src/push_branch.rs	push-branch diverged	tests/push_test.rs	1
@@ -223,7 +225,7 @@ src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/sync.rs	no-such-workweave	-	1
 src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
-src/sync.rs	protected declared	-	1
+src/sync.rs	protected declared	tests/branch_rename_test.rs	1
 src/sync.rs	resume-contradicts-record	-	3
 src/sync.rs	stale-lock	tests/refusal_arrival_test.rs	4
 src/sync.rs	target-diverged-mid-op	-	1

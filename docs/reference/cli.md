@@ -534,7 +534,7 @@ From a detached project repo a spelling is required and `<W>` starts at its HEAD
 
 ### `rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]`
 
-Write the record of `<W>`, the project repo's checked-out branch when none is named, and nothing else: no branch moves and no checkout changes. `<W>` must exist locally or on a remote as last fetched (`name` `no-such-branch` otherwise). The mode is always the last word, so a branch named `declared` is still a branch when two words are given.
+Write the record of `<W>`, the project repo's checked-out branch when none is named. Where this workspace has `<W>` checked out, its members then re-align to the new record as `rwv update` aligns them; another workspace on `<W>` is not touched. `<W>` must exist locally or on a remote as last fetched (`name` `no-such-branch` otherwise). The mode is always the last word, so a branch named `declared` is still a branch when two words are given.
 
 | Mode | Takes |
 |---|---|

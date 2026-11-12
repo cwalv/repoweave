@@ -265,12 +265,14 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 |---|---|---|
 | `here` | the project's `rwv.toml` at the checked-out tip names member-entry keys an earlier release wrote, each listed with the key that replaces it | every verb that reads the project's `rwv.toml`; `rwv doctor` reports it instead, and `rwv status` and `rwv prime` skip the project with a warning |
 | `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv sync-to`, when the project does not load after the project repo is replayed; `rwv doctor` reports it for every project |
+| `at` | the `rwv.toml` at the tip of a live branch the verb acts on, not the checked-out one, names member-entry keys an earlier release wrote or does not parse, with the parser's error | the verbs that act on that branch |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `here` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | here | commits only the rewrite; other edits stay uncommitted |
+| `at` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | where `<b>` is checked out | commits only the rewrite; other edits stay uncommitted |
 
 **Where this sits.** [Formats](./formats.md) states the member-entry keys; [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.
 
