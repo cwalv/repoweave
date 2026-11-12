@@ -188,11 +188,12 @@ fn take_within(
     loop {
         match path.create(&bytes) {
             Ok(()) => {
+                sweep_dead_takeovers(path.dir(), &mine);
                 return Ok(LandingClaim {
                     path,
                     op: op.clone(),
                     held_before: false,
-                })
+                });
             }
             Err(CreateNewError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::create_dir_all(path.dir())
@@ -206,10 +207,12 @@ fn take_within(
             }
             Err(CreateNewError::AlreadyExists) => {}
         }
-        let Ok(seen) = path.read() else {
-            continue;
+        let seen = match path.read() {
+            Ok(seen) => seen,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => e.to_string().into_bytes(),
         };
-        let holder = match standing(&seen) {
+        let blocking = match standing(&seen) {
             Standing::Live(holder) if holder.op == *op => {
                 return Ok(LandingClaim {
                     path,
@@ -218,14 +221,17 @@ fn take_within(
                 })
             }
             Standing::Dead(dead) => {
-                if take_over(&path, &seen, &dead, &mine)
+                match remove_dead(&path.dir().join(LANDING_CLAIM_FILE), &seen, &dead.op, &mine)
                     .with_context(|| format!("failed to take over the dead claim {path}"))?
                 {
-                    continue;
+                    None => continue,
+                    Some(blocking) => blocking,
                 }
-                Ok(dead)
             }
-            Standing::Live(holder) => Ok(holder),
+            other => other,
+        };
+        let holder = match blocking {
+            Standing::Live(holder) | Standing::Dead(holder) => Ok(holder),
             Standing::Unread(text) => Err(text),
         };
         let progress = match &holder {
@@ -269,66 +275,109 @@ fn take_within(
     }
 }
 
-/// The lock a taker holds while it removes the dead claim `dead` held, beside
-/// the claim. Only its holder removes a claim reading `seen`, and a claim
-/// cannot change while it reads `seen`: no create succeeds on an occupied
-/// path, and the dead op it names releases nothing. So the read and the
-/// removal under the lock are one step to every other taker. A lock whose
-/// holder is dead is passed over for one a level up, named after that holder
-/// as well, so no lock is ever removed except by its own holder.
-fn take_over(path: &StatePath, seen: &[u8], dead: &Holder, mine: &Holder) -> anyhow::Result<bool> {
-    let mut lock = path
-        .dir()
-        .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
+/// Remove `path`, which read `seen` when it was judged to name the dead op
+/// `dead`, under the guard `<path>.takeover.<dead>` that `mine` creates
+/// exclusively: only the guard's holder removes `path`, and only while it
+/// still reads `seen`. While it reads `seen` nothing can replace it (no create
+/// succeeds on an occupied path, and its dead op releases nothing), so the
+/// re-read and the removal under the guard are one step to every other
+/// remover. A guard whose holder is dead is itself removed this way first.
+/// Returns what blocks the removal: a guard another standing op holds, or
+/// one this rwv does not read.
+fn remove_dead(
+    path: &Path,
+    seen: &[u8],
+    dead: &OpId,
+    mine: &Holder,
+) -> anyhow::Result<Option<Standing>> {
+    let guard = guard_of(path, dead);
     loop {
-        match crate::durable_file::create_new(&lock, &mine.bytes()?) {
+        match crate::durable_file::create_new(&guard, &mine.bytes()?) {
             Ok(()) => break,
             Err(CreateNewError::AlreadyExists) => {}
             Err(CreateNewError::Io(e)) => return Err(e.into()),
         }
-        let Ok(held) = std::fs::read(&lock) else {
-            continue;
+        let held = match std::fs::read(&guard) {
+            Ok(held) => held,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Ok(Some(Standing::Unread(e.to_string()))),
         };
         match standing(&held) {
             Standing::Live(holder) if holder.op == mine.op => break,
             Standing::Dead(holder) => {
-                let mut name = lock.into_os_string();
-                name.push(format!(".{}", holder.op));
-                lock = name.into();
+                if let Some(blocking) = remove_dead(&guard, &held, &holder.op, mine)? {
+                    return Ok(Some(blocking));
+                }
             }
-            Standing::Live(_) | Standing::Unread(_) => return Ok(false),
+            blocking => return Ok(Some(blocking)),
         }
     }
     crate::test_pause::point("landing-claim-takeover");
-    if path.read().is_ok_and(|now| now == seen) {
-        match path.remove() {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
+    if std::fs::read(path).is_ok_and(|now| now == seen) {
+        crate::durable_file::remove_named(path)?;
     }
-    crate::durable_file::remove_named(&lock)?;
-    Ok(true)
+    crate::durable_file::remove_named(&guard)?;
+    Ok(None)
 }
 
-/// Remove each takeover lock in `dir` that `op` holds, left by a landing
+fn guard_of(path: &Path, dead: &OpId) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(format!(".{TAKEOVER}.{dead}"));
+    name.into()
+}
+
+const TAKEOVER: &str = "takeover";
+
+/// Whether `name` spells a takeover guard beside the claim: the claim's file
+/// name followed by one or more `.takeover.<op>`.
+fn is_takeover_guard(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(LANDING_CLAIM_FILE) else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('.').collect();
+    parts.len() >= 3
+        && parts.len() % 2 == 1
+        && parts[0].is_empty()
+        && parts[1..]
+            .chunks(2)
+            .all(|pair| pair[0] == TAKEOVER && pair[1].parse::<OpId>().is_ok())
+}
+
+fn takeover_guards(dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| is_takeover_guard(&entry.file_name().to_string_lossy()))
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Remove each takeover guard in `dir` whose holder is dead: one left by a
+/// taker whose op ended without removing it. Run by a landing that just took
+/// the claim; a guard it cannot remove is left for the next.
+fn sweep_dead_takeovers(dir: &Path, mine: &Holder) {
+    for guard in takeover_guards(dir) {
+        let Ok(held) = std::fs::read(&guard) else {
+            continue;
+        };
+        if let Standing::Dead(holder) = standing(&held) {
+            let _ = remove_dead(&guard, &held, &holder.op, mine);
+        }
+    }
+}
+
+/// Remove each takeover guard in `dir` that `op` holds, left by a landing
 /// killed while it took over a dead claim.
 fn release_takeovers_held_by(dir: &Path, op: &OpId) -> anyhow::Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    let prefix = format!("{LANDING_CLAIM_FILE}.takeover.");
-    for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
-            continue;
-        }
-        let lock = entry.path();
-        if std::fs::read(&lock)
+    for guard in takeover_guards(dir) {
+        if std::fs::read(&guard)
             .ok()
             .and_then(|held| Holder::parse(&held))
             .is_some_and(|holder| holder.op == *op)
         {
-            crate::durable_file::remove_named(&lock)?;
+            crate::durable_file::remove_named(&guard)?;
         }
     }
     Ok(())
@@ -440,6 +489,10 @@ mod tests {
         assert!(!path.exists());
     }
 
+    fn file_of(path: &StatePath) -> std::path::PathBuf {
+        path.dir().join(LANDING_CLAIM_FILE)
+    }
+
     fn holder(op: OpId, owner: &Path) -> Holder {
         Holder {
             op,
@@ -462,12 +515,20 @@ mod tests {
         let live = tmp.path().join("live");
         std::fs::create_dir_all(&live).unwrap();
         record(&live, &op(2));
-        assert!(take_over(&path, &seen, &dead, &holder(op(2), &live)).unwrap());
+        assert!(
+            remove_dead(&file_of(&path), &seen, &dead.op, &holder(op(2), &live))
+                .unwrap()
+                .is_none()
+        );
         let _held = take_within(path.clone(), "t", &op(2), &live, Duration::ZERO).unwrap();
         let late = tmp.path().join("late");
         std::fs::create_dir_all(&late).unwrap();
         record(&late, &op(3));
-        assert!(take_over(&path, &seen, &dead, &holder(op(3), &late)).unwrap());
+        assert!(
+            remove_dead(&file_of(&path), &seen, &dead.op, &holder(op(3), &late))
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
     }
 
@@ -505,6 +566,62 @@ mod tests {
         record(&next, &op(3));
         take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(3));
+    }
+
+    #[test]
+    fn a_takeover_guard_whose_taker_died_is_removed_by_the_next_take() {
+        let tmp = crate::tempdir().unwrap();
+        let path = claim_in(tmp.path());
+        std::fs::create_dir_all(path.dir()).unwrap();
+        let died = tmp.path().join("died");
+        std::fs::create_dir_all(&died).unwrap();
+        let guard = guard_of(&file_of(&path), &op(1));
+        crate::durable_file::create_new(&guard, &holder(op(2), &died).bytes().unwrap()).unwrap();
+        let nested = guard_of(&guard, &op(4));
+        crate::durable_file::create_new(&nested, &holder(op(4), &died).bytes().unwrap()).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(&next).unwrap();
+        record(&next, &op(3));
+        take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
+        assert!(!guard.exists(), "the dead taker's guard is gone");
+        assert!(!nested.exists(), "a dead guard on a guard is gone");
+        assert_eq!(
+            takeover_guards(path.dir()),
+            Vec::<std::path::PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn a_takeover_guard_a_stopped_op_holds_is_waited_on_and_named() {
+        let tmp = crate::tempdir().unwrap();
+        let (path, _, dead) = dead_claim(tmp.path());
+        let stopped = tmp.path().join("stopped");
+        std::fs::create_dir_all(&stopped).unwrap();
+        record(&stopped, &op(2));
+        let guard = guard_of(&file_of(&path), &dead.op);
+        crate::durable_file::create_new(&guard, &holder(op(2), &stopped).bytes().unwrap()).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(&next).unwrap();
+        record(&next, &op(3));
+        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::StateClaimHeld));
+        assert!(
+            format!("{refused:#}").contains(&format!("op {}", op(2))),
+            "the refusal names the guard's holder: {refused:#}"
+        );
+        assert!(guard.exists());
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
+    }
+
+    #[test]
+    fn only_a_claims_takeover_guards_read_as_guards() {
+        assert!(is_takeover_guard(".rwv-landing.lock.takeover.12"));
+        assert!(is_takeover_guard(
+            ".rwv-landing.lock.takeover.12.takeover.7"
+        ));
+        assert!(!is_takeover_guard(".rwv-landing.lock.takeover.12.tmp.99.0"));
+        assert!(!is_takeover_guard(".rwv-landing.lock"));
+        assert!(!is_takeover_guard(".rwv-landing.lock.tmp.99.0"));
     }
 
     #[test]
