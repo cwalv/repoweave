@@ -7,7 +7,7 @@ It also means a branch ref checked out in one workspace can be moved from
 outside it, leaving that workspace's index and working tree describing the
 old commit. This joint defines the two flavors of that drift, the
 safe-to-fix classification rwv applies to them, and the invariant that
-makes auto-fix safe.
+makes refreshing it safe.
 
 ## How worktrees share state (and what they don't)
 
@@ -91,64 +91,81 @@ what differs.
 
 ## Safe-to-fix classification
 
-rwv treats drift as a first-class problem and offers `rwv doctor` /
-`rwv doctor --fix` for it (and applies the same fix automatically at
-the end of `rwv sync`). The interesting question is *what counts as
-safe to fix*.
+rwv repairs drift in three places: `rwv doctor --fix`, which reports it
+and refreshes it when asked; `rwv land`, which refreshes it in each
+checkout, in either workspace, whose edits it judges, before judging
+them; and the end of `rwv sync`, for each checkout the sync took in. The
+interesting question is *what counts as drift*.
 
-Auto-fixing index drift by stomping the index, or auto-fixing
-working-tree drift by checking out HEAD's tree, is fine *unless* the
-content rwv would overwrite is actually live work — staged changes the
-user authored, or edits to working-tree files the user is in the
-middle of writing.
+A checkout that differs from its HEAD is not evidence that its branch
+moved. A deleted file, a file returned to an earlier version, a staged
+`git revert --no-commit`, one file copied over another and a mode change
+each leave only content some commit already holds, and a staged revert
+leaves the index holding exactly the tree drift from the parent commit
+would. Content alone cannot tell those edits from drift, and replacing
+them would discard the operator's work. So rwv asks two questions, and
+refreshes only what both answer:
 
-rwv distinguishes the two cases at the blob level. For every file or
-index entry rwv would touch as part of fixing drift:
+- **Did the branch move under this checkout?** Every move a checkout
+  makes itself — a commit, a reset, a rebase, a revert, a stash, an
+  `update-ref` run in it — is recorded in its own `HEAD` reflog. A move
+  made from another worktree is not. So a checkout whose newest reflog
+  entry is a commit other than HEAD, and an ancestor of it, had its
+  branch moved forward from that commit (the *moved-from tip*) by
+  something else. Where the newest entry is HEAD, the branch moved
+  backward or sideways, HEAD is detached, or no reflog exists, nothing
+  moved under the checkout and every difference is an edit.
+- **Does this path still hold what the moved-from tip held?** The
+  classifier runs per path. A path the move changed whose index entry and
+  file both still hold the moved-from tip's content is stale: both take
+  HEAD's content, a file HEAD lacks removed. A path whose file already
+  holds HEAD's content and whose index entry the moved-from tip's is
+  stale in the index alone, and its entry is reset. A path the move did
+  not change is an edit. A path the move changed that something else
+  changed too is left as it stands: neither side can be dropped without
+  losing one.
 
-- **Safe class.** The content matches an *already-committed blob*
-  reachable in the object DAG. By construction, no information is
-  lost by replacing it with HEAD's blob — every byte already exists in
-  some commit. This is drift in the strict sense: stale stable
-  content, not live work.
-- **Live class.** The content does not match any committed blob.
-  Could be a staged change the user typed, a mid-edit save in the
-  working tree, an untracked file rwv shouldn't touch. Auto-fixing
-  here could silently discard user work.
+A file whose stat data changed but whose content did not reads as
+unchanged. Something on disk where the index lists nothing is never
+overwritten. Each refreshed file and each reset index entry is reported.
 
-`rwv doctor` reports both classes; `rwv doctor --fix` and the
-post-sync auto-refresh only touch the *safe* class. The live class is
-surfaced as a warning so the operator can resolve it intentionally —
-no silent overwrite, ever.
+`rwv doctor` reports the stale paths as `index-drift` and
+`working-tree-drift` `safe-to-fix`, and everything else as `live-staged`
+and `live-edits`; a checkout can carry both. `--fix` refreshes the
+stale paths and leaves the rest.
+
+`rwv land` judges each checkout's edits on what the refresh leaves, so
+drift is never refused as an edit and never listed under the choice that
+commits edits. A landing that goes ahead refreshes every such checkout. A
+landing that refuses changes nothing, except in a checkout whose own
+edits it refused: that checkout's drift is refreshed, so the commit or
+stash the refusal offers there cannot commit the old tip's content back
+over the move.
 
 ## The shared invariant
 
-The safety property is worth stating directly because everything else
-in this joint hangs off it:
+> rwv replaces a path only where its branch moved under the checkout and
+> the path still holds exactly what the moved-from tip held, a commit
+> reachable from HEAD. No uncommitted edit is ever silently discarded.
 
-> `rwv doctor --fix` and sync's post-refresh **only** replace content
-> that exactly matches an already-committed blob in the object DAG. No
-> user work is ever silently discarded.
-
-This is what makes auto-fix safe to apply mechanically. The classifier
-runs per-file (or per-index-entry); each item makes its own
-safe/live decision; the safe ones are remediated and the live ones are
-left alone.
-
-The invariant is checked at the blob-content level, not at file-path
-or timestamp level. That matters: a file the user touched but didn't
-actually change (a no-op edit and save) classifies as safe because its
-blob already exists. A file modified in any meaningful way classifies
-as live and is left alone.
+The classifier is one function that `rwv doctor --fix`, `rwv land` and
+`rwv sync` share. Each path makes its own decision; the stale ones are
+refreshed and the rest are left alone. A file the user touched but did
+not change reads as unchanged; a file changed in any way reads as live.
 
 ## What this means for everyday workflow
 
 Most users will rarely think about drift explicitly:
 
 - If a checked-out branch ref moves underneath a workspace and `git status`
-  shows phantom staged changes, run `rwv doctor --fix` (or let the next
-  `rwv sync` refresh it).
+  shows phantom staged changes, run `rwv doctor --fix`, or let the next
+  `rwv land` or `rwv sync` refresh it.
 - Build tools that read files seeing stale content is a *real* symptom
   of working-tree drift, not a build-tool bug. The fix is the same.
+- Running `git reset` in a drifted checkout records the move as the
+  checkout's own. What it leaves — files at the old tip, index at HEAD —
+  reads as an edit returning files to earlier content, and rwv leaves it
+  for you to commit or discard.
 - Tools that aggressively track file timestamps (some IDEs, some
   watchers) may notice ref movement and lag a moment catching up. That is
   unavoidable in the worktree model.
@@ -167,14 +184,16 @@ commit is intact, and only a workspace's index and files lag its ref.
   resulting drift.
 - rwv does not silently discard live content. Ever. Live work
   classifies as live; the operator decides.
+- rwv does not decide a path both the move and an edit changed. It is
+  left as it stands, with the edits.
 
 ## Related joints
 
 - [sync-semantics](./sync-semantics.md) — sync's Phase 3 disk
-  reconciliation runs the same auto-fix as `rwv doctor --fix` post
+  reconciliation runs the same classifier as `rwv doctor --fix` post
   Phase-2.
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree of
   workspaces that share each repo's refs, one branch per workspace.
-- [clone-topology](./clone-topology.md) — the safe/live classifier
-  asks "is this blob in the object DAG?" The tier-0 invariants are what
-  make "the" object DAG unambiguous.
+- [clone-topology](./clone-topology.md) — the moved-from tip the
+  classifier compares against is a commit in the shared object store.
+  The tier-0 invariants are what make that store unambiguous.

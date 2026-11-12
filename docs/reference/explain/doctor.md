@@ -624,14 +624,14 @@ Schema:
       "description": "How a stale index should be treated.",
       "oneOf": [
         {
-          "description": "Index tree matches the tree of some recent ancestor commit. Safe to auto-fix with `git reset` — the displaced tree is permanently in the DAG.",
+          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
           "type": "string",
           "enum": [
             "safe-to-fix"
           ]
         },
         {
-          "description": "Index tree is not found in recent ancestor trees. The user has live staged content; `--fix` must not touch this.",
+          "description": "An index entry differs from HEAD for a reason the move does not account for: a staged change, or a path both the move and the user changed. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-staged"
@@ -2747,14 +2747,14 @@ Schema:
       "description": "How stale working-tree files should be treated.",
       "oneOf": [
         {
-          "description": "All modified files' on-disk content matches blobs reachable from HEAD. Safe to restore with `git checkout HEAD -- <files>` — no work is lost.",
+          "description": "The checkout's branch moved forward under it, and a file the move changed, with its index entry, still holds the moved-from tip's content. `--fix` gives it HEAD's; no work is lost.",
           "type": "string",
           "enum": [
             "safe-to-fix"
           ]
         },
         {
-          "description": "At least one modified file has on-disk content not found in any recent ancestor's tree. The user has active edits; `--fix` must not touch this.",
+          "description": "A file differs from HEAD for a reason the move does not account for: an edit, whatever commit already holds its content, or a file both the move and the user changed. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-edits"

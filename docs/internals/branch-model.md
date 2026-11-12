@@ -519,7 +519,7 @@ citation base pinned this pair at `:289-323` and `:239-287`, which are the
 `"--hard"` entry and its neighbor — the entries were named correctly and
 located wrongly, and no sweep before this one checked the line against the
 `pattern:` it claimed.) Its clauses no longer consider only
-*working-tree clobber*: they cover `refresh_working_tree_to_head_if_safe`,
+*working-tree clobber*: they cover `refresh_paths_from_head`,
 `set_detached_head`, `attach_head_to`, and `clone_attached_at` — and the two
 attachment-changing ones are reachable only behind `DetachConsent` /
 `ReattachConsent`, which now have real minting callers in the CLI dispatch
@@ -2060,7 +2060,7 @@ landed — plus a seventh the implementation exposed.
    sibling worktree" are in `check.rs` (`:65`, `:73-74`), not one in
    `check.rs` and one in `git.rs` as an earlier version of this note had it
    `[V]`, and `sync.rs` repairs it every sync at its actual per-repo call
-   sites (`refresh_index_to_head_if_safe` / `refresh_working_tree_to_head_if_safe`,
+   sites (`refresh_drift_after`,
    `sync.rs:3802-3803`) `[V]` — but its *stated mechanism* cannot occur
    **through default porcelain or through any path rwv takes**. Operator
    `--force` / `symbolic-ref` is therefore the first concrete candidate for

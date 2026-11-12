@@ -1401,41 +1401,51 @@ A member's checkout, or the project repo's, is not where the checked-out project
 
 ### `index-drift`
 
-A repo's index does not match its HEAD tree — the silent stale index left
-when the branch a checkout is on is moved from outside it (by `git update-ref`
-run in another worktree of the same store, for one). See
-[Shared-refs drift](../explanation/joints/shared-refs-drift.md).
+A repo's index does not match its HEAD tree. Where the branch the checkout is
+on was moved forward from outside it (by `git update-ref` run in another
+worktree of the same store, for one), the index still holds the old tip's
+entries. Read path by path, as
+[Shared-refs drift](../explanation/joints/shared-refs-drift.md) describes; one
+checkout can carry both sub-kinds.
 
 #### `safe-to-fix`
 
-**Warning. Auto-fixable.** The index tree matches the tree of a recent
-ancestor commit, so the displaced tree is permanently in the commit graph.
+**Warning. Auto-fixable.** The checkout's branch moved forward under it, and
+at least one path the move changed still has the old tip's index entry, with
+a file holding the old tip's content or already HEAD's.
 
-**What to do:** `rwv doctor --fix` resets the index.
+**What to do:** `rwv doctor --fix` gives those paths HEAD's index entries and
+files, and reports each one.
 
 #### `live-staged`
 
-**Warning. Report-only.** The index tree is in no recent ancestor. You have
-live staged content, and `--fix` must not touch it.
+**Warning. Report-only.** At least one index entry differs from HEAD for a
+reason the branch's move does not account for: a staged change of yours, a
+staged deletion or revert included, or a path both the move and you changed.
+`--fix` does not touch it.
 
 **What to do:** commit or stash it, then re-run.
 
 ### `working-tree-drift`
 
-A repo's working-tree files do not match its HEAD tree, after the branch the
-checkout is on was moved from outside it, as for `index-drift`.
+A repo's working-tree files do not match its HEAD tree. Read path by path, as
+for `index-drift`.
 
 #### `safe-to-fix`
 
-**Warning. Auto-fixable.** Every modified file's on-disk content matches a
-blob reachable from HEAD, so nothing is lost by restoring.
+**Warning. Auto-fixable.** The checkout's branch moved forward under it, and
+at least one file the move changed, with its index entry, still holds the old
+tip's content, which a commit reachable from HEAD keeps.
 
-**What to do:** `rwv doctor --fix` restores the files.
+**What to do:** `rwv doctor --fix` gives those files HEAD's content, and
+reports each one.
 
 #### `live-edits`
 
-**Warning. Report-only.** At least one modified file's content is in no recent
-ancestor's tree. Those are your edits.
+**Warning. Report-only.** At least one file differs from HEAD for a reason the
+branch's move does not account for: your edit, whatever commit already holds
+its content (a deletion, a file returned to an earlier version, a copy, a mode
+change), or a file both the move and you changed. `--fix` does not touch it.
 
 **What to do:** commit or stash them, then re-run.
 

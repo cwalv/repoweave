@@ -108,8 +108,8 @@ pub enum CheckViolation {
         repo: RepoPath,
     },
 
-    /// A git repo's index does not match its HEAD tree (silent stale-index from
-    /// shared-ref advance in a sibling worktree).
+    /// A git repo's index does not match its HEAD tree: stale entries a
+    /// shared-ref advance from a sibling worktree left, or staged changes.
     IndexDrift {
         /// `None` for repos in the primary weave.
         workweave: Option<WorkweaveId>,
@@ -117,8 +117,8 @@ pub enum CheckViolation {
         kind: IndexDriftKind,
     },
 
-    /// A git repo's working-tree files do not match its HEAD tree (stale on-disk
-    /// content after shared-ref advance in a sibling worktree).
+    /// A git repo's working-tree files do not match its HEAD tree: stale files
+    /// a shared-ref advance from a sibling worktree left, or edits.
     WorkingTreeDrift {
         workweave: Option<WorkweaveId>,
         repo: RepoPath,
@@ -557,9 +557,9 @@ pub enum CheckViolation {
     ///
     /// When the canonical clone directory is removed out-of-band, git commands
     /// in the dependent worktree fail silently or with opaque errors — in
-    /// particular, `git diff-index HEAD` fails and the former catch-all arm in
-    /// `classify_working_tree_drift` would misattribute the failure as
-    /// `LiveEdits`. This variant surfaces the true root cause instead.
+    /// particular, `git diff-index HEAD` fails and the drift reading would
+    /// misattribute the failure as `LiveEdits`. This variant surfaces the true
+    /// root cause instead.
     ///
     /// Repair: `rwv update --project <p>` at the primary weave clones it again,
     /// and `rwv doctor --fix` there relinks this worktree. No auto-fix of the
@@ -1414,11 +1414,13 @@ pub enum RegistrationDirectoryKind {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum IndexDriftKind {
-    /// Index tree matches the tree of some recent ancestor commit. Safe to
-    /// auto-fix with `git reset` — the displaced tree is permanently in the DAG.
+    /// The checkout's branch moved forward under it, and a path the move
+    /// changed still has the moved-from tip's index entry. `--fix` gives it
+    /// HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.
     SafeToFix,
-    /// Index tree is not found in recent ancestor trees. The user has live
-    /// staged content; `--fix` must not touch this.
+    /// An index entry differs from HEAD for a reason the move does not
+    /// account for: a staged change, or a path both the move and the user
+    /// changed. `--fix` must not touch it.
     LiveStaged,
 }
 
@@ -1426,11 +1428,13 @@ pub enum IndexDriftKind {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkingTreeDriftKind {
-    /// All modified files' on-disk content matches blobs reachable from HEAD.
-    /// Safe to restore with `git checkout HEAD -- <files>` — no work is lost.
+    /// The checkout's branch moved forward under it, and a file the move
+    /// changed, with its index entry, still holds the moved-from tip's
+    /// content. `--fix` gives it HEAD's; no work is lost.
     SafeToFix,
-    /// At least one modified file has on-disk content not found in any recent
-    /// ancestor's tree. The user has active edits; `--fix` must not touch this.
+    /// A file differs from HEAD for a reason the move does not account for:
+    /// an edit, whatever commit already holds its content, or a file both the
+    /// move and the user changed. `--fix` must not touch it.
     LiveEdits,
 }
 

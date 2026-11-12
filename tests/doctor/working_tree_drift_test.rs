@@ -538,7 +538,10 @@ fn doctor_fix_leaves_edits_that_hold_committed_content() {
         stdout.contains("live staged") && stdout.contains("live edits"),
         "{stdout}"
     );
-    assert!(!stdout.contains("drift in"), "nothing is refreshed: {stdout}");
+    assert!(
+        !stdout.contains("drift in"),
+        "nothing is refreshed: {stdout}"
+    );
     assert_eq!(
         common::git_in(&ws.server_ww, &["status", "--porcelain"]),
         before
