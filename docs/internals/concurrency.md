@@ -100,6 +100,24 @@ tips the carry is about to move. Those claims are held until the op that
 carries ends (`feature_sync::act`, the landing's `cleanup`) or is aborted, and
 the refusal names the holder's own continue command, read from its record.
 
+Other rwv verbs respect a live claim (`refuse_moving_claimed` in
+`src/landing_claim.rs`): `rwv switch` (the branch it leaves and the one it
+opens), `rwv branch delete` and `rwv workweave delete` (through
+`deletion::Rule::open`), `rwv branch rename` (both names), `rwv branch
+set-mode`, `rwv member set-branch` (the project branch it commits to and the
+member branch it re-points), `rwv push` (each branch it publishes) and the
+refs `rwv update --remote` moves or settles each check, before they write,
+whether any branch they would move, delete, rename, re-point or publish is
+the target of a claim another op holds or a branch that op's record lands
+into or carries (`OwnerRecord::claimed_branches`), and refuse
+`state-claim-held`, naming the holder and its two exits. `rwv sync`, `rwv
+pull`, `rwv cherry-pick` and `rwv land` move only branches checked out in
+their own workspace, or under their own claim: a landing leases the workspace
+holding any branch it moves in a checkout, and `rwv switch` and `rwv member
+set-branch` refuse to open a claimed project or member branch, so they meet
+the lease. Raw git is left to each
+move's compare-and-swap.
+
 The claim names its op and the workspace holding the op's record (JSON). The
 record is written before the claim is taken and cleared only after it is
 released, so a claim whose workspace is here (it reads as a workspace root)
