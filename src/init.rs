@@ -431,7 +431,7 @@ fn resolve_adopt_source(source: &str) -> anyhow::Result<(CloneUrl, String)> {
     let parsed: RepoUrl = source.parse()?;
     if parsed.is_plain_path() {
         return Err(crate::registry::unresolvable_source(
-            "rwv init --adopt",
+            Some("rwv init --adopt"),
             source,
             None,
         ));

@@ -68,7 +68,7 @@ fn resolve_source(source: &str) -> anyhow::Result<registry::CloneUrl> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
     if parsed.is_plain_path() {
         return Err(registry::unresolvable_source(
-            "rwv clone",
+            Some("rwv clone"),
             source,
             Some(
                 "To bring up the members of a project already in this weave at \

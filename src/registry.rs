@@ -622,7 +622,7 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
                     id: RepoId::new("", project_name),
                 })
             } else {
-                Err(unresolvable_source("cannot resolve", s, None))
+                Err(unresolvable_source(None, s, None))
             }
         }
     }
@@ -630,10 +630,11 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
 
 /// The refusal for a source that is neither a URL nor a registry shorthand,
 /// naming both spellings it could have meant: a shorthand, whose first segment
-/// names the registry, and a `file://` URL for a local path. `other` is the
-/// verb's own further reading of a path, when it has one.
+/// names the registry, and a `file://` URL for a local path, spelled as the
+/// command `verb` would take it. `other` is the verb's own further reading of
+/// a path, when it has one.
 pub(crate) fn unresolvable_source(
-    lead: &str,
+    verb: Option<&str>,
     source: &str,
     other: Option<String>,
 ) -> anyhow::Error {
@@ -642,12 +643,16 @@ pub(crate) fn unresolvable_source(
         .filter(|r| r.matches(&format!("{}/o/r", r.name().as_str())).is_some())
         .map(|r| r.name().as_str().to_owned())
         .collect();
+    let file_url = file_url_suggestion(source);
+    let (lead, spelled) = match verb {
+        Some(verb) => (verb.to_owned(), format!("{verb} {file_url}")),
+        None => ("cannot resolve".to_owned(), file_url),
+    };
     let mut message = format!(
         "{lead}: '{source}' is neither a URL nor a registry shorthand. A shorthand names its \
          registry first, `<registry>/<owner>/<repo>`, where <registry> is one of {}. A local \
-         path is spelled as a URL: `{}`.",
+         path is spelled as a URL: `{spelled}`.",
         shorthand_registries.join(", "),
-        file_url_suggestion(source),
     );
     if let Some(other) = other {
         message.push(' ');
@@ -1108,8 +1113,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_to_clone_info_two_part_shorthand() {
-        let info = resolve_to_clone_info(&parse("cwalv/repoweave")).unwrap();
+    fn resolve_to_clone_info_registry_shorthand() {
+        let info = resolve_to_clone_info(&parse("github/cwalv/repoweave")).unwrap();
         assert_eq!(
             info.url.to_string(),
             "https://github.com/cwalv/repoweave.git"

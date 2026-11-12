@@ -245,8 +245,9 @@ fn clone_refuses_a_plain_path_source_and_names_the_file_url_spelling() {
         let stderr = stderr_of(&out);
         assert_eq!(out.status.code(), Some(1), "{source}: {stderr}");
         assert!(
-            stderr.contains(&format!("'{source}' is a plain path"))
-                && stderr.contains("rwv clone file://<absolute path>")
+            stderr.contains(&format!(
+                "'{source}' is neither a URL nor a registry shorthand"
+            )) && stderr.contains("rwv clone file://<absolute path>")
                 && stderr.contains("rwv explain unresolvable-repo-source"),
             "{source}: the refusal names the source, the URL spelling and its page:\n{stderr}"
         );

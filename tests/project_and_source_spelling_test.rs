@@ -405,6 +405,7 @@ fn update_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file(
 
     let spelled = stderr
         .split_whitespace()
+        .map(|w| w.trim_start_matches('`'))
         .find(|w| w.starts_with("file://"))
         .map(|w| w.trim_end_matches([')', '`', ',', '.']))
         .expect("the refusal names the file:// spelling");

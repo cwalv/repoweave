@@ -303,7 +303,7 @@ pub fn run_add(
         Err(crate::registry::PlacementError::Invalid(e)) => return Err(e.into()),
         Err(crate::registry::PlacementError::NoMatch) if !parsed_url.is_url() => {
             return Err(crate::registry::unresolvable_source(
-                "rwv member add",
+                Some("rwv member add"),
                 url,
                 Some(format!(
                     "To register the clone already at that path under the weave root: \
