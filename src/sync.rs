@@ -9180,8 +9180,9 @@ fn refuse_moved_target(
         ));
     }
     lines.push(
-        "  end the operation leaving the target as it stands, the source restored, a commit only \
-         a savepoint of the target reached kept as a backup first:\n\trwv abort --leave-target"
+        "  end the operation leaving the target as it stands, the source restored, each tip this \
+         landing wrote there kept as a backup first where no branch reaches it:\n\trwv abort \
+         --leave-target"
             .to_owned(),
     );
     eprintln!("\nrecovery options:\n{}", lines.join("\n"));
@@ -9293,8 +9294,11 @@ fn abort_leaving_target(
 }
 
 /// Leave a landing's target as it stands: each tip the landing wrote there,
-/// which the target's lock may pin, and each savepoint's tip is kept as a
-/// backup where no branch reaches it, then the savepoints are dropped.
+/// which the target's lock may pin, is kept as a backup where no branch
+/// reaches it, then the target's savepoints are dropped. Each savepoint's tip
+/// is one the landing composed onto, so the tip it wrote holds it, or one
+/// the source's own checkouts hold, since a landing starts only from a target
+/// its pins describe.
 fn leave_target(
     record: &op_state::OwnerRecord,
     standing: &TargetStanding,
@@ -9337,10 +9341,10 @@ fn leave_target(
         }
     }
     let target_key = SavepointKey::LandTarget(record.id.clone());
-    let mut dirs: Vec<(RepoKey, PathBuf)> = stores
+    let mut dirs: Vec<PathBuf> = stores
         .workspaces
         .iter()
-        .map(|ws| (RepoKey::Project, project_dir(ws, project)))
+        .map(|ws| project_dir(ws, project))
         .collect();
     for (path, vcs_type) in &members.0 {
         let member_vcs = OpMembers::vcs(*vcs_type);
@@ -9349,8 +9353,7 @@ fn leave_target(
                 .target
                 .iter()
                 .map(|t| t.as_path().join(path.as_path()))
-                .chain(stores.dir(member_vcs.as_ref(), path))
-                .map(|dir| (RepoKey::Member(path.clone()), dir)),
+                .chain(stores.dir(member_vcs.as_ref(), path)),
         );
     }
     let in_place_key = SavepointKey::LandInPlace(record.id.clone());
@@ -9360,50 +9363,18 @@ fn leave_target(
             .iter()
             .filter_map(|(repo, receiving)| match (repo, &receiving.moves) {
                 (RepoKey::Member(path), op_state::Moves::InPlace { workspace }) => {
-                    Some((repo.clone(), workspace.join(path.as_path())))
+                    Some(workspace.join(path.as_path()))
                 }
                 _ => None,
             })
     });
-    let keyed = dirs
+    for (dir, key) in dirs
         .into_iter()
-        .map(|(repo, dir)| (repo, dir, &target_key))
-        .chain(in_place.map(|(repo, dir)| (repo, dir, &in_place_key)))
-        .collect::<Vec<_>>();
-    for (repo, dir, key) in keyed {
-        if !vcs.is_repo(&dir) {
-            continue;
-        }
-        let named = RepoOperand::of(&repo, project);
-        let checkout = vcs.resolve_savepoint(&dir, key).map(|saved| {
-            (
-                vcs.head_backup_source(&dir)
-                    .unwrap_or(crate::vcs::BackupSource::DetachedHead),
-                saved.id().clone(),
-            )
-        });
-        let branches = match vcs.ref_savepoints(&dir, key) {
-            Ok(saved) => saved,
-            Err(e) => {
-                eprintln!("  {named}: could not read its branch savepoints: {e:#}");
-                tally.any_failure = true;
-                continue;
-            }
-        };
-        let kept = checkout
-            .into_iter()
-            .chain(
-                branches
-                    .into_iter()
-                    .map(|saved| (crate::vcs::BackupSource::Branch(saved.branch), saved.at)),
-            )
-            .try_for_each(|(source, at)| keep_unreached(vcs.as_ref(), &dir, &source, &at, &named));
-        match kept {
-            Ok(()) => vcs.drop_savepoint(&dir, key),
-            Err(e) => {
-                eprintln!("  {named}: {e:#}");
-                tally.any_failure = true;
-            }
+        .map(|dir| (dir, &target_key))
+        .chain(in_place.map(|dir| (dir, &in_place_key)))
+    {
+        if vcs.is_repo(&dir) {
+            vcs.drop_savepoint(&dir, key);
         }
     }
 }

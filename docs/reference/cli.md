@@ -558,7 +558,7 @@ Roll an in-flight `sync` or `land` back to its savepoints in every workspace the
 | Flag | Effect |
 |---|---|
 | `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `projects/<name>` for the project repo (the project of the op in progress; another project's repo is refused). The abandoned commits are first kept as a backup marked `abandoned`, which [`rwv backup list`](#rwv-backup-list---json) shows and `rwv backup drop` drops. |
-| `--leave-target` | End a landing whose target something else moved since (another landing built on it, a commit, a deletion, a checkout abort may not move): the source is restored and the whole target left as it stands, each tip the landing wrote there and each savepoint's tip first kept as a backup where no branch reaches it, the target's savepoints dropped. Refused where abort can restore the target, and for an operation that is not a landing. |
+| `--leave-target` | End a landing whose target something else moved since (another landing built on it, a commit, a deletion, a checkout abort may not move): the source is restored and the whole target left as it stands, each tip the landing wrote there first kept as a backup where no branch reaches it, the target's savepoints dropped. Refused where abort can restore the target, and for an operation that is not a landing. |
 
 Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset, and the refusal writes nothing. A restore over the op's own tips writes no backup either: what abort throws away is what the op made.
 

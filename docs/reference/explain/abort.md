@@ -112,8 +112,8 @@ moves, naming each and the commits on it since, and prints the choices:
 - `rwv land --continue`, from the landing's workspace, where the landing
   stopped in its retire: the landing stands and the retire finishes;
 - `rwv abort --leave-target`: the source is restored and the landing ends,
-  its whole target left as it stands. Each tip the landing wrote there, and
-  each savepoint's tip, is kept as a backup first where no branch reaches it;
+  its whole target left as it stands. Each tip the landing wrote there is
+  kept as a backup first where no branch reaches it;
   the target's savepoints are dropped and the landing's claim and leases end.
   It is refused, before anything moves, where abort can restore the target,
   and for an operation that is not a landing.
