@@ -321,9 +321,7 @@ fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<Source> {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
-    let primary = vcs
-        .store_of(dest)
-        .and_then(|store| store.parent().map(Path::to_path_buf));
+    let primary = vcs.main_checkout(dest);
     let mut found: Vec<(bool, bool, PathBuf)> = vcs
         .list_worktrees(dest)
         .unwrap_or_default()

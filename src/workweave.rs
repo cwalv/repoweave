@@ -2978,10 +2978,7 @@ fn collect_diverged_paths(
         // worktree. Under tier-0 violations the canonical store for the
         // workweave checkout differs from the baseline's canonical store,
         // and we conservatively decline to vouch — see below.
-        let wt_canonical = match vcs
-            .store_of(wt)
-            .and_then(|s| s.parent().map(CanonicalPath::of))
-        {
+        let wt_canonical = match vcs.main_checkout(wt).map(|main| CanonicalPath::of(&main)) {
             Some(p) => p,
             None => {
                 diverged.push(format!(
@@ -3005,8 +3002,8 @@ fn collect_diverged_paths(
             // workweave checkout's, treat as not-vouched-by-this-baseline
             // and let the operator run `rwv doctor`.
             let base_canonical = match vcs
-                .store_of(&canonical)
-                .and_then(|s| s.parent().map(CanonicalPath::of))
+                .main_checkout(&canonical)
+                .map(|main| CanonicalPath::of(&main))
             {
                 Some(p) => p,
                 None => continue,
@@ -3123,8 +3120,8 @@ pub(crate) fn resolved_worktree_parent(
         return CanonicalPath::of(fallback);
     }
     match vcs
-        .store_of(checkout)
-        .and_then(|s| s.parent().map(CanonicalPath::of))
+        .main_checkout(checkout)
+        .map(|main| CanonicalPath::of(&main))
     {
         Some(p) => p,
         None => CanonicalPath::of(fallback),
@@ -3165,8 +3162,8 @@ fn refuse_if_checkouts_host_foreign_worktrees(
             return;
         }
         let canonical = match vcs
-            .store_of(checkout)
-            .and_then(|s| s.parent().map(CanonicalPath::of))
+            .main_checkout(checkout)
+            .map(|main| CanonicalPath::of(&main))
         {
             Some(p) => p,
             None => return, // not a repo; nothing to host

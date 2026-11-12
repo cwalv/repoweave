@@ -614,6 +614,23 @@ pub fn commondir_target(git_dir: &Path) -> Option<PathBuf> {
     })
 }
 
+/// The clone directory a linked worktree at `repo` names through its link,
+/// read from the filesystem alone, so it answers when that clone is gone;
+/// `None` for a checkout that owns its store, or one with no readable link.
+///
+/// The store is resolved from `commondir` when git's record of it survives,
+/// and from the `<store>/worktrees/<name>` layout when it does not. That
+/// second arm is not a shortcut: the `commondir` file lives inside the
+/// clone, so it is gone in precisely the situation a caller asks about.
+pub(crate) fn linked_clone_dir(repo: &Path) -> Option<PathBuf> {
+    let git_dir = match git_dir_link(repo)? {
+        GitDirLink::Owned(_) => return None,
+        GitDirLink::Linked(git_dir) => git_dir,
+    };
+    let store = commondir_target(&git_dir).or_else(|| store_above_worktree_dir(&git_dir))?;
+    Some(store.parent()?.to_path_buf())
+}
+
 /// The store directory above a per-worktree git dir, assuming the layout `git
 /// worktree add` writes: `<store>/worktrees/<name>` → `<store>`.
 ///
@@ -3127,6 +3144,38 @@ impl Vcs for GitVcs {
             return None;
         }
         Some(PathBuf::from(trimmed))
+    }
+
+    fn main_checkout(&self, checkout: &Path) -> Option<PathBuf> {
+        if !checkout.exists() {
+            return None;
+        }
+        let dirs = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-dir",
+                "--git-common-dir",
+            ],
+            checkout,
+        )
+        .ok()?;
+        let [top, own, common] = dirs.lines().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        if CanonicalPath::of(Path::new(own)) == CanonicalPath::of(Path::new(common)) {
+            return Some(PathBuf::from(top));
+        }
+        let listing =
+            Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], checkout).ok()?;
+        let main = listing.split("\n\n").next()?;
+        if main.lines().any(|line| line == "bare") {
+            return None;
+        }
+        main.lines()
+            .find_map(|line| line.strip_prefix("worktree "))
+            .map(PathBuf::from)
     }
 
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {

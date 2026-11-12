@@ -7242,22 +7242,10 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
 /// - the `gitdir:` line cannot be parsed (defensive: caller should not skip
 ///   drift classification for unknowns)
 ///
-/// The store is resolved from `commondir` when git's record of it survives,
-/// and from the `<store>/worktrees/<name>` layout when it does not. That
-/// second arm is not a shortcut: the `commondir` file lives inside the
-/// canonical clone, so it is gone in precisely the situation this function
-/// exists to detect, and a resolution that only reads the filesystem answers
-/// `None` exactly when a finding is due.
+/// The reported path names the repo directory rather than its store, so it
+/// matches DanglingReference's repair target.
 pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
-    let git_dir = match crate::git::git_dir_link(repo)? {
-        crate::git::GitDirLink::Owned(_) => return None,
-        crate::git::GitDirLink::Linked(git_dir) => git_dir,
-    };
-    let store = crate::git::commondir_target(&git_dir)
-        .or_else(|| crate::git::store_above_worktree_dir(&git_dir))?;
-    // The reported path names the repo directory rather than its store, so it
-    // matches DanglingReference's repair target.
-    let canonical = store.parent()?;
+    let canonical = crate::git::linked_clone_dir(repo)?;
     if canonical.exists() {
         None
     } else {

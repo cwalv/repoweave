@@ -260,6 +260,10 @@ impl Vcs for FakeVcs {
         None
     }
 
+    fn main_checkout(&self, _checkout: &Path) -> Option<PathBuf> {
+        None
+    }
+
     fn resolve_local_branch_tip(
         &self,
         repo: &Path,

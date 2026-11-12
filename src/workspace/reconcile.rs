@@ -37,11 +37,11 @@ pub enum Policy {
 pub(crate) fn relation_primary(root: &Path, project: &ProjectName) -> Option<CanonicalPath> {
     let vcs = project_vcs();
     let checkout = project_dir(root, project);
-    let store = vcs.store_of(&checkout)?;
-    let clone = CanonicalPath::existing(store.parent()?).ok()?;
+    let clone = CanonicalPath::existing(&vcs.main_checkout(&checkout)?).ok()?;
     if clone.same_directory(&checkout) {
         return None;
     }
+    let store = vcs.store_of(&checkout)?;
     vcs.worktree_registration(&store, &checkout)
         .ok()
         .flatten()?;

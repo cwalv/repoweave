@@ -3424,13 +3424,23 @@ pub trait Vcs: Send + Sync {
     /// before equality when that matters — see `workweave.rs` call sites
     /// that compare against `checkout.canonicalize()`.
     ///
-    /// Callers that need the canonical clone *directory* (for operations
-    /// like `git worktree remove` that run in the repo root, not the
-    /// `.git/` subdir) should call `.parent()` on the returned path.
+    /// Where the store sits says nothing about which checkout owns it:
+    /// [`Vcs::main_checkout`] answers that.
     ///
     /// For git: runs `git rev-parse
     /// --path-format=absolute --git-common-dir` in `workspace`.
     fn store_of(&self, workspace: &Path) -> Option<PathBuf>;
+
+    /// The checkout that owns the store `checkout` draws from: `checkout`
+    /// itself when it is that checkout, another when `checkout` is linked to
+    /// it. `None` when `checkout` is no checkout, or its store has no
+    /// checkout of its own.
+    ///
+    /// For git: the checkout's own top level when its git dir is the common
+    /// dir, which holds wherever the clone keeps its store
+    /// (`--separate-git-dir` included); else the main worktree `git worktree
+    /// list` names first; none for a bare repo.
+    fn main_checkout(&self, checkout: &Path) -> Option<PathBuf>;
     /// List paths registered as worktrees of `repo` whose on-disk
     /// directories no longer exist. The administrative entries are still
     /// in the VCS state and will be dropped by [`worktree_prune`].

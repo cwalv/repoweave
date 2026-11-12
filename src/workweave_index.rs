@@ -135,9 +135,12 @@ pub fn legacy_index_path(primary_root: &Path, project: &ProjectName) -> StatePat
 /// must not land in another's.
 fn store_dir(primary_root: &Path, project: &ProjectName) -> Option<PathBuf> {
     let dir = project_dir(primary_root, project);
-    let store = project_vcs().store_of(&dir)?;
-    let clone = CanonicalPath::existing(store.parent()?).ok()?;
-    clone.same_directory(&dir).then_some(store)
+    let vcs = project_vcs();
+    let clone = CanonicalPath::existing(&vcs.main_checkout(&dir)?).ok()?;
+    clone
+        .same_directory(&dir)
+        .then(|| vcs.store_of(&dir))
+        .flatten()
 }
 
 /// Where the index file for `(primary_root, project)` lives; `None` when the
@@ -756,7 +759,7 @@ mod tests {
         let sha_path = clone.join("f");
         std::fs::write(&sha_path, "x").unwrap();
         let run = |args: &[&str]| {
-            let status = std::process::Command::new("git")
+            let status = crate::git::git_command_in_test()
                 .args(["-c", "user.name=t", "-c", "user.email=t@t"])
                 .args(args)
                 .current_dir(&clone)
@@ -779,6 +782,31 @@ mod tests {
             CanonicalPath::existing(&from_linked).unwrap(),
             CanonicalPath::existing(&clone.join(".git")).unwrap(),
             "a worktree's shared dir is the clone's own"
+        );
+    }
+
+    #[test]
+    fn a_clone_whose_store_sits_apart_from_it_keeps_the_index() {
+        let tmp = crate::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let clone = primary.join("projects/web-app");
+        std::fs::create_dir_all(&clone).unwrap();
+        let store = tmp.path().join("web-app.git");
+        let status = crate::git::git_command_in_test()
+            .args(["init", "-q", "--separate-git-dir"])
+            .arg(&store)
+            .arg(&clone)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let project = ProjectName::new("web-app").unwrap();
+
+        require_clone(&primary, &project).unwrap();
+        record(&primary, &project, "a");
+        assert!(read(&primary, &project).unwrap().is_some());
+        assert!(
+            StateFile::WorkweaveIndex.in_dir(&store).exists(),
+            "the index is kept in the clone's store, wherever that sits"
         );
     }
 
