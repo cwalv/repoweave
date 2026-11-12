@@ -878,3 +878,57 @@ fn json_under_two_workers_carries_the_pruned_member() {
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_one_member(envelope["members"].as_array().unwrap(), "pruned", &s1);
 }
+
+/// A landing that drops a member prunes the target's checkout of it; `rwv
+/// abort` after that leaves the checkout pruned and says so, with the verb that
+/// makes it again once the restored target lists it.
+#[test]
+fn abort_after_a_landing_pruned_a_dropped_member_in_the_target_names_the_checkout() {
+    let weave = weave();
+    add_and_commit(&weave.root, &weave.extra_url, "dependency");
+    let s1 = seat(&weave, &weave.root, "s1");
+    succeed(&s1, &["member", "remove", EXTRA, "--delete"]);
+    succeed(&s1, &["lock"]);
+    let project = project_dir(&s1);
+    common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
+    common::commit_staged(&project, "drop extra");
+
+    let mut land = common::rwv_std();
+    land.args([
+        "land",
+        "--retire",
+        "--allow-member-change",
+        EXTRA,
+        "--strategy",
+        "rebase",
+    ])
+    .current_dir(&s1);
+    let held = common::pause::Paused::spawn(land, "retire", &weave.root.join("..").join("pause"))
+        .expect("the landing is held before its retire");
+    if common::under(&weave.root, EXTRA).exists() {
+        let out = held.release();
+        panic!(
+            "the landing must have pruned the target's checkout of {EXTRA}:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    drop(held);
+
+    let out = run(&s1, &["abort"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains(&format!(
+            "{EXTRA}: its checkout here was pruned as the landing dropped it"
+        )) && stdout.contains("`rwv update`"),
+        "{stdout}"
+    );
+    assert!(names_extra(&weave.root));
+    succeed(&weave.root, &["update"]);
+    assert!(common::under(&weave.root, EXTRA).is_dir());
+}

@@ -6982,6 +6982,17 @@ fn restore_abort_workspace(
     let project_vcs = project_vcs();
     let mut members = OpMembers::default();
     members.take_project(project_dir, project, &restore_key);
+    if matches!(side, AbortSide::LandTarget) {
+        for repo_path in members.0.keys().filter(|path| {
+            !project.manifest.contains_repo(path) && !workspace_dir.join(path.as_path()).exists()
+        }) {
+            outln!(
+                "  {label}{}: its checkout here was pruned as the landing dropped it, and is not \
+                 made again; `rwv update` here makes it once the restored branch lists it",
+                RepoOperand::of(&RepoKey::Member(repo_path.clone()), &project.name)
+            );
+        }
+    }
     let repos = members
         .0
         .iter()
