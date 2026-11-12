@@ -71,7 +71,7 @@ impl LandOutcome {
         Some(LandJsonOutput {
             schema: LAND_JSON_SCHEMA_URL.to_owned(),
             source_workweave: coordinates.source_workweave,
-            target: WirePath::of(&coordinates.target),
+            target: coordinates.target.as_deref().map(WirePath::of),
             retired: self.retired.is_some(),
             survivors: self.survivors,
             resumed: self.resumed,

@@ -41,8 +41,10 @@ Add `--json` for a machine-readable envelope. To read a workweave from outside i
 
 ## Preconditions
 
-- The target must be checked out in a workspace: a target checked out nowhere
-  refuses, naming `rwv workweave create <ww> --branch <T>`.
+- A target checked out nowhere lands as refs: it and each receiving branch
+  move without a checkout, and a branch it declares beyond its pin refuses
+  (`pin` `unpinned`), naming the `rwv workweave create` that opens a
+  workspace on the target to record it in.
 - Every repo the landing moves, here and in the target's workspace, must be
   clean; under `--retire`, every checkout of the workweave, untracked files
   included.

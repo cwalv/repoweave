@@ -5266,11 +5266,10 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
     )
 }
 
-/// A landing that would run into nothing moves nothing: the target checked out
-/// in no workspace refuses until the landing as refs exists, naming the
-/// workweave that opens it, and the source's own refusals come in the same
-/// report: what retiring it refuses under `--retire`, and beside a target
-/// with no record or a project repo on no branch too.
+/// A target checked out in no workspace lands as refs, so what refuses such a
+/// landing is the source's own: its edits, what retiring it refuses under
+/// `--retire`, and beside a target with no record or a project repo on no
+/// branch too, each before anything moves.
 pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
     scenario(
         "land into a target checked out nowhere",
@@ -5280,20 +5279,16 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
             Step::git(&a(), Repo::Proj, &["switch", "--detach"]),
             Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib", "lib edited"),
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut))
-                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
-                .claim(Claim::OutputContains(
-                    "rwv workweave create <ww> --branch main",
-                ))
-                .claim(Claim::LocalStateUnchanged(ww("w"))),
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
             Step::git(
                 &ww("w"),
                 Repo::App,
                 &["checkout-index", "--prefix=copy-", "README"],
             ),
-            Step::rwv(&ww("w"), &["land", "--retire"])
-                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut))
-                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
                 .claim(Claim::Judged(Repo::App, State::EditsDirty))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(&ww("w"), &["land", "--target", "nosuch"])
@@ -5427,7 +5422,6 @@ pub fn land_refuses_a_record_retargeted_elsewhere() -> Scenario {
     steps.extend(feat_x_retargeted_on_b());
     let refused = |step: Step| {
         step.expect(Exit::refuses(Repo::Proj, State::TargetRecordChanged))
-            .claim(Claim::Judged(Repo::Proj, State::TargetNotCheckedOut))
             .claim(Claim::OutputContains("rwv update"))
             .claim(Claim::OutputContains(
                 "rwv branch set-mode feat-x feature --target main",
@@ -8733,8 +8727,9 @@ pub fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace() -> Sce
 }
 
 /// From the primary, a target checked out in a workweave refuses: the primary
-/// would switch onto it. Freeing the workweave's checkout as printed lets the
-/// landing reach the next thing it needs, a workspace with the target.
+/// would switch onto it. Freeing the workweave's checkout as printed, the
+/// target is checked out nowhere: it lands as refs, and the primary switches
+/// to it and aligns its members to its new pins.
 pub fn land_from_the_primary_refuses_a_target_in_a_workweave() -> Scenario {
     scenario(
         "land from the primary refuses a target in a workweave",
@@ -8763,8 +8758,21 @@ pub fn land_from_the_primary_refuses_a_target_in_a_workweave() -> Scenario {
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(&a(), &["workweave", "delete", "t", "--project", "proj"])
                 .expect(Exit::Succeeds),
-            Step::rwv(&a(), &["land", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut)),
+            lands_on_main(
+                Step::rwv(&a(), &["land", "--history", "linear"]),
+                Repo::App,
+                "feat-app",
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Proj,
+                branch: "main",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::App,
+            }),
         ],
     )
 }
@@ -9872,9 +9880,7 @@ pub enum ReceivingCase {
     Created,
 }
 
-/// The workspace `rwv abort` is first run in. The landing gave up the
-/// target's workspace before its retire, so from there it finds no operation
-/// and changes nothing, and the source's abort restores both.
+/// The workspace `rwv abort` is run in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbortFrom {
     Source,
@@ -9882,8 +9888,8 @@ pub enum AbortFrom {
 }
 
 /// A landing that changes `lib`'s declared branch to `lib-next` stops after the
-/// target's workspace aligned onto `lib-next`, and `rwv abort` runs from either
-/// workspace: the target's `lib` is switched back onto `main` at its pin,
+/// target's workspace aligned onto `lib-next`, before it releases the target,
+/// and `rwv abort` runs from either workspace: the target's `lib` is switched back onto `main` at its pin,
 /// `lib-next` is put back where it was (or deleted, where the landing created
 /// it) and never reset to `main`'s pin, and no commit is left on no ref.
 pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> Scenario {
@@ -9923,22 +9929,19 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
                 "--allow-member-change",
                 LIB,
             ],
-            "retire",
+            "landed",
             "landing",
         ),
         Step::kill("landing"),
         Step::git(&a(), Repo::Lib, &["branch", "--show-current"])
             .claim(Claim::OutputLine("lib-next")),
     ]);
-    if from == AbortFrom::Target {
-        steps.push(
-            Step::rwv(&a(), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
-                .claim(Claim::LocalStateUnchanged(a())),
-        );
-    }
+    let aborts_in = match from {
+        AbortFrom::Source => ww("w"),
+        AbortFrom::Target => a(),
+    };
     steps.push(
-        Step::rwv(&ww("w"), &["abort"])
+        Step::rwv(&aborts_in, &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
@@ -10001,6 +10004,273 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
         "abort after the target aligned onto a new receiving branch",
         steps,
     )
+}
+
+/// A landing stopped in its retire has moved the target and released it, so
+/// another landing may already build on it: `rwv abort` from the target's
+/// workspace finds no operation, and from the source ends the operation and
+/// restores nothing on either side. The landing stands, the source stays as it
+/// left it, and `land --retire` run again retires the workweave.
+pub fn abort_after_the_landing_released_its_target() -> Scenario {
+    let landed = |at: Place| Claim::Contains {
+        at,
+        repo: Repo::App,
+        rev: "main",
+        mark: "w-app",
+    };
+    scenario(
+        "abort after the landing released its target",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&a(), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("nothing is restored"))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(landed(a())),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w")))
+                .claim(landed(a())),
+        ],
+    )
+}
+
+/// The primary leaves every branch of `main`'s: its project repo and members
+/// detached, so `main` and each member's `main` are checked out nowhere.
+fn main_checked_out_nowhere() -> Vec<Step> {
+    [Repo::Proj, Repo::App, Repo::Lib]
+        .into_iter()
+        .map(|repo| Step::git(&a(), repo, &["switch", "-q", "--detach"]))
+        .collect()
+}
+
+fn lands_on_main(step: Step, repo: Repo, mark: &'static str) -> Step {
+    step.claim(Claim::Contains {
+        at: a(),
+        repo,
+        rev: "main",
+        mark,
+    })
+    .claim(Claim::PinContains {
+        site: LockSite::Branch(Store::Clone(Machine::A), Repo::Proj, "main".to_owned()),
+        member: repo,
+        mark,
+    })
+}
+
+/// `landing-as-refs`: `main` checked out nowhere. A seat lands into it as
+/// refs: `main` and each member's `main` move by compare-and-swap, no
+/// checkout moves, and the primary stays detached where it was.
+pub fn landing_as_refs() -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        lands_on_main(
+            lands_on_main(
+                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+                Repo::App,
+                "w-app",
+            ),
+            Repo::Lib,
+            "w-lib",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("as refs"))
+        .claim(Claim::WorkweaveGone(ww("w"))),
+        Step::git(&a(), Repo::Proj, &["branch", "--show-current"])
+            .claim(Claim::OutputLacks("main")),
+    ]);
+    scenario("landing as refs", steps)
+}
+
+/// `landing-as-refs-unpinned`: `main` checked out nowhere, its `lib` branch
+/// holding a raw commit beyond `main`'s pin. A seat landing only `app` work
+/// refuses `pin` unpinned for `lib` in `main`, naming the lock in a workspace
+/// on `main` and the `workweave create` that opens one; the seat's own
+/// unlocked `app` commit is not refused, its relock takes it. Following the
+/// printed choices, the landing then lands.
+pub fn landing_as_refs_unpinned() -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend([
+        Step::hand_commit(&a(), Repo::Lib, "main", &[("raw.txt", "raw\n")]),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
+            .claim(Claim::OutputContains(
+                "rwv workweave create main --branch main",
+            ))
+            .claim(Claim::OutputContains("rwv lock --commit"))
+            .claim(Claim::OutputLacks("app:"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv_printed(&ww("w"), "rwv workweave create").expect(Exit::Succeeds),
+        Step::rwv(&ww("main"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        lands_on_main(
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+            Repo::App,
+            "w-app",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w")))
+        .claim(Claim::Contains {
+            at: ww("main"),
+            repo: Repo::App,
+            rev: "HEAD",
+            mark: "w-app",
+        }),
+    ]);
+    scenario("landing as refs unpinned", steps)
+}
+
+/// `lost-race-abort`: a landing as refs has moved `app`'s `main` when the
+/// compare-and-swap of `lib`'s loses to a commit made there meanwhile. It
+/// stops with `target` moved mid-operation and the lost-race recovery;
+/// `--continue` refuses; `rwv abort` puts `app`'s `main` back from its
+/// savepoint and leaves `lib`'s where the race put it; the landing run again
+/// lands on the new tips.
+pub fn lost_race_abort() -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--history", "linear"],
+            "advance-target",
+            "landing",
+        ),
+        Step::hand_commit(&a(), Repo::Lib, "main", &[("raced.txt", "raced\n")]),
+        Step::release("landing")
+            .expect(Exit::refuses(Repo::Lib, State::TargetMovedMidOperation))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            }),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App])
+            .claim(Claim::OutputContains("restored")),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("w-app")),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "-1", "main"])
+            .claim(Claim::OutputLine("hand commit")),
+        lands_on_main(
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+            Repo::App,
+            "w-app",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("rebased"))
+        .claim(Claim::WorkweaveGone(ww("w"))),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputContains("w-lib"))
+            .claim(Claim::OutputContains("hand commit")),
+    ]);
+    scenario("lost race abort", steps)
+}
+
+/// Where `dc05` stops: a landing as refs killed once it composed, before or
+/// after its first move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dc05 {
+    /// Killed before any ref moved, then aborted.
+    BeforeTheMoveAborted,
+    /// Killed as it moves `app`'s `main`, then aborted.
+    AtTheMoveAborted,
+    /// Killed as it moves `app`'s `main`, then continued.
+    AtTheMoveContinued,
+    /// Killed once every ref moved, the project's `main` included, before it
+    /// released the target, then aborted.
+    LandedAborted,
+}
+
+/// `dc05-compose-in-source`: a landing as refs killed after it composed in
+/// the source. `rwv abort` restores the source and every ref the op moved;
+/// `--continue` completes the landing; either way no tip is left that the op
+/// record does not name, and the landing then lands.
+pub fn dc05_compose_in_source(stop: Dc05) -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(main_checked_out_nowhere());
+    let point = match stop {
+        Dc05::BeforeTheMoveAborted => "composed",
+        Dc05::AtTheMoveAborted | Dc05::AtTheMoveContinued => "advance-target",
+        Dc05::LandedAborted => "landed",
+    };
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(&ww("w"), &["land", "--history", "linear"], point, "landing"),
+        Step::kill("landing"),
+    ]);
+    let land = || {
+        lands_on_main(
+            lands_on_main(
+                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+                Repo::App,
+                "w-app",
+            ),
+            Repo::Lib,
+            "w-lib",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w")))
+    };
+    match stop {
+        Dc05::BeforeTheMoveAborted | Dc05::AtTheMoveAborted | Dc05::LandedAborted => {
+            steps.extend([
+                Step::rwv(&ww("w"), &["abort"])
+                    .expect(Exit::Succeeds)
+                    .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+                    .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+                Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                    .claim(Claim::OutputLacks("w-app")),
+                Step::git(&a(), Repo::Proj, &["log", "--format=%s", "-1", "main"])
+                    .claim(Claim::OutputLacks("auto-relock")),
+                Step::git(&ww("w"), Repo::App, &["log", "--format=%s", "-1"])
+                    .claim(Claim::OutputLine("w-app")),
+                Step::rwv(&ww("w"), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("in progress")),
+                land(),
+            ])
+        }
+        Dc05::AtTheMoveContinued => steps.extend([lands_on_main(
+            lands_on_main(
+                Step::rwv(&ww("w"), &["land", "--continue"]),
+                Repo::App,
+                "w-app",
+            ),
+            Repo::Lib,
+            "w-lib",
+        )
+        .expect(Exit::Succeeds)]),
+    }
+    scenario("dc05: compose in source", steps)
 }
 
 /// What happens to a receiving branch the landing moves as a ref while the

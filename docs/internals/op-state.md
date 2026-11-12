@@ -61,7 +61,7 @@ missing a key fails to parse rather than defaulting.
 | `history` | The `--history` the op was run with for one run (`linear`, `merge`, `ff-only`), or `null`. It governs a repo only where the target records no `history` for it, and `--continue` re-applies it |
 | `project` | The project the op operates on. Both `source` and `target` are resolved under it; neither workspace's `.rwv-active` is consulted, since an operator may retarget a pointer while the op is parked. `rwv abort` reads it to know which manifest to enumerate on each side |
 | `source` | Absolute path of the source workspace |
-| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `land`: the named target workspace |
+| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `land`: the workspace that has the target checked out, or `null` where it is checked out nowhere and the landing moves it as refs (no workspace is leased then; the project repo's entry in `take_in.receiving` is `{"as-ref": {"create": false}}`) |
 | `retire` | Whether `--retire` was passed |
 | `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (land only) → `retire` (`--retire` only) |
 | `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root, or `(project)` for the project repo (the flag spelling `projects/<name>` is the operator's, and is not stored). Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |

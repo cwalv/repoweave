@@ -610,7 +610,14 @@ fn resumed_land_json_run_reports_the_op_not_the_invocation() {
          primary weave this resume was invoked from"
     );
     assert_eq!(
-        repoweave::path_spelling::resolve(Path::new(envelope.target.as_str())).ok(),
+        repoweave::path_spelling::resolve(Path::new(
+            envelope
+                .target
+                .as_ref()
+                .expect("a target workspace")
+                .as_str()
+        ))
+        .ok(),
         repoweave::path_spelling::resolve(&primary).ok(),
         "target must be the workspace the op recorded; the request carries none"
     );
@@ -652,7 +659,14 @@ fn resumed_land_json_run_reports_the_retire_that_did_not_run() {
          not an accident of the fixture"
     );
     assert_eq!(
-        repoweave::path_spelling::resolve(Path::new(envelope.target.as_str())).ok(),
+        repoweave::path_spelling::resolve(Path::new(
+            envelope
+                .target
+                .as_ref()
+                .expect("a target workspace")
+                .as_str()
+        ))
+        .ok(),
         repoweave::path_spelling::resolve(&primary).ok(),
         "target must be the workspace the op recorded; the request carries none"
     );

@@ -1115,7 +1115,7 @@ fn op_status(verb: OpVerb, phase: OpPhase) -> OpStatus {
         started_at: "2026-01-01T00:00:00Z".to_owned(),
         owner: wire("/ws"),
         source: wire("/ws/.workweaves/proj--feat-a"),
-        target: wire("/ws"),
+        target: Some(wire("/ws")),
         overrides: Vec::new(),
     }
 }
@@ -1961,7 +1961,9 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(LandJsonOutput {
                 schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
+                target: Some(repoweave::path_spelling::WirePath::of(
+                    std::path::Path::new("/ws"),
+                )),
                 retired: true,
                 survivors: survivors_of_every_reason(),
                 // Fresh run: the absent shape of the `resumed` disclosure.
@@ -1982,7 +1984,9 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(LandJsonOutput {
                 schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: None,
-                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
+                target: Some(repoweave::path_spelling::WirePath::of(
+                    std::path::Path::new("/ws"),
+                )),
                 retired: false,
                 survivors: Vec::new(),
                 // Resumed at replay (the common interruption, a step-1
@@ -2008,7 +2012,9 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(LandJsonOutput {
                 schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
+                target: Some(repoweave::path_spelling::WirePath::of(
+                    std::path::Path::new("/ws"),
+                )),
                 retired: false,
                 survivors: Vec::new(),
                 resumed: Some(OpPhase::Relock),
@@ -2028,7 +2034,9 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(LandJsonOutput {
                 schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
+                target: Some(repoweave::path_spelling::WirePath::of(
+                    std::path::Path::new("/ws"),
+                )),
                 retired: false,
                 survivors: Vec::new(),
                 resumed: Some(OpPhase::AdvanceTarget),
@@ -2048,7 +2056,9 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(LandJsonOutput {
                 schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
+                target: Some(repoweave::path_spelling::WirePath::of(
+                    std::path::Path::new("/ws"),
+                )),
                 retired: true,
                 survivors: Vec::new(),
                 resumed: Some(OpPhase::Retire),

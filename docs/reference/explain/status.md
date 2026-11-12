@@ -778,7 +778,6 @@ Schema:
         "phase",
         "source",
         "started_at",
-        "target",
         "verb"
       ],
       "properties": {
@@ -809,7 +808,15 @@ Schema:
           "type": "string"
         },
         "target": {
-          "$ref": "#/definitions/WirePath"
+          "description": "The workspace that has the landing's target checked out; absent where it is checked out nowhere and the landing moves it as refs.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "verb": {
           "$ref": "#/definitions/OpVerb"

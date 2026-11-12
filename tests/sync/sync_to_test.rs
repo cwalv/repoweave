@@ -835,7 +835,7 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
 }
 
 #[test]
-fn sync_to_refuses_when_target_project_repo_is_detached() {
+fn a_landing_into_a_target_checked_out_nowhere_moves_its_branches_as_refs() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
@@ -847,27 +847,26 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
     let project_main_before =
         common::git_in(&primary.project_dir, &["rev-parse", "refs/heads/main"]);
     common::git_in(&primary.project_dir, &["checkout", "--detach", "HEAD"]);
+    common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
-    let err_output = rwv()
+    rwv()
         .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = common::cli::refused(&err_output, State::TargetNotCheckedOut);
-    assert!(
-        stderr.contains("rwv workweave create <ww> --branch main"),
-        "the interim refusal opens the target in a workweave; got:\n{stderr}"
-    );
+        .success();
 
     assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "refs/heads/main"]),
+        c2,
+        "the member's `main`, checked out nowhere, moves as a ref"
+    );
+    assert_ne!(
         common::git_in(&primary.project_dir, &["rev-parse", "refs/heads/main"]),
         project_main_before,
-        "target project `main` must be untouched by a refused land"
+        "the project's `main`, checked out nowhere, moves as a ref"
     );
     common::assert_detached(&primary.project_dir);
-    common::assert_on_branch(&ww.project_dir, "ww/project");
+    common::assert_detached(&primary.server_dir);
 }
 
 // ---------------------------------------------------------------------------

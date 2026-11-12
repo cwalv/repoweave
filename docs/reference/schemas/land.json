@@ -12,8 +12,7 @@
     "placements",
     "refused",
     "reports",
-    "retired",
-    "target"
+    "retired"
   ],
   "properties": {
     "$schema": {
@@ -117,10 +116,13 @@
       }
     },
     "target": {
-      "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it.",
-      "allOf": [
+      "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it; null where the target is checked out nowhere and landed as refs.",
+      "anyOf": [
         {
           "$ref": "#/definitions/WirePath"
+        },
+        {
+          "type": "null"
         }
       ]
     }

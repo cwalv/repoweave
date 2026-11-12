@@ -17,8 +17,6 @@ use std::path::{Path, PathBuf};
 
 use crate::common;
 
-use repoweave::diagnosis::State;
-
 // ---------------------------------------------------------------------------
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
@@ -737,11 +735,11 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
 // 3. Friendly error replaces raw canonicalize on bare land
 // ===========================================================================
 
-/// A bare `rwv land` from a workweave whose parent vanished must emit
-/// friendly doctor-remediation text — NOT the raw `failed to canonicalize …
-/// (os error 2)`.
+/// A bare `rwv land` from a workweave whose parent vanished lands into the
+/// parent's branch, now checked out nowhere, as refs, never surfacing the raw
+/// `failed to canonicalize … (os error 2)`.
 #[test]
-fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
+fn a_landing_whose_target_workweave_was_removed_lands_as_refs() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
@@ -752,17 +750,12 @@ fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
     std::fs::remove_dir_all(&wwa.root).unwrap();
 
     let out = common::cli::run(&["land", "--history", "linear"], &wwb.root);
-    let stderr = common::cli::refused(&out, State::TargetNotCheckedOut);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
         "should NOT surface the raw canonicalize IO error; got:\n{stderr}"
     );
-    assert!(
-        stderr.contains(&format!(
-            "rwv workweave create <ww> --branch {PROJECT}--wwa"
-        )),
-        "{stderr}"
-    );
+    assert!(out.status.success(), "{stderr}");
 }
 
 // ===========================================================================

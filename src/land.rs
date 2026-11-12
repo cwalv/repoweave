@@ -36,8 +36,12 @@ pub struct Landing {
     pub feature: BranchName,
     /// The branch it lands into, `T`.
     pub target: BranchName,
-    /// The workspace that has `T` checked out.
-    pub target_workspace: PathBuf,
+    /// The workspace that has `T` checked out; none where `T` is checked out
+    /// nowhere, and the landing moves it and its receiving branches as refs.
+    pub target_workspace: Option<PathBuf>,
+    /// The primary, where it is the source and `T` is checked out nowhere: it
+    /// switches to `T` once `T` landed.
+    pub switches_primary: Option<PathBuf>,
     /// The newer of `T` and its upstream.
     pub target_tip: CommitId,
     /// `T`'s mode as its record holds it now.
@@ -47,6 +51,16 @@ pub struct Landing {
     /// The repos whose entries in `T` the landing may change, as
     /// `--allow-member-change` names them.
     pub allow_member_change: Vec<RepoOperand>,
+}
+
+impl Landing {
+    /// The workspace on `T` once the landing is done: `T`'s, or the primary
+    /// that switches to it; none where `T` stays checked out nowhere.
+    pub fn aligns(&self) -> Option<&Path> {
+        self.target_workspace
+            .as_deref()
+            .or(self.switches_primary.as_deref())
+    }
 }
 
 /// What [`judge`] planned.
@@ -290,6 +304,9 @@ pub fn resolve(
         project,
         feature,
         target,
+        switches_primary: (target_workspace.is_none()
+            && matches!(ctx.checkout, Checkout::Primary { .. }))
+        .then(|| ctx.primary_path().to_path_buf()),
         target_workspace,
         target_tip,
         target_mode: target_record.mode(),
@@ -465,16 +482,16 @@ fn judge_unrelated_target(
     ))
 }
 
-/// The workspace that has `target` checked out: never the source, and from
-/// the primary never a workweave, which a landing from the primary would
-/// leave on the branch the primary switches to.
+/// The workspace that has `target` checked out, none where nothing has: never
+/// the source, and from the primary never a workweave, which a landing from
+/// the primary would leave on the branch the primary switches to.
 fn target_checkout(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     dir: &Path,
     target: &BranchName,
     label: &str,
-) -> anyhow::Result<Result<PathBuf, Judged>> {
+) -> anyhow::Result<Result<Option<PathBuf>, Judged>> {
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
     let own = crate::path_spelling::CanonicalPath::of(dir);
@@ -484,14 +501,7 @@ fn target_checkout(
         .filter(|c| crate::path_spelling::CanonicalPath::of(c) != own)
         .collect();
     let Some(checkout) = checkouts.first() else {
-        return Ok(Err(State::TargetNotCheckedOut
-            .of(label)
-            .project_repo()
-            .subject(target)
-            .bind("<W>", target)
-            .checkout(dir)
-            .by_verb("land")
-            .judge(vcs)));
+        return Ok(Ok(None));
     };
     let at = crate::path_spelling::CanonicalPath::of(checkout);
     let root = checkout
@@ -522,7 +532,7 @@ fn target_checkout(
     if WorkspaceContext::resolve_for_project(&root, project).is_err() {
         return Ok(Err(raw()));
     }
-    Ok(Ok(root))
+    Ok(Ok(Some(root)))
 }
 
 /// The inputs a landing judges its members against: `W`'s `rwv.toml` and
@@ -721,11 +731,17 @@ pub fn judge(
         Some((&landing.feature, &landing.target)),
         report,
     )?;
-    let target_aligner = crate::alignment::Aligner::open(
-        &landing.target_workspace,
-        &landing.project,
-        crate::alignment::Accounting::default(),
-    )?;
+    let target_aligner = landing
+        .target_workspace
+        .as_deref()
+        .map(|workspace| {
+            crate::alignment::Aligner::open(
+                workspace,
+                &landing.project,
+                crate::alignment::Accounting::default(),
+            )
+        })
+        .transpose()?;
     let as_mode = landing.target_mode;
     let mut plan = Plan {
         landed_changes,
@@ -778,7 +794,7 @@ pub fn judge(
         let judging = Judging {
             landing,
             sides: &sides,
-            target_aligner: &target_aligner,
+            target_aligner: target_aligner.as_ref(),
             as_mode,
             one_run,
         };
@@ -1528,7 +1544,7 @@ fn judge_carried_pin(
                 now: receiving.as_str().to_owned(),
                 feature_pin,
                 commits,
-                checkout: landing.target_workspace.join(path.as_path()),
+                checkout: landing.aligns().map(|ws| ws.join(path.as_path())),
             });
         }
     }
@@ -1624,7 +1640,7 @@ fn judge_unmerged_pin(
 struct Judging<'a> {
     landing: &'a Landing,
     sides: &'a Sides,
-    target_aligner: &'a crate::alignment::Aligner,
+    target_aligner: Option<&'a crate::alignment::Aligner>,
     as_mode: Mode,
     one_run: Option<History>,
 }
@@ -1727,7 +1743,7 @@ fn judge_member(
                     now: receiving.as_str().to_owned(),
                     feature_pin: false,
                     commits,
-                    checkout: landing.target_workspace.join(path.as_path()),
+                    checkout: landing.aligns().map(|ws| ws.join(path.as_path())),
                 });
             }
         }
@@ -2000,13 +2016,24 @@ fn judge_receiving_checkout(
     landing: &Landing,
     member: &Member<'_>,
     receiving: &RawRefName,
-    target_aligner: &crate::alignment::Aligner,
+    target_aligner: Option<&crate::alignment::Aligner>,
     report: &mut Report,
 ) -> anyhow::Result<Moves> {
     let Member {
         path, entry, vcs, ..
     } = *member;
-    let there = landing.target_workspace.join(path.as_path());
+    let (Some(target_workspace), Some(target_aligner)) =
+        (landing.target_workspace.as_deref(), target_aligner)
+    else {
+        return Ok(
+            if judge_unheld_receiving(landing, member, receiving, report)? {
+                Moves::AsRef { create: false }
+            } else {
+                Moves::InCheckout
+            },
+        );
+    };
+    let there = target_workspace.join(path.as_path());
     if !vcs.is_repo(&there) {
         return Ok(Moves::InCheckout);
     }
@@ -2035,7 +2062,7 @@ fn judge_receiving_checkout(
                     landing.target
                 ))
                 .listing(elsewhere.iter().map(|p| p.display().to_string()))
-                .elsewhere(&landing.target_workspace)
+                .elsewhere(target_workspace)
                 .by_verb("land")
                 .judge(vcs),
         );
@@ -2047,14 +2074,14 @@ fn judge_receiving_checkout(
         dir: &there,
         vcs,
     };
-    let target_project = project_dir(&landing.target_workspace, &landing.project);
+    let target_project = project_dir(target_workspace, &landing.project);
     let lock = LockFile::path_in(&target_project)
         .read_to_string()
         .ok()
         .and_then(|text| LockFile::from_json_str(&text).ok());
     let planned = target_aligner.plan(&checked, lock.as_ref())?;
     match target_aligner.refusal(&checked, &planned, path)? {
-        Some(off) => report.add(off.elsewhere(&landing.target_workspace)),
+        Some(off) => report.add(off.elsewhere(target_workspace)),
         None if sits_on.is_some()
             && Manifest::from_path(&target_project.join(Manifest::FILE_NAME))
                 .ok()
@@ -2073,7 +2100,7 @@ fn judge_receiving_checkout(
                     "not on '{receiving}', which this lands into, in '{}''s workspace",
                     landing.target
                 ))
-                .elsewhere(&landing.target_workspace)
+                .elsewhere(target_workspace)
                 .by_verb("land")
                 .judge(vcs),
         ),

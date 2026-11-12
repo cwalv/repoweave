@@ -76,7 +76,7 @@ impl Op {
     ) -> anyhow::Result<Self> {
         let id = OpId::new_now();
         let record = OwnerRecord::new_take_in(&id, verb, project.clone(), workspace, take_in);
-        let touched = TouchedWorkspaces::of(verb, workspace, workspace);
+        let touched = TouchedWorkspaces::of(verb, workspace, Some(workspace));
         let _held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
         for (dir, vcs) in repos {
             let _ = vcs.create_savepoint(dir, &SavepointKey::Op(id.clone()));

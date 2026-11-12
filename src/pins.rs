@@ -12,7 +12,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::branch_ref::BranchRef;
-use crate::diagnosis::{ChoiceId, Fact, FactKind, Judged, State};
+use crate::diagnosis::{ChoiceId, Fact, FactKind, Form, Judged, State};
 use crate::manifest::{LockFile, ProjectName, RepoPath};
 use crate::vcs::{
     project_vcs, CommitId, CommitSummary, Relation, ResolvedRevisionId, Vcs, VcsError,
@@ -216,8 +216,47 @@ pub(crate) fn judge_elsewhere(
     pin: &ResolvedRevisionId,
     workspace: &Path,
 ) -> Option<Judged> {
-    judging(repo, dir, vcs, standing, head, pin, None)
-        .map(|judging| judging.elsewhere(workspace).by_verb("land").judge(vcs))
+    judging(repo, dir, vcs, standing, head, pin, None).map(|judging| {
+        judging
+            .elsewhere(workspace)
+            .only_forms(&[Form::C5Lock, Form::C3UpdateRemote])
+            .by_verb("land")
+            .judge(vcs)
+    })
+}
+
+/// A branch `target` declares, checked out nowhere, beyond `target`'s pin by
+/// the commits `beyond` lists: refused as `pin` unpinned, recorded by a lock
+/// in a workspace on `target`, which the printed `workweave create` opens.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn judge_unpinned_branch(
+    repo: &RepoPath,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    branch: &str,
+    beyond: &Beyond,
+    tip: &ResolvedRevisionId,
+    pin: &ResolvedRevisionId,
+    target: &str,
+) -> Judged {
+    State::PinUnpinned
+        .of(repo)
+        .member()
+        .checkout(dir)
+        .bind("<m>", repo.as_str())
+        .bind("<repo>", repo.as_str())
+        .bind("<W>", target)
+        .bind("<ww>", target)
+        .subject(format!(
+            "'{branch}', checked out nowhere, is at {}, {} beyond '{target}''s pin {}",
+            tip.id().short(),
+            commits_text(beyond.count),
+            pin.id().short()
+        ))
+        .listing(listing(&beyond.unpinned))
+        .only_forms(&[Form::OpenWorkweave, Form::C5Lock])
+        .by_verb("land")
+        .judge(vcs)
 }
 
 fn judging(

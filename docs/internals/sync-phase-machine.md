@@ -188,7 +188,8 @@ below).
 Write a durable pre-op snapshot reference for every ref the op may
 move, under `refs/rwv/pre-op/<op-id>`: each checkout's HEAD with the branch
 it is on, and, for `rwv land`, each receiving branch it will move as a ref
-(no checkout holds it), at the tip the landing read. The op-id is
+(no checkout holds it), at the tip the landing read, and, where the target
+is checked out nowhere, the target's project branch likewise. The op-id is
 nanosecond wall-clock so concurrent or interleaved invocations cannot
 collide.
 
@@ -325,6 +326,20 @@ happened in CWD during replay.
 
 Re-entry rule: ff to an already-reached tip is a no-op.
 
+**A target checked out nowhere.** `Landing.target_workspace` and
+`OpContext.dest_workspace_dir` are `None`, and the op record's `target` is
+null: no workspace is leased, and the landing claim alone keeps another
+landing off the target. The plan records the project repo as
+`Moves::AsRef { create: false }`, beside every receiving branch checked out
+nowhere, and the savepoint step files a ref savepoint for the target's
+project branch as for a member's (`advance_receiving_ref` moves both by
+compare-and-swap). The snapshot reads the target's lock at its tip through
+the source's project repo and resolves it in the primary
+(`ClassifySource::Refs`), and `judge_unpinned_refs` judges each branch the
+target declares for a member the plan leaves alone against its pin, as
+`judge_target_pins` judges a checkout of it. A primary that is the source
+switches to the target (`switch_primary_to_target`) and aligns.
+
 **Ordering rule: member repos first, project repo last, and the project
 advance is gated on all of them landing.** The project repo carries the
 lock and the lock names the manifest tips, so advancing it past a
@@ -375,6 +390,12 @@ Before retire runs, once the record says `retire`, a landing clears its lease
 on the target's workspace and releases its claim on the target
 (`release_target`): the target is no longer moved, and a landing waiting on
 the claim then finds no lease of an op whose owner workweave retire removes.
+From then on the landing is not undone: `rwv abort` of a record at `retire`
+(`end_released_landing`) drops the op's savepoints and clears its record,
+restoring nothing, since another landing may have read the target and another
+op may lease its workspace. The pause point `landed`, after the target's
+workspace aligned and before the record says `retire`, is the last a stop can
+still be rolled back from.
 
 ## cleanup
 

@@ -615,7 +615,9 @@ pub enum LandingReport {
         repo: RepoKey,
         label: String,
         branch: String,
-        workspace: PathBuf,
+        /// The workspace that has the branch checked out, none where it
+        /// landed as a ref.
+        workspace: Option<PathBuf>,
     },
 }
 
@@ -656,8 +658,8 @@ pub struct LeftBehind {
     pub feature_pin: bool,
     pub commits: Vec<crate::vcs::CommitSummary>,
     /// Where the new branch is checked out once the landing aligns the
-    /// target's workspace.
-    pub checkout: PathBuf,
+    /// workspace on the target; none where the target is checked out nowhere.
+    pub checkout: Option<PathBuf>,
 }
 
 /// The port a `cherry-pick` planned, and each member's copies so far.
@@ -810,8 +812,9 @@ pub struct OwnerRecord {
     /// The source workspace.
     pub source: CanonicalPath,
     /// The target workspace (for `sync`: same as the owner workspace; for
-    /// `land`: the named target workspace).
-    pub target: CanonicalPath,
+    /// `land`: the workspace that has the target checked out, none where it
+    /// is checked out nowhere and lands as refs).
+    pub target: Option<CanonicalPath>,
     /// Whether `--retire` was passed.
     pub retire: bool,
     /// Current phase.
@@ -855,7 +858,7 @@ struct WireOwnerRecord {
     history: Option<crate::manifest::History>,
     project: ProjectName,
     source: CanonicalPath,
-    target: CanonicalPath,
+    target: Option<CanonicalPath>,
     retire: bool,
     phase: OpPhase,
     advanced_tips: BTreeMap<RepoKey, CommitId>,
@@ -937,7 +940,7 @@ impl OwnerRecord {
             history,
             project,
             source: CanonicalPath::of(source_workspace),
-            target: CanonicalPath::of(cwd_workspace),
+            target: Some(CanonicalPath::of(cwd_workspace)),
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
@@ -955,7 +958,7 @@ impl OwnerRecord {
         history: Option<crate::manifest::History>,
         project: ProjectName,
         cwd_workspace: &Path,
-        target_workspace: &Path,
+        target_workspace: Option<&Path>,
         retire: bool,
     ) -> Self {
         Self {
@@ -964,7 +967,7 @@ impl OwnerRecord {
             history,
             project,
             source: CanonicalPath::of(cwd_workspace),
-            target: CanonicalPath::of(target_workspace),
+            target: target_workspace.map(CanonicalPath::of),
             retire,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
@@ -989,7 +992,7 @@ impl OwnerRecord {
             history: None,
             project,
             source: CanonicalPath::of(workspace),
-            target: CanonicalPath::of(workspace),
+            target: Some(CanonicalPath::of(workspace)),
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
@@ -1063,7 +1066,7 @@ pub struct OwnerHeader {
     pub verb: OpVerb,
     pub project: ProjectName,
     pub source: CanonicalPath,
-    pub target: CanonicalPath,
+    pub target: Option<CanonicalPath>,
     pub started_at: String,
 }
 
@@ -1696,10 +1699,13 @@ pub struct TouchedWorkspaces {
 }
 
 impl TouchedWorkspaces {
-    pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: &Path) -> Self {
+    pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: Option<&Path>) -> Self {
         let leases = match verb {
             OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote | OpVerb::CherryPick => Vec::new(),
-            OpVerb::Land => vec![dest_workspace_dir.to_path_buf()],
+            OpVerb::Land => dest_workspace_dir
+                .map(Path::to_path_buf)
+                .into_iter()
+                .collect(),
         };
         Self {
             owner: owner_workspace_dir.to_path_buf(),
@@ -2737,7 +2743,7 @@ mod tests {
             None,
             test_project(),
             Path::new("/cwd/ws"),
-            Path::new("/tgt/ws"),
+            Some(Path::new("/tgt/ws")),
             true,
         );
         write_owner(dir, &record).unwrap();
@@ -3042,7 +3048,7 @@ mod tests {
             None,
             test_project(),
             Path::new("/cwd"),
-            Path::new("/tgt"),
+            Some(Path::new("/tgt")),
             false,
         );
         write_owner(&owner_dir, &record).unwrap();
@@ -3145,7 +3151,7 @@ mod tests {
             None,
             test_project(),
             Path::new("/cwd"),
-            Path::new("/tgt"),
+            Some(Path::new("/tgt")),
             false,
         );
         record.started_at = stale_started_at();
@@ -3180,7 +3186,7 @@ mod tests {
             None,
             test_project(),
             &owner_dir,
-            Path::new("/tgt"),
+            Some(Path::new("/tgt")),
             false,
         );
         record.started_at = stale_started_at();
@@ -3284,7 +3290,7 @@ mod tests {
             None,
             test_project(),
             Path::new("/src"),
-            Path::new("/tgt"),
+            Some(Path::new("/tgt")),
             false,
         );
         write_owner(dir, &record).unwrap();
@@ -3381,7 +3387,7 @@ mod tests {
             None,
             test_project(),
             Path::new("/cwd"),
-            Path::new("/tgt"),
+            Some(Path::new("/tgt")),
             false,
         );
         write_owner(&owner_dir, &record).unwrap();
@@ -3463,11 +3469,11 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn sync_touched(owner: &Path) -> TouchedWorkspaces {
-        TouchedWorkspaces::of(OpVerb::Sync, owner, owner)
+        TouchedWorkspaces::of(OpVerb::Sync, owner, Some(owner))
     }
 
     fn land_touched(owner: &Path, target: &Path) -> TouchedWorkspaces {
-        TouchedWorkspaces::of(OpVerb::Land, owner, target)
+        TouchedWorkspaces::of(OpVerb::Land, owner, Some(target))
     }
 
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
@@ -3475,7 +3481,7 @@ mod tests {
     }
 
     fn make_land_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
-        OwnerRecord::new_land(op_id, None, test_project(), owner, target, false)
+        OwnerRecord::new_land(op_id, None, test_project(), owner, Some(target), false)
     }
 
     #[test]

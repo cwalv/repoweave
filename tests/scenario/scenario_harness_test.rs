@@ -708,6 +708,14 @@ every_scenario!(
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
+    abort_after_the_landing_released_its_target,
+    landing_as_refs,
+    landing_as_refs_unpinned,
+    lost_race_abort,
+    dc05_compose_in_source(scenarios::Dc05::BeforeTheMoveAborted),
+    dc05_compose_in_source(scenarios::Dc05::AtTheMoveAborted),
+    dc05_compose_in_source(scenarios::Dc05::AtTheMoveContinued),
+    dc05_compose_in_source(scenarios::Dc05::LandedAborted),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2458,6 +2466,55 @@ holding_rwv! {
     }
 }
 
+holding_rwv! {
+    /// `main` checked out nowhere: a landing moves it and its members'
+    /// branches as refs, and no checkout moves.
+    fn a_target_checked_out_nowhere_lands_as_refs() {
+        runner::run(scenarios::landing_as_refs()).assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A branch `main` declares, checked out nowhere and beyond `main`'s pin,
+    /// refuses the landing as `pin` unpinned; its printed choices clear it.
+    fn a_target_branch_beyond_its_pin_refuses_a_landing_as_refs() {
+        runner::run(scenarios::landing_as_refs_unpinned()).assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A landing as refs that loses one compare-and-swap after moving
+    /// another ref stops; abort puts back what it moved; it lands again.
+    fn a_landing_as_refs_that_loses_its_race_is_aborted_and_lands_again() {
+        runner::run(scenarios::lost_race_abort()).assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A landing as refs killed after composing is aborted or continued,
+    /// either way leaving no tip its record does not name.
+    fn a_landing_as_refs_killed_after_composing_aborts_or_continues() {
+        for stop in [
+            scenarios::Dc05::BeforeTheMoveAborted,
+            scenarios::Dc05::AtTheMoveAborted,
+            scenarios::Dc05::AtTheMoveContinued,
+            scenarios::Dc05::LandedAborted,
+        ] {
+            runner::run(scenarios::dc05_compose_in_source(stop)).assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// A landing stopped in its retire has released its target: abort from
+    /// the target finds no operation, abort from the source restores nothing,
+    /// and the landing run again retires the workweave.
+    fn abort_after_the_landing_released_its_target_keeps_the_landing() {
+        runner::run(scenarios::abort_after_the_landing_released_its_target())
+            .assert_fully_decided_green();
+    }
+}
+
 /// A member the port never touches, stopped in the operator's own merge, is
 /// left in it by `rwv abort`: no cancel, no reset.
 #[test]
@@ -3924,7 +3981,7 @@ fn sync_stores_the_record_silently_where_none_is_stored() {
 }
 
 #[test]
-fn a_target_checked_out_nowhere_refuses_the_landing_naming_the_workweave_that_opens_it() {
+fn a_landing_into_a_target_checked_out_nowhere_refuses_only_for_the_source() {
     runner::run(scenarios::land_into_a_target_checked_out_nowhere()).assert_fully_decided_green();
 }
 

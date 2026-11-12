@@ -903,8 +903,8 @@ fn abort_after_a_landing_pruned_a_dropped_member_in_the_target_names_the_checkou
         "linear",
     ])
     .current_dir(&s1);
-    let held = common::pause::Paused::spawn(land, "retire", &weave.root.join("..").join("pause"))
-        .expect("the landing is held before its retire");
+    let held = common::pause::Paused::spawn(land, "landed", &weave.root.join("..").join("pause"))
+        .expect("the landing is held before it releases its target");
     if common::under(&weave.root, EXTRA).exists() {
         let out = held.release();
         panic!(

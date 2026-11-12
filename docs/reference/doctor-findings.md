@@ -315,7 +315,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 |---|---|---|
 | `behind` | the checkout's commit is an ancestor of the commit the lock pins: the lock records commits the checkout lacks | `rwv push`; `rwv status` reports it |
 | `ahead` | the checkout holds commits beyond the commit the lock pins, and each is pushed or pinned by another live lock, which the facts name; the commits are published with `rwv push` only where none is pushed yet | `rwv status` reports it; `rwv push` reports it and goes on; `rwv cherry-pick` refuses it for a member it would copy onto |
-| `unpinned` | the checkout holds the commits listed beyond the commit the lock pins, which no remote-tracking branch and no live lock reaches | `rwv push`; `rwv cherry-pick`, for a member it would copy onto; `rwv status` reports it |
+| `unpinned` | the checkout holds the commits listed beyond the commit the lock pins, which no remote-tracking branch and no live lock reaches | `rwv push`; `rwv cherry-pick`, for a member it would copy onto; `rwv land`, in the target's workspace, or for a branch the target declares and nothing has checked out; `rwv status` reports it |
 | `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch, or where it was found | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv lock`, `rwv update` and `rwv status` report it |
 | `diverged` | neither the checkout's commit nor the commit the lock pins is an ancestor of the other | `rwv push`; `rwv status` reports it |
 | `off lineage` | the member's work is built on a commit the branch it would move into lacks: its base, the newest commit of its first-parent chain that a lock in the target's history pins or built on, listed with the receiving branch | `rwv sync`, for a member it would integrate, or that would follow while the branch has dependents; `rwv update --remote --merge-upstream` and `rwv pull --merge-upstream`, for a feature's member |
@@ -337,6 +337,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `unpinned` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
 | `unpinned` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
+| `unpinned`, for `rwv land` | open it | `rwv workweave create <ww> --branch <W>` | here | moves only what alignment moves |
 | `none` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `none` | C1: take in theirs | `rwv update --remote --repo <m> --commit` | any workspace | fast-forward only |
 | `diverged` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |

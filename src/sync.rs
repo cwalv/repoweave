@@ -605,8 +605,9 @@ pub struct LandJsonOutput {
     /// not necessarily the one `--continue` was invoked from.
     pub source_workweave: Option<String>,
     /// Absolute path of the target workspace that step-3 fast-forwarded, as
-    /// the machine resolved it.
-    pub target: crate::path_spelling::WirePath,
+    /// the machine resolved it; null where the target is checked out nowhere
+    /// and landed as refs.
+    pub target: Option<crate::path_spelling::WirePath>,
     /// True iff retire deleted the workweave. False when `--retire` was not
     /// passed, when retire refused, and when retire was skipped (the op is
     /// rooted in the primary weave, where there is no workweave to delete).
@@ -1054,15 +1055,18 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
             } => {
                 let vcs = project_vcs();
                 let mut ahead = Report::default();
+                let mut judging = State::PushBranchAhead
+                    .of(label)
+                    .project_repo()
+                    .subject(format!(
+                        "'{branch}' holds the landing, and its push branch does not"
+                    ))
+                    .bind("<W>", branch);
+                if let Some(workspace) = workspace {
+                    judging = judging.elsewhere(workspace);
+                }
                 ahead.add(
-                    State::PushBranchAhead
-                        .of(label)
-                        .project_repo()
-                        .subject(format!(
-                            "'{branch}' holds the landing, and its push branch does not"
-                        ))
-                        .bind("<W>", branch)
-                        .elsewhere(workspace)
+                    judging
                         .by_verb("land")
                         .only_forms(&[crate::diagnosis::Form::C7PushBranch])
                         .judge(vcs.as_ref()),
@@ -2374,8 +2378,8 @@ pub struct OpCoordinates {
     /// The workweave the op is rooted in — `None` when the owner is the
     /// primary weave.
     pub source_workweave: Option<String>,
-    /// The workspace advance-target lands into.
-    pub target: PathBuf,
+    /// The workspace advance-target lands into, none for a landing as refs.
+    pub target: Option<PathBuf>,
 }
 
 /// Witness that `--retire` deleted a workweave.
@@ -2544,18 +2548,20 @@ struct OpContext<'a> {
     /// Display name of the source workspace, used in human messages
     /// (e.g. the auto-relock commit message and replay's lock-freshness hint).
     source_workspace_name: String,
-    /// Destination workspace (the one phases write into): the target workspace.
-    dest_workspace_dir: PathBuf,
-    dest_project_dir: PathBuf,
+    /// The workspace that has the target checked out, which the landing
+    /// fast-forwards in place; none where it is checked out nowhere, and
+    /// lands as refs.
+    dest_workspace_dir: Option<PathBuf>,
+    dest_project_dir: Option<PathBuf>,
+    /// The primary, where it is the source of a landing as refs: it switches
+    /// to the target once the target landed.
+    switches_primary: Option<PathBuf>,
     /// CWD's project repo dir: where replay+relock run, while
     /// `dest_project_dir` is where advance-target lands.
     cwd_project_dir: PathBuf,
     /// CWD project name (used for materialize_missing_repo's ephemeral
     /// branch namespace in workweaves).
     cwd_project_name: ProjectName,
-    /// Path arg the operator passed on the CLI (or recorded in op-state),
-    /// retained for hint messages that show the original target spelling.
-    cli_path: PathBuf,
     /// The landing's plan, read back from the op record: each `owned` or
     /// `fork` member's receiving-branch tip it is composed onto, `T`'s tip,
     /// and the source's tip once the op-start relock committed.
@@ -2589,6 +2595,9 @@ struct OpContext<'a> {
 enum ClassifySource {
     /// Classify the source's checkouts. The gate's refusals read the relations.
     Relations,
+    /// The source is a branch checked out nowhere: only which of its pins
+    /// this clone lacks, with no checkout to classify.
+    Refs,
 }
 
 /// Atomic source snapshot pinned at T0 (start of replay).
@@ -2632,9 +2641,12 @@ fn left_behind_choices(
     std::collections::BTreeMap<&'static str, String>,
 ) {
     let mut bindings = std::collections::BTreeMap::new();
+    let Some(checkout) = &left.checkout else {
+        return (&[], bindings);
+    };
     bindings.insert("<m>", left.repo.to_string());
     bindings.insert("<b>", left.now.clone());
-    bindings.insert("<checkout>", left.checkout.display().to_string());
+    bindings.insert("<checkout>", checkout.display().to_string());
     bindings.insert(
         "<ids>",
         left.commits
@@ -2992,10 +3004,11 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// then its claim on the target, so a landing waiting on the claim never
 /// meets a lease whose op `--retire` is about to remove.
 fn release_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
-    if crate::path_spelling::CanonicalPath::of(&ctx.dest_workspace_dir)
-        != crate::path_spelling::CanonicalPath::of(&ctx.owner_workspace_dir)
-    {
-        op_state::clear_lease(&ctx.dest_workspace_dir);
+    if let Some(dest) = ctx.dest_workspace_dir.as_deref().filter(|dest| {
+        crate::path_spelling::CanonicalPath::of(dest)
+            != crate::path_spelling::CanonicalPath::of(&ctx.owner_workspace_dir)
+    }) {
+        op_state::clear_lease(dest);
     }
     release_landing_claim(ctx)
 }
@@ -3366,8 +3379,7 @@ fn run_preconditions_after_acquire(
     cwd_workspace_dir: &Path,
     cwd_ctx: &WorkspaceContext,
     cwd_project_name: &ProjectName,
-    dest_project_dir: &Path,
-    dest_workspace_dir: &Path,
+    dest: Option<(&Path, &Path)>,
     dest_workspace_name: &str,
 ) -> anyhow::Result<PreconditionOutcome> {
     let mut report = landing.judged.clone();
@@ -3397,19 +3409,22 @@ fn run_preconditions_after_acquire(
             &mut report,
         );
     }
+    let primary = cwd_ctx.primary_path();
+    let (read_in, read_root, classify) = match dest {
+        Some((project_dir, workspace)) => (project_dir, workspace, ClassifySource::Relations),
+        None => (cwd_project_dir, primary, ClassifySource::Refs),
+    };
     let snapshot = pin_source_snapshot(
         project_vcs,
-        dest_project_dir,
-        dest_workspace_dir,
-        cwd_ctx.primary_path(),
+        read_in,
+        read_root,
+        primary,
         Some(ResolvedRevisionId::from(landing.target_tip.clone())),
-        ClassifySource::Relations,
+        classify,
     )?;
-    if let (Some(tip_class), Ok(tip_manifest)) = (
-        snapshot.source_class.as_ref(),
-        manifest_at_revision(project_vcs, dest_project_dir, &snapshot.source_project_tip),
-    ) {
-        judge_unreachable_target_pins(tip_class, dest_workspace_dir, &tip_manifest, &mut report);
+    let tip_manifest = manifest_at_revision(project_vcs, read_in, &snapshot.source_project_tip);
+    if let (Some(tip_class), Ok(tip_manifest)) = (snapshot.source_class.as_ref(), &tip_manifest) {
+        judge_unreachable_target_pins(tip_class, read_root, tip_manifest, &mut report);
     }
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
     let cwd_class = {
@@ -3433,27 +3448,29 @@ fn run_preconditions_after_acquire(
         &cwd_project.manifest,
         &mut report,
     );
-    let checked_out_target = pin_source_snapshot(
-        project_vcs,
-        dest_project_dir,
-        dest_workspace_dir,
-        cwd_ctx.primary_path(),
-        None,
-        ClassifySource::Relations,
-    )?;
-    if let Some(target_class) = checked_out_target.source_class.as_ref() {
-        if let Ok(target_manifest) = manifest_at_revision(
+    if let Some((dest_project_dir, dest_workspace_dir)) = dest {
+        let checked_out_target = pin_source_snapshot(
             project_vcs,
             dest_project_dir,
-            &checked_out_target.source_project_tip,
-        ) {
-            judge_target_pins(
-                target_class,
-                dest_workspace_dir,
-                &target_manifest,
-                cwd_ctx.primary_path(),
-                &mut report,
-            )?;
+            dest_workspace_dir,
+            primary,
+            None,
+            ClassifySource::Relations,
+        )?;
+        if let Some(target_class) = checked_out_target.source_class.as_ref() {
+            if let Ok(target_manifest) = manifest_at_revision(
+                project_vcs,
+                dest_project_dir,
+                &checked_out_target.source_project_tip,
+            ) {
+                judge_target_pins(
+                    target_class,
+                    dest_workspace_dir,
+                    &target_manifest,
+                    primary,
+                    &mut report,
+                )?;
+            }
         }
     }
     let cwd_lock_behind: Vec<RepoRelation> = cwd_class
@@ -3483,20 +3500,33 @@ fn run_preconditions_after_acquire(
             crate::land::Plan::default()
         }
     };
-    judge_edits_target_preflight(
-        &cwd_project,
-        plan.moving(),
-        dest_workspace_dir,
-        dest_project_dir,
-        &mut report,
-        drifted,
-    );
-    hold(
-        crate::lock_driver::refuse_unmigrated(
-            project_vcs,
-            dest_project_dir.display(),
+    match dest {
+        Some((dest_project_dir, dest_workspace_dir)) => judge_edits_target_preflight(
+            &cwd_project,
+            plan.moving(),
+            dest_workspace_dir,
             dest_project_dir,
+            &mut report,
+            drifted,
         ),
+        None => {
+            if let (Ok(tip_manifest), Some(raw)) = (&tip_manifest, Some(&snapshot.raw_source_lock))
+            {
+                judge_unpinned_refs(
+                    tip_manifest,
+                    raw,
+                    &plan,
+                    cwd_workspace_dir,
+                    primary,
+                    &landing.target,
+                    &mut report,
+                )?;
+            }
+        }
+    }
+    let migrated_in = dest.map_or(cwd_project_dir, |(project_dir, _)| project_dir);
+    hold(
+        crate::lock_driver::refuse_unmigrated(project_vcs, migrated_in.display(), migrated_in),
         &mut report,
     );
     if let Some(e) = unjudged {
@@ -3514,6 +3544,88 @@ fn run_preconditions_after_acquire(
         cwd_lock_behind,
         plan,
     })
+}
+
+/// Where `T` is checked out nowhere, each member branch `T` declares, read
+/// as a ref, judged against `T`'s pin as a checkout of it would be: one
+/// beyond its pin by commits no live lock and no remote reaches refuses (`pin`
+/// unpinned in `T`), unless the landing moves that branch and so pins it.
+fn judge_unpinned_refs(
+    manifest: &Manifest,
+    lock: &LockFile,
+    plan: &crate::land::Plan,
+    source_root: &Path,
+    primary: &Path,
+    target: &crate::records::BranchName,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let live = crate::pins::live_pins(primary)?;
+    for (repo_path, entry) in manifest.iter_entries() {
+        if plan.receiving.contains_key(repo_path) {
+            continue;
+        }
+        let Some(pin) = lock
+            .get_entry(repo_path)
+            .and_then(|e| e.version.as_commit_id())
+        else {
+            continue;
+        };
+        let vcs = vcs_for(entry.vcs_type);
+        let Some(dir) = [source_root, primary]
+            .into_iter()
+            .map(|root| root.join(repo_path.as_path()))
+            .find(|dir| vcs.is_repo(dir))
+        else {
+            continue;
+        };
+        let branch = entry.branch.local_counterpart();
+        let Some(tip) =
+            vcs.resolve_local_branch_tip(&dir, &crate::vcs::RawRefName::new(branch.as_str()))?
+        else {
+            continue;
+        };
+        let pin = ResolvedRevisionId::from(pin);
+        if tip.id() == pin.id() {
+            continue;
+        }
+        let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
+        if let crate::pins::Standing::Unpinned(beyond) =
+            crate::pins::standing(vcs.as_ref(), &dir, &tip, &pin, held)?
+        {
+            report.add(crate::pins::judge_unpinned_branch(
+                repo_path,
+                &dir,
+                vcs.as_ref(),
+                branch.as_str(),
+                &beyond,
+                &tip,
+                &pin,
+                target.as_str(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The name the landing's relock message gives the side it lands into: the
+/// workspace that has `T` checked out, else `T` itself.
+fn target_side_name(
+    workspace: Option<&Path>,
+    project: &ProjectName,
+    target: &str,
+) -> anyhow::Result<String> {
+    let Some(workspace) = workspace else {
+        return Ok(target.to_owned());
+    };
+    WorkspaceContext::resolve_for_project(workspace, project)
+        .and_then(|ctx| workspace_name(&ctx))
+        .with_context(|| {
+            format!(
+                "failed to resolve {} as a workspace of project `{}`",
+                workspace.display(),
+                project.as_str(),
+            )
+        })
 }
 
 /// A [`SyncRequest::Fresh`] as [`guard_and_mark`] consumes it.
@@ -3543,24 +3655,22 @@ fn guard_and_mark<'a>(
     let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
     let dest_workspace_dir = landing.target_workspace.clone();
-    let cli_path = dest_workspace_dir.clone();
 
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
-    let dest_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
-    let source_workspace_name =
-        WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name)
-            .and_then(|target| workspace_name(&target))
-            .with_context(|| {
-                format!(
-                    "failed to resolve {} as a workspace of project `{}`",
-                    dest_workspace_dir.display(),
-                    cwd_project_name.as_str(),
-                )
-            })?;
+    let dest_project_dir = dest_workspace_dir
+        .as_deref()
+        .map(|dir| project_dir(dir, &cwd_project_name));
+    let source_workspace_name = target_side_name(
+        dest_workspace_dir.as_deref(),
+        &cwd_project_name,
+        landing.target.as_str(),
+    )?;
 
     refuse_symlinked_members(&cwd_workspace_dir, &cwd_project_name)?;
-    refuse_symlinked_members(&dest_workspace_dir, &cwd_project_name)?;
+    if let Some(dest) = &dest_workspace_dir {
+        refuse_symlinked_members(dest, &cwd_project_name)?;
+    }
 
     // The touched-workspace set is claimed atomically before any
     // precondition runs, so two landings judging the same workspaces never
@@ -3572,13 +3682,13 @@ fn guard_and_mark<'a>(
         history,
         cwd_project_name.clone(),
         &cwd_workspace_dir,
-        &dest_workspace_dir,
+        dest_workspace_dir.as_deref(),
         retire,
     );
     let touched = op_state::TouchedWorkspaces::of(
         initial_record.verb,
         &owner_workspace_dir,
-        &dest_workspace_dir,
+        dest_workspace_dir.as_deref(),
     );
     let acquired = op_state::acquire_op(&touched, &initial_record)?;
 
@@ -3594,8 +3704,9 @@ fn guard_and_mark<'a>(
         &cwd_workspace_dir,
         cwd_ctx,
         &cwd_project_name,
-        &dest_project_dir,
-        &dest_workspace_dir,
+        dest_project_dir
+            .as_deref()
+            .zip(dest_workspace_dir.as_deref()),
         &source_workspace_name,
     );
     let PreconditionOutcome {
@@ -3655,20 +3766,30 @@ fn guard_and_mark<'a>(
         }
     }
     let tsp_id = SavepointKey::LandTarget(op_id.clone());
-    if create_savepoint(project_vcs.as_ref(), &dest_project_dir, &tsp_id).is_ok() {
-        project_anchors.push((dest_project_dir.clone(), tsp_id.clone()));
-    }
-    if let Ok(tp) =
-        crate::manifest::Project::from_dir_skip_lock(&dest_project_dir, cwd_project_name.clone())
+    if let (Some(dest_project_dir), Some(dest_workspace_dir)) =
+        (&dest_project_dir, &dest_workspace_dir)
     {
-        for (repo_path, entry) in tp.manifest.iter_entries() {
-            let abs = dest_workspace_dir.join(repo_path.as_path());
-            if abs.exists() {
-                let vcs = vcs_for(entry.vcs_type);
-                if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
-                    member_anchors.push((vcs, abs, tsp_id.clone()));
+        if create_savepoint(project_vcs.as_ref(), dest_project_dir, &tsp_id).is_ok() {
+            project_anchors.push((dest_project_dir.clone(), tsp_id.clone()));
+        }
+        if let Ok(tp) =
+            crate::manifest::Project::from_dir_skip_lock(dest_project_dir, cwd_project_name.clone())
+        {
+            for (repo_path, entry) in tp.manifest.iter_entries() {
+                let abs = dest_workspace_dir.join(repo_path.as_path());
+                if abs.exists() {
+                    let vcs = vcs_for(entry.vcs_type);
+                    if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
+                        member_anchors.push((vcs, abs, tsp_id.clone()));
+                    }
                 }
             }
+        }
+    } else {
+        let target_ref = crate::vcs::RawRefName::new(landing.target.as_str());
+        if let Some(read) = project_vcs.resolve_local_branch_tip(&cwd_project_dir, &target_ref)? {
+            project_vcs.create_ref_savepoint(&cwd_project_dir, &tsp_id, &target_ref, read.id())?;
+            project_anchors.push((cwd_project_dir.clone(), tsp_id.clone()));
         }
     }
 
@@ -3771,7 +3892,11 @@ fn guard_and_mark<'a>(
         op_state::Receiving {
             branch: landing.target.to_string(),
             tip: landing.target_tip.clone(),
-            moves: op_state::Moves::InCheckout,
+            moves: if dest_workspace_dir.is_some() {
+                op_state::Moves::InCheckout
+            } else {
+                op_state::Moves::AsRef { create: false }
+            },
         },
     );
     for (path, receiving) in &plan.receiving {
@@ -3826,9 +3951,9 @@ fn guard_and_mark<'a>(
         source_workspace_name,
         dest_workspace_dir,
         dest_project_dir,
+        switches_primary: landing.switches_primary.clone(),
         cwd_project_dir,
         cwd_project_name,
-        cli_path,
         take_in,
         retire,
         retire_left: std::sync::atomic::AtomicBool::new(false),
@@ -3909,19 +4034,23 @@ fn load_continuing_context<'a>(
     let cwd_workspace_dir = owner_workspace_dir.clone();
     let cwd_project_name = record.project.clone();
     let cwd_project_dir = project_dir(&owner_workspace_dir, &cwd_project_name);
-    let dest_workspace_dir = record.target.as_path().to_path_buf();
-    let cli_path = dest_workspace_dir.clone();
-    let dest_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
-    let source_workspace_name =
-        WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name)
-            .and_then(|target| workspace_name(&target))
-            .with_context(|| {
-                format!(
-                    "failed to resolve {} as a workspace of project `{}`",
-                    dest_workspace_dir.display(),
-                    cwd_project_name.as_str(),
-                )
-            })?;
+    let dest_workspace_dir = record.target.as_ref().map(|t| t.as_path().to_path_buf());
+    let dest_project_dir = dest_workspace_dir
+        .as_deref()
+        .map(|dir| project_dir(dir, &cwd_project_name));
+    let target_branch = take_in
+        .receiving
+        .get(&RepoKey::Project)
+        .map(|r| r.branch.clone())
+        .unwrap_or_default();
+    let source_workspace_name = target_side_name(
+        dest_workspace_dir.as_deref(),
+        &cwd_project_name,
+        &target_branch,
+    )?;
+    let switches_primary = (dest_workspace_dir.is_none()
+        && matches!(cwd_ctx.checkout, Checkout::Primary { .. }))
+    .then(|| cwd_ctx.primary_path().to_path_buf());
     let project_vcs = project_vcs();
 
     let landing_claim = match (&record.phase, &take_in.sync_from) {
@@ -3945,7 +4074,7 @@ fn load_continuing_context<'a>(
         let composed = record.tips.converged().filter(|tips| !tips.is_empty());
         if let Some(moved) = target_moved(
             &cwd_project_name,
-            &dest_workspace_dir,
+            dest_workspace_dir.as_deref(),
             &owner_workspace_dir,
             &SavepointKey::LandTarget(op_id.clone()),
             &take_in,
@@ -3993,20 +4122,33 @@ fn load_continuing_context<'a>(
         .receiving
         .get(&RepoKey::Project)
         .map(|r| ResolvedRevisionId::from(r.tip.clone()));
-    let snapshot = pin_source_snapshot(
-        project_vcs.as_ref(),
-        &dest_project_dir,
-        &dest_workspace_dir,
-        invocation_ctx.primary_path(),
-        target_tip,
-        ClassifySource::Relations,
-    )?;
+    let primary = invocation_ctx.primary_path();
+    let snapshot = match (&dest_project_dir, &dest_workspace_dir) {
+        (Some(project_dir), Some(workspace)) => pin_source_snapshot(
+            project_vcs.as_ref(),
+            project_dir,
+            workspace,
+            primary,
+            target_tip,
+            ClassifySource::Relations,
+        )?,
+        _ => pin_source_snapshot(
+            project_vcs.as_ref(),
+            &cwd_project_dir,
+            primary,
+            primary,
+            target_tip,
+            ClassifySource::Refs,
+        )?,
+    };
 
     // From relock onward the remaining phase that reads the target's worktree
     // is advance-target, whose fast-forward a dirty target blocks: refused
     // here, before relock commits. Retire re-entry is exempt: its own check
     // refuses any uncommitted state, untracked included.
-    if matches!(entry_phase, op_state::OpPhase::Relock) {
+    if let (op_state::OpPhase::Relock, Some(dest_workspace_dir), Some(dest_project_dir)) =
+        (&entry_phase, &dest_workspace_dir, &dest_project_dir)
+    {
         let cwd_project_preflight =
             Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
                 .context("failed to load CWD project for the resumed op's dirt scan")?;
@@ -4024,8 +4166,8 @@ fn load_continuing_context<'a>(
                     RepoKey::Project => None,
                 })
                 .collect::<std::collections::BTreeSet<_>>(),
-            &dest_workspace_dir,
-            &dest_project_dir,
+            dest_workspace_dir,
+            dest_project_dir,
             &mut edits,
             &mut drifted,
         );
@@ -4049,9 +4191,9 @@ fn load_continuing_context<'a>(
         source_workspace_name,
         dest_workspace_dir,
         dest_project_dir,
+        switches_primary,
         cwd_project_dir,
         cwd_project_name,
-        cli_path,
         take_in,
         retire: record.retire,
         retire_left: std::sync::atomic::AtomicBool::new(false),
@@ -4153,7 +4295,7 @@ fn rejudge_entries(
 /// of its store, `T`'s workspace or the source.
 fn target_moved(
     project: &ProjectName,
-    target_workspace: &Path,
+    target_workspace: Option<&Path>,
     source_workspace: &Path,
     read: &SavepointKey,
     take_in: &op_state::TakeInRecord,
@@ -4161,10 +4303,11 @@ fn target_moved(
 ) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
     let mut moved: Vec<String> = Vec::new();
     let stores = MemberStores {
-        workspaces: vec![
-            target_workspace.to_path_buf(),
-            source_workspace.to_path_buf(),
-        ],
+        workspaces: target_workspace
+            .into_iter()
+            .chain([source_workspace])
+            .map(Path::to_path_buf)
+            .collect(),
     };
     for (key, receiving) in &take_in.receiving {
         let to = match (receiving.moves, composed) {
@@ -4181,9 +4324,16 @@ fn target_moved(
             op_state::Moves::Enters => Some(true),
             op_state::Moves::InCheckout | op_state::Moves::Follows { .. } => None,
         };
-        if let (Some(create), RepoKey::Member(path)) = (create, key) {
-            let vcs = crate::vcs::probe_vcs();
-            let Some(dir) = stores.dir(vcs.as_ref(), path) else {
+        if let Some(create) = create {
+            let (vcs, dir) = match key {
+                RepoKey::Project => (project_vcs(), Some(project_dir(source_workspace, project))),
+                RepoKey::Member(path) => {
+                    let vcs = crate::vcs::probe_vcs();
+                    let dir = stores.dir(vcs.as_ref(), path);
+                    (vcs, dir)
+                }
+            };
+            let Some(dir) = dir else {
                 continue;
             };
             let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
@@ -4237,6 +4387,9 @@ fn target_moved(
             }
             continue;
         }
+        let Some(target_workspace) = target_workspace else {
+            continue;
+        };
         let (dir, vcs) = match key {
             RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
             RepoKey::Member(path) => (
@@ -4292,16 +4445,20 @@ fn off_its_branch(vcs: &dyn Vcs, dir: &Path, branch: &str) -> anyhow::Result<Opt
 
 fn target_moved_line(
     project: &ProjectName,
-    target_workspace: &Path,
+    target_workspace: Option<&Path>,
     moved: Vec<String>,
 ) -> crate::diagnosis::Judged {
+    let subject = match target_workspace {
+        Some(workspace) => format!(
+            "a branch the landing fast-forwards in {} moved after the landing read it",
+            workspace.display()
+        ),
+        None => "a branch the landing moves as a ref moved after the landing read it".to_owned(),
+    };
     State::TargetMovedMidOperation
         .of(project_rel_path(project))
         .project_repo()
-        .subject(format!(
-            "a branch the landing fast-forwards in {} moved after the landing read it",
-            target_workspace.display()
-        ))
+        .subject(subject)
         .listing(moved)
         .by_verb("land")
         .judge(project_vcs().as_ref())
@@ -4811,9 +4968,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     if emit_text {
         eprintln!(
-            "land: composing this workspace onto {} ({})...",
+            "land: composing this workspace onto {}{}...",
             target_name(ctx),
-            ctx.cli_path.display(),
+            ctx.dest_workspace_dir
+                .as_deref()
+                .map(|dest| format!(" ({})", dest.display()))
+                .unwrap_or_default(),
         );
     }
 
@@ -5489,6 +5649,10 @@ fn pin_source_snapshot(
             Some(&source_lock),
             source_lock_unresolvable,
         )),
+        ClassifySource::Refs => Some(LockClassification {
+            relations: Vec::new(),
+            unresolvable: source_lock_unresolvable,
+        }),
     };
 
     let source_tips = match &source_class {
@@ -5864,13 +6028,20 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
 
 fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
+    crate::test_pause::point("composed");
 
     if emit_text {
-        eprintln!(
-            "land: fast-forwarding {} and its receiving branches in {}...",
-            target_name(ctx),
-            ctx.dest_workspace_dir.display()
-        );
+        match &ctx.dest_workspace_dir {
+            Some(dest) => eprintln!(
+                "land: fast-forwarding {} and its receiving branches in {}...",
+                target_name(ctx),
+                dest.display()
+            ),
+            None => eprintln!(
+                "land: moving {} and its receiving branches as refs...",
+                target_name(ctx)
+            ),
+        }
     }
 
     let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
@@ -5889,7 +6060,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     })?;
     if let Some(moved) = target_moved(
         &ctx.cwd_project_name,
-        &ctx.dest_workspace_dir,
+        ctx.dest_workspace_dir.as_deref(),
         &ctx.cwd_workspace_dir,
         &ctx.target_savepoint_key(),
         &ctx.take_in,
@@ -5910,9 +6081,12 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     };
 
-    let target_ctx =
-        WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
-            .context("failed to resolve the target for advance-target")?;
+    let target_ctx = ctx
+        .dest_workspace_dir
+        .as_deref()
+        .map(|dest| WorkspaceContext::resolve_for_project(dest, &ctx.cwd_project_name))
+        .transpose()
+        .context("failed to resolve the target for advance-target")?;
 
     let mut any_ff_failure = false;
     let mut moved = Report::default();
@@ -5937,7 +6111,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if let Err(e) = moved.absorb(advance_receiving_ref(
             ctx,
             vcs.as_ref(),
-            repo_path,
+            key,
             &cwd_repo,
             receiving,
             create,
@@ -5949,7 +6123,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             any_ff_failure = true;
         }
     }
+    let in_checkouts = ctx.dest_workspace_dir.as_deref().zip(target_ctx.as_ref());
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
+        let Some((dest_workspace_dir, target_ctx)) = in_checkouts else {
+            break;
+        };
         let key = RepoKey::Member(repo_path.clone());
         if !ctx
             .take_in
@@ -5961,7 +6139,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
+        let target_repo = dest_workspace_dir.join(repo_path.as_path());
         if !cwd_repo.exists() {
             continue;
         }
@@ -6076,21 +6254,127 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let (target_branch, cwd_project_tip) = planned(&RepoKey::Project)?;
     let taken_in = upstream_taken_in(ctx, target_branch)?;
 
+    match &ctx.dest_project_dir {
+        Some(dest_project_dir) => {
+            advance_project_in_checkout(ctx, dest_project_dir, target_branch, &cwd_project_tip)?
+        }
+        None => {
+            let receiving = ctx
+                .take_in
+                .receiving
+                .get(&RepoKey::Project)
+                .ok_or_else(|| {
+                    crate::untokened!(
+                        InternalInvariant,
+                        "internal: the landing recorded no branch for the project repo"
+                    )
+                })?;
+            advance_receiving_ref(
+                ctx,
+                ctx.project_vcs.as_ref(),
+                &RepoKey::Project,
+                &ctx.cwd_project_dir,
+                receiving,
+                false,
+                cwd_project_tip.id(),
+            )?;
+        }
+    }
+
+    if let Some(taken_in) = taken_in {
+        report_landing(ctx, taken_in)?;
+    }
+    report_target_ahead(ctx)?;
+
+    if let (Some((dest_workspace_dir, target_ctx)), Some(dest_project_dir)) =
+        (in_checkouts, &ctx.dest_project_dir)
+    {
+        let target_savepoint = ctx.target_savepoint_key();
+        settle_members(
+            dest_workspace_dir,
+            dest_project_dir,
+            &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
+            Some(ctx.handler),
+        );
+        prune_dropped_in_target(ctx, target_ctx, &cwd_project_final.manifest);
+
+        for key in ctx.take_in.receiving.keys().cloned().chain(
+            Project::from_dir_skip_lock(dest_project_dir, ctx.cwd_project_name.clone())
+                .map(|p| {
+                    p.manifest
+                        .iter_entries()
+                        .map(|(path, _)| RepoKey::Member(path.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        ) {
+            journal_fast_forward(ctx, &key)?;
+        }
+        align_after_landing(ctx, target_ctx);
+    }
+    if ctx.switches_primary.is_some() {
+        switch_primary_to_target(ctx, target_branch)?;
+        align_after_landing(ctx, &ctx.cwd_ctx);
+    } else if !ctx.retire {
+        align_after_landing(ctx, &ctx.cwd_ctx);
+    }
+    crate::test_pause::point("landed");
+    Ok(())
+}
+
+/// The primary, source of a landing as refs, switches to `T` once `T` holds
+/// the landing; the feature it leaves keeps every commit, which `T` contains.
+fn switch_primary_to_target(ctx: &OpContext<'_>, target_branch: &str) -> anyhow::Result<()> {
+    let vcs = ctx.project_vcs.as_ref();
+    let dir = &ctx.cwd_project_dir;
+    let raw = crate::vcs::RawRefName::new(target_branch);
+    let attachment = vcs.head_attachment(dir)?;
+    if matches!(&attachment, HeadAttachment::Attached(on) if on.to_string() == target_branch) {
+        return Ok(());
+    }
+    let tip = vcs.resolve_local_branch_tip(dir, &raw)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "'{target_branch}' is gone from {} after the landing moved it",
+            dir.display()
+        )
+    })?;
+    let departure = crate::alignment::Departure::of_project_move(vcs, dir, &tip)?;
+    vcs.reattach_head(
+        attachment,
+        &crate::vcs::LocalRefName::of_branch(&raw),
+        &departure,
+    )?;
+    if ctx.handler.emit_text() {
+        outln!("  {}: switched to {target_branch}", RepoKey::Project);
+    }
+    Ok(())
+}
+
+/// Fast-forward `T` in the checkout of its project repo at
+/// `dest_project_dir`, journaled before it moves.
+fn advance_project_in_checkout(
+    ctx: &OpContext<'_>,
+    dest_project_dir: &Path,
+    target_branch: &str,
+    cwd_project_tip: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
     journal_fast_forward(ctx, &RepoKey::Project)?;
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
         project_rel_path(&ctx.cwd_project_name),
-        &ctx.dest_project_dir,
+        dest_project_dir,
         &ctx.cwd_project_dir,
         target_branch,
-        &cwd_project_tip,
+        cwd_project_tip,
     ) {
         Ok(advance) => {
             if emit_text {
                 outln!(
                     "  {}: {}",
                     RepoKey::Project,
-                    ff_advance_line(&advance, &cwd_project_tip)
+                    ff_advance_line(&advance, cwd_project_tip)
                 );
             }
             if advance.onto.is_some() {
@@ -6106,7 +6390,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 ctx,
                 &RepoKey::Project,
                 ctx.project_vcs.as_ref(),
-                &ctx.dest_project_dir,
+                dest_project_dir,
                 cwd_project_tip.id(),
             )?;
             return Err(e);
@@ -6127,36 +6411,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    if let Some(taken_in) = taken_in {
-        report_landing(ctx, taken_in)?;
-    }
-    report_target_ahead(ctx)?;
-
-    let target_savepoint = ctx.target_savepoint_key();
-    settle_members(
-        &ctx.dest_workspace_dir,
-        &ctx.dest_project_dir,
-        &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
-        Some(ctx.handler),
-    );
-    prune_dropped_in_target(ctx, &target_ctx, &cwd_project_final.manifest);
-
-    for key in ctx.take_in.receiving.keys().cloned().chain(
-        Project::from_dir_skip_lock(&ctx.dest_project_dir, ctx.cwd_project_name.clone())
-            .map(|p| {
-                p.manifest
-                    .iter_entries()
-                    .map(|(path, _)| RepoKey::Member(path.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default(),
-    ) {
-        journal_fast_forward(ctx, &key)?;
-    }
-    align_after_landing(ctx, &target_ctx);
-    if !ctx.retire {
-        align_after_landing(ctx, &ctx.cwd_ctx);
-    }
     Ok(())
 }
 
@@ -6170,8 +6424,15 @@ fn upstream_taken_in(
         return Ok(None);
     };
     let vcs = ctx.project_vcs.as_ref();
-    let dir = &ctx.dest_project_dir;
-    let before = vcs.head_revision(dir)?.id().clone();
+    let (dir, before) = match &ctx.dest_project_dir {
+        Some(dir) => (dir, vcs.head_revision(dir)?.id().clone()),
+        None => match vcs
+            .resolve_local_branch_tip(&ctx.cwd_project_dir, &crate::vcs::RawRefName::new(branch))?
+        {
+            Some(tip) => (&ctx.cwd_project_dir, tip.id().clone()),
+            None => return Ok(None),
+        },
+    };
     if before == receiving.tip
         || !vcs.is_ancestor(
             dir,
@@ -6202,15 +6463,15 @@ fn upstream_taken_in(
 fn advance_receiving_ref(
     ctx: &OpContext<'_>,
     vcs: &dyn Vcs,
-    repo_path: &RepoPath,
+    key: &RepoKey,
     dir: &Path,
     receiving: &op_state::Receiving,
     create: bool,
     composed: &CommitId,
 ) -> anyhow::Result<()> {
+    let label = key.as_str();
     let emit_text = ctx.handler.emit_text();
     let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
-    let key = RepoKey::Member(repo_path.clone());
     let read = vcs
         .ref_savepoints(dir, &ctx.target_savepoint_key())?
         .into_iter()
@@ -6222,7 +6483,7 @@ fn advance_receiving_ref(
     let moved_since = |now: Option<&CommitId>, why: String| {
         let now = now.map_or_else(|| "gone".to_owned(), |n| format!("at {}", n.short()));
         target_moved_line_for(
-            repo_path,
+            label,
             dir,
             format!("'{}' is {now}, {why}", receiving.branch),
         )
@@ -6237,7 +6498,7 @@ fn advance_receiving_ref(
                 format!("not at {}, where the landing read it", read.short()),
             ))
         }
-        (None, Some(now)) if op_state::created_by(&ctx.owner_workspace_dir, &key, &branch)? => now,
+        (None, Some(now)) if op_state::created_by(&ctx.owner_workspace_dir, key, &branch)? => now,
         (None, Some(now)) => {
             return Err(moved_since(
                 Some(&now),
@@ -6286,11 +6547,11 @@ fn advance_receiving_ref(
     if &from == composed {
         return Ok(());
     }
-    journal_fast_forward(ctx, &key)?;
+    journal_fast_forward(ctx, key)?;
     crate::test_pause::point("advance-target");
     let held = vcs.checkouts_of_branch(dir, &branch)?;
     if !held.is_empty() {
-        unjournal(ctx, &key)?;
+        unjournal(ctx, key)?;
         return Err(moved_since(
             Some(&from),
             format!(
@@ -6318,20 +6579,20 @@ fn advance_receiving_ref(
             .resolve_local_branch_tip(dir, &branch)?
             .unwrap_or_else(|| ResolvedRevisionId::from(from.clone()));
         if now.id() != composed {
-            unjournal(ctx, &key)?;
+            unjournal(ctx, key)?;
         }
         return Err(target_moved_line_for(
-            repo_path,
+            label,
             dir,
             does_not_fast_forward(&now, &ResolvedRevisionId::from(composed.clone())),
         )
         .refused());
     }
     ctx.handler
-        .record_step3_advance(&key, from.as_str(), composed.as_str());
+        .record_step3_advance(key, from.as_str(), composed.as_str());
     if emit_text {
         outln!(
-            "  {repo_path}: '{}' fast-forwarded {} -> {}",
+            "  {label}: '{}' fast-forwarded {} -> {}",
             receiving.branch,
             from.short(),
             composed.short()
@@ -6366,10 +6627,14 @@ fn report_target_ahead(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let Ok(target) = landed_into(ctx, &ctx.cwd_project_name) else {
         return Ok(());
     };
-    let url_remote = vcs.project_url_remote(&ctx.dest_project_dir).ok().flatten();
+    let dir = ctx
+        .dest_project_dir
+        .as_ref()
+        .unwrap_or(&ctx.cwd_project_dir);
+    let url_remote = vcs.project_url_remote(dir).ok().flatten();
     let Ok((standing, _)) = crate::push_branch::standing_of_branch(
         vcs,
-        &ctx.dest_project_dir,
+        dir,
         &crate::vcs::RawRefName::new(target.as_str()),
         url_remote.as_ref(),
     ) else {
@@ -6393,6 +6658,11 @@ fn report_target_ahead(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// landing and `landed` drops, once every member has merged.
 fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed: &Manifest) {
     let emit_text = op.handler.emit_text();
+    let (Some(dest_project_dir), Some(dest_workspace_dir)) =
+        (&op.dest_project_dir, &op.dest_workspace_dir)
+    else {
+        return;
+    };
     let Some(before) = op
         .take_in
         .receiving
@@ -6400,7 +6670,7 @@ fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed
         .and_then(|project| {
             manifest_at_revision(
                 op.project_vcs.as_ref(),
-                &op.dest_project_dir,
+                dest_project_dir,
                 &ResolvedRevisionId::from(project.tip.clone()),
             )
             .ok()
@@ -6409,7 +6679,7 @@ fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed
         return;
     };
     for (repo_path, entry) in before.iter_entries() {
-        let checkout = op.dest_workspace_dir.join(repo_path.as_path());
+        let checkout = dest_workspace_dir.join(repo_path.as_path());
         if landed.contains_repo(repo_path) || !checkout.exists() {
             continue;
         }
@@ -6530,7 +6800,12 @@ fn landed_into(
     project: &crate::manifest::ProjectName,
 ) -> anyhow::Result<crate::records::BranchName> {
     let vcs = ctx.project_vcs.as_ref();
-    let dir = project_dir(&ctx.dest_workspace_dir, project);
+    let dir = project_dir(
+        ctx.dest_workspace_dir
+            .as_deref()
+            .unwrap_or(&ctx.cwd_workspace_dir),
+        project,
+    );
     let receiving = ctx
         .take_in
         .receiving
@@ -6610,7 +6885,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // case.
     let primary = ctx.cwd_ctx.primary_path();
     let canonical_project_dir = project_dir(primary, &ctx.cwd_project_name);
-    let target_project_dir = project_dir(&ctx.dest_workspace_dir, &ctx.cwd_project_name);
+    let target_project_dir = ctx.dest_project_dir.clone();
     let mut keys = vec![ctx.savepoint_key()];
     if matches!(ctx.verb, op_state::OpVerb::Land) {
         keys.push(ctx.target_savepoint_key());
@@ -6624,18 +6899,27 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     {
         members.take_project(&canonical_project_dir, &project, &ctx.savepoint_key());
     }
-    if let (true, Ok(project)) = (
+    if let (true, Some((target_project_dir, Ok(project)))) = (
         matches!(ctx.verb, op_state::OpVerb::Land),
-        Project::from_dir_skip_lock(&target_project_dir, ctx.cwd_project_name.clone()),
+        target_project_dir.as_ref().map(|dir| {
+            (
+                dir,
+                Project::from_dir_skip_lock(dir, ctx.cwd_project_name.clone()),
+            )
+        }),
     ) {
-        members.take_project(&target_project_dir, &project, &ctx.target_savepoint_key());
+        members.take_project(target_project_dir, &project, &ctx.target_savepoint_key());
     }
     let stores = MemberStores {
-        workspaces: vec![
-            primary.to_path_buf(),
-            ctx.dest_workspace_dir.clone(),
-            ctx.cwd_workspace_dir.clone(),
-        ],
+        workspaces: [
+            Some(primary),
+            ctx.dest_workspace_dir.as_deref(),
+            Some(&ctx.cwd_workspace_dir),
+        ]
+        .into_iter()
+        .flatten()
+        .map(Path::to_path_buf)
+        .collect(),
     };
     for (path, vcs_type) in &members.0 {
         let vcs = OpMembers::vcs(*vcs_type);
@@ -6651,8 +6935,12 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     drop_rebased_backups(ctx);
 
-    op_state::TouchedWorkspaces::of(ctx.verb, &ctx.owner_workspace_dir, &ctx.dest_workspace_dir)
-        .clear();
+    op_state::TouchedWorkspaces::of(
+        ctx.verb,
+        &ctx.owner_workspace_dir,
+        ctx.dest_workspace_dir.as_deref(),
+    )
+    .clear();
     Ok(())
 }
 
@@ -6880,7 +7168,7 @@ enum AbortSide {
 
 impl AbortSide {
     fn of(workspace: &CanonicalPath, header: &OwnerHeader) -> Self {
-        if header.verb == OpVerb::Land && *workspace == header.target {
+        if header.verb == OpVerb::Land && header.target.as_ref() == Some(workspace) {
             Self::LandTarget
         } else {
             Self::Replay
@@ -6965,13 +7253,15 @@ pub fn run_abort(
             header.id,
         );
     }
-    let other_workspace = (header.verb == OpVerb::Land).then(|| {
-        if owner_workspace == *workspace {
-            header.target.clone()
-        } else {
-            owner_workspace.clone()
-        }
-    });
+    let other_workspace = (header.verb == OpVerb::Land)
+        .then(|| {
+            if owner_workspace == *workspace {
+                header.target.clone()
+            } else {
+                Some(owner_workspace.clone())
+            }
+        })
+        .flatten();
     let tips = reading.tips();
     let op_id = header.id.clone();
     let moved_in_target: Option<&[RepoKey]> = match &reading {
@@ -7008,6 +7298,11 @@ pub fn run_abort(
     refuse_symlinked_members(&workspace_dir, &op_project_name)?;
     if let Some(other) = &other_workspace {
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
+    }
+    if let op_state::OwnerReading::Whole(record) = &reading {
+        if record.verb == OpVerb::Land && record.phase == op_state::OpPhase::Retire {
+            return end_released_landing(ctx, record, &owner_workspace, &cwd_project_dir);
+        }
     }
 
     if let op_state::OwnerReading::Whole(_) = &reading {
@@ -7117,7 +7412,7 @@ pub fn run_abort(
             members.take_record(record);
             let stores = MemberStores {
                 workspaces: [
-                    Some(header.target.as_path().to_path_buf()),
+                    header.target.as_ref().map(|t| t.as_path().to_path_buf()),
                     Some(header.source.as_path().to_path_buf()),
                     Some(ctx.primary_path().to_path_buf()),
                 ]
@@ -7434,6 +7729,72 @@ impl MemberStores {
     }
 }
 
+/// `rwv abort` of a landing stopped in its retire: the landing finished
+/// moving the target and released it, so another landing may already have
+/// read the target or built on it and another operation may hold its
+/// workspace. Nothing is restored on either side: the op ends, its savepoints
+/// go, and the source keeps the state the landing left it in.
+fn end_released_landing(
+    ctx: &WorkspaceContext,
+    record: &op_state::OwnerRecord,
+    owner_workspace: &CanonicalPath,
+    project_dir_here: &Path,
+) -> anyhow::Result<()> {
+    let mut members = OpMembers::default();
+    members.take_record(record);
+    if let Ok(project) = Project::from_dir_skip_lock(project_dir_here, record.project.clone()) {
+        members.take_manifest(&project.manifest);
+    }
+    let stores = MemberStores {
+        workspaces: vec![
+            owner_workspace.as_path().to_path_buf(),
+            ctx.primary_path().to_path_buf(),
+        ],
+    };
+    let keys = record.savepoint_keys();
+    for (path, vcs_type) in &members.0 {
+        let vcs = OpMembers::vcs(*vcs_type);
+        if let Some(dir) = stores.dir(vcs.as_ref(), path) {
+            for key in &keys {
+                delete_savepoint(vcs.as_ref(), &dir, key);
+            }
+        }
+    }
+    let project_vcs = project_vcs();
+    if let Some(dir) = stores
+        .workspaces
+        .iter()
+        .map(|ws| project_dir(ws, &record.project))
+        .find(|dir| project_vcs.is_repo(dir))
+    {
+        for key in &keys {
+            delete_savepoint(project_vcs.as_ref(), &dir, key);
+        }
+    }
+    let target = record
+        .take_in
+        .as_ref()
+        .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
+        .map_or_else(|| "the target".to_owned(), |r| format!("'{}'", r.branch));
+    if let Some(target) = &record.target {
+        if op_state::read_lease(target.as_path())
+            .ok()
+            .flatten()
+            .is_some_and(|lease| lease.id == record.id)
+        {
+            op_state::clear_lease(target.as_path());
+        }
+    }
+    op_state::TouchedWorkspaces::of(record.verb, owner_workspace.as_path(), None).clear();
+    outln!(
+        "abort: op {} had landed into {target} and released it before its retire, so nothing \
+         is restored: the landing stands, and this workspace is as the landing left it. \
+         `rwv land --retire` here retires it.",
+        record.id
+    );
+    Ok(())
+}
+
 /// Put back each branch a landing moved or created as a ref, once every
 /// checkout is restored, so no branch moves under a checkout the landing
 /// switched onto it.
@@ -7451,12 +7812,18 @@ fn restore_landing_refs(
         .as_ref()
         .map(|take_in| take_in.moved_in_target.as_slice())
         .unwrap_or_default();
-    for (path, vcs_type) in &members.0 {
+    let project_repo = stores
+        .workspaces
+        .iter()
+        .map(|ws| project_dir(ws, &record.project))
+        .find(|dir| project_vcs().is_repo(dir))
+        .map(|dir| (RepoKey::Project, project_vcs(), dir));
+    let member_repos = members.0.iter().filter_map(|(path, vcs_type)| {
         let vcs = OpMembers::vcs(*vcs_type);
-        let Some(dir) = stores.dir(vcs.as_ref(), path) else {
-            continue;
-        };
-        let repo_key = RepoKey::Member(path.clone());
+        let dir = stores.dir(vcs.as_ref(), path)?;
+        Some((RepoKey::Member(path.clone()), vcs, dir))
+    });
+    for (repo_key, vcs, dir) in project_repo.into_iter().chain(member_repos) {
         let named = RepoOperand::of(&repo_key, &record.project);
         let saved = match vcs.ref_savepoints(&dir, &key) {
             Ok(saved) => saved,

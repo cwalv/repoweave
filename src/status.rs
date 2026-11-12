@@ -119,7 +119,9 @@ pub struct OpStatus {
     /// unless this workspace only holds a lease.
     pub owner: WirePath,
     pub source: WirePath,
-    pub target: WirePath,
+    /// The workspace that has the landing's target checked out; absent where
+    /// it is checked out nowhere and the landing moves it as refs.
+    pub target: Option<WirePath>,
     pub overrides: Vec<op_state::Override>,
 }
 
@@ -132,7 +134,11 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
             started_at: resolved.record.started_at.clone(),
             owner: WirePath::of(resolved.owner_workspace.as_path()),
             source: WirePath::of(resolved.record.source.as_path()),
-            target: WirePath::of(resolved.record.target.as_path()),
+            target: resolved
+                .record
+                .target
+                .as_ref()
+                .map(|target| WirePath::of(target.as_path())),
             overrides: resolved.record.overrides.iter().collect(),
         }
     }
@@ -998,7 +1004,9 @@ mod tests {
                 started_at: "2026-06-10T21:14:03Z".into(),
                 owner: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
                 source: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/source")),
-                target: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
+                target: Some(crate::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/ws/target",
+                ))),
                 overrides: Vec::new(),
             }),
         };

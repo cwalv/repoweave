@@ -559,7 +559,6 @@ pub enum State {
     TargetRecordChanged,
     TargetModeChanged,
     TargetMemberChanges,
-    TargetNotCheckedOut,
     TargetMovedMidOperation,
     PublishTargetUnpublished,
     AlignmentAligned,
@@ -608,7 +607,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 78] = [
+    pub const ALL: [State; 77] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -671,7 +670,6 @@ impl State {
         Self::TargetRecordChanged,
         Self::TargetModeChanged,
         Self::TargetMemberChanges,
-        Self::TargetNotCheckedOut,
         Self::TargetMovedMidOperation,
         Self::PublishTargetUnpublished,
         Self::AlignmentAligned,
@@ -1354,9 +1352,10 @@ impl State {
                 means: "the checkout holds the commits listed beyond the commit the lock pins, \
                         which no remote-tracking branch and no live lock reaches",
                 refused_by: "`rwv push`; `rwv cherry-pick`, for a member it would copy onto; \
-                             `rwv status` reports it",
+                             `rwv land`, in the target's workspace, or for a branch the target \
+                             declares and nothing has checked out; `rwv status` reports it",
                 offers: &[Form::C5Lock, Form::C3UpdateRemote],
-                verb_offers: &[],
+                verb_offers: &[("land", Form::OpenWorkweave)],
             },
             Self::PinDiverged => &StateRow {
                 axis: Axis::Pin,
@@ -1571,16 +1570,6 @@ impl State {
                     Form::C31Continue,
                     Form::LostRace,
                 ],
-                verb_offers: &[],
-            },
-            Self::TargetNotCheckedOut => &StateRow {
-                axis: Axis::Target,
-                name: "checked out nowhere",
-                means: "no workspace of this clone has the branch the feature lands into \
-                        checked out, so nothing holds the checkouts its receiving branches \
-                        fast-forward in",
-                refused_by: "`rwv land`, before anything moves",
-                offers: &[Form::OpenWorkweave],
                 verb_offers: &[],
             },
             Self::TargetMovedMidOperation => &StateRow {

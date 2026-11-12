@@ -158,7 +158,6 @@ src/land.rs	pin off lineage	-	1
 src/land.rs	pin unmerged	tests/sync/push_test.rs	1
 src/land.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/land.rs	push-branch diverged	tests/sync/push_test.rs	3
-src/land.rs	target checked out nowhere	tests/sync/sync_to_test.rs	1
 src/land.rs	target dependents	-	1
 src/land.rs	target member changes	tests/sync/sync_prune_direction_test.rs	1
 src/land.rs	target mode changed	-	1
@@ -216,7 +215,7 @@ src/pins.rs	pin ahead	-	1
 src/pins.rs	pin behind	-	1
 src/pins.rs	pin diverged	-	1
 src/pins.rs	pin off remote	-	1
-src/pins.rs	pin unpinned	tests/doctor/benign_staleness_test.rs	1
+src/pins.rs	pin unpinned	tests/doctor/benign_staleness_test.rs	2
 src/plugins.rs	(untokened:environment-passthrough)	-	1
 src/plugins.rs	unknown-verb	tests/vcs/vcs_tool_floor_test.rs	1
 src/project_merge.rs	(untokened:internal-invariant)	-	1
@@ -272,7 +271,7 @@ src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	5
-src/sync.rs	(untokened:internal-invariant)	-	18
+src/sync.rs	(untokened:internal-invariant)	-	20
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	checkout in a raw worktree	-	1
 src/sync.rs	checkout in another workspace	-	1
