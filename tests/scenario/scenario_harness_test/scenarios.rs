@@ -9866,6 +9866,133 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
     )
 }
 
+/// The target's `lib` aligned onto `lib-next`, which the landing moved as a
+/// ref, and the landing was killed; someone edits a file `lib-next` holds
+/// and `main` lacks. Abort cannot switch the checkout back to `main` over
+/// that edit: it refuses, leaving the checkout where it is.
+fn abort_refused_over_colliding_edits() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
+        Step::commit(&a(), Repo::Lib, "dev-own"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &declared_branch_text(Repo::Lib, "lib-next"),
+        ),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["commit", "-qam", "lib onto lib-next"],
+        ),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(
+            &ww("w"),
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::hand_edit(
+            &a(),
+            Repo::Lib,
+            "w-lib.txt",
+            "w-lib",
+            "edited in the target",
+        ),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/lib: is off where its savepoint",
+            ))
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "lib-next",
+            }),
+    ]
+}
+
+/// The edits keep abort from switching the checkout back
+/// ([`abort_refused_over_colliding_edits`]); the printed command sets them
+/// aside, and the rerun restores everything.
+pub fn abort_refuses_a_switch_back_over_colliding_edits() -> Scenario {
+    let mut steps = abort_refused_over_colliding_edits();
+    steps.extend([
+        Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj, Repo::Lib])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::Lib,
+            }),
+        Step::git(&a(), Repo::Lib, &["stash", "list"]).claim(Claim::OutputContains("lib-next")),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario("abort refuses a switch-back over colliding edits", steps)
+}
+
+/// The edits keep abort from switching the checkout back
+/// ([`abort_refused_over_colliding_edits`]); the printed
+/// `--abandon-foreign-tip` keeps them as a backup, then restores.
+pub fn abort_abandons_colliding_edits_keeping_them() -> Scenario {
+    let mut steps = abort_refused_over_colliding_edits();
+    steps.extend([
+        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj, Repo::Lib])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/lib: its uncommitted edits are kept as backup",
+            ))
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            }),
+        Step::git(
+            &a(),
+            Repo::Lib,
+            &["log", "--all", "--format=kept %s", "-Sedited in the target"],
+        )
+        .claim(Claim::OutputContains("kept ")),
+    ]);
+    scenario("abort abandons colliding edits keeping them", steps)
+}
+
 /// How a landing that changes `lib`'s declared branch to `lib-next` treats `lib-next`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceivingCase {

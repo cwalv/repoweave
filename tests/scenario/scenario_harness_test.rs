@@ -706,6 +706,8 @@ every_scenario!(
     abort_keeps_edits_made_in_the_target_after_the_stop,
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
+    abort_refuses_a_switch_back_over_colliding_edits,
+    abort_abandons_colliding_edits_keeping_them,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
@@ -2410,6 +2412,19 @@ holding_rwv! {
     #[ignore = "the foreign-tip recovery's second choice, ending the operation with the ref left as it is, is the landing-as-refs slice's"]
     fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
         runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it())
+            .assert_fully_decided_green();
+    }
+
+    /// Edits in the target that keep abort from switching a checkout back
+    /// are refused with the choice that sets them aside.
+    fn abort_refuses_a_switch_back_over_colliding_edits() {
+        runner::run(scenarios::abort_refuses_a_switch_back_over_colliding_edits())
+            .assert_fully_decided_green();
+    }
+
+    /// The printed abandon keeps the colliding edits as a backup first.
+    fn abort_abandons_colliding_edits_keeping_them() {
+        runner::run(scenarios::abort_abandons_colliding_edits_keeping_them())
             .assert_fully_decided_green();
     }
 

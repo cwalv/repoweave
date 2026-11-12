@@ -1096,6 +1096,10 @@ pub enum VerifiedRestoreOutcome {
         /// The checkouts holding the branch; empty where it is gone.
         held_at: Vec<PathBuf>,
     },
+    /// The checkout, at a tip abort may restore, is off where its savepoint
+    /// was taken, and its uncommitted edits keep it from switching back.
+    /// Nothing was touched.
+    EditsBlockSwitchBack { savepoint: CommitId },
     /// Work was kept as backups before the steps that would have discarded
     /// it; `then` is what the restore did.
     Kept {

@@ -4869,6 +4869,17 @@ impl GitVcs {
         Ok(())
     }
 
+    /// Keep `repo`'s uncommitted edits as a backup, once per restore, then
+    /// discard them, HEAD staying where it is.
+    fn discard_edits_kept(&self, repo: &Path, kept: &mut Vec<KeptWork>) -> Result<(), VcsError> {
+        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
+            if let Some(edits) = self.backup_edits(repo)? {
+                kept.push(KeptWork::Edits(edits));
+            }
+        }
+        Self::run(["reset", "--hard", "HEAD"], repo).map(|_| ())
+    }
+
     fn hard_move_discards(repo: &Path, to: &ResolvedRevisionId) -> Result<bool, VcsError> {
         if !Self::dirty_file_names_inner(repo, StatusReach::Tracked)?.is_empty() {
             return Ok(true);
@@ -4952,7 +4963,15 @@ impl GitVcs {
         let head_id = head.id();
 
         let off = match (&on, self.observe_head(repo)?) {
-            (SavedCheckout::Unnamed, _) => None,
+            (SavedCheckout::Unnamed, _) => {
+                return Err(VcsError::CommandFailed {
+                    args: vec!["for-each-ref".to_owned(), savepoint_ref(key)],
+                    repo: repo.to_path_buf(),
+                    stderr: "the savepoint was filed by an earlier release and names no branch; \
+                             only `rwv doctor --fix` reads one"
+                        .to_owned(),
+                });
+            }
             (SavedCheckout::On(b), HeadObservation::Attached { name }) if &name == b => None,
             (SavedCheckout::Detached, HeadObservation::Detached { .. }) => None,
             (_, HeadObservation::Attached { name }) => Some(Some(name)),
@@ -4989,11 +5008,23 @@ impl GitVcs {
                     Some(BackupMark::Abandoned),
                 )?;
             }
-            match &on {
-                SavedCheckout::On(b) => self.attach_head_to(repo, &LocalRefName::of_branch(b))?,
+            let switch_back = |vcs: &Self| match &on {
+                SavedCheckout::On(b) => vcs.attach_head_to(repo, &LocalRefName::of_branch(b)),
                 SavedCheckout::Detached | SavedCheckout::Unnamed => {
-                    self.set_detached_head(repo, &savepoint)?
+                    vcs.set_detached_head(repo, &savepoint)
                 }
+            };
+            if let Err(refused) = switch_back(self) {
+                if self.snapshot_edits(repo)?.is_none() {
+                    return Err(refused);
+                }
+                if foreign_tip_policy == ForeignTipPolicy::Refuse {
+                    return Ok(VerifiedRestoreOutcome::EditsBlockSwitchBack {
+                        savepoint: savepoint.id().clone(),
+                    });
+                }
+                self.discard_edits_kept(repo, kept)?;
+                switch_back(self)?;
             }
             let then =
                 self.restore_checkout_savepoint(repo, key, attribution, foreign_tip_policy, kept)?;

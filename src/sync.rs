@@ -8057,7 +8057,29 @@ fn report_abort_outcome(
                 "  {label}: is off '{branch}', where its savepoint was taken, and cannot be \
                  switched back: {why}; it is left as it is"
             );
-            tally.blocked.push((named.clone(), choice));
+            tally
+                .blocked
+                .push((named.clone(), format!("{choice}\nthen rerun:\n\trwv abort")));
+        }
+        VerifiedRestoreOutcome::EditsBlockSwitchBack { savepoint } => {
+            tally.any_foreign = true;
+            let dir = repo_abs.display().to_string();
+            eprintln!(
+                "  {label}: is off where its savepoint {} was taken, and its uncommitted edits \
+                 keep it from switching back; it is left as it is",
+                savepoint.short()
+            );
+            tally.blocked.push((
+                named.clone(),
+                format!(
+                    "commit or set aside its edits, as this shows:\n\t{}\n\
+                     then rerun:\n\trwv abort\n\
+                     or give them up, kept as a backup first:\n\
+                     \trwv abort --abandon-foreign-tip {named}",
+                    vcs.hint(crate::vcs::VcsAction::Stash)
+                        .replace("<checkout>", &dir)
+                ),
+            ));
         }
         VerifiedRestoreOutcome::Kept { kept, then } => {
             for work in kept {
@@ -8157,7 +8179,7 @@ fn print_abort_recovery_options(tally: &AbortTally) {
         ));
     }
     for (named, choice) in &tally.blocked {
-        lines.push(format!("  {named}: {choice}\nthen rerun:\n\trwv abort"));
+        lines.push(format!("  {named}: {choice}"));
     }
     for named in &tally.abandonable {
         lines.push(format!(
