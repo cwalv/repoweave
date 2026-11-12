@@ -8,7 +8,8 @@
 use crate::diagnosis::{Report, State};
 use crate::manifest::{ProjectName, RepoKey, RepoOperand, RepoPath};
 use crate::op_state::{
-    self, AcquiredOp, OpId, OpVerb, OwnerRecord, RefMove, SavepointKey, TakeInRecord, TouchedWorkspaces,
+    self, AcquiredOp, OpId, OpVerb, OwnerRecord, RefMove, SavepointKey, TakeInRecord,
+    TouchedWorkspaces,
 };
 use crate::refusal::RefusalKind;
 use crate::vcs::{
@@ -119,6 +120,15 @@ impl Op {
         ))
     }
 
+    /// The op a resumed run goes on under.
+    pub(crate) fn adopt(op: &Op) -> Op {
+        Op {
+            workspace: op.workspace.clone(),
+            id: op.id.clone(),
+            acquired: None,
+        }
+    }
+
     /// Release the op after a refusal that came before anything moved.
     pub(crate) fn release(&self) {
         if let Some(acquired) = &self.acquired {
@@ -187,7 +197,11 @@ pub(crate) fn judge_reset(
             State::TargetDependents
                 .of(repo)
                 .checkout(dir)
-                .listing(dependents.iter().map(|d| format!("{d} lands into this branch")))
+                .listing(
+                    dependents
+                        .iter()
+                        .map(|d| format!("{d} lands into this branch")),
+                )
                 .judge(vcs),
         );
     }
@@ -208,12 +222,7 @@ pub(crate) fn reset_to_upstream(
     let tip = vcs
         .resolve_local_branch_tip(dir, branch)?
         .with_context(|| format!("'{branch}' does not exist here"))?;
-    let kept = vcs.create_backup(
-        dir,
-        &BackupSource::Branch(branch.clone()),
-        &tip,
-        None,
-    )?;
+    let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &tip, None)?;
     match on {
         Some(on) => {
             vcs.reset_attached_ref_keeping(on, upstream, &kept)?;

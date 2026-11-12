@@ -1031,7 +1031,9 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
 }
 
 fn refuse_other_schema(path: &StatePath, json: &str) -> anyhow::Result<()> {
-    let record: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    let Ok(record) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Ok(());
+    };
     if record.get("schema").and_then(serde_json::Value::as_u64) == Some(u64::from(OP_RECORD_SCHEMA))
     {
         return Ok(());
@@ -1073,8 +1075,12 @@ pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()>
 /// Journal `tip` as where this op moved `repo`, so `rwv abort` attributes the
 /// tip to the op.
 pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyhow::Result<()> {
-    let mut record = read_owner(workspace_dir)?
-        .ok_or_else(|| anyhow::anyhow!("no owner record at {} to journal in", workspace_dir.display()))?;
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
     if let Some(advanced) = record.tips.advanced_mut() {
         advanced.insert(repo, tip.clone());
     }
@@ -1083,8 +1089,12 @@ pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyho
 
 /// Journal a branch the op moved as a ref, checked out nowhere.
 pub fn journal_ref_move(workspace_dir: &Path, moved: RefMove) -> anyhow::Result<()> {
-    let mut record = read_owner(workspace_dir)?
-        .ok_or_else(|| anyhow::anyhow!("no owner record at {} to journal in", workspace_dir.display()))?;
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
     if let Some(take_in) = record.take_in.as_mut() {
         take_in.ref_moves.push(moved);
     }
@@ -1667,6 +1677,45 @@ fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    fn a_record_in(dir: &Path, schema_fields: &str) {
+        let record = format!(
+            "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"strategy\": \"ff\", \
+             \"project\": \"p\", \"source\": \"{d}\", \"target\": \"{d}\", \
+             \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
+             \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \
+             \"take_in\": null}}",
+            d = dir.display()
+        );
+        std::fs::write(dir.join(OP_STATE_FILE), record).unwrap();
+    }
+
+    #[test]
+    fn a_record_of_an_older_schema_is_refused_by_every_reader_naming_its_release() {
+        let tmp = tempfile::tempdir().unwrap();
+        a_record_in(tmp.path(), "");
+        for refused in [
+            read_owner(tmp.path()).map(|_| ()),
+            read_owner_for_abort(tmp.path()).map(|_| ()),
+            read_owner_header(tmp.path()).map(|_| ()),
+        ] {
+            let message = format!("{:#}", refused.unwrap_err());
+            assert!(
+                message.contains("an rwv release before") && message.contains("abort it with"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_of_the_current_schema_reads_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        a_record_in(
+            tmp.path(),
+            &format!("\"schema\": {OP_RECORD_SCHEMA}, \"release\": \"1.2.3\", "),
+        );
+        assert!(read_owner(tmp.path()).unwrap().is_some());
+    }
+
     fn tip(hex: char) -> CommitId {
         CommitId::parse(&hex.to_string().repeat(40)).unwrap()
     }
@@ -1704,6 +1753,8 @@ mod tests {
         let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
+  "schema": 3,
+  "release": "{release}",
   "id": "1779769917405921588",
   "verb": "sync-to",
   "strategy": "rebase",
@@ -1719,11 +1770,13 @@ mod tests {
   }},
   "converged_tips": {{}},
   "overrides": [],
-  "started_at": "2026-06-10T21:14:03Z"
+  "started_at": "2026-06-10T21:14:03Z",
+  "take_in": null
 }}"#,
             a = tip('a'),
             b = tip('b'),
             d = tip('d'),
+            release = crate::rwv_version(),
         );
 
         let read: OwnerRecord = serde_json::from_str(&record).unwrap();
@@ -1937,7 +1990,7 @@ mod tests {
   "phase": "replay",
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -1966,7 +2019,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -1997,7 +2050,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2022,7 +2075,7 @@ mod tests {
   "advanced_tips": {{}},
   "converged_tips": {{}},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }}
 "#
         )
@@ -2077,7 +2130,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2103,7 +2156,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2225,7 +2278,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z"
+  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2243,7 +2296,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "strategy": "rebase", "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
-                "overrides": [], "started_at": "2026-06-01T00:00:00Z"}}"#
+                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");

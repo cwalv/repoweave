@@ -214,6 +214,11 @@ pub struct Seed {
     pub mirrors: bool,
     /// Remotes whose `update` hook refuses `refs/heads/rwv-records`.
     pub refusing_records: Vec<Remote>,
+    /// Every git the sandbox runs answers as release 2.37, which has no
+    /// `merge-tree --write-tree`.
+    pub old_git: bool,
+    /// The `vscode-workspace` integration stays enabled.
+    pub integration: bool,
 }
 
 impl Seed {
@@ -224,6 +229,16 @@ impl Seed {
 
     pub fn role(mut self, member: Repo, role: Role) -> Seed {
         self.roles.push((member, role));
+        self
+    }
+
+    pub fn integration(mut self) -> Seed {
+        self.integration = true;
+        self
+    }
+
+    pub fn old_git(mut self) -> Seed {
+        self.old_git = true;
         self
     }
 
@@ -276,6 +291,7 @@ pub struct Sandbox {
     pub root: PathBuf,
     home: PathBuf,
     remotes: Vec<Remote>,
+    shim: Option<PathBuf>,
 }
 
 impl Sandbox {
@@ -289,7 +305,11 @@ impl Sandbox {
             root,
             home,
             remotes: Vec::new(),
+            shim: None,
         };
+        if seed.old_git {
+            sandbox.shim = Some(sandbox.install_git_shim());
+        }
         for member in Repo::MEMBERS {
             sandbox.seed_member(member);
         }
@@ -527,7 +547,44 @@ impl Sandbox {
             .collect()
     }
 
+    /// A directory holding a `git` that reports release 2.37 and refuses
+    /// `merge-tree --write-tree` as that release does, and runs the real git
+    /// for everything else.
+    fn install_git_shim(&self) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let real = String::from_utf8(
+            Command::new("sh")
+                .args(["-c", "command -v git"])
+                .output()
+                .expect("a git on PATH")
+                .stdout,
+        )
+        .unwrap();
+        let dir = self.root.join("git-shim");
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = format!(
+            "#!/bin/sh\n\
+             case \"$1\" in\n\
+             version|--version) echo 'git version 2.37.0'; exit 0;;\n\
+             merge-tree) case \"$*\" in *--write-tree*) echo 'usage: git merge-tree <base-tree> <branch1> <branch2>' >&2; exit 129;; esac;;\n\
+             esac\n\
+             exec {} \"$@\"\n",
+            real.trim()
+        );
+        let path = dir.join("git");
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        dir
+    }
+
     fn hermetic(&self, mut cmd: Command) -> Command {
+        if let Some(shim) = &self.shim {
+            let mut paths = vec![shim.clone()];
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ));
+            cmd.env("PATH", std::env::join_paths(paths).unwrap());
+        }
         cmd.env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -770,8 +827,11 @@ impl Sandbox {
         pin_first_commit: bool,
     ) {
         let seed = self.init_remote(project);
-        let mut manifest =
-            String::from("[integrations.vscode-workspace]\nenabled = false\n\n[repositories]\n");
+        let mut manifest = if spec.integration {
+            String::from("[repositories]\n")
+        } else {
+            String::from("[integrations.vscode-workspace]\nenabled = false\n\n[repositories]\n")
+        };
         let mut pins = Vec::new();
         for (member, branch) in members {
             let url = self.remote_url(Remote::origin(*member));

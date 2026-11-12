@@ -103,6 +103,7 @@ impl From<VcsError> for MemberStop {
 /// nothing has that checked out. Idempotent: a merge already staged is
 /// finished, one already made is left.
 pub(crate) fn merge_member(
+    as_refs: bool,
     workspace: &Path,
     repo: &RepoPath,
     entry: &RepoEntry,
@@ -113,7 +114,11 @@ pub(crate) fn merge_member(
 ) -> Result<Joined, MemberStop> {
     let vcs = vcs_for(entry.vcs_type);
     let journal = |tip: &CommitId| {
-        op_state::journal_tip(workspace, crate::manifest::RepoKey::Member(repo.clone()), tip)
+        op_state::journal_tip(
+            workspace,
+            crate::manifest::RepoKey::Member(repo.clone()),
+            tip,
+        )
     };
     if let Some(in_flight) = vcs.merge_in_flight(dir)? {
         if in_flight == *source {
@@ -133,7 +138,7 @@ pub(crate) fn merge_member(
         }
     }
     let attached = match vcs.head_attachment(dir)? {
-        crate::vcs::HeadAttachment::Attached(attached) => Some(attached),
+        crate::vcs::HeadAttachment::Attached(attached) if !as_refs => Some(attached),
         _ => None,
     };
     let Some(attached) = attached else {
@@ -256,11 +261,9 @@ pub(crate) fn entry_setters(
             .ok()?;
         Manifest::from_toml_str(&text).ok()
     };
-    let (Some(base), Some(theirs), Some(ours)) = (
-        base.and_then(read),
-        read(&sides.first),
-        read(&sides.second),
-    ) else {
+    let (Some(base), Some(theirs), Some(ours)) =
+        (base.and_then(read), read(&sides.first), read(&sides.second))
+    else {
         return Vec::new();
     };
     let mut lines = Vec::new();
@@ -277,7 +280,10 @@ pub(crate) fn entry_setters(
             if theirs_field.now == ours_field.now {
                 continue;
             }
-            lines.push(format!("rwv.toml entry {path}: {} differs", ours_field.name));
+            lines.push(format!(
+                "rwv.toml entry {path}: {} differs",
+                ours_field.name
+            ));
             for (side, value) in [("ours", &ours_field.now), ("theirs", &theirs_field.now)] {
                 if let Some(setter) = setter(ours_field.name, path, value) {
                     lines.push(format!("  keep {side}: {setter}"));
@@ -551,6 +557,7 @@ impl ProjectMerge<'_> {
             }
             let message = format!("Merge the pin of {path} taken from {}", sides.first.short());
             match merge_member(
+                false,
                 self.ctx.active_path(),
                 path,
                 entry,

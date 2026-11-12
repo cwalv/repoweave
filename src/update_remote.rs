@@ -9,11 +9,17 @@
 //! before any member moves.
 
 use crate::lock;
+use crate::manifest::RepoKey;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
+use crate::merge_upstream::{Flags, Op};
+use crate::op_state::{OpVerb, TakeInRecord};
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::placement::PlacementOutput;
+use crate::project_merge::{conflict_stop, merge_member, MemberStop, Order};
 use crate::selector::RepoFilter;
-use crate::vcs::{vcs_for, HeadAttachment, Relation, ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{
+    vcs_for, AttachedRef, HeadAttachment, RawRefName, Relation, ResolvedRevisionId, Vcs, VcsError,
+};
 use crate::workspace::{
     member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
 };
@@ -21,7 +27,7 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Schema URL for `rwv update --remote --json` output. Pins to the committed
@@ -125,9 +131,60 @@ pub fn run_update_remote(
     filter: &RepoFilter,
     jobs: usize,
     opts: crate::activate::ActivateOptions,
+    take: Take,
 ) -> anyhow::Result<()> {
-    // Only reads the op-state; the sync engine takes its own exclusion.
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    let resumed = match &take {
+        Take::Continue => Some(Op::resume(ctx, OpVerb::UpdateRemote)?),
+        Take::Fresh(..) => {
+            // Only reads the op-state; the sync engine takes its own exclusion.
+            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+            None
+        }
+    };
+    let record_filter;
+    let (dirty, commit, filter, opts, state) = match (take, resumed) {
+        (Take::Fresh(flags, wire), None) => (
+            dirty,
+            commit,
+            filter,
+            opts,
+            State {
+                flags,
+                wire,
+                dirty,
+                committing: None,
+                resumed: None,
+            },
+        ),
+        (_, Some((op, _, record))) => {
+            record_filter = RepoFilter::parse(&record.roles, &record.repos)?;
+            (
+                record.dirty,
+                record
+                    .commit
+                    .then(|| lock::CommitMessage::from_flag(record.message.clone())),
+                &record_filter,
+                crate::activate::ActivateOptions {
+                    no_materialize: record.no_materialize,
+                },
+                State {
+                    flags: Flags::default().recorded(&record),
+                    wire: Wire::default(),
+                    dirty: record.dirty,
+                    committing: None,
+                    resumed: Some((op, record)),
+                },
+            )
+        }
+        (Take::Continue, None) => unreachable!("a continue resumes an op"),
+    };
+    let state = State {
+        committing: commit.as_ref().map(|message| match message {
+            lock::CommitMessage::Generated => None,
+            lock::CommitMessage::Given(text) => Some(text.clone()),
+        }),
+        ..state
+    };
 
     let (project_name, workweave_dir) = match &ctx.checkout {
         Checkout::Primary { .. } => {
@@ -149,7 +206,30 @@ pub fn run_update_remote(
         filter,
         jobs,
         opts,
+        &state,
     )
+}
+
+/// What `update --remote` was asked to do for a diverged branch.
+pub enum Take {
+    Fresh(Flags, Wire),
+    Continue,
+}
+
+/// The selection and the options a resumed op re-applies, spelled as given.
+#[derive(Debug, Clone, Default)]
+pub struct Wire {
+    pub roles: Vec<String>,
+    pub repos: Vec<String>,
+    pub no_materialize: bool,
+}
+
+struct State {
+    flags: Flags,
+    wire: Wire,
+    dirty: bool,
+    committing: Option<Option<String>>,
+    resumed: Option<(Op, TakeInRecord)>,
 }
 
 /// Outcome of advancing a single repo.
@@ -189,6 +269,7 @@ fn update_for_project(
     filter: &RepoFilter,
     jobs: usize,
     opts: crate::activate::ActivateOptions,
+    state: &State,
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
@@ -266,8 +347,18 @@ fn update_for_project(
             Reporter::serial()
         }
     };
-    let fetched: Vec<Result<ResolvedRevisionId, String>> =
-        run_in_parallel(&work_items, jobs, |_idx, item| {
+    let fetched: Vec<Result<ResolvedRevisionId, String>> = match &state.resumed {
+        Some((_, record)) => work_items
+            .iter()
+            .map(|item| {
+                record
+                    .upstream_tips
+                    .get(&RepoKey::Member(item.repo_path.clone()))
+                    .map(|tip| ResolvedRevisionId::from(tip.clone()))
+                    .ok_or_else(|| format!("{}: the op recorded no upstream tip", item.repo_path))
+            })
+            .collect(),
+        None => run_in_parallel(&work_items, jobs, |_idx, item| {
             fetch_and_resolve(
                 item.vcs.as_ref(),
                 &item.repo_path,
@@ -277,10 +368,20 @@ fn update_for_project(
                 &reporter_for(item),
                 use_reporter,
             )
-        });
+        }),
+    };
     refuse_backwards(&work_items, &fetched, project.lock.as_ref())?;
+    let settled = settle_diverged(ctx, &project_name, &work_items, &fetched, state)?;
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |idx, item| {
+        if settled.as_refs.contains(&idx) {
+            let head = item
+                .vcs
+                .head_revision(item.checkout.path())
+                .map(|head| head.display_str().to_owned())
+                .map_err(|e| format!("{}: {e:#}", item.repo_path))?;
+            return Ok((head, None));
+        }
         let resolved = match &fetched[idx] {
             Ok(resolved) => resolved,
             Err(message) => return Err(message.clone()),
@@ -411,6 +512,9 @@ fn update_for_project(
     // has joined: the lock is shared project-wide state, and concurrent writes
     // would race. The `--role` / `--repo` filter selects the members recorded
     // as well as the ones advanced; every other pin stays as it was.
+    if let Some(op) = &settled.op {
+        crate::op_state::set_phase(&op.workspace, crate::op_state::OpPhase::Relock)?;
+    }
     let pending_commit = lock::relock(
         ctx,
         &lock::Relocking {
@@ -475,6 +579,10 @@ fn update_for_project(
     if let Some(pending) = &pending_commit {
         lock::commit_project_lock(pending, &authored)
             .context("failed to commit lock after update")?;
+    }
+
+    if let Some(op) = &settled.op {
+        op.finish(&settled.repos);
     }
 
     // Emit JSON envelope after lock write (so the lock is coherent before
@@ -726,11 +834,12 @@ fn advance_checkout(
     };
 
     let head = vcs.head_revision(repo_dir).map_err(describe)?;
+    let holds_target = vcs.is_ancestor(repo_dir, target, &head).map_err(describe)?;
     let is_fast_forward =
         &head == target || vcs.is_ancestor(repo_dir, &head, target).map_err(describe)?;
 
     if in_workweave {
-        if &head == target {
+        if holds_target {
             return Ok(());
         }
         if is_fast_forward {
@@ -761,7 +870,7 @@ fn advance_checkout(
         ));
     }
 
-    if &head == target {
+    if holds_target {
         return Ok(());
     }
     if is_fast_forward {
@@ -778,4 +887,315 @@ fn advance_checkout(
         target.display_str(),
         declared = entry.branch,
     ))
+}
+
+/// What the diverged members came to.
+struct Settled {
+    op: Option<Op>,
+    repos: Vec<(PathBuf, Box<dyn Vcs>)>,
+    /// Members whose branch moved as a ref: their checkouts stay where they are.
+    as_refs: BTreeSet<usize>,
+}
+
+enum Site {
+    Checkout(AttachedRef),
+    Refs(RawRefName),
+}
+
+struct Divergence {
+    idx: usize,
+    site: Site,
+    local: ResolvedRevisionId,
+    relation: Relation,
+}
+
+/// The members whose branch differs from its upstream tip, with the place the
+/// branch lives: attached in the checkout, or checked out nowhere.
+fn divergences(
+    items: &[WorkItem],
+    fetched: &[Result<ResolvedRevisionId, String>],
+) -> Vec<Divergence> {
+    let mut found = Vec::new();
+    for (idx, (item, tip)) in items.iter().zip(fetched).enumerate() {
+        let Ok(tip) = tip else { continue };
+        let dir = item.checkout.path();
+        if !dir.exists() {
+            continue;
+        }
+        let vcs = item.vcs.as_ref();
+        let counterpart = item.entry.branch.local_counterpart();
+        let in_workweave = item.checkout.is_workweave_slot();
+        let placed = match vcs.head_attachment(dir) {
+            Ok(HeadAttachment::Attached(attached))
+                if in_workweave || attached.is_named(&counterpart) =>
+            {
+                vcs.head_revision(dir)
+                    .ok()
+                    .map(|head| (Site::Checkout(attached), head))
+            }
+            _ => {
+                let branch = RawRefName::new(counterpart.as_str());
+                match (
+                    vcs.resolve_local_branch_tip(dir, &branch),
+                    vcs.checkouts_of_branch(dir, &branch),
+                ) {
+                    (Ok(Some(local)), Ok(held)) if held.is_empty() => {
+                        Some((Site::Refs(branch), local))
+                    }
+                    _ => None,
+                }
+            }
+        };
+        let Some((site, local)) = placed else {
+            continue;
+        };
+        let Ok(relation) = vcs.relation(dir, &local, tip) else {
+            continue;
+        };
+        if relation != Relation::Even {
+            found.push(Divergence {
+                idx,
+                site,
+                local,
+                relation,
+            });
+        }
+    }
+    found
+}
+
+/// Refuse, all together and before anything moves, each member that has
+/// diverged and no flag takes in; then reset and merge the ones a flag names,
+/// under the op record.
+fn settle_diverged(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    items: &[WorkItem],
+    fetched: &[Result<ResolvedRevisionId, String>],
+    state: &State,
+) -> anyhow::Result<Settled> {
+    let mut settled = Settled {
+        op: None,
+        repos: Vec::new(),
+        as_refs: BTreeSet::new(),
+    };
+    let found = divergences(items, fetched);
+    let project_vcs = crate::vcs::project_vcs();
+    let project_dir = crate::workspace::project_dir(ctx.active_path(), project);
+    let mut report = crate::diagnosis::Report::default();
+    let mut acting: Vec<(&Divergence, bool)> = Vec::new();
+    for named in &state.flags.reset_to_upstream {
+        let is_member = matches!(named, crate::manifest::RepoOperand::Member(path)
+            if items.iter().any(|item| item.repo_path == *path));
+        if !is_member {
+            crate::refuse!(
+                crate::refusal::RefusalKind::InapplicableFlag,
+                "`--reset-to-upstream {named}` names no member this update acts on; the project \
+                 repo is reset by `rwv pull --reset-to-upstream {named}`"
+            );
+        }
+    }
+    for d in &found {
+        let item = &items[d.idx];
+        let dir = item.checkout.path();
+        let vcs = item.vcs.as_ref();
+        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
+        let operand = crate::manifest::RepoOperand::Member(item.repo_path.clone());
+        let reset = state.flags.resets(&operand);
+        let merging = state.flags.merge_upstream && d.relation == Relation::Diverged;
+        if !reset && !merging {
+            if d.relation == Relation::Diverged {
+                let (ahead, behind) = vcs.ahead_behind(dir, tip.id(), d.local.id());
+                let mut judging = crate::diagnosis::State::PushBranchDiverged
+                    .of(&item.repo_path)
+                    .member()
+                    .checkout(dir)
+                    .bind("<m>", item.repo_path.as_str())
+                    .bind("<repo>", item.repo_path.as_str())
+                    .subject(format!("{ahead} ahead, {behind} behind"));
+                if !upstream_is_push_branch(vcs, dir, d) {
+                    judging = judging.only(&[crate::diagnosis::ChoiceId::C2]);
+                }
+                report.add(judging.judge(vcs));
+            }
+            continue;
+        }
+        if reset {
+            let branch = match &d.site {
+                Site::Checkout(attached) => RawRefName::new(attached.to_string()),
+                Site::Refs(branch) => branch.clone(),
+            };
+            let tracked = match d.site {
+                Site::Checkout(_) => vcs.tracked_dirty_file_names(dir).unwrap_or_default(),
+                Site::Refs(_) => Vec::new(),
+            };
+            crate::merge_upstream::judge_reset(
+                item.repo_path.as_str(),
+                dir,
+                vcs,
+                Some(tip),
+                &crate::merge_upstream::dependents_of(
+                    project_vcs.as_ref(),
+                    &project_dir,
+                    branch.as_str(),
+                )?,
+                crate::diagnosis::judge_edits(vcs, &item.repo_path, dir, tracked, None),
+                &mut report,
+            );
+        } else {
+            match &d.site {
+                Site::Checkout(_) => {
+                    let tracked = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
+                    report.extend(crate::diagnosis::judge_edits(
+                        vcs,
+                        &item.repo_path,
+                        dir,
+                        tracked,
+                        None,
+                    ));
+                }
+                Site::Refs(_) => {
+                    if let crate::vcs::RefMerge::Conflicted { paths } =
+                        vcs.merge_as_refs(dir, tip.id(), d.local.id(), "probe")?
+                    {
+                        report.note(format!(
+                            "{}: '{}' is checked out nowhere and its merge conflicts in {}; a \
+                             conflict needs a workspace to stop in, so run it where the branch \
+                             is checked out",
+                            item.repo_path,
+                            item.entry.branch.local_counterpart(),
+                            paths.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+        acting.push((d, reset));
+    }
+    report.into_result()?;
+    if acting.is_empty() && state.resumed.is_none() {
+        return Ok(settled);
+    }
+
+    let mut repos: Vec<(PathBuf, Box<dyn Vcs>)> =
+        vec![(project_dir.clone(), crate::vcs::project_vcs())];
+    for item in items {
+        if item.checkout.path().exists() {
+            repos.push((
+                item.checkout.path().to_path_buf(),
+                vcs_for(item.entry.vcs_type),
+            ));
+        }
+    }
+    let op = match &state.resumed {
+        Some((op, _)) => Op::adopt(op),
+        None => {
+            let mut record = state.flags.into_record();
+            record.roles = state.wire.roles.clone();
+            record.repos = state.wire.repos.clone();
+            record.dirty = state.dirty;
+            record.commit = state.committing.is_some();
+            record.message = state.committing.clone().flatten();
+            record.no_materialize = state.wire.no_materialize;
+            for (item, tip) in items.iter().zip(fetched) {
+                if let Ok(tip) = tip {
+                    record
+                        .upstream_tips
+                        .insert(RepoKey::Member(item.repo_path.clone()), tip.id().clone());
+                }
+            }
+            Op::begin(
+                ctx.active_path(),
+                project,
+                OpVerb::UpdateRemote,
+                record,
+                &repos,
+            )?
+        }
+    };
+    let workspace = ctx.active_path();
+    for (d, reset) in &acting {
+        if !reset {
+            continue;
+        }
+        let item = &items[d.idx];
+        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
+        let (branch, on) = match &d.site {
+            Site::Checkout(attached) => (RawRefName::new(attached.to_string()), Some(attached)),
+            Site::Refs(branch) => (branch.clone(), None),
+        };
+        let backup = crate::merge_upstream::reset_to_upstream(
+            workspace,
+            RepoKey::Member(item.repo_path.clone()),
+            item.vcs.as_ref(),
+            item.checkout.path(),
+            &branch,
+            on,
+            tip,
+        )?;
+        eprintln!(
+            "rwv update --remote: {}: reset '{branch}' to its upstream {}, keeping {} in backup {backup}",
+            item.repo_path,
+            tip.id().short(),
+            d.local.id().short()
+        );
+        if on.is_none() {
+            settled.as_refs.insert(d.idx);
+        }
+    }
+    for (d, reset) in &acting {
+        if *reset {
+            continue;
+        }
+        let item = &items[d.idx];
+        let tip = fetched[d.idx].as_ref().expect("a divergence has a tip");
+        let message = format!(
+            "Merge the upstream of {} into it",
+            item.entry.branch.local_counterpart()
+        );
+        match merge_member(
+            matches!(d.site, Site::Refs(_)),
+            workspace,
+            &item.repo_path,
+            &item.entry,
+            item.checkout.path(),
+            tip.id(),
+            Order::SourceFirst,
+            &message,
+        ) {
+            Ok(joined) => {
+                if joined.tip().is_some() {
+                    eprintln!(
+                        "rwv update --remote: {}: merged its upstream {}",
+                        item.repo_path,
+                        tip.id().short()
+                    );
+                }
+                if matches!(d.site, Site::Refs(_)) {
+                    settled.as_refs.insert(d.idx);
+                }
+            }
+            Err(MemberStop::Conflict(conflicted)) => {
+                return Err(conflict_stop(
+                    "update --remote",
+                    "rwv update --remote --continue",
+                    &conflicted,
+                    item.vcs.as_ref(),
+                    &[],
+                ));
+            }
+            Err(MemberStop::Refused(error)) => return Err(error),
+        }
+    }
+    settled.op = Some(op);
+    settled.repos = repos;
+    Ok(settled)
+}
+
+fn upstream_is_push_branch(vcs: &dyn Vcs, dir: &Path, d: &Divergence) -> bool {
+    let branch = match &d.site {
+        Site::Checkout(attached) => RawRefName::new(attached.to_string()),
+        Site::Refs(branch) => branch.clone(),
+    };
+    crate::push_branch::upstream_is_push_branch(vcs, dir, &branch, None)
 }

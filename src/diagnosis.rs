@@ -594,10 +594,15 @@ impl State {
                 name: "diverged",
                 means: "the branch and its upstream each hold commits the other lacks, counted \
                         on the line",
-                refused_by: "`rwv pull`, for the project branch; `rwv branch create`, for a branch \
-                             that would start at the tip of a branch that has diverged from \
-                             its upstream",
-                offers: &[Form::C2Pull, Form::C3Pull],
+                refused_by: "`rwv pull`, for the project branch; `rwv update --remote`, for a \
+                             member; `rwv branch create`, for a branch that would start at the \
+                             tip of a branch that has diverged from its upstream",
+                offers: &[
+                    Form::C2Pull,
+                    Form::C3Pull,
+                    Form::C2UpdateRemote,
+                    Form::C3UpdateRemote,
+                ],
                 verb_offers: &[("branch create", Form::C34)],
             },
             Self::PushBranchBehind => &StateRow {
@@ -1073,7 +1078,7 @@ impl State {
                 means: "the checkout holds the commits listed beyond the commit the lock pins, \
                         which no remote-tracking branch and no live lock reaches",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C5Lock],
+                offers: &[Form::C5Lock, Form::C3UpdateRemote],
                 verb_offers: &[],
             },
             Self::PinDiverged => &StateRow {
@@ -1082,7 +1087,7 @@ impl State {
                 means: "neither the checkout's commit nor the commit the lock pins is an \
                         ancestor of the other",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C5LockRepo],
+                offers: &[Form::C5LockRepo, Form::C2UpdateRemote],
                 verb_offers: &[],
             },
             Self::PinOffRemote => &StateRow {
@@ -1703,25 +1708,25 @@ impl Form {
                 choice: C::C2,
                 steps: &[Rwv("rwv pull --merge-upstream")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C2UpdateRemote => &FormRow {
                 choice: C::C2,
                 steps: &[Rwv("rwv update --remote --merge-upstream --repo <m>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C3Pull => &FormRow {
                 choice: C::C3,
                 steps: &[Rwv("rwv pull --reset-to-upstream <repo>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C3UpdateRemote => &FormRow {
                 choice: C::C3,
                 steps: &[Rwv("rwv update --remote --reset-to-upstream <repo>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C5Lock => &FormRow {
                 choice: C::C5,
@@ -3164,17 +3169,34 @@ mod tests {
     }
 
     #[test]
-    fn a_state_with_nothing_shipped_prints_no_choices_block() {
-        let mut report = Report::default();
-        report.add(
-            State::PushBranchDiverged
+    fn a_diverged_branch_offers_the_merge_and_the_reset_spelled_for_its_repo() {
+        let judged = |scope: Scope| {
+            let judging = State::PushBranchDiverged
                 .of("github/o/lib")
                 .subject("1 ahead, 1 behind")
-                .judge(git().as_ref()),
+                .bind("<m>", "github/o/lib")
+                .bind("<repo>", "github/o/lib");
+            let judging = match scope {
+                Scope::Member => judging.member(),
+                Scope::Project => judging.project_repo(),
+            };
+            let mut report = Report::default();
+            report.add(judging.judge(git().as_ref()));
+            report.render("update")
+        };
+        let member = judged(Scope::Member);
+        assert!(
+            member.contains("rwv update --remote --merge-upstream --repo github/o/lib")
+                && member.contains("rwv update --remote --reset-to-upstream github/o/lib"),
+            "{member}"
         );
-        let text = report.render("add");
-        assert!(!text.contains("choices:"), "{text}");
-        assert!(text.ends_with("\nrwv explain push-branch\n"), "{text}");
+        assert!(!member.contains("rwv pull"), "{member}");
+        let project = judged(Scope::Project);
+        assert!(
+            project.contains("rwv pull --merge-upstream")
+                && project.contains("rwv pull --reset-to-upstream github/o/lib"),
+            "{project}"
+        );
     }
 
     #[test]

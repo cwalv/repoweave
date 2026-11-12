@@ -6729,6 +6729,22 @@ pub fn run_abort(
         abandon,
         &mut tally,
     );
+    if let op_state::OwnerReading::Whole(record) = &reading {
+        let ref_moves = record
+            .take_in
+            .as_ref()
+            .map(|take_in| take_in.ref_moves.as_slice())
+            .unwrap_or_default();
+        for (repo, branch, error) in
+            crate::merge_upstream::restore_ref_moves(&workspace_dir, ref_moves)
+        {
+            eprintln!(
+                "  {}: '{branch}' moved since the op wrote it, so it is left where it is: {error:#}",
+                RepoOperand::of(&repo, &op_project_name)
+            );
+            tally.any_foreign = true;
+        }
+    }
 
     if let Some(other_dir) = &other_workspace {
         // Best-effort: an other workspace that does not present the op's

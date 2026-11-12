@@ -2876,3 +2876,286 @@ pub fn detached_create_start() -> Scenario {
         ],
     )
 }
+
+fn publish_app_and_project(mark: &'static str) -> Vec<Step> {
+    vec![
+        Step::commit(&a(), Repo::App, mark),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+    ]
+}
+
+pub fn three_way_pins() -> Scenario {
+    three_way_pins_on(Seed::default())
+}
+
+pub fn three_way_pins_on_old_git() -> Scenario {
+    three_way_pins_on(Seed::default().old_git())
+}
+
+fn three_way_pins_on(seed: Seed) -> Scenario {
+    let mut steps = publish_app_and_project("app-one");
+    steps.extend(publish_app_and_project("app-two"));
+    steps.extend([
+        Step::new_machine(Machine::B),
+        Step::rwv(
+            &b(),
+            &["member", "pin", "local/remotes/app", "HEAD~1", "--commit"],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::App]),
+        Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .may_rewind(&[Repo::App]),
+        Step::commit(&a(), Repo::Proj, "a-notes"),
+        Step::rwv(&a(), &["pull", "--merge-upstream"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::App,
+                mark: "app-one",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Proj,
+                rev: "HEAD",
+                mark: "a-notes",
+            }),
+    ]);
+    Scenario {
+        name: "three-way pins: a backward pin by name survives the merge",
+        seed,
+        steps,
+    }
+}
+
+pub fn dc14_c3_under_pin_ahead() -> Scenario {
+    scenario(
+        "dc14: C3 under an unpinned commit whose push branch sits at the pin",
+        vec![
+            Step::commit(&a(), Repo::App, "app-local"),
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("local/remotes/app: pin unpinned"))
+                .claim(Claim::OutputContains(
+                    "rwv update --remote --reset-to-upstream local/remotes/app",
+                )),
+            Step::rwv(
+                &a(),
+                &[
+                    "update",
+                    "--remote",
+                    "--reset-to-upstream",
+                    "local/remotes/app",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "app-local",
+                marked: None,
+            }),
+        ],
+    )
+}
+
+pub fn dc09_integrations_settle(seed: Seed) -> Scenario {
+    let docs_url = "url:origin:docs";
+    Scenario {
+        name: "dc09: a merge adding a member settles its integration files",
+        seed,
+        steps: vec![
+            Step::rwv(&a(), &["member", "remove", "local/remotes/docs"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::new_machine(Machine::B),
+            Step::rwv(&a(), &["member", "add", docs_url]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::commit(&b(), Repo::Proj, "b-notes"),
+            Step::rwv(&b(), &["pull", "--merge-upstream"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: b(),
+                    repo: Repo::Proj,
+                    rev: "HEAD",
+                    mark: "b-notes",
+                }),
+        ],
+    }
+}
+
+pub fn both_sides_move_app_conflictingly() -> Vec<Step> {
+    vec![
+        Step::new_machine(Machine::B),
+        Step::rwv(&a(), &["member", "remove", "local/remotes/docs"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::hand_edit(&b(), Repo::App, "README", "app", "beta"),
+        Step::git(&b(), Repo::App, &["commit", "-qam", "beta"]),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["pull", "--merge-upstream"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "merge conflict in local/remotes/app (README)",
+            ))
+            .claim(Claim::OutputContains("rwv pull --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&b(), Repo::Proj, &["rev-parse", "--verify", "-q", "HEAD^2"]).expect(Exit::Fails),
+        Step::git(&b(), Repo::Docs, &["status", "--porcelain"]).expect(Exit::Succeeds),
+    ]
+}
+
+pub fn merge_conflict_continues() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.extend([
+        Step::git(&b(), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&b(), Repo::App, &["add", "README"]),
+        Step::rwv(&b(), &["pull", "--continue"]).expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "pull --merge-upstream: a member conflict stops, continue finishes",
+        steps,
+    )
+}
+
+pub fn merge_conflict_aborts() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.push(Step::rwv(&b(), &["abort"]).expect(Exit::Succeeds));
+    scenario(
+        "pull --merge-upstream: a member conflict stops, abort restores",
+        steps,
+    )
+}
+
+pub fn resolve_app_conflict_and_continue() -> Vec<Step> {
+    vec![
+        Step::git(&b(), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&b(), Repo::App, &["add", "README"]),
+        Step::rwv(&b(), &["pull", "--continue"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["rev-parse", "--verify", "-q", "HEAD^2"])
+            .expect(Exit::Succeeds),
+    ]
+}
+
+pub fn merge_upstream_as_refs() -> Scenario {
+    scenario(
+        "update --remote --merge-upstream: a branch checked out nowhere merges as refs",
+        vec![
+            Step::commit(&a(), Repo::Lib, "lib-local"),
+            Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "side"]),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-remote",
+            }),
+            Step::rwv(&a(), &["update", "--remote", "--repo", "local/remotes/lib"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("push-branch diverged"))
+                .claim(Claim::OutputContains("--merge-upstream")),
+            Step::rwv(
+                &a(),
+                &[
+                    "update",
+                    "--remote",
+                    "--merge-upstream",
+                    "--repo",
+                    "local/remotes/lib",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "side",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "lib-remote",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "lib-local",
+            }),
+            Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "-q", "main^2"])
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["diff", "--quiet", "HEAD"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["ls-files", "--error-unmatch", "lib-remote.txt"],
+            )
+            .expect(Exit::Fails),
+        ],
+    )
+}
+
+pub fn reset_acts_only_on_the_named_repo() -> Scenario {
+    let mut steps = Vec::new();
+    for (repo, local, remote) in [
+        (Repo::App, "app-local", "app-remote"),
+        (Repo::Lib, "lib-local", "lib-remote"),
+    ] {
+        steps.extend([
+            Step::commit(&a(), repo, local),
+            Step::forge(Forge::Commit {
+                repo,
+                branch: "main",
+                mark: remote,
+            }),
+        ]);
+    }
+    steps.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "update",
+                "--remote",
+                "--repo",
+                "local/remotes/app",
+                "--reset-to-upstream",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewrite(&[Repo::App])
+        .claim(Claim::BackedUp {
+            repo: Repo::App,
+            mark: "app-local",
+            marked: None,
+        })
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "HEAD",
+            mark: "app-remote",
+        }),
+        Step::git(&a(), Repo::Lib, &["rev-parse", "--verify", "-q", "HEAD^2"]).expect(Exit::Fails),
+        Step::git(&a(), Repo::Lib, &["log", "-1", "--format=%P"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "lib-local",
+            }),
+    ]);
+    scenario(
+        "update --remote --reset-to-upstream acts only on the named repo",
+        steps,
+    )
+}

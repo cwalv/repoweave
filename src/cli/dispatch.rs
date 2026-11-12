@@ -1500,10 +1500,17 @@ pub fn run() -> anyhow::Result<()> {
                     if do_continue {
                         update_remote::Take::Continue
                     } else {
-                        update_remote::Take::Fresh(crate::merge_upstream::Flags {
-                            merge_upstream,
-                            reset_to_upstream,
-                        })
+                        update_remote::Take::Fresh(
+                            crate::merge_upstream::Flags {
+                                merge_upstream,
+                                reset_to_upstream,
+                            },
+                            update_remote::Wire {
+                                roles: selector.roles.clone(),
+                                repos: selector.repos.clone(),
+                                no_materialize,
+                            },
+                        )
                     },
                 )?;
             } else {

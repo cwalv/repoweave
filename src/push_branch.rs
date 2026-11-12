@@ -164,6 +164,17 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
     if let Some(declared) = subject.declared {
         judging = judging.bind("<b>", declared);
     }
+    judging = judging.bind("<repo>", subject.repo);
+    if matches!(standing, Standing::Diverged { .. })
+        && !upstream_is_push_branch(
+            vcs,
+            subject.checkout,
+            &RawRefName::new(subject.branch),
+            None,
+        )
+    {
+        judging = judging.only(&[crate::diagnosis::ChoiceId::C2]);
+    }
     judging = judging.listing(
         standing
             .listed()
@@ -171,4 +182,20 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
             .map(|c| format!("{} {}", short_revision(c.id.as_str()), c.subject)),
     );
     Some(judging.judge(vcs))
+}
+
+/// Whether `branch` takes in from the branch it publishes to: a same-name
+/// upstream on its push target. A reset to the upstream or a merge of it then
+/// answers a diverged push branch.
+pub(crate) fn upstream_is_push_branch(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    url_remote: Option<&RemoteHandle>,
+) -> bool {
+    let Ok(Some(upstream)) = vcs.upstream_of(repo, branch) else {
+        return false;
+    };
+    upstream.branch == *branch
+        && vcs.push_target_of(repo, branch, url_remote).ok().flatten() == Some(upstream.remote)
 }

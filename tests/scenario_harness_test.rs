@@ -382,6 +382,91 @@ fn unpushed_branches_and_minted_seats_never_reach_a_remote() {
 }
 
 #[test]
+fn a_pin_one_side_moved_backward_by_name_survives_a_merge_of_the_other() {
+    runner::run(scenarios::three_way_pins()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_merge_without_merge_tree_gives_the_same_pins() {
+    runner::run(scenarios::three_way_pins_on_old_git()).assert_fully_decided_green();
+}
+
+#[test]
+fn c3_is_printed_under_an_unpinned_commit_at_the_push_branch_and_run_keeps_a_backup() {
+    runner::run(scenarios::dc14_c3_under_pin_ahead()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_that_adds_a_member_clones_it_and_settles_its_files() {
+    let sandbox = Sandbox::new(Seed::default().integration());
+    let report = runner::run_in(
+        &sandbox,
+        scenarios::dc09_integrations_settle(Seed::default().integration()),
+    );
+    report.assert_fully_decided_green();
+    let project = sandbox.weave_root(Machine::B).join("projects/proj");
+    assert_eq!(
+        sandbox
+            .git_ok(&project, &["rev-list", "--parents", "-n1", "HEAD"])
+            .split(' ')
+            .count(),
+        3,
+        "the project commit is a merge"
+    );
+    assert!(sandbox
+        .weave_root(Machine::B)
+        .join(Repo::Docs.rel_path())
+        .exists());
+}
+
+#[test]
+fn a_member_merge_that_conflicts_stops_and_continue_finishes() {
+    runner::run(scenarios::merge_conflict_continues()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_member_merge_that_conflicts_stops_and_abort_restores() {
+    runner::run(scenarios::merge_conflict_aborts()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_member_merge_that_conflicts_leaves_no_project_commit_until_it_continues() {
+    let sandbox = Sandbox::new(Seed::default());
+    let mut steps = scenarios::both_sides_move_app_conflictingly();
+    steps.extend(scenarios::resolve_app_conflict_and_continue());
+    runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "member conflict",
+            seed: Seed::default(),
+            steps,
+        },
+    )
+    .assert_green();
+    let project = sandbox.weave_root(Machine::B).join("projects/proj");
+    let parents = sandbox.git_ok(&project, &["rev-list", "--parents", "-n1", "HEAD"]);
+    assert_eq!(parents.split(' ').count(), 3, "{parents}");
+    assert!(!sandbox.weave_root(Machine::B).join(".rwv-op").exists());
+    assert!(
+        !sandbox
+            .weave_root(Machine::B)
+            .join(Repo::Docs.rel_path())
+            .exists(),
+        "the dropped member's checkout is pruned once every member has merged"
+    );
+}
+
+#[test]
+fn a_branch_checked_out_nowhere_merges_as_refs_and_touches_no_working_tree() {
+    runner::run(scenarios::merge_upstream_as_refs()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_reset_to_the_upstream_keeps_a_backup_and_acts_only_on_the_repo_it_names() {
+    runner::run(scenarios::reset_acts_only_on_the_named_repo()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_waiver_covers_the_merge_it_re_pins_after_and_is_listed() {
     runner::run(scenarios::waiver_per_merge()).assert_fully_decided_green();
 }

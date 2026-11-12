@@ -4,18 +4,18 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
-    AbsentRemote, AttachedRef, Backup, BackupMark, BackupWitness, RefMerge, TreeMerges, BackupName, BackupSource, BranchChange,
-    BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
+    AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BackupWitness,
+    BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
     DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
     FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
     MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeCommit,
     RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
-    RecordsPublish, RecordsSite, RefOrigin, RegistrationPrune, RemoteBranchCopies,
+    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies,
     RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip,
     RemoteTracking, Replace, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId,
     SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind,
-    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
-    WorkspacePopulation,
+    TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

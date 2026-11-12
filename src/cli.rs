@@ -505,7 +505,12 @@ pub enum Commands {
         #[arg(long, requires = "remote", conflicts_with = "do_continue")]
         merge_upstream: bool,
         /// With --remote, move this member's branch to its upstream, keeping the tip it leaves in a backup. Repeat the flag per repo; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
-        #[arg(long, value_name = "REPO", requires = "remote", conflicts_with = "do_continue")]
+        #[arg(
+            long,
+            value_name = "REPO",
+            requires = "remote",
+            conflicts_with = "do_continue"
+        )]
         reset_to_upstream: Vec<crate::manifest::RepoOperand>,
         /// With --remote, resume the update a conflict stopped, from the workspace it runs in
         #[arg(long = "continue", requires = "remote")]

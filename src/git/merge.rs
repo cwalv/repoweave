@@ -4,8 +4,7 @@
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
 use super::{git_command, local_branch, GitVcs};
 use crate::vcs::{
-    BackupWitness, CommitId, RawRefName, RefMerge, TreeId, TreeMerge, TreeMerges,
-    Vcs, VcsError,
+    BackupWitness, CommitId, RawRefName, RefMerge, TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
 };
 use std::path::Path;
 
@@ -72,7 +71,11 @@ impl TreeMerges for GitVcs {
         if named.is_empty() {
             return Ok(None);
         }
-        Self::run(["cat-file", "blob", &format!("{}:{path}", tree.as_str())], repo).map(Some)
+        Self::run(
+            ["cat-file", "blob", &format!("{}:{path}", tree.as_str())],
+            repo,
+        )
+        .map(Some)
     }
 }
 
@@ -81,7 +84,13 @@ impl GitVcs {
         checkout: &Path,
         other: &CommitId,
     ) -> Result<Vec<String>, VcsError> {
-        let args = ["merge", "--no-commit", "--no-ff", "--no-edit", other.as_str()];
+        let args = [
+            "merge",
+            "--no-commit",
+            "--no-ff",
+            "--no-edit",
+            other.as_str(),
+        ];
         let output = git_command()
             .args(args)
             .current_dir(checkout)
@@ -131,7 +140,10 @@ impl GitVcs {
 
     pub(super) fn staged(checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {
         let listed = Self::run_trimmed(["ls-files", "--stage", "--", path], checkout)?;
-        if !listed.lines().any(|line| line.split_whitespace().nth(2) == Some("0")) {
+        if !listed
+            .lines()
+            .any(|line| line.split_whitespace().nth(2) == Some("0"))
+        {
             return Ok(None);
         }
         Self::run(["show", &format!(":0:{path}")], checkout).map(Some)

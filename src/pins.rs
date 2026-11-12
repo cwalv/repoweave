@@ -181,6 +181,16 @@ fn listing(commits: &[CommitSummary]) -> Vec<String> {
     lines
 }
 
+/// The tip of the branch the checkout is on at the remote it publishes to, as
+/// last fetched.
+fn push_branch_tip(vcs: &dyn Vcs, dir: &Path) -> Option<ResolvedRevisionId> {
+    let crate::vcs::HeadAttachment::Attached(attached) = vcs.head_attachment(dir).ok()? else {
+        return None;
+    };
+    let target = vcs.push_target(&attached, None).ok()??;
+    vcs.push_branch(&attached, &target).ok()?
+}
+
 /// The line for a member standing `standing` to `pin`, `None` where it is at
 /// the pin. `head` is the commit the checkout is at.
 pub(crate) fn judge(
@@ -197,7 +207,9 @@ pub(crate) fn judge(
             .member()
             .checkout(dir)
             .bind("<m>", repo.as_str())
+            .bind("<repo>", repo.as_str())
     };
+    let push_branch = push_branch_tip(vcs, dir);
     let heads = format!(
         "HEAD {} and the pin {}",
         head.id().short(),
@@ -221,9 +233,19 @@ pub(crate) fn judge(
             commits_text(*by),
             pin.id().short()
         )),
-        Standing::Diverged => judging(State::PinDiverged).subject(format!(
-            "neither HEAD nor the pin is an ancestor of the other: {heads}"
-        )),
+        Standing::Diverged => {
+            let judging = judging(State::PinDiverged).subject(format!(
+                "neither HEAD nor the pin is an ancestor of the other: {heads}"
+            ));
+            let reaches_pin = push_branch
+                .as_ref()
+                .is_some_and(|tip| vcs.is_ancestor(dir, pin, tip).unwrap_or(false));
+            if reaches_pin {
+                judging
+            } else {
+                judging.only(&[ChoiceId::C5])
+            }
+        }
         Standing::Ahead(beyond) => {
             let mut judging = judging(State::PinAhead).subject(format!(
                 "HEAD {} is {} beyond the pin {}",
@@ -252,7 +274,11 @@ pub(crate) fn judge(
             for fact in facts(beyond) {
                 judging = judging.fact(fact);
             }
-            judging
+            if push_branch.as_ref() == Some(pin) {
+                judging
+            } else {
+                judging.only(&[ChoiceId::C5])
+            }
         }
     };
     Some(judged.judge(vcs))

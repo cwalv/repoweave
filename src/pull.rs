@@ -10,12 +10,12 @@ use crate::activate::ActivateOptions;
 use crate::diagnosis::{judge_edits, Report, State};
 use crate::fetch::{fetch_repos, FetchedRepoOutput};
 use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath};
+use crate::member_selection::MemberSelection;
 use crate::merge_upstream::{Flags, Op};
 use crate::op_state::{OpVerb, TakeInRecord};
-use crate::project_merge::{ProjectMerge, Sides};
-use crate::member_selection::MemberSelection;
 use crate::parallel::OutputMode;
 use crate::placement::PlacementOutput;
+use crate::project_merge::{ProjectMerge, Sides};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::skipped::SkippedEffect;
@@ -357,18 +357,33 @@ fn take_in_project(
         return Ok(taken);
     }
     if reset {
-        return reset_project(ctx, project, &dir, &attached, &upstream, &head, how, taken, &say);
+        return reset_project(
+            ctx, project, &dir, &attached, &upstream, &head, how, taken, &say,
+        );
     }
     if diverged || (contains_upstream && how.resumed.is_some()) {
         if !how.flags.merge_upstream {
             let (ahead, behind) = vcs.ahead_behind(&dir, upstream.id(), head.id());
-            return Err(State::PushBranchDiverged
+            let mut judging = State::PushBranchDiverged
                 .of(&path)
-                .subject(format!("{ahead} ahead, {behind} behind"))
-                .judge(vcs.as_ref())
-                .refused());
+                .project_repo()
+                .checkout(&dir)
+                .bind("<repo>", &path)
+                .subject(format!("{ahead} ahead, {behind} behind"));
+            let url_remote = vcs.project_url_remote(&dir).ok().flatten();
+            if !crate::push_branch::upstream_is_push_branch(
+                vcs.as_ref(),
+                &dir,
+                &RawRefName::new(attached.to_string()),
+                url_remote.as_ref(),
+            ) {
+                judging = judging.only(&[crate::diagnosis::ChoiceId::C2]);
+            }
+            return Err(judging.judge(vcs.as_ref()).refused());
         }
-        return merge_project(ctx, project, &dir, &attached, &upstream, &head, how, taken, &say);
+        return merge_project(
+            ctx, project, &dir, &attached, &upstream, &head, how, taken, &say,
+        );
     }
 
     let tracked = vcs.tracked_dirty_file_names(&dir)?;
