@@ -533,6 +533,10 @@ impl Vcs for FakeVcs {
         unsupported("record_replayed")
     }
 
+    fn forget_replays(&self, _repo: &Path) -> Result<(), VcsError> {
+        Ok(())
+    }
+
     fn copy_replayed(
         &self,
         _repo: &Path,

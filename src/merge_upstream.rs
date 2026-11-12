@@ -140,6 +140,7 @@ impl Op {
     pub(crate) fn finish(&self, repos: &[(PathBuf, Box<dyn Vcs>)]) {
         for (dir, vcs) in repos {
             vcs.drop_savepoint(dir, &SavepointKey::Op(self.id.clone()));
+            let _ = vcs.forget_replays(dir);
         }
         op_state::clear_all_at(&self.workspace);
     }

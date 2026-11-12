@@ -43,6 +43,9 @@
 //!   A target that is itself a feature and lands, then follows the branch it
 //!   landed into, takes that branch's chain: its new tip is the tip, in the
 //!   same store, of a branch it lands into.
+//! - **replay record left**: a record of what a replay made, kept in a
+//!   checkout's git dir, in a place that holds no operation's record or
+//!   lease, so nothing will read it again.
 //!
 //! What they read: every ref (`git rev-list --all`, which takes in each linked
 //! worktree's HEAD) of every remote and every machine's canonical clone; the
@@ -99,6 +102,7 @@ pub enum Invariant {
     EveryRemoteWriteAttributed,
     DeclaredBranchesMoveForward,
     TargetsKeepFirstParents,
+    NoReplayRecordOutlivesItsOp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +142,11 @@ pub enum Violation {
         from: String,
         to: String,
     },
+    ReplayRecordLeft {
+        place: Place,
+        repo: Repo,
+        record: String,
+    },
 }
 
 impl Violation {
@@ -149,6 +158,7 @@ impl Violation {
             Violation::UnattributedRemoteWrite { .. } => Invariant::EveryRemoteWriteAttributed,
             Violation::DeclaredMovedBack { .. } => Invariant::DeclaredBranchesMoveForward,
             Violation::FirstParentsBroken { .. } => Invariant::TargetsKeepFirstParents,
+            Violation::ReplayRecordLeft { .. } => Invariant::NoReplayRecordOutlivesItsOp,
         }
     }
 }
@@ -205,6 +215,15 @@ impl fmt::Display for Violation {
             } => write!(
                 f,
                 "{} {store:?}: target branch {branch} moved {from} -> {to}, off its first-parent chain",
+                repo.name()
+            ),
+            Violation::ReplayRecordLeft {
+                place,
+                repo,
+                record,
+            } => write!(
+                f,
+                "{place:?} {}: replay record {record} is left with no operation to read it",
                 repo.name()
             ),
         }
@@ -340,6 +359,8 @@ pub struct Snapshot {
     pub records: BTreeMap<(Repo, Store), Records>,
     /// The branch each project's origin hands a fresh clone.
     pub default_branch: BTreeMap<Repo, String>,
+    /// Each replay record kept in a checkout of a place no operation holds.
+    replay_records_left: BTreeSet<(Place, Repo, String)>,
 }
 
 impl Snapshot {
@@ -480,6 +501,7 @@ pub fn snapshot(sandbox: &Sandbox) -> Snapshot {
         }
     }
 
+    snap.replay_records_left = replay_records_left(sandbox);
     for place in sandbox.live_places() {
         for project in [Repo::Proj, Repo::Proj2] {
             let checkout = sandbox.checkout(&place, project);
@@ -707,7 +729,59 @@ pub fn check(
         &allow.may_restore,
     ));
     violations.extend(first_parents_broken(sandbox, before, after));
+    violations.extend(
+        after
+            .replay_records_left
+            .difference(&before.replay_records_left)
+            .map(|(place, repo, record)| Violation::ReplayRecordLeft {
+                place: place.clone(),
+                repo: *repo,
+                record: record.clone(),
+            }),
+    );
     violations
+}
+
+/// The git dir of the checkout at `checkout`, read from its `.git` without
+/// running git: the directory itself, or the one a linked worktree's file
+/// names.
+fn git_dir_of(checkout: &Path) -> Option<PathBuf> {
+    let dot_git = checkout.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let named = PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
+    Some(if named.is_absolute() {
+        named
+    } else {
+        checkout.join(named)
+    })
+}
+
+fn replay_records_left(sandbox: &Sandbox) -> BTreeSet<(Place, Repo, String)> {
+    let mut left = BTreeSet::new();
+    for place in sandbox.live_places() {
+        let root = sandbox.place_root(&place);
+        if root.join(".rwv-op").exists() || root.join(".rwv-op-lease").exists() {
+            continue;
+        }
+        for repo in Repo::ALL {
+            let Some(dir) = git_dir_of(&sandbox.checkout(&place, repo)) else {
+                continue;
+            };
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in entries.filter_map(Result::ok) {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("rwv-replayed-") {
+                    left.insert((place.clone(), repo, name));
+                }
+            }
+        }
+    }
+    left
 }
 
 pub fn stranded(

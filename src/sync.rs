@@ -7493,6 +7493,9 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     drop_rebased_backups(ctx);
+    for workspace in std::iter::once(&ctx.cwd_workspace_dir).chain(&ctx.dest_workspace_dir) {
+        forget_replays_in(workspace, &ctx.cwd_project_name);
+    }
 
     op_state::TouchedWorkspaces::of(
         ctx.verb,
@@ -7502,6 +7505,27 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     .leasing(ctx.take_in.in_place_workspaces())
     .clear();
     Ok(())
+}
+
+/// Drop what every replay recorded in the checkouts of `workspace`, once the
+/// op that read it ended.
+fn forget_replays_in(workspace: &Path, project: &crate::manifest::ProjectName) {
+    let dir = project_dir(workspace, project);
+    let vcs = project_vcs();
+    if !vcs.is_repo(&dir) {
+        return;
+    }
+    let _ = vcs.forget_replays(&dir);
+    let Ok(loaded) = Project::from_dir_skip_lock(&dir, project.clone()) else {
+        return;
+    };
+    for (path, entry) in loaded.manifest.iter_entries() {
+        let member = workspace.join(path.as_path());
+        let vcs = vcs_for(entry.vcs_type);
+        if vcs.is_repo(&member) {
+            let _ = vcs.forget_replays(&member);
+        }
+    }
 }
 
 /// Drop the `rebased` backups the landing journaled, once it has landed,
@@ -8168,6 +8192,9 @@ pub fn run_abort(
                 &op_project_name,
                 kept.iter(),
             );
+        }
+        for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
+            forget_replays_in(dir, &op_project_name);
         }
         op_state::clear_all_at(&workspace_dir);
     } else if tally.any_foreign {

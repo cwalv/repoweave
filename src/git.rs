@@ -3093,6 +3093,10 @@ impl Vcs for GitVcs {
         Self::write_replay_record(repo, old, onto, replayed)
     }
 
+    fn forget_replays(&self, repo: &Path) -> Result<(), VcsError> {
+        Self::remove_replay_records(repo)
+    }
+
     fn copy_replayed(
         &self,
         repo: &Path,

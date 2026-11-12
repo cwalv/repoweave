@@ -3343,6 +3343,10 @@ pub trait Vcs: Send + Sync {
         replayed: &Replayed,
     ) -> Result<(), VcsError>;
 
+    /// Drop every record a replay in the checkout at `repo` kept, once no
+    /// operation reads it.
+    fn forget_replays(&self, repo: &Path) -> Result<(), VcsError>;
+
     /// A copy of `commit` whose parent is `parent`, its message and
     /// authorship kept and its tree `commit`'s with `changes` applied,
     /// referenced by nothing.

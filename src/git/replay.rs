@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 
 /// The name, under the checkout's own git dir, of the record a replay of
 /// `old` onto `onto` keeps.
+const RECORD_PREFIX: &str = "rwv-replayed-";
+
 fn record_name(old: &CommitId, onto: &CommitId) -> String {
-    format!("rwv-replayed-{}-{}", old.as_str(), onto.as_str())
+    format!("{RECORD_PREFIX}{}-{}", old.as_str(), onto.as_str())
 }
 
 /// What a record's pairs, each replayed commit with the commit git noted
@@ -132,6 +134,37 @@ impl GitVcs {
             }
         }
         Ok(read_pairs(&pairs, &olds, onto, &written))
+    }
+
+    pub(super) fn remove_replay_records(repo: &Path) -> Result<(), VcsError> {
+        let held = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                RECORD_PREFIX,
+            ],
+            repo,
+        )
+        .map(PathBuf::from)?;
+        let Some(dir) = held.parent() else {
+            return Ok(());
+        };
+        let io = |source| VcsError::Io {
+            ctx: format!("failed to clear the replay records in {}", dir.display()),
+            source,
+        };
+        for entry in std::fs::read_dir(dir).map_err(io)? {
+            let entry = entry.map_err(io)?;
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(RECORD_PREFIX))
+            {
+                std::fs::remove_file(entry.path()).map_err(io)?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn write_replay_record(
