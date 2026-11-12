@@ -797,7 +797,7 @@
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `ff-impossible` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `merge-failed` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
@@ -842,7 +842,7 @@
             "kind": {
               "type": "string",
               "enum": [
-                "ff-impossible"
+                "merge-failed"
               ]
             },
             "message": {
