@@ -162,7 +162,7 @@ src/land.rs	target dependents	-	1
 src/land.rs	target member changes	tests/sync/sync_prune_direction_test.rs	1
 src/land.rs	target mode changed	-	1
 src/land.rs	target no target	-	1
-src/land.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
+src/land.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	2
 src/lock.rs	(untokened:environment-passthrough)	-	5
 src/lock.rs	(untokened:tally)	-	1
 src/lock.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
@@ -276,7 +276,7 @@ src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
 src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	2
-src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
+src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
 src/sync.rs	not-fast-forwardable	-	3
 src/sync.rs	op-parked	-	6
