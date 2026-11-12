@@ -331,7 +331,14 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
         plan.print_dry_run(
             &pushed,
             push_project,
-            &fetch_age_text(pvcs.as_ref(), &pushed.project_dir),
+            &fetch_age_text(
+                pvcs.as_ref(),
+                &pushed.project_dir,
+                plan.project
+                    .as_ref()
+                    .map(|project| &project.target)
+                    .or(project_url_remote.as_ref()),
+            ),
         );
         return Ok(());
     }
@@ -1265,9 +1272,14 @@ fn plan_declared_branches(
     Ok(())
 }
 
-/// `, the last fetch <n> ago` or `, none on record`, for the project repo.
-fn fetch_age_text(vcs: &dyn Vcs, repo: &Path) -> String {
-    match vcs.last_fetch_age(repo) {
+/// How long ago rwv last fetched the project repo's `remote`, or that it has
+/// no record of doing so.
+fn fetch_age_text(vcs: &dyn Vcs, repo: &Path, remote: Option<&RemoteHandle>) -> String {
+    let age = match remote {
+        Some(remote) => crate::fetch_claim::last_fetch_age(vcs, repo, remote),
+        None => Ok(None),
+    };
+    match age {
         Ok(Some(age)) => {
             let secs = age.as_secs();
             let (n, unit) = match secs {
@@ -1281,7 +1293,8 @@ fn fetch_age_text(vcs: &dyn Vcs, repo: &Path) -> String {
                 if n == 1 { "" } else { "s" }
             )
         }
-        _ => " (no fetch on record)".to_owned(),
+        Ok(None) => " (no fetch on record)".to_owned(),
+        Err(e) => format!(" (the fetch record does not read: {e:#})"),
     }
 }
 

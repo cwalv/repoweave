@@ -173,8 +173,7 @@ pub(crate) fn pruning_fetch(
         if let Some(absent) = add {
             vcs.add_url_remote(dir, absent)?;
         }
-        vcs.fetch_pruning(claim, dir, None)
-            .map_err(anyhow::Error::from)
+        claim.fetch_pruning(vcs, dir, None)
     })
 }
 
@@ -185,8 +184,7 @@ pub(crate) fn pruning_fetch_of(
     remotes: &[crate::vcs::RemoteHandle],
 ) -> anyhow::Result<PruningFetch> {
     FetchClaim::hold(vcs, dir, |claim| {
-        vcs.fetch_pruning(claim, dir, Some(remotes))
-            .map_err(anyhow::Error::from)
+        claim.fetch_pruning(vcs, dir, Some(remotes))
     })
 }
 

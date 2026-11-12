@@ -552,6 +552,83 @@ fn push_dry_run_says_it_judged_refs_as_last_fetched() {
     );
 }
 
+/// The age a dry run gives is that of rwv's own fetch of the remote: a
+/// transfer from a local path into the project repo contacted no remote and
+/// does not count.
+#[test]
+fn push_dry_run_counts_only_rwvs_fetch_of_the_remote() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(
+        &project_dir,
+        &[
+            "fetch",
+            "-q",
+            &common::file_url(&ws.manifest_bares[0].1),
+            "HEAD",
+        ],
+    );
+    let dry_run = || {
+        let out = rwv()
+            .args(["push", "--dry-run"])
+            .current_dir(&ws.workspace)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let stdout = dry_run();
+    assert!(
+        stdout.contains("judged on refs as last fetched (no fetch on record)"),
+        "{stdout}"
+    );
+
+    rwv()
+        .args(["fetch"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let stdout = dry_run();
+    assert!(
+        stdout.contains("judged on refs as last fetched (last fetch"),
+        "{stdout}"
+    );
+}
+
+/// The refs a fetch moves are shared by every workspace on the store, and so
+/// is the age of that fetch.
+#[test]
+fn push_dry_run_in_a_workweave_reads_the_age_of_a_fetch_run_elsewhere() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    rwv()
+        .args(["workweave", "create", "--project", "alpha", "ww"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    rwv()
+        .args(["fetch"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let workweave = ws.workspace.parent().unwrap().join(".workweaves/alpha--ww");
+    rwv()
+        .args(["branch", "rename", "ww-work"])
+        .current_dir(&workweave)
+        .assert()
+        .success();
+    let out = rwv()
+        .args(["push", "--dry-run"])
+        .current_dir(&workweave)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("judged on refs as last fetched (last fetch"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// A publishing push leaves `rwv.lock` as the committed lock holds it: it
 /// judges the pins and never writes them.
 #[test]

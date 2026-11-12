@@ -1972,6 +1972,7 @@ impl Vcs for GitVcs {
         let before = Self::remote_tracking_tips(repo)?;
         let mut log = String::new();
         let mut unconfirmed = Vec::new();
+        let mut fetched = Vec::new();
         let remotes = Self::run_trimmed(["remote"], repo)?;
         let wanted = |remote: &str| only.is_none_or(|only| only.iter().any(|r| r.name() == remote));
         for remote in remotes
@@ -1980,7 +1981,10 @@ impl Vcs for GitVcs {
             .filter(|r| !r.is_empty() && wanted(r))
         {
             match Self::run_logged(["fetch", "--tags", "--prune", remote], repo) {
-                Ok(report) => log.push_str(&report),
+                Ok(report) => {
+                    log.push_str(&report);
+                    fetched.push(RemoteHandle::new(remote));
+                }
                 Err(VcsError::CommandFailed { stderr, .. }) => {
                     unconfirmed.push(UnconfirmedRemote {
                         remote: remote.to_owned(),
@@ -2029,6 +2033,7 @@ impl Vcs for GitVcs {
         moves.sort_by(|a, b| a.branch.cmp(&b.branch));
         Ok(PruningFetch {
             moves,
+            fetched,
             log,
             unconfirmed,
         })
@@ -2978,22 +2983,6 @@ impl Vcs for GitVcs {
                 })
             })
             .collect()
-    }
-
-    fn last_fetch_age(&self, repo: &Path) -> Result<Option<std::time::Duration>, VcsError> {
-        let path = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "FETCH_HEAD",
-            ],
-            repo,
-        )?;
-        Ok(std::fs::metadata(path)
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|at| at.elapsed().ok()))
     }
 
     fn pushed_range(

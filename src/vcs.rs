@@ -1565,6 +1565,8 @@ pub struct MemberBirth {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PruningFetch {
     pub moves: Vec<RemoteBranchMove>,
+    /// The remotes the fetch completed.
+    pub fetched: Vec<RemoteHandle>,
     /// The VCS's own progress report, for a caller that relays it.
     pub log: String,
     /// The remotes the fetch could not complete. The others are fetched and
@@ -3320,10 +3322,6 @@ pub trait Vcs: Send + Sync {
         tip: &ResolvedRevisionId,
         pushed: Option<&ResolvedRevisionId>,
     ) -> Result<Vec<RangeCommit>, VcsError>;
-
-    /// How long ago a fetch into `repo` last completed, or `None` where none
-    /// is on record. For git: the age of `FETCH_HEAD`.
-    fn last_fetch_age(&self, repo: &Path) -> Result<Option<std::time::Duration>, VcsError>;
 
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
