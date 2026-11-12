@@ -3023,19 +3023,21 @@ pub fn finding_entries_markdown(vcs_type: crate::manifest::VcsType) -> Vec<(Axis
         .into_iter()
         .filter_map(|axis| Some((axis, axis.finding()?)))
         .map(|(axis, finding)| {
+            let marks = finding.whole.as_ref().map_or(String::new(), |whole| {
+                format!(
+                    "**{}. {}** ",
+                    severity_text(whole.severity),
+                    fix_text(whole.fix)
+                )
+            });
             let mut out = format!(
-                "### `{}`\n\n{}\n\n{}",
+                "### `{}`\n\n{marks}{}\n\n{}",
                 axis.token(),
                 axis.row().condition,
                 kind_sections(axis, vcs.as_ref(), &vcs_name)
             );
             if let Some(whole) = &finding.whole {
-                out.push_str(&format!(
-                    "\n**{}. {}** {}\n",
-                    severity_text(whole.severity),
-                    fix_text(whole.fix),
-                    consent_note(whole.fix, whole.entry)
-                ));
+                out.push_str(&format!("\n{}\n", consent_note(whole.fix, whole.entry)));
             }
             for sub_kind in &finding.sub_kinds {
                 out.push_str(&format!(
@@ -3340,7 +3342,7 @@ mod tests {
             "{history}"
         );
         assert!(
-            history.contains("\n**Warning. Report-only.** `histories` names"),
+            history.starts_with("### `history-disagreement`\n\n**Warning. Report-only.** Two"),
             "{history}"
         );
         assert!(!history.contains("\n#### "), "{history}");

@@ -98,6 +98,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
+| [`history-disagreement`](#history-disagreement) | Warning | Report-only |
 | [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone` | Warning | Auto-fixable |
 | [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands` | Warning | Report-only |
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
@@ -1012,6 +1013,30 @@ project's role.
 **What to do:** decide which role the clone should have and give it that role
 in every project listing it, with `rwv member set-role --project <name> <repo> <role>`.
 `--fix` does not choose between the projects.
+
+### `history-disagreement`
+
+**Warning. Report-only.** Two projects list the same member, and their live weave branches record different `history` for it.
+
+**Why.** A member's clone is shared, so one member branch can be landed into by several projects. Each project's landings follow its own setting, so the branch takes rebased work from one project and merge commits from another, and neither project's setting describes its history. Nothing refuses: each project's setting is its own to keep, and `rwv doctor` reports the difference.
+
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: history-disagreement <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `disagreement` | projects listing this member record different `history` for it on their live weave branches, each branch listed with its value | nothing refuses; `rwv doctor` reports it |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `disagreement` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv branch set-history <h> --repo <m>` | a workspace with the branch checked out | re-pins by name, backup kept |
+
+**Where this sits.** [Formats](./formats.md) states the `history` keys.
+
+`histories` names every live weave branch, of every project listing the member, that records a `history` for it, with the value it records: the member's own, else the branch's top-level one. Branches of one project that differ among themselves are not reported. Doctor reports it from any workspace, for each member a project in scope lists.
+
+**What to do:** decide which shape the member's branches take, and give every project that setting with `rwv branch set-history <h> --repo <m>` in a workspace on each branch that records another, then push it. Leaving it is allowed: each project's landings follow its own setting.
 
 ### `stale-worktree-registration`
 

@@ -138,6 +138,26 @@
         }
       ]
     },
+    "BranchHistoryOutput": {
+      "description": "The `history` one project's live weave branch records for a member.",
+      "type": "object",
+      "required": [
+        "branch",
+        "history",
+        "project"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "history": {
+          "$ref": "#/definitions/History"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
+    },
     "CargoSkewOccurrenceOutput": {
       "description": "Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].\n\nKept separate so the internal type stays free of serde/schemars deps and the wire shape is a single-source-of-truth definition here.",
       "type": "object",
@@ -366,6 +386,32 @@
           "type": "string",
           "enum": [
             "dangling-link-unfetched"
+          ]
+        }
+      ]
+    },
+    "History": {
+      "description": "How a weave branch accepts landings and takes its target's work in. `rwv.toml` records it at the top level and per member; no value is the default, so an absent one is unset.",
+      "oneOf": [
+        {
+          "description": "Fast-forward, else rebase onto the receiving branch.",
+          "type": "string",
+          "enum": [
+            "linear"
+          ]
+        },
+        {
+          "description": "Fast-forward, else a merge commit.",
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        {
+          "description": "A landing only fast-forwards; taking the target in rebases.",
+          "type": "string",
+          "enum": [
+            "ff-only"
           ]
         }
       ]
@@ -1199,6 +1245,36 @@
               "items": {
                 "$ref": "#/definitions/ProjectRoleOutput"
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "histories",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "histories": {
+              "description": "Every live weave branch, of every project listing the member, that records a `history` for it, with that value.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/BranchHistoryOutput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "history-disagreement"
+              ]
+            },
+            "path": {
+              "type": "string"
             }
           }
         },

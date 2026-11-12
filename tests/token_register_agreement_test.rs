@@ -95,6 +95,11 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "a checkout is not where its workspace expects it",
     ),
     (
+        "history-disagreement",
+        &["doctor", "kind"],
+        "projects record different `history` for one member",
+    ),
+    (
         "clone-topology",
         &["doctor", "refusal"],
         "a clone sits in a topology rwv does not maintain",

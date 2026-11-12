@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Create a **weave branch**, record how one is used, list the weave branches with
-their records, rename one, and delete one. A weave branch is a branch of the project repo that
+Create a **weave branch**, record how one is used or how it accepts landings,
+list the weave branches with their records, rename one, and delete one. A weave branch is a branch of the project repo that
 carries `rwv.toml` and `rwv.lock`.
 
 A branch's **record** is one of two modes:
@@ -103,6 +103,22 @@ read as usual.
 
 The records branch's own name, and every name below it, is not a weave branch's:
 `set-mode` refuses it as `name` `reserved`.
+
+### `set-history`
+
+Writes the checked-out branch's `history` in its `rwv.toml`: the top-level
+setting, or with `--repo <m>` that member's own, which overrides the top-level
+one for it. `--unset` removes the key, and a member's then follows the
+top-level one. `linear`, `merge` and `ff-only` are the values; none is the
+default, and nothing else writes one. `--repo projects/<p>`, this project's
+repo, names the top-level setting.
+
+The change is committed alone, leaving any other edit to `rwv.toml`
+uncommitted. A value the file already holds is committed where the commit
+lacks it, so a hand edit is finished by running it. It refuses, writing
+nothing, a branch with no record that reads, a detached project repo, an
+operation in progress and other uncommitted tracked changes in the project
+repo; a member the manifest does not list is `repo-not-in-manifest`.
 
 ### `list`
 
@@ -221,6 +237,7 @@ recording `a/b`.
 ```
 rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]
 rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]
+rwv branch set-history <linear|merge|ff-only|--unset> [--repo <m>] [--project <name>]
 rwv branch list [--json] [--project <name>]
 rwv branch rename <new> [--adopt] [--project <name>]
 rwv branch delete <W> [--target <T>] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
@@ -238,7 +255,8 @@ Run `rwv branch --help` for the full clap surface.
 `create` prints `created <W> at <rev>: <record>`, the `target-recorded` lines, and
 the alignment `update` reports under the `rwv branch create` prefix.
 `set-mode` prints one line saying what is recorded, then any `target-recorded`
-and dependent lines. `list` prints one line per branch, or `no weave branches`.
+and dependent lines. `set-history` prints `<repo>: history <old> -> <new>`,
+`projects/<p>` naming the top-level setting, or that nothing changed. `list` prints one line per branch, or `no weave branches`.
 `rename` prints `renamed <repo>: <old> -> <new>` for each branch it renamed,
 `moved the record of <old> to <new>: <record>`, `retargeted <dependent>` for
 each record that lands into it and `adopted <repo>: <new> takes in from

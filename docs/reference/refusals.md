@@ -61,6 +61,7 @@ included, on [Doctor findings](./doctor-findings.md):
 
 - [`unparseable-project`](./doctor-findings.md#unparseable-project)
 - [`pin`](./doctor-findings.md#pin)
+- [`history-disagreement`](./doctor-findings.md#history-disagreement)
 - [`alignment`](./doctor-findings.md#alignment)
 - [`legacy-workweave-index`](./doctor-findings.md#legacy-workweave-index)
 
@@ -284,6 +285,29 @@ The others follow.
 | `dependents` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
+
+### `history`
+
+**Condition.** Integrating work needs more than a fast-forward, and the branch it moves into records no `history` for that repo; or a run names a `history` the branch records otherwise; or the branch records `ff-only` and only a fast-forward would do.
+
+**Why.** A branch's `rwv.toml` records how it accepts landings: `linear`, `merge` or `ff-only`, at the top level and per member. No value is the default and no role implies one, because the choice between rewriting a feature onto the target and recording a merge is the target's owners' to make, once, and every later landing follows it. A fast-forward reads no setting.
+
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: history <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `unset` | integrating this repo needs more than a fast-forward, and the branch it moves into records no `history` for it: neither the member's own nor the top-level one | a verb that takes a target's work in or lands work into it, where a fast-forward does not do it |
+| `contradicted` | the run names a `history` for one run, and the branch it moves into records another for this repo | a verb that takes a target's work in or lands work into it, run with a `history` for one run |
+| `not fast-forward` | the branch records `ff-only` for this repo, and the landing is not a fast-forward: the target has work the source has not taken in | a landing into a branch that records `ff-only` |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `unset` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+| `contradicted` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+
+**Where this sits.** [Formats](./formats.md) states the `history` keys; [Sync semantics](../explanation/joints/sync-semantics.md).
 
 ### `protected`
 

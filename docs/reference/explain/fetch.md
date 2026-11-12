@@ -201,6 +201,20 @@ Schema:
           ]
         },
         {
+          "description": "How a branch accepts landings and takes its target's work in.",
+          "type": "string",
+          "enum": [
+            "history"
+          ]
+        },
+        {
+          "description": "Projects sharing a member that record different `history` for it.",
+          "type": "string",
+          "enum": [
+            "history-disagreement"
+          ]
+        },
+        {
           "description": "Where a workspace's checkouts sit against where the checked-out branch's record says they should.",
           "type": "string",
           "enum": [

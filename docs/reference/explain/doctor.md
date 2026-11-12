@@ -168,7 +168,7 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -341,6 +341,26 @@ Schema:
           ]
         }
       ]
+    },
+    "BranchHistoryOutput": {
+      "description": "The `history` one project's live weave branch records for a member.",
+      "type": "object",
+      "required": [
+        "branch",
+        "history",
+        "project"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "history": {
+          "$ref": "#/definitions/History"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
     },
     "CargoSkewOccurrenceOutput": {
       "description": "Wire representation of `crate::integrations::cargo_workspace::CargoSkewOccurrence`.\n\nKept separate so the internal type stays free of serde/schemars deps and the wire shape is a single-source-of-truth definition here.",
@@ -570,6 +590,32 @@ Schema:
           "type": "string",
           "enum": [
             "dangling-link-unfetched"
+          ]
+        }
+      ]
+    },
+    "History": {
+      "description": "How a weave branch accepts landings and takes its target's work in. `rwv.toml` records it at the top level and per member; no value is the default, so an absent one is unset.",
+      "oneOf": [
+        {
+          "description": "Fast-forward, else rebase onto the receiving branch.",
+          "type": "string",
+          "enum": [
+            "linear"
+          ]
+        },
+        {
+          "description": "Fast-forward, else a merge commit.",
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        {
+          "description": "A landing only fast-forwards; taking the target in rebases.",
+          "type": "string",
+          "enum": [
+            "ff-only"
           ]
         }
       ]
@@ -1403,6 +1449,36 @@ Schema:
               "items": {
                 "$ref": "#/definitions/ProjectRoleOutput"
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "histories",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "histories": {
+              "description": "Every live weave branch, of every project listing the member, that records a `history` for it, with that value.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/BranchHistoryOutput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "history-disagreement"
+              ]
+            },
+            "path": {
+              "type": "string"
             }
           }
         },

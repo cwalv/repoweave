@@ -7,6 +7,8 @@ Reference for the on-disk files repoweave reads and writes.
 The source of truth for which repos belong to a project. Committed in the project repo at `projects/<name>/rwv.toml`. The one file on this page you author by hand; rwv writes the rest.
 
 ```toml
+history = "linear"
+
 [repositories."github/chatly/server"]
 type = "git"
 url = "https://github.com/chatly/server.git"
@@ -24,6 +26,7 @@ type = "git"
 url = "https://github.com/chatly/protocol.git"
 branch = "main"
 role = "owned"
+history = "merge"
 
 [repositories."github/socketio/engine.io"]
 type = "git"
@@ -46,7 +49,7 @@ Earlier versions read a YAML manifest at `projects/<name>/rwv.yaml`. A project d
 
 There is no `--fix` arm. The manifest is yours — the comments and the key order in it are things you wrote, and neither has a mechanical translation between the two formats. A conversion that guessed at them would hand back a file you would have to audit line by line anyway.
 
-`rwv.toml` accepts only three top-level tables: `repositories`, `integrations`, and `workweave` (unknown top-level keys are rejected). Project identity comes from the `projects/<name>/` directory path rather than a `[project]` table, and the legacy `[lock]` table is retired because `rwv.lock` always records 40-character commit SHAs.
+`rwv.toml` accepts only the top-level key `history` and three top-level tables: `repositories`, `integrations`, and `workweave` (unknown top-level keys are rejected). Project identity comes from the `projects/<name>/` directory path rather than a `[project]` table, and the legacy `[lock]` table is retired because `rwv.lock` always records 40-character commit SHAs.
 
 ### `repositories` entries
 
@@ -59,6 +62,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | `branch` | yes | The branch the member tracks. |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 | `recurse-submodules` | no | `true` (the default, and not written when rwv writes the file) or `false`. See [Submodules](#submodules). |
+| `history` | no | `linear`, `merge` or `ff-only`: how this branch accepts landings of this member, overriding the top-level `history`. See [`history`](#history). |
 
 Any other key in an entry is rejected, naming it. `version` and `submodules`, the keys an earlier release wrote for what `branch` and `recurse-submodules` now say, are rejected too: a project whose entries name one does not load, and `rwv doctor` reports it as [`unparseable-project`](./doctor-findings.md#unparseable-project) / `pre-schema`. `rwv doctor --fix` renames the keys in place and commits only that rename; see [Upgrade rwv](../how-to/upgrade-rwv.md).
 
@@ -83,6 +87,12 @@ A submodule whose recorded commit the canonical clone does not hold stays empty,
 `recurse-submodules = false` leaves a member's submodules empty in the canonical clone and in every checkout rwv creates, and doctor does not report them. So does git's own `submodule.<name>.update = none`, from `.gitmodules` or the repository's config, for that one submodule.
 
 The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
+
+### `history`
+
+How the branch whose `rwv.toml` this is accepts landings, and how a feature cut from it takes its work in: the top-level `history` for the project branch and every member without its own, a member entry's `history` for that member. `linear` fast-forwards, else rebases onto the receiving branch; `merge` fast-forwards, else makes a merge commit; `ff-only` lands only by fast-forward, the rebase happening when a feature takes the target's work in. Any other value fails to parse, naming it and its line.
+
+There is no default and no role implies one: a project whose `rwv.toml` names none has the setting unset, and no verb writes one implicitly. `rwv branch set-history <h> [--repo <path>]` writes it and `--unset` removes it, committing only that change; `rwv lock --commit` commits a hand edit of it. The setting is content of the branch, so a branch cut from another starts with its setting. Two projects listing one member whose live weave branches record different values for it are reported by `rwv doctor` as [`history-disagreement`](./doctor-findings.md#history-disagreement).
 
 ### `integrations` block
 

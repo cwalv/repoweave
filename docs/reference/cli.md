@@ -514,7 +514,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 ### `rwv branch`
 
-Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+Create a weave branch, record how one is used or how it accepts landings, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
 ### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]`
 
@@ -542,6 +542,24 @@ Write the record of `<W>`, the project repo's checked-out branch when none is na
 | `declared` | no `--target` |
 
 A `--target` with no record is refused as `target` `unrecorded`, naming `rwv branch set-mode <T>`. Recording a feature prints where it lands (`target-recorded`): into `<T>`'s member branches when `<T>` is a feature, else into each branch `<T>` declares, listing the members whose entry in `<W>` differs from `<T>`'s. A change to `<W>`'s mode lists each feature that targets `<W>` and recorded its mode differently, which refuses to land until rebound. A branch whose entry two writers set differently (`target` `conflict`) or whose entry does not read (`target` `unreadable`) is settled by this verb, which writes the one value. The records branch's own name and every name below it is refused as `name` `reserved`. Recording a feature is refused where an `owned` or `fork` member's branch of its name is one a live weave branch declares (`name` `declared`) or one another project's feature of that name uses for a member both list (`name` `feature`).
+
+### `rwv branch set-history <linear|merge|ff-only|--unset> [--repo <path>] [--project <name>]`
+
+Record how the checked-out weave branch accepts landings: its top-level `history`, or with `--repo` one member's, which overrides the top-level one for that member. `--unset` removes the key; a member whose own key is removed follows the top-level one again. No value is the default and no role implies one, so a project whose `rwv.toml` names none has the setting unset, and no verb writes one but this. A value the file already holds is not rewritten, and is committed when the commit lacks it, so a hand edit is finished by running this.
+
+| Value | Taking the target's work in | Landing |
+|---|---|---|
+| `linear` | fast-forward, else rebase onto it | fast-forward, else rebase onto the target, then fast-forward |
+| `merge` | fast-forward, else a merge commit | fast-forward, else a merge commit |
+| `ff-only` | as `linear` | fast-forward only |
+
+| Flag | Effect |
+|---|---|
+| `--unset` | Remove the setting instead of writing one |
+| `--repo <path>` | The member whose own setting to write; `projects/<name>`, this project's repo, names the top-level setting, as no `--repo` does. Another project's repo, and a member the manifest does not list, are refused |
+| `--project <name>` | Operate on this project instead of the active project |
+
+The change is committed alone, as `member set-role`'s is: any other uncommitted edit to `rwv.toml` stays uncommitted. Refused before anything is written: a branch with no record that reads (`target`), a detached project repo (`alignment` `project detached`), an operation in progress, and uncommitted changes to other tracked files of the project repo (`edits`). A value other than the three is refused by the argument parser, and in a hand-edited `rwv.toml` by every verb that reads the file. A `history` one project's live weave branches record for a member another project records differently is reported by `rwv doctor` as [`history-disagreement`](./doctor-findings.md#history-disagreement).
 
 ### `rwv branch list [--json] [--project <name>]`
 
