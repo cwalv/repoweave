@@ -12353,6 +12353,44 @@ fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
     ]
 }
 
+/// A sync rebases `app` and stops on a conflict in `lib`; while stopped, the
+/// operator amends `app`'s rebased tip, which keeps its author date. Abort
+/// refuses that tip as foreign and leaves the amended commit where it is.
+pub fn abort_refuses_a_tip_amended_during_a_stop() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib\n", "lib in w\n"),
+        Step::git(&ww("w"), Repo::Lib, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib on main\n"),
+        Step::git(&a(), Repo::Lib, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("app: rebased")),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app", "app amended"),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["commit", "-qa", "--amend", "--no-edit"],
+        ),
+        Step::rwv(&ww("w"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["grep", "-q", "app amended", "HEAD", "--", "README"],
+        )
+        .expect(Exit::Succeeds),
+    ];
+    scenario(
+        "abort refuses a tip the operator amended during a stop",
+        steps,
+    )
+}
+
 /// `sync --continue` re-judges a repo the stop changed: `lib`, planned a
 /// fast-forward, now holds the operator's commit, and under `merge` it takes
 /// `main` in by a merge commit, the seat's branch first, never by a rebase.

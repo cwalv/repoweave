@@ -693,6 +693,7 @@ every_scenario!(
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     stack_at_the_tip_under_update_refs,
     stack_carry_stopped_under_update_refs,
+    abort_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
         scenarios::AfterHandContinue::Continue
@@ -4790,6 +4791,12 @@ fn a_dependent_at_the_tip_is_carried_under_update_refs() {
 #[test]
 fn a_stopped_carry_under_update_refs_moves_no_dependent_and_aborts_clean() {
     runner::run(scenarios::stack_carry_stopped_under_update_refs()).assert_fully_decided_green();
+}
+
+#[test]
+fn abort_refuses_a_tip_amended_during_a_stop_and_keeps_it() {
+    runner::run(scenarios::abort_refuses_a_tip_amended_during_a_stop())
+        .assert_fully_decided_green();
 }
 
 #[cfg(unix)]
