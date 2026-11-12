@@ -547,27 +547,20 @@ fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
         .unwrap()
 }
 
-/// The deletion rule judges against the branch the record lands into, `p1`'s,
-/// so work landed in `p2` for one run is not seen as landed: the workweave is
-/// retired, its branches survive with their commits, and the exit status says
-/// so.
+/// The deletion rule judges against the branch the landing went into, a
+/// one-run `--target` included: work landed in `p2` is landed, so the
+/// workweave retires with nothing left.
 #[test]
-fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
+fn retire_into_a_named_target_judges_the_deletion_against_that_target() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let (a, p2) = fork_and_land_in_a_named_target(&main);
 
     let out = retire_into(&a, &p2);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(3), "{stderr}");
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(!a.root.exists(), "a retired");
-    assert!(
-        stderr.contains(&format!("{PROJECT}--a: unlanded"))
-            && stderr.contains(&format!(
-                "{PROJECT}--p1's corresponding branch does not reach"
-            )),
-        "{stderr}"
-    );
+    assert!(!stderr.contains("left:"), "{stderr}");
 }
 
 /// Drop the index entry the primary keeps for `ww`, leaving its marker and
