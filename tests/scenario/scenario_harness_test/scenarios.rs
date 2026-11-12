@@ -16551,7 +16551,7 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
             .claim(Claim::OutputContains(needs))
-            .claim(Claim::OutputContains("then rerun"))
+            .claim(Claim::OutputContains("once each fix above is made, rerun"))
             .claim(Claim::OutputLacks("--abandon-foreign-tip"))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
         clear,

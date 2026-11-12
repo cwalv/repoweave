@@ -258,13 +258,15 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   dependent moved mid-operation, nothing moved, and `--continue` composes
   it again from where it stands.
 - **Abort of a carry** (the `AbortStep::Carried` step `plan_carried` plans,
-  judged before `retake_target` and again before `mark_abort_begun`): each
-  dependent's branch a carry moved is read where it moved it. One built on,
-  moved elsewhere, gone, or checked out outside the op's workspaces refuses
-  the whole abort with nothing put back: a gone or held branch names what to
-  do first; a moved one offers `--abandon-foreign-tip` for every such repo
-  and, where each was only built on, the op's own continue, which keeps
-  those commits.
+  a source-side step of the abort plan, judged with every other step before
+  `retake_target` and again before `mark_abort_begun`): each dependent's
+  branch a carry moved is read where it moved it. One built on, moved
+  elsewhere, gone, or checked out outside the op's workspaces blocks the
+  plan, and its obstacles join the abort's one refusal with nothing put
+  back: a gone or held branch names what to do first; a moved one is named
+  on the closing `--abandon-foreign-tip` command and, where each was only
+  built on, the op's own continue is offered, which keeps those commits.
+  Under `--leave-target` the step runs with the source's.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, rebased or merged as the
