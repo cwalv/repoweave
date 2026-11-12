@@ -112,15 +112,6 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn ref_exists(repo: &Path, refname: &str) -> bool {
-    common::git()
-        .args(["rev-parse", "--verify", refname])
-        .current_dir(repo)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// A linked worktree's `.git` is a pointer file, not a directory, so
 /// mid-rebase state never lives at `<repo>/.git/rebase-merge` there — only
 /// `git rev-parse --git-path` resolves the real location.
@@ -279,8 +270,10 @@ struct OwnerRecordFixture {
     converged_tips: Vec<(String, String)>,
     /// override strings (e.g. "discard-local-commits", "allow-stale-lock").
     overrides: Vec<&'static str>,
-    /// The target repos a landing journaled as fast-forwarded.
-    fast_forwarded: Vec<repoweave::manifest::RepoKey>,
+    /// The target repos a landing journaled as moved. `None` journals what a
+    /// landing that reached `phase` journals: each repo with a converged tip
+    /// once it is advancing the target, before it moves any.
+    moved_in_target: Option<Vec<repoweave::manifest::RepoKey>>,
 }
 
 fn tip_map_json(tips: &[(String, String)]) -> String {
@@ -304,13 +297,27 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
             let mut plan: repoweave::op_state::TakeInRecord = serde_json::from_str(
                 &common::land_plan_json(workspace, Path::new(&rec.target), "web-app"),
             )
             .unwrap();
-            plan.fast_forwarded = rec.fast_forwarded.clone();
+            plan.moved_in_target = rec.moved_in_target.clone().unwrap_or_else(|| {
+                if matches!(rec.phase, "advance-target" | "retire") {
+                    rec.converged_tips
+                        .iter()
+                        .map(|(key, _)| match key.as_str() {
+                            "(project)" => repoweave::manifest::RepoKey::Project,
+                            path => repoweave::manifest::RepoKey::Member(
+                                repoweave::manifest::RepoPath::new(path).unwrap(),
+                            ),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            });
             serde_json::to_string(&plan).unwrap()
         } else {
             "null".to_owned()
@@ -334,18 +341,11 @@ fn plant_lease(workspace: &Path, owner: &Path, id: &str) {
 }
 
 fn plant_savepoint(repo: &Path, op_id: &str) {
-    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
-    common::git_in(
-        repo,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
-    );
+    common::savepoint::plant(repo, op_id);
 }
 
 fn plant_savepoint_at(repo: &Path, op_id: &str, sha: &str) {
-    common::git_in(
-        repo,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
-    );
+    common::savepoint::plant_at(repo, op_id, sha);
 }
 
 /// `land` plants two savepoint refs per worktree pair: `<id>` on the
@@ -1609,9 +1609,9 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
                 (SERVER_PATH.to_owned(), ww_server_tip),
                 ("(project)".to_owned(), ww_project_tip),
             ],
-            fast_forwarded: vec![repoweave::manifest::RepoKey::Member(
+            moved_in_target: Some(vec![repoweave::manifest::RepoKey::Member(
                 repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
-            )],
+            )]),
             ..Default::default()
         },
     );
@@ -1814,14 +1814,14 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
 
     // Sanity: the refs exist before the op (visible from the surviving primary
     // clones, which is where the workweave's shared refs actually live).
-    let source_ref = format!("refs/rwv/pre-op/{op_id}");
-    let target_ref = format!("refs/rwv/pre-op/{target_id}");
+    let filed = |repo: &Path, key: &str| common::savepoint::checkout_tip(repo, key).is_some();
+    let (source_ref, target_ref) = (op_id, target_id.as_str());
     assert!(
-        ref_exists(&primary.server_dir, &source_ref),
+        filed(&primary.server_dir, source_ref),
         "fixture must plant the source-side savepoint in the shared refdb"
     );
     assert!(
-        ref_exists(&primary.project_dir, &source_ref),
+        filed(&primary.project_dir, source_ref),
         "fixture must plant the source-side project savepoint in the shared refdb"
     );
 
@@ -1838,19 +1838,19 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
     // savepoint for the op's own repos through the SURVIVING clone. Before the
     // fix these refs survive (cleanup hit the deleted workweave paths).
     assert!(
-        !ref_exists(&primary.server_dir, &source_ref),
+        !filed(&primary.server_dir, source_ref),
         "source-side server savepoint {source_ref} leaked into the surviving clone refdb after retire"
     );
     assert!(
-        !ref_exists(&primary.project_dir, &source_ref),
+        !filed(&primary.project_dir, source_ref),
         "source-side project savepoint {source_ref} leaked into the surviving clone refdb after retire"
     );
     assert!(
-        !ref_exists(&primary.server_dir, &target_ref),
+        !filed(&primary.server_dir, target_ref),
         "target-side server savepoint {target_ref} leaked after retire"
     );
     assert!(
-        !ref_exists(&primary.project_dir, &target_ref),
+        !filed(&primary.project_dir, target_ref),
         "target-side project savepoint {target_ref} leaked after retire"
     );
 }
@@ -1983,12 +1983,14 @@ fn landed_then_moved_again(journaled: bool) -> (Workspace, Workspace, String, te
     let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
     let landed = advance_one(&ww.server_dir, "advance.txt", "advanced\n", "advance");
-    common::git_in(
-        &primary.server_dir,
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
-    );
-    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
-    common::git_in(&primary.server_dir, &["merge", "--ff-only", &fh]);
+    if journaled {
+        common::git_in(
+            &primary.server_dir,
+            &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+        );
+        let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+        common::git_in(&primary.server_dir, &["merge", "--ff-only", &fh]);
+    }
     let op_id = if journaled {
         "crash-matrix-landed-then-moved-journaled"
     } else {
@@ -2003,13 +2005,13 @@ fn landed_then_moved_again(journaled: bool) -> (Workspace, Workspace, String, te
             target: primary.root.display().to_string(),
             phase: "advance-target",
             converged_tips: vec![(SERVER_PATH.to_owned(), landed)],
-            fast_forwarded: if journaled {
+            moved_in_target: Some(if journaled {
                 vec![repoweave::manifest::RepoKey::Member(
                     repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
                 )]
             } else {
                 Vec::new()
-            },
+            }),
             ..Default::default()
         },
     );
@@ -2035,6 +2037,34 @@ fn abort_refuses_a_target_repo_the_landing_moved_that_moved_again() {
         ww.root.join(".rwv-op").exists(),
         "the refused abort keeps the op"
     );
+}
+
+/// A target repo the landing never moved, stopped in a merge someone else
+/// started, is left in that merge: abort neither cancels it nor resets the
+/// branch under it, and ends the op.
+#[test]
+fn abort_leaves_a_target_repo_stopped_in_someone_elses_merge() {
+    let (primary, ww, moved_again, _tmp) = landed_then_moved_again(false);
+    let base = common::git_in(&primary.server_dir, &["rev-parse", "HEAD~1"]);
+    common::git_in(&primary.server_dir, &["switch", "-q", "-c", "topic", &base]);
+    advance_one(&primary.server_dir, "again.txt", "theirs\n", "theirs");
+    common::git_in(&primary.server_dir, &["switch", "-q", "main"]);
+    let merge = common::git()
+        .args(["merge", "topic"])
+        .current_dir(&primary.server_dir)
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "the merge stops on its conflict");
+    run_abort_ok(&ww.root, "someone else's merge in the target");
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+        moved_again
+    );
+    common::git_in(
+        &primary.server_dir,
+        &["rev-parse", "--verify", "-q", "MERGE_HEAD"],
+    );
+    assert!(!ww.root.join(".rwv-op").exists(), "the abort ends the op");
 }
 
 #[test]
@@ -2715,7 +2745,7 @@ fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     )

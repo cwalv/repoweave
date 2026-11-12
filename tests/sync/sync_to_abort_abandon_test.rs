@@ -156,7 +156,7 @@ fn plant_sync_to_owner_record(
 ) {
     let mut plan: repoweave::op_state::TakeInRecord =
         serde_json::from_str(&common::land_plan_json(owner, target, "web-app")).unwrap();
-    plan.fast_forwarded = vec![
+    plan.moved_in_target = vec![
         repoweave::manifest::RepoKey::Member(
             repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
         ),
@@ -167,7 +167,7 @@ fn plant_sync_to_owner_record(
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{\"{SERVER_PATH}\": \"{landed_server}\", \"(project)\": \"{landed_project}\"}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
         plan = serde_json::to_string(&plan).unwrap(),
@@ -184,16 +184,8 @@ fn plant_lease(workspace: &Path, owner: &Path, op_id: &str) {
 }
 
 fn plant_savepoint(repo: &Path, restore_id: &str) -> String {
-    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
-    common::git_in(
-        repo,
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{restore_id}"),
-            &head,
-        ],
-    );
-    head
+    common::savepoint::plant(repo, restore_id);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 /// The target side's restore id: savepoints for repos in the op's target

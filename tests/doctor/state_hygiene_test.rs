@@ -104,33 +104,14 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-/// Add a `refs/rwv/pre-op/<op_id>` savepoint pointing at the given SHA.
+/// File a checkout savepoint under `op_id` pointing at the given SHA.
 fn add_savepoint(repo: &Path, op_id: &str, sha: &str) {
-    let out = common::git()
-        .args(["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha])
-        .current_dir(repo)
-        .output()
-        .expect("git update-ref failed to start");
-    assert!(
-        out.status.success(),
-        "git update-ref failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    common::savepoint::plant_at(repo, op_id, sha);
 }
 
-/// Read whether a savepoint ref currently resolves.
+/// Read whether a savepoint under `op_id` is filed.
 fn savepoint_exists(repo: &Path, op_id: &str) -> bool {
-    common::git()
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/rwv/pre-op/{op_id}"),
-        ])
-        .current_dir(repo)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    !common::savepoint::under(repo, op_id).is_empty()
 }
 
 /// Register a worktree at `wt_path` and immediately delete its on-disk
@@ -172,7 +153,7 @@ fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
         "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"/tmp/src\", \"target\": \"/tmp/tgt\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
     );
     std::fs::write(workspace_dir.join(".rwv-op"), json).unwrap();
 }
@@ -962,8 +943,16 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
         &root.join("projects").join("my-app"),
         &[(repo_rel, "https://github.com/acme/server.git")],
     );
-    add_savepoint(&repo_abs, "not.a.key", &head_sha);
-    add_savepoint(&repo_abs, "nested/leaf", &head_sha);
+    for name in [
+        "not.a.key",
+        "nested/leaf",
+        "1700000000000000000/elsewhere/main",
+    ] {
+        common::git_in(
+            &repo_abs,
+            &["update-ref", &format!("refs/rwv/pre-op/{name}"), &head_sha],
+        );
+    }
 
     let findings = |args: &[&str]| -> Vec<serde_json::Value> {
         let out = rwv_cmd().args(args).current_dir(&root).output().unwrap();
@@ -980,7 +969,11 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
     unrecognized.sort_unstable();
     assert_eq!(
         unrecognized,
-        vec!["refs/rwv/pre-op/nested/leaf", "refs/rwv/pre-op/not.a.key"],
+        vec![
+            "refs/rwv/pre-op/1700000000000000000/elsewhere/main",
+            "refs/rwv/pre-op/nested/leaf",
+            "refs/rwv/pre-op/not.a.key"
+        ],
         "every ref no key names is a finding; got: {violations:#?}"
     );
     assert!(
@@ -993,8 +986,16 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
         .current_dir(&root)
         .output()
         .unwrap();
-    assert!(savepoint_exists(&repo_abs, "not.a.key"));
-    assert!(savepoint_exists(&repo_abs, "nested/leaf"));
+    for name in [
+        "not.a.key",
+        "nested/leaf",
+        "1700000000000000000/elsewhere/main",
+    ] {
+        common::git_in(
+            &repo_abs,
+            &["rev-parse", "--verify", &format!("refs/rwv/pre-op/{name}")],
+        );
+    }
 }
 
 /// The words of a command printed with POSIX single-quoting.

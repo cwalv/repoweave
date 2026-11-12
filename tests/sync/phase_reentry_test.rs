@@ -136,7 +136,7 @@ fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &st
         "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(source, target, "web-app"),
@@ -145,11 +145,7 @@ fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &st
 }
 
 fn create_savepoint(repo: &Path, op_id: &str) {
-    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
-    common::git_in(
-        repo,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
-    );
+    common::savepoint::plant(repo, op_id);
 }
 
 #[test]
@@ -244,7 +240,7 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
         "{{\"id\": \"reentry-test-advance\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(workspace, target, "web-app"),
@@ -464,7 +460,7 @@ fn write_sync_to_owner_record_at_phase(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(source, target, "web-app"),
@@ -614,13 +610,10 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
     );
 
     // Owner's savepoints dropped (cleanup ran in the OWNER workspace).
-    let owner_savepoint_refs = common::git_in(
-        &ww.project_dir,
-        &["for-each-ref", &format!("refs/rwv/pre-op/{op_id}")],
-    );
+    let owner_savepoint_refs = common::savepoint::under(&ww.project_dir, op_id);
     assert!(
         owner_savepoint_refs.is_empty(),
-        "owner savepoints must be dropped by cleanup; refs left: {owner_savepoint_refs}"
+        "owner savepoints must be dropped by cleanup; refs left: {owner_savepoint_refs:?}"
     );
 }
 
@@ -725,10 +718,10 @@ fn write_sync_to_retire_record(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
-        plan = common::land_plan_json(source, target, "web-app"),
+        plan = common::land_plan_json_after_advancing(source, target, "web-app"),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -1082,7 +1075,7 @@ fn write_sync_to_record_with_strategy(
         "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(owner, target, "web-app"),

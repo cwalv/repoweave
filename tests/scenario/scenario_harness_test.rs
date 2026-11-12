@@ -676,6 +676,9 @@ every_scenario!(
         scenarios::ReceivingCase::Created,
         scenarios::AbortFrom::Target
     ),
+    a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
+    a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
+    a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
     carried_pin_judged_against_the_receiving_branch,
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
@@ -2379,6 +2382,23 @@ holding_rwv! {
                 from,
             ))
             .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// A receiving branch the landing moves as a ref, advanced, moved back,
+    /// or checked out while the landing is held at its compare-and-swap,
+    /// stops the landing; abort leaves the branch as the race left it, and
+    /// the landing reruns over it.
+    fn a_receiving_branch_moved_as_a_ref_that_loses_its_race_stops_the_landing() {
+        for race in [
+            scenarios::RefRace::Advanced,
+            scenarios::RefRace::Rewound,
+            scenarios::RefRace::CheckedOut,
+        ] {
+            runner::run(scenarios::a_receiving_branch_moved_as_a_ref_loses_its_race(race))
+                .assert_fully_decided_green();
         }
     }
 }

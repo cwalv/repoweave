@@ -95,7 +95,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// The schema every record this release writes carries.
-pub(crate) const OP_RECORD_SCHEMA: u32 = 3;
+pub(crate) const OP_RECORD_SCHEMA: u32 = 4;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
@@ -520,10 +520,10 @@ pub struct TakeInRecord {
     /// how the landing moves it.
     #[serde(default)]
     pub receiving: BTreeMap<RepoKey, Receiving>,
-    /// Each repo of `T`'s workspace whose checked-out branch a landing has
-    /// fast-forwarded, written once the branch moved.
+    /// Each repo of `T`'s workspace a landing moves, by its fast-forward or
+    /// by aligning that workspace after it, written before the repo moves.
     #[serde(default)]
-    pub fast_forwarded: Vec<RepoKey>,
+    pub moved_in_target: Vec<RepoKey>,
     /// Each branch a landing created, and where.
     #[serde(default)]
     pub created_refs: Vec<CreatedRef>,

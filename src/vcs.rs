@@ -3366,6 +3366,14 @@ pub trait Vcs: Send + Sync {
         key: &SavepointKey,
     ) -> Result<Vec<RefSavepoint>, VcsError>;
 
+    /// Drop the savepoint of `branch` filed under `key`, leaving the branch.
+    fn drop_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        branch: &RawRefName,
+    ) -> Result<(), VcsError>;
+
     /// Put `saved.branch` back at `saved.at` by compare-and-swap against
     /// `wrote`, the tip the op moved it to, and drop its savepoint. A branch
     /// at its savepoint is left; one gone, checked out anywhere, or at any
@@ -3404,6 +3412,10 @@ pub trait Vcs: Send + Sync {
     /// ref-update failures (a savepoint is purely a recovery aid — its
     /// absence is benign).
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey);
+
+    /// Drop the savepoint of the checkout `repo` filed under `key`, keeping
+    /// the branch savepoints filed beside it.
+    fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError>;
 
     /// HEAD-verified restore: classify the repo's current tip and restore
     /// to the savepoint ONLY when the tip is attributable to the op.

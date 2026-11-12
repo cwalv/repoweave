@@ -71,12 +71,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 fn add_savepoint(repo: &Path, op_id: &str, sha: &str) {
-    let out = common::git()
-        .args(["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha])
-        .current_dir(repo)
-        .output()
-        .unwrap();
-    assert!(out.status.success());
+    common::savepoint::plant_at(repo, op_id, sha);
 }
 
 /// Two redundant savepoints + one misnamed workweave dir, two kinds live.

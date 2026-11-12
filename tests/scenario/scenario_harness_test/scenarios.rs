@@ -8995,3 +8995,96 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
         steps,
     )
 }
+
+/// What happens to a receiving branch the landing moves as a ref while the
+/// landing is held at its compare-and-swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefRace {
+    /// Someone commits onto it.
+    Advanced,
+    /// Someone moves it back by name.
+    Rewound,
+    /// A checkout takes it.
+    CheckedOut,
+}
+
+/// A landing that moves `lib-next` as a ref loses its compare-and-swap to
+/// `race`: it stops with `target` moved mid-operation, `--continue` refuses,
+/// `rwv abort` leaves `lib-next` where the race put it, and the landing run
+/// again judges the new tips.
+pub fn a_receiving_branch_moved_as_a_ref_loses_its_race(race: RefRace) -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
+        Step::commit(&a(), Repo::Lib, "dev-own"),
+        Step::commit(&a(), Repo::Lib, "dev-two"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &declared_branch_text(Repo::Lib, "lib-next"),
+        ),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["commit", "-qam", "lib onto lib-next"],
+        ),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--allow-member-change", LIB],
+            "advance-target",
+            "landing",
+        ),
+    ];
+    steps.push(match race {
+        RefRace::Advanced => {
+            Step::hand_commit(&a(), Repo::Lib, "lib-next", &[("raced.txt", "raced\n")])
+        }
+        RefRace::Rewound => Step::git(&a(), Repo::Lib, &["branch", "-f", "lib-next", "lib-next~1"])
+            .may_restore(&[Repo::Lib])
+            .may_strand(&[Repo::Lib]),
+        RefRace::CheckedOut => Step::git(&a(), Repo::Lib, &["switch", "-q", "lib-next"]),
+    });
+    let held = match race {
+        RefRace::CheckedOut => "checked out at",
+        RefRace::Advanced | RefRace::Rewound => "does not fast-forward",
+    };
+    steps.extend([
+        Step::release("landing")
+            .expect(Exit::refuses(Repo::Lib, State::TargetMovedMidOperation))
+            .claim(Claim::OutputContains(held))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
+            .claim(Claim::OutputLacks("w-lib")),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
+            .claim(Claim::OutputLacks("w-lib")),
+        Step::git(&ww("w"), Repo::Lib, &["log", "--format=%s", "-1"])
+            .claim(Claim::OutputLine("w-lib")),
+    ]);
+    if race == RefRace::CheckedOut {
+        steps.push(Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]));
+    }
+    steps.push(
+        Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "lib-next",
+            }),
+    );
+    steps.push(
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
+            .claim(Claim::OutputContains("w-lib"))
+            .claim(Claim::OutputContains("dev-own")),
+    );
+    scenario("a receiving branch moved as a ref loses its race", steps)
+}

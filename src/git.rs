@@ -2925,6 +2925,15 @@ impl Vcs for GitVcs {
             .collect())
     }
 
+    fn drop_ref_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        branch: &RawRefName,
+    ) -> Result<(), VcsError> {
+        Self::run(["update-ref", "-d", &ref_savepoint_ref(key, branch)], repo).map(|_| ())
+    }
+
     fn restore_ref_savepoint(
         &self,
         repo: &Path,
@@ -3013,6 +3022,15 @@ impl Vcs for GitVcs {
         }
     }
 
+    fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError> {
+        for filed in Self::savepoints_under(repo, key)? {
+            if let Saved::Checkout(_) = filed.saved {
+                Self::run(["update-ref", "-d", &filed.ref_name], repo)?;
+            }
+        }
+        Ok(())
+    }
+
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
@@ -3042,6 +3060,7 @@ impl Vcs for GitVcs {
             || recorded_converged_tip == Some(head_id);
 
         let off = match (&on, self.observe_head(repo)?) {
+            (SavedCheckout::Unnamed, _) => None,
             (SavedCheckout::On(b), HeadObservation::Attached { name }) if &name == b => None,
             (SavedCheckout::Detached, HeadObservation::Detached { .. }) => None,
             (_, HeadObservation::Attached { name }) => Some(Some(name)),
@@ -3065,7 +3084,9 @@ impl Vcs for GitVcs {
             }
             match &on {
                 SavedCheckout::On(b) => self.attach_head_to(repo, &LocalRefName::of_branch(b))?,
-                SavedCheckout::Detached => self.set_detached_head(repo, &savepoint)?,
+                SavedCheckout::Detached | SavedCheckout::Unnamed => {
+                    self.set_detached_head(repo, &savepoint)?
+                }
             }
             let then = self.verified_restore_savepoint(
                 repo,
@@ -3696,11 +3717,16 @@ impl Vcs for GitVcs {
         let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &prefix], repo)?;
         let mut listing = SavepointListing::default();
         for refname in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            let filed = refname.strip_prefix(&prefix).and_then(|below| {
-                let (key, rest) = below.split_once('/')?;
-                Saved::parse(rest)?;
-                key.parse::<SavepointKey>().ok()
-            });
+            let filed =
+                refname
+                    .strip_prefix(&prefix)
+                    .and_then(|below| match below.split_once('/') {
+                        Some((key, rest)) => {
+                            Saved::parse(rest)?;
+                            key.parse::<SavepointKey>().ok()
+                        }
+                        None => below.parse::<SavepointKey>().ok(),
+                    });
             match filed {
                 Some(key) if listing.keys.contains(&key) => {}
                 Some(key) => listing.keys.push(key),
@@ -4666,16 +4692,19 @@ impl GitVcs {
 
     /// Every savepoint filed under `key` in `repo`'s store.
     fn savepoints_under(repo: &Path, key: &SavepointKey) -> Result<Vec<FiledSavepoint>, VcsError> {
-        let prefix = format!("{}/", savepoint_ref(key));
+        let base = savepoint_ref(key);
         let listing = Self::run_trimmed(
-            ["for-each-ref", "--format=%(objectname) %(refname)", &prefix],
+            ["for-each-ref", "--format=%(objectname) %(refname)", &base],
             repo,
         )?;
         Ok(listing
             .lines()
             .filter_map(|line| {
                 let (at, ref_name) = line.trim().split_once(' ')?;
-                let saved = Saved::parse(ref_name.strip_prefix(&prefix)?)?;
+                let saved = match ref_name.strip_prefix(&base)? {
+                    "" => Saved::Checkout(SavedCheckout::Unnamed),
+                    below => Saved::parse(below.strip_prefix('/')?)?,
+                };
                 Some(FiledSavepoint {
                     ref_name: ref_name.to_owned(),
                     saved,
@@ -4699,15 +4728,6 @@ impl GitVcs {
                 Saved::Ref(_) => None,
             }))
     }
-
-    fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError> {
-        for filed in Self::savepoints_under(repo, key)? {
-            if let Saved::Checkout(_) = filed.saved {
-                Self::run(["update-ref", "-d", &filed.ref_name], repo)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Where a checkout was when its savepoint was taken.
@@ -4715,6 +4735,10 @@ impl GitVcs {
 enum SavedCheckout {
     On(RawRefName),
     Detached,
+    /// Filed by an earlier release at the key's own name, saying nothing of
+    /// a branch. Only `rwv doctor --fix` meets one: the op record that
+    /// owned it is in a schema this release refuses.
+    Unnamed,
 }
 
 impl SavedCheckout {
@@ -4722,6 +4746,7 @@ impl SavedCheckout {
         match self {
             Self::On(branch) => format!("{}/checkout/{}", savepoint_ref(key), branch.as_str()),
             Self::Detached => format!("{}/detached", savepoint_ref(key)),
+            Self::Unnamed => savepoint_ref(key),
         }
     }
 }

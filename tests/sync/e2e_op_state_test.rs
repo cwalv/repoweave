@@ -445,7 +445,7 @@ fn continue_with_strategy_flag_is_rejected() {
         "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     );
@@ -632,28 +632,14 @@ fn abort_restores_repos_and_removes_op_state() {
     // Plant an op-state file in ww's workspace (simulate an in-progress sync).
     let op_id = "test-abort-opstate-5678";
     let ww_project_sha = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
-    common::git_in(
-        &ww.project_dir,
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_project_sha,
-        ],
-    );
+    common::savepoint::plant_at(&ww.project_dir, op_id, &ww_project_sha);
     let ww_server_sha = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
-    common::git_in(
-        &primary.server_dir,
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_server_sha,
-        ],
-    );
+    common::savepoint::plant_at(&ww.server_dir, op_id, &ww_server_sha);
 
     let op_state_json = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
-         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     );
@@ -694,7 +680,7 @@ fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: 
         "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(src),
         tgt = common::json_escaped(tgt),
     );

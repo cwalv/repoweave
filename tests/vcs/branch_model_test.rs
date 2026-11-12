@@ -38,18 +38,6 @@ use crate::common;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/// Run git in `dir`, returning whether it succeeded. For the cases where
-/// the failure IS the fixture.
-fn git_ok(dir: &Path, args: &[&str]) -> bool {
-    common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git")
-        .status
-        .success()
-}
-
 /// A repo with no commits: HEAD is symbolic and points at an unborn branch.
 fn empty_repo() -> TempDir {
     let dir = common::tempdir().unwrap();
@@ -856,10 +844,7 @@ fn a_savepoint_ref_is_proof_the_savepoint_exists() {
     assert_eq!(savepoint.key(), &key("op-2"));
     assert_eq!(savepoint.at(), &head);
     assert!(
-        git_ok(
-            repo.path(),
-            &["rev-parse", "--verify", "refs/rwv/pre-op/op-2"]
-        ),
+        common::savepoint::checkout_tip(repo.path(), "op-2").is_some(),
         "the ref is on disk, not merely planned"
     );
 }

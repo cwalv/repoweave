@@ -3643,9 +3643,14 @@ fn load_continuing_context<'a>(
     // tips.
     if !matches!(record.phase, op_state::OpPhase::Retire) {
         let composed = record.tips.converged().filter(|tips| !tips.is_empty());
-        if let Some(moved) =
-            target_moved(&cwd_project_name, &dest_workspace_dir, &take_in, composed)?
-        {
+        if let Some(moved) = target_moved(
+            &cwd_project_name,
+            &dest_workspace_dir,
+            &owner_workspace_dir,
+            &SavepointKey::LandTarget(op_id.clone()),
+            &take_in,
+            composed,
+        )? {
             return Err(moved.refused());
         }
     }
@@ -3829,19 +3834,28 @@ fn rejudge_entries(
 
 /// The `target` moved mid-operation line, when a checkout the landing
 /// fast-forwards in `T`'s workspace is no longer on the branch the plan
-/// names for it, or a branch it moves, in a checkout or as a ref, no longer
-/// fast-forwards to the tip `composed` holds for it (before the landing
-/// composed, to the tip it read), or is gone where the plan does not create
-/// it and no remote holds it at that tip to take it from.
+/// names for it, or no longer at the tip its savepoint read unless already
+/// at the tip it lands; or when a branch it moves as a ref is not where its
+/// savepoint read it, or no longer fast-forwards to the tip `composed`
+/// holds for it (before the landing composed, to the tip it read), or is
+/// gone where the plan does not create it and no remote holds it at that
+/// tip to take it from. A branch moved as a ref is read through any checkout
+/// of its store, `T`'s workspace or the source.
 fn target_moved(
     project: &ProjectName,
     target_workspace: &Path,
+    source_workspace: &Path,
+    read: &SavepointKey,
     take_in: &op_state::TakeInRecord,
     composed: Option<&std::collections::BTreeMap<RepoKey, CommitId>>,
 ) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
     let mut moved: Vec<String> = Vec::new();
-    let manifest =
-        Manifest::from_path(&project_dir(target_workspace, project).join(Manifest::FILE_NAME)).ok();
+    let stores = MemberStores {
+        workspaces: vec![
+            target_workspace.to_path_buf(),
+            source_workspace.to_path_buf(),
+        ],
+    };
     for (key, receiving) in &take_in.receiving {
         let to = match (receiving.moves, composed) {
             (op_state::Moves::Follows { .. }, _) => continue,
@@ -3851,32 +3865,45 @@ fn target_moved(
                 None => continue,
             },
         };
-        let (dir, vcs) = match key {
-            RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
-            RepoKey::Member(path) => {
-                let Some(entry) = manifest.as_ref().and_then(|m| m.get_entry(path)) else {
-                    continue;
-                };
-                (
-                    target_workspace.join(path.as_path()),
-                    vcs_for(entry.vcs_type),
-                )
-            }
-        };
+        let to_rev = ResolvedRevisionId::from(to.clone());
         let create = match receiving.moves {
             op_state::Moves::AsRef { create } => Some(create),
             op_state::Moves::Enters => Some(true),
             op_state::Moves::InCheckout | op_state::Moves::Follows { .. } => None,
         };
-        if let Some(create) = create {
-            if !vcs.is_repo(&dir) {
+        if let (Some(create), RepoKey::Member(path)) = (create, key) {
+            let vcs = crate::vcs::probe_vcs();
+            let Some(dir) = stores.dir(vcs.as_ref(), path) else {
+                continue;
+            };
+            let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
+            let saved = vcs
+                .ref_savepoints(&dir, read)?
+                .into_iter()
+                .find(|saved| saved.branch == branch);
+            let now = vcs.resolve_local_branch_tip(&dir, &branch)?;
+            let held = vcs.checkouts_of_branch(&dir, &branch)?;
+            if now.as_ref().is_some_and(|n| n.id() != to) && !held.is_empty() {
+                moved.push(format!(
+                    "{key}: '{}' is now checked out at {}, so it no longer moves as a ref",
+                    receiving.branch,
+                    held.iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
                 continue;
             }
-            let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
-            match vcs.resolve_local_branch_tip(&dir, &branch)? {
-                Some(now)
-                    if !vcs.is_ancestor(&dir, &now, &ResolvedRevisionId::from(to.clone()))? =>
-                {
+            match (now, saved) {
+                (Some(now), Some(saved)) if now.id() != &saved.at && now.id() != to => {
+                    moved.push(format!(
+                        "{key}: '{}' now at {}, not at {}, where the landing read it",
+                        receiving.branch,
+                        now.id().short(),
+                        saved.at.short()
+                    ));
+                }
+                (Some(now), _) if !vcs.is_ancestor(&dir, &now, &to_rev)? => {
                     moved.push(format!(
                         "{key}: '{}' now at {}, which does not fast-forward to {}",
                         receiving.branch,
@@ -3884,16 +3911,30 @@ fn target_moved(
                         to.short()
                     ));
                 }
-                None if !create
-                    && !vcs
-                        .remote_copies(&dir, &branch)?
-                        .iter()
-                        .any(|copy| copy.tip.id() == &receiving.tip) =>
+                (None, Some(_)) => {
+                    moved.push(format!("{key}: '{}' is gone", receiving.branch));
+                }
+                (None, None)
+                    if !create
+                        && !vcs
+                            .remote_copies(&dir, &branch)?
+                            .iter()
+                            .any(|copy| copy.tip.id() == &receiving.tip) =>
                 {
                     moved.push(format!("{key}: '{}' is gone", receiving.branch));
                 }
                 _ => {}
             }
+            continue;
+        }
+        let (dir, vcs) = match key {
+            RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
+            RepoKey::Member(path) => (
+                target_workspace.join(path.as_path()),
+                crate::vcs::probe_vcs(),
+            ),
+        };
+        if !vcs.is_repo(&dir) {
             continue;
         }
         let Ok(head) = vcs.head_revision(&dir) else {
@@ -3903,7 +3944,17 @@ fn target_moved(
             moved.push(format!("{key}: {off}"));
             continue;
         }
-        if !vcs.is_ancestor(&dir, &head, &ResolvedRevisionId::from(to.clone()))? {
+        if let Some(saved) = vcs.resolve_savepoint(&dir, read) {
+            if head.id() != saved.id() && head.id() != to {
+                moved.push(format!(
+                    "{key}: now at {}, not at {}, where the landing read it",
+                    head.id().short(),
+                    saved.id().short()
+                ));
+                continue;
+            }
+        }
+        if !vcs.is_ancestor(&dir, &head, &to_rev)? {
             moved.push(format!(
                 "{key}: now at {}, which does not fast-forward to {}",
                 head.id().short(),
@@ -5417,6 +5468,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     if let Some(moved) = target_moved(
         &ctx.cwd_project_name,
         &ctx.dest_workspace_dir,
+        &ctx.cwd_workspace_dir,
+        &ctx.target_savepoint_key(),
         &ctx.take_in,
         Some(&composed),
     )? {
@@ -5540,6 +5593,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
+        journal_fast_forward(ctx, &key)?;
         match ff_advance_repo(
             vcs.as_ref(),
             repo_path,
@@ -5553,7 +5607,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     outln!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
                 }
                 if advance.onto.is_some() {
-                    journal_fast_forward(ctx, &key)?;
                     ctx.handler.record_step3_advance(
                         &RepoKey::Member(repo_path.clone()),
                         advance.from.id().as_str(),
@@ -5562,6 +5615,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
+                unjournal_unless_at(ctx, &key, vcs.as_ref(), &target_repo, cwd_tip.id())?;
                 if let Err(e) = moved.absorb(Err(e)) {
                     if emit_text {
                         eprintln!("  {}: ff-advance failed: {e:#}", repo_path);
@@ -5600,6 +5654,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let (target_branch, cwd_project_tip) = planned(&RepoKey::Project)?;
     let taken_in = upstream_taken_in(ctx, target_branch)?;
 
+    journal_fast_forward(ctx, &RepoKey::Project)?;
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
         project_rel_path(&ctx.cwd_project_name),
@@ -5617,7 +5672,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 );
             }
             if advance.onto.is_some() {
-                journal_fast_forward(ctx, &RepoKey::Project)?;
                 ctx.handler.record_step3_advance(
                     &RepoKey::Project,
                     advance.from.id().as_str(),
@@ -5625,7 +5679,16 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 );
             }
         }
-        Err(e) if crate::diagnosis::report_of(&e).is_some() => return Err(e),
+        Err(e) if crate::diagnosis::report_of(&e).is_some() => {
+            unjournal_unless_at(
+                ctx,
+                &RepoKey::Project,
+                ctx.project_vcs.as_ref(),
+                &ctx.dest_project_dir,
+                cwd_project_tip.id(),
+            )?;
+            return Err(e);
+        }
         Err(e) => {
             if emit_text {
                 eprintln!("  {}: ff-advance failed: {e:#}", RepoKey::Project);
@@ -5658,6 +5721,18 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     );
     prune_dropped_in_target(ctx, &target_ctx, &cwd_project_final.manifest);
 
+    for key in ctx.take_in.receiving.keys().cloned().chain(
+        Project::from_dir_skip_lock(&ctx.dest_project_dir, ctx.cwd_project_name.clone())
+            .map(|p| {
+                p.manifest
+                    .iter_entries()
+                    .map(|(path, _)| RepoKey::Member(path.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    ) {
+        journal_fast_forward(ctx, &key)?;
+    }
     align_after_landing(ctx, &target_ctx);
     if !ctx.retire {
         align_after_landing(ctx, &ctx.cwd_ctx);
@@ -5734,6 +5809,7 @@ fn advance_receiving_ref(
         .refused()
     };
     let from = match (read, now) {
+        (_, Some(now)) if &now == composed => return Ok(()),
         (Some(read), Some(now)) if now == read => now,
         (Some(read), now) => {
             return Err(moved_since(
@@ -5790,9 +5866,11 @@ fn advance_receiving_ref(
     if &from == composed {
         return Ok(());
     }
+    journal_fast_forward(ctx, &key)?;
     crate::test_pause::point("advance-target");
     let held = vcs.checkouts_of_branch(dir, &branch)?;
     if !held.is_empty() {
+        unjournal(ctx, &key)?;
         return Err(moved_since(
             Some(&from),
             format!(
@@ -5819,6 +5897,9 @@ fn advance_receiving_ref(
         let now = vcs
             .resolve_local_branch_tip(dir, &branch)?
             .unwrap_or_else(|| ResolvedRevisionId::from(from.clone()));
+        if now.id() != composed {
+            unjournal(ctx, &key)?;
+        }
         return Err(target_moved_line_for(
             repo_path,
             dir,
@@ -5839,9 +5920,10 @@ fn advance_receiving_ref(
     Ok(())
 }
 
-/// Record on the op record that the landing moved `key`'s branch in `T`'s
-/// workspace, so `rwv abort` restores it and leaves every other repo there
-/// where it stands.
+/// Record on the op record that the landing moves `key`'s branch in `T`'s
+/// workspace, before it moves, so `rwv abort` restores it whichever step a
+/// stop interrupts (a journaled repo still at its savepoint is untouched)
+/// and leaves every other repo there where it stands.
 fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
@@ -5850,8 +5932,8 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()
         )
     })?;
     let take_in = owner.take_in.get_or_insert_with(Default::default);
-    if !take_in.fast_forwarded.contains(key) {
-        take_in.fast_forwarded.push(key.clone());
+    if !take_in.moved_in_target.contains(key) {
+        take_in.moved_in_target.push(key.clone());
     }
     op_state::write_owner(&ctx.owner_workspace_dir, &owner)
         .context("failed to record a fast-forward of the target")
@@ -5934,6 +6016,41 @@ fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed
         };
         op.handler.record_member(member);
     }
+}
+
+/// Take `key` back off the journal of repos the landing moves in `T`'s
+/// workspace when its fast-forward stopped before it moved: the repo is not
+/// at `landing_at`, the tip the landing moves it to.
+fn unjournal_unless_at(
+    ctx: &OpContext<'_>,
+    key: &RepoKey,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    landing_at: &CommitId,
+) -> anyhow::Result<()> {
+    if vcs
+        .head_revision(dir)
+        .is_ok_and(|head| head.id() == landing_at)
+    {
+        return Ok(());
+    }
+    unjournal(ctx, key)
+}
+
+/// Take `key` back off the journal of repos the landing moves in `T`'s
+/// workspace, where it stopped before moving it.
+fn unjournal(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
+    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: owner record missing at advance-target"
+        )
+    })?;
+    if let Some(take_in) = owner.take_in.as_mut() {
+        take_in.moved_in_target.retain(|moved| moved != key);
+    }
+    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+        .context("failed to record that the target was not moved")
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.
@@ -6452,12 +6569,12 @@ pub fn run_abort(
     });
     let tips = reading.tips();
     let op_id = header.id.clone();
-    let fast_forwarded: Option<&[RepoKey]> = match &reading {
+    let moved_in_target: Option<&[RepoKey]> = match &reading {
         op_state::OwnerReading::Whole(record) => Some(
             record
                 .take_in
                 .as_ref()
-                .map(|take_in| take_in.fast_forwarded.as_slice())
+                .map(|take_in| take_in.moved_in_target.as_slice())
                 .unwrap_or_default(),
         ),
         op_state::OwnerReading::HeaderOnly { .. } => None,
@@ -6504,7 +6621,7 @@ pub fn run_abort(
         "",
         &op_id,
         tips,
-        fast_forwarded,
+        moved_in_target,
         abandon,
         &mut tally,
     );
@@ -6534,7 +6651,7 @@ pub fn run_abort(
                             side.label(),
                             &op_id,
                             tips,
-                            fast_forwarded,
+                            moved_in_target,
                             abandon,
                             &mut tally,
                         );
@@ -6640,7 +6757,7 @@ pub fn run_abort(
 /// to the replay side only; converged tips apply to both, because
 /// advance-target lands the target on them.
 ///
-/// `fast_forwarded` is the landing's journal of the target repos whose branch
+/// `moved_in_target` is the landing's journal of the target repos whose branch
 /// it moved, `None` where the record could not be read. On the target side a
 /// repo the journal does not name, at neither its savepoint nor its converged
 /// tip, was moved by someone else and never by the landing: it is left where
@@ -6654,7 +6771,7 @@ fn restore_abort_workspace(
     label: &str,
     op_id: &OpId,
     tips: Option<&op_state::PhaseTips>,
-    fast_forwarded: Option<&[RepoKey]>,
+    moved_in_target: Option<&[RepoKey]>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -6690,10 +6807,64 @@ fn restore_abort_workspace(
     for (repo_key, vcs, abs) in repos {
         let named = RepoOperand::of(&repo_key, &project.name);
         let unmoved_target = matches!(side, AbortSide::LandTarget)
-            && fast_forwarded.is_some_and(|moved| !moved.contains(&repo_key));
+            && moved_in_target.is_some_and(|moved| !moved.contains(&repo_key));
         let consented = !unmoved_target && abandon.covers(&repo_key, &project.name);
-        if let Ok(head) = vcs.head_revision(&abs) {
-            moved_from.insert(abs.clone(), head);
+        if unmoved_target && abandon.covers(&repo_key, &project.name) {
+            outln!(
+                "  {label}{named}: --abandon-foreign-tip names it, but this landing never moved it, \
+                 so nothing of it is abandoned"
+            );
+        }
+        let head = vcs.head_revision(&abs).ok();
+        if let Some(head) = &head {
+            moved_from.insert(abs.clone(), head.clone());
+        }
+        if let (AbortSide::LandTarget, Some(stopped)) = (side, vcs.mid_op(&abs)) {
+            if unmoved_target {
+                outln!(
+                    "  {label}{named}: left stopped in a {stopped}, which this landing never starts"
+                );
+                let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
+            } else {
+                eprintln!(
+                    "  {label}{named}: stopped in a {stopped}, which this landing never starts, so \
+                     it is left as it is; finish or abort that {stopped} there, then rerun `rwv abort`"
+                );
+                tally.any_foreign = true;
+            }
+            continue;
+        }
+        if unmoved_target {
+            if let Some(saved) = vcs.resolve_savepoint(&abs, &restore_key) {
+                let source = vcs
+                    .head_backup_source(&abs)
+                    .unwrap_or(crate::vcs::BackupSource::DetachedHead);
+                if let Err(e) = keep_unreached(
+                    vcs.as_ref(),
+                    &abs,
+                    &source,
+                    saved.id(),
+                    head.as_ref(),
+                    &named,
+                ) {
+                    eprintln!("  {label}{named}: {e:#}");
+                    tally.any_failure = true;
+                    continue;
+                }
+            }
+            match (vcs.resolve_savepoint(&abs, &restore_key), &head) {
+                (None, _) => tally.noise.no_savepoint += 1,
+                (Some(saved), Some(head)) if saved == *head => tally.noise.untouched += 1,
+                (Some(_), head) => {
+                    outln!(
+                    "  {label}{named}: left {}, where something other than this landing moved it",
+                    head.as_ref()
+                        .map_or_else(|| "as it is".to_owned(), |h| format!("at {}", h.id().short()))
+                )
+                }
+            }
+            let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
+            continue;
         }
         match abort_one_repo(
             vcs.as_ref(),
@@ -6703,12 +6874,6 @@ fn restore_abort_workspace(
             converged_tips.get(&repo_key),
             consented,
         ) {
-            Ok(VerifiedRestoreOutcome::ForeignTip { observed_tip, .. }) if unmoved_target => {
-                outln!(
-                    "  {label}{named}: left at {}, where something other than this landing moved it",
-                    observed_tip.short()
-                );
-            }
             Ok(outcome) => report_abort_outcome(
                 vcs.as_ref(),
                 &format!("{label}{named}"),
@@ -6729,6 +6894,32 @@ fn restore_abort_workspace(
         &|_, member| moved_from.get(member).cloned(),
         None,
     );
+}
+
+/// Keep `saved`, a savepoint's tip abort is about to drop, as a backup when
+/// `now` does not reach it, so dropping a savepoint someone else's move left
+/// behind leaves no commit on no ref.
+fn keep_unreached(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    source: &crate::vcs::BackupSource,
+    saved: &CommitId,
+    now: Option<&ResolvedRevisionId>,
+    named: &RepoOperand,
+) -> anyhow::Result<()> {
+    let saved = ResolvedRevisionId::from(saved.clone());
+    if let Some(now) = now {
+        if vcs.is_ancestor(dir, &saved, now)? {
+            return Ok(());
+        }
+    }
+    let kept = vcs.create_backup(dir, source, &saved, None)?;
+    outln!(
+        "  {named}: {} it held before this landing is kept as backup {}",
+        saved.id().short(),
+        kept.backup().name
+    );
+    Ok(())
 }
 
 /// Every member an op may have moved a ref of: those a workspace's
@@ -6801,6 +6992,11 @@ fn restore_landing_refs(
 ) {
     let key = SavepointKey::LandTarget(record.id.clone());
     let wrote = record.tips.converged();
+    let journaled = record
+        .take_in
+        .as_ref()
+        .map(|take_in| take_in.moved_in_target.as_slice())
+        .unwrap_or_default();
     for (path, vcs_type) in &members.0 {
         let vcs = OpMembers::vcs(*vcs_type);
         let Some(dir) = stores.dir(vcs.as_ref(), path) else {
@@ -6823,6 +7019,33 @@ fn restore_landing_refs(
         };
         for saved in saved {
             let branch = &saved.branch;
+            if !journaled.contains(&repo_key) {
+                let now = vcs.resolve_local_branch_tip(&dir, branch).ok().flatten();
+                if now.as_ref().map(|n| n.id()) != Some(&saved.at) {
+                    outln!(
+                        "  {named}: '{branch}' left {}, where something other than this landing \
+                         moved it",
+                        now.as_ref().map_or_else(
+                            || "gone".to_owned(),
+                            |n| format!("at {}", n.id().short())
+                        )
+                    );
+                }
+                if let Err(e) = keep_unreached(
+                    vcs.as_ref(),
+                    &dir,
+                    &crate::vcs::BackupSource::Branch(branch.clone()),
+                    &saved.at,
+                    now.as_ref(),
+                    &named,
+                )
+                .and_then(|()| Ok(vcs.drop_ref_savepoint(&dir, &key, branch)?))
+                {
+                    eprintln!("  {named}: '{branch}': {e:#}");
+                    tally.any_failure = true;
+                }
+                continue;
+            }
             match vcs.restore_ref_savepoint(
                 &dir,
                 &key,

@@ -491,15 +491,12 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
     let weave = unmigrated_weave(tmp.path());
     let op_id = "1700000000000000000";
     let pin = common::git_in(&weave.linked_canonical, &["rev-parse", "HEAD"]);
-    common::git_in(
-        &weave.linked_canonical,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &pin],
-    );
+    common::savepoint::plant_at(&weave.linked_canonical, op_id, &pin);
     let record = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(&weave.seat),
     );
     std::fs::write(weave.seat.join(".rwv-op"), record).unwrap();

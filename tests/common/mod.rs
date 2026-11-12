@@ -9,6 +9,7 @@ pub mod json_schema;
 pub mod pause;
 pub mod records;
 pub mod refusal_census;
+pub mod savepoint;
 pub mod src_scan;
 
 use std::path::PathBuf;
@@ -1664,5 +1665,19 @@ pub fn land_plan_json(source: &std::path::Path, target: &std::path::Path, projec
             );
         }
     }
+    serde_json::to_string(&plan).unwrap()
+}
+
+/// [`land_plan_json`] for a landing that has advanced the target: every repo
+/// it plans is journaled as moved there, as a landing journals each before
+/// it moves it.
+pub fn land_plan_json_after_advancing(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    project: &str,
+) -> String {
+    let mut plan: repoweave::op_state::TakeInRecord =
+        serde_json::from_str(&land_plan_json(source, target, project)).unwrap();
+    plan.moved_in_target = plan.receiving.keys().cloned().collect();
     serde_json::to_string(&plan).unwrap()
 }

@@ -156,7 +156,7 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(workspace),
     );
     std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
@@ -164,10 +164,7 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.
 fn plant_savepoint(repo: &Path, op_id: &str, sha: &str) {
-    common::git_in(
-        repo,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
-    );
+    common::savepoint::plant_at(repo, op_id, sha);
 }
 
 /// Every ref under `prefix` in `repo`, as `(refname, sha)`.
@@ -193,15 +190,7 @@ fn assert_writes_no_ref(repo: &Path) {
 }
 
 fn savepoint_sha(repo: &Path, op_id: &str) -> Option<String> {
-    let out = common::git()
-        .args(["rev-parse", "--verify", &format!("refs/rwv/pre-op/{op_id}")])
-        .current_dir(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8(out.stdout).ok()?.trim().to_string())
+    common::savepoint::checkout_tip(repo, op_id)
 }
 
 /// A workspace with `repo_paths.len()` manifest repos instead of

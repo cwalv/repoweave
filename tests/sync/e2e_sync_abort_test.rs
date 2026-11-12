@@ -822,10 +822,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
     // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
-    common::git_in(
-        project_dir,
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha2],
-    );
+    common::savepoint::plant_at(project_dir, &op_id.to_string(), &sha2);
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
     // branch, then start a rebase that will conflict.

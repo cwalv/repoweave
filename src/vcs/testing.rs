@@ -606,6 +606,15 @@ impl Vcs for FakeVcs {
         unsupported("ref_savepoints")
     }
 
+    fn drop_ref_savepoint(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+        _branch: &RawRefName,
+    ) -> Result<(), VcsError> {
+        unsupported("drop_ref_savepoint")
+    }
+
     fn restore_ref_savepoint(
         &self,
         _repo: &Path,
@@ -631,6 +640,10 @@ impl Vcs for FakeVcs {
 
     fn drop_savepoint(&self, _repo: &Path, _key: &SavepointKey) {
         unsupported("drop_savepoint")
+    }
+
+    fn drop_checkout_savepoint(&self, _repo: &Path, _key: &SavepointKey) -> Result<(), VcsError> {
+        unsupported("drop_checkout_savepoint")
     }
 
     fn verified_restore_savepoint(
