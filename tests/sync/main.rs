@@ -17,6 +17,7 @@ mod e2e_sync_abort_test;
 mod e2e_sync_lock_replay_test;
 mod e2e_two_workweaves_test;
 mod fetch_test;
+mod land_drift_test;
 mod late_added_member_test;
 mod lock_by_name_test;
 mod lock_commit_whole_file_test;
