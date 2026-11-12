@@ -20,10 +20,12 @@
 //! - Worktree B is on branch `ww/main`
 //! - Another process advances `refs/heads/ww/main`
 //! - B's HEAD (via symbolic ref) now points at the new commit
-//! - B's index is then reset to HEAD (`git reset`) but the on-disk files are not updated
+//! - B's index and on-disk files still hold the old tip's content
 //!
-//! Tests simulate this by combining `git update-ref` with `git reset` in the
-//! worktree, leaving files on disk at their pre-advance content.
+//! Tests simulate this with `git update-ref` run in the primary's checkout,
+//! which leaves B's own `HEAD` reflog where B last put it. A `git reset` run
+//! in B would record the move as B's own, and what it leaves is then an edit
+//! returning files to earlier content, not drift.
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
@@ -154,14 +156,12 @@ fn advance_ww_branch(server_primary: &Path, branch: &str, new_sha: &str) {
     );
 }
 
-/// Simulate working-tree drift: advance the ww branch ref to `new_sha` and
-/// reset the index to HEAD, leaving working-tree files at their old content.
+/// Simulate working-tree drift: advance the ww branch ref to `new_sha` from
+/// outside the workweave's checkout.
 ///
-/// After this call: HEAD = new_sha, index = new_sha's tree, working tree = old.
-fn make_working_tree_stale(server_ww: &Path, server_primary: &Path, new_sha: &str) {
+/// After this call: HEAD = new_sha, index and working tree = the old tip's.
+fn make_working_tree_stale(server_primary: &Path, new_sha: &str) {
     advance_ww_branch(server_primary, "ww/main", new_sha);
-    // `git reset` (mixed) aligns the index to HEAD without touching the working tree.
-    common::git_in(server_ww, &["reset"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ fn doctor_detects_stale_working_tree_in_workweave() {
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
-    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+    make_working_tree_stale(&ws.server_primary, &c2);
 
     // Verify working tree IS stale before doctor.
     let wt_diff = common::git()
@@ -210,7 +210,7 @@ fn doctor_fix_restores_stale_working_tree() {
     std::fs::write(ws.server_ww.join("untracked.txt"), "untouched\n").unwrap();
 
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
-    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+    make_working_tree_stale(&ws.server_primary, &c2);
 
     // Confirm working tree is stale.
     let diff_before = common::git()
@@ -261,8 +261,6 @@ fn doctor_fix_does_not_clobber_live_working_tree_edits() {
     // C2 on primary — we'll advance the ww branch ref to it.
     let c2 = make_commit(&ws.server_primary, "unrelated.txt", "x\n", "primary: C2");
     advance_ww_branch(&ws.server_primary, "ww/main", &c2);
-    // Reset index to HEAD so the index reflects C2.
-    common::git_in(&ws.server_ww, &["reset"]);
 
     // Now write a live edit to a tracked file with UNIQUE content (never committed).
     std::fs::write(
@@ -379,7 +377,6 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
     // Set up working-tree drift in the ww server repo.
     advance_ww_branch(&server_primary, "ww/project", &c2);
-    common::git_in(&server_ww, &["reset"]);
 
     let diff_before = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
@@ -460,9 +457,8 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
 
     // Commit C2 and make BOTH workweaves stale.
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
-    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+    make_working_tree_stale(&ws.server_primary, &c2);
     advance_ww_branch(&ws.server_primary, "ww2/main", &c2);
-    common::git_in(&server_ww2, &["reset"]);
 
     // Doctor from primary should detect drift in both workweaves.
     let out = rwv()
@@ -492,7 +488,7 @@ fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
 
     // Advance the ww branch and reset index (working-tree drift setup).
     let c2 = make_commit(&ws.server_primary, "other.txt", "x\n", "primary: C2");
-    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+    make_working_tree_stale(&ws.server_primary, &c2);
 
     // Write UNIQUE content to a tracked file — content not in any committed blob.
     std::fs::write(
@@ -516,6 +512,39 @@ fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
         content.contains("content that has never been committed anywhere"),
         "unreachable content must survive --fix; got: {content}"
     );
+}
+
+/// Edits whose content a commit already holds, in a checkout whose branch did
+/// not move under it: a deletion, and a staged revert, which leaves the index
+/// at the parent's tree exactly as drift from the parent would. Neither is
+/// drift, so `--fix` reports both as live and leaves them as they are.
+#[test]
+fn doctor_fix_leaves_edits_that_hold_committed_content() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+    make_commit(&ws.server_ww, "added.txt", "added\n", "ww: add");
+    common::git_in(&ws.server_ww, &["revert", "--no-commit", "HEAD"]);
+    std::fs::remove_file(ws.server_ww.join("README.md")).unwrap();
+    let before = common::git_in(&ws.server_ww, &["status", "--porcelain"]);
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("live staged") && stdout.contains("live edits"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("drift in"), "nothing is refreshed: {stdout}");
+    assert_eq!(
+        common::git_in(&ws.server_ww, &["status", "--porcelain"]),
+        before
+    );
+    assert!(!ws.server_ww.join("README.md").exists());
+    assert!(!ws.server_ww.join("added.txt").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +684,7 @@ fn doctor_canonical_intact_classification_unchanged() {
 
     // Introduce real working-tree drift (stale, not live edits).
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
-    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+    make_working_tree_stale(&ws.server_primary, &c2);
 
     // canonical is intact — classification must proceed normally.
     let out = rwv()

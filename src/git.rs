@@ -665,8 +665,17 @@ fn changed_against(
 ///
 /// `diff-index` against a tree reads a path the index lacks as absent from
 /// the working tree whatever is on disk there, so a path it reports deleted
-/// that something on disk still occupies holds [`Holds::Other`].
+/// that something on disk still occupies holds [`Holds::Other`]. It also
+/// reports a file whose stat data no longer matches its index entry as
+/// changed without reading it, so the stat data is refreshed first, as
+/// `git status` does; the refresh writes no content to the index.
 fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStanding>, VcsError> {
+    let _ = git_command()
+        .args(["update-index", "-q", "--refresh"])
+        .current_dir(repo)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let file_vs_head = changed_against(repo, "HEAD", false)?;
     let index_vs_head = changed_against(repo, "HEAD", true)?;
     let (moved, file_vs_left, index_vs_left) = match left {

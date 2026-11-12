@@ -1474,12 +1474,8 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["workweave-tree-integrity/unregistered-workweave"]),
         ),
         (
-            "index refreshed for",
-            Findings(&["index-drift/safe-to-fix"]),
-        ),
-        (
-            "working tree refreshed for",
-            Findings(&["working-tree-drift/safe-to-fix"]),
+            "drift in",
+            Findings(&["index-drift/safe-to-fix", "working-tree-drift/safe-to-fix"]),
         ),
         (
             "stale-worktree-registration for",

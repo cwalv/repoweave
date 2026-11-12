@@ -12,7 +12,7 @@
 //! the witness-carrying wrappers rwv calls delegate to these with the same
 //! arguments, and a test crate cannot mint their consent tokens.
 
-use repoweave::git::{git_vcs, restore_paths_from_head};
+use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::vcs::{
     ContentIdentity, DerivedContentPolicy, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
@@ -192,14 +192,12 @@ enum Update {
 }
 
 impl Update {
-    /// A tree-level update moves the workspace from `before` to `after`. A
+    /// A tree-level update moves the workspace from `before` to `after`, as
+    /// does a drift refresh, whose branch moves to `after` from outside it. A
     /// path-level one finds it already at `after`, with the shared file
     /// still holding `before`.
     fn starts_after(self) -> bool {
-        matches!(
-            self,
-            Update::PathCheckout | Update::WorkingTreeRefresh | Update::Repair
-        )
+        matches!(self, Update::PathCheckout | Update::Repair)
     }
 
     fn run(self, w: &Weave, vcs: &dyn Vcs, updater: &Path) {
@@ -223,8 +221,22 @@ impl Update {
                     DerivedContentPolicy::vcs_default(),
                 )
                 .unwrap(),
-            Update::PathCheckout => restore_paths_from_head(updater, &paths).unwrap(),
-            Update::WorkingTreeRefresh => vcs.refresh_working_tree_to_head_if_safe(updater),
+            Update::PathCheckout => vcs.refresh_paths_from_head(updater, &paths, &[]).unwrap(),
+            Update::WorkingTreeRefresh => {
+                let branch = updater.file_name().unwrap().to_str().unwrap();
+                common::git_in(
+                    &w.store,
+                    &[
+                        "update-ref",
+                        &format!("refs/heads/{branch}"),
+                        w.after.id().as_str(),
+                    ],
+                );
+                let reading = repoweave::check::read_drift(vcs, updater).unwrap();
+                repoweave::check::refresh_drift(vcs, updater, &reading)
+                    .unwrap()
+                    .expect("the moved branch left the shared file stale");
+            }
             Update::Repair => population(vcs).check_out_paths(updater, &paths).unwrap(),
         }
     }

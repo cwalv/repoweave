@@ -7761,9 +7761,14 @@ fn apply_finding_repairs(
                         .and_then(|reading| refresh_drift(vcs, repo_abs, &reading));
                     match refreshed {
                         Ok(Some(refreshed)) => {
-                            outln!("[fixed] core: {location}: {}", refreshed.describe())
+                            outln!(
+                                "[fixed] core: drift in {location}: {}",
+                                refreshed.describe()
+                            )
                         }
-                        Ok(None) => outln!("[fixed] core: {location}: no drift left to refresh"),
+                        Ok(None) => {
+                            outln!("[fixed] core: drift in {location}: nothing left to refresh")
+                        }
                         Err(e) => {
                             fix_errors.push(format!("{location}: drift refresh failed: {e:#}"))
                         }

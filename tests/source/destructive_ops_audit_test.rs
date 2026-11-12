@@ -330,7 +330,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"checkout\"",
         count: 5,
-        callers: &[("restore_paths_from_head", 2)],
+        callers: &[("refresh_paths_from_head", 2)],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
@@ -339,15 +339,16 @@ const ALLOWLIST: &[Allowed] = &[
             What remains is five sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
-            (1) restore_paths_from_head: the one write both restore \
-            paths share. Its callers each establish the same precondition \
-            before reaching it — refresh_working_tree_to_head_if_safe acts \
-            only on a WorkingTreeState::RestorableFromHead, and check's \
-            restore_working_tree_to_head is the doctor --fix path, called \
-            only after classify_working_tree_drift has proved the same \
-            thing. That state is reached only when every on-disk blob is \
-            reachable from recent history, so live edits are never \
-            clobbered. \
+            (1) refresh_paths_from_head: the one write of a drift refresh, \
+            reached only through the backend's Vcs method of the same name, \
+            whose one caller is check::refresh_drift, which passes only the \
+            paths check::read_drift classified stale in a reading taken \
+            then and again just before the write: the checkout's branch \
+            moved forward under it (its own HEAD reflog's newest entry is \
+            an ancestor of HEAD other than HEAD), the move changed the path, \
+            and its index entry and file both still hold the moved-from \
+            tip's content, which a commit reachable from HEAD keeps. Any \
+            other difference classifies as an edit and is never passed. \
             (2) set_detached_head: the branch-model ATTACH/MOVE primitive \
             for a HEAD that names no branch. No -f, so git's own refusal to \
             overwrite modified paths still applies. Reachable only through \

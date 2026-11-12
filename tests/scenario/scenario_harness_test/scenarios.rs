@@ -6225,20 +6225,21 @@ pub fn parallel_retire_fetch() -> Scenario {
     scenario("parallel retire fetch", steps)
 }
 
-/// `dc11-drift-before-dirt`: a member's branch moved under its worktree, so
-/// its index and files describe the old tip. Drift whose every file holds
-/// committed content is refreshed and reported before edits are judged, and
-/// the landing carries the moved tip. Drift beside a live edit is left
-/// undecided: refreshing what is safe leaves files whose content only the
-/// edit holds, which neither `rwv doctor --fix` nor C13 settles without
-/// committing the stale side.
+/// `dc11-drift-before-dirt`: a member's branch moved under its worktree, by a
+/// move made from the primary's checkout of the same store, so the seat's
+/// index and files describe the old tip. Drift is refreshed and reported
+/// before edits are judged, and the landing carries the moved tip. Beside an
+/// edit to a file the move did not touch, the drift is still refreshed and the
+/// edit alone is refused, so the commit C13 offers cannot carry the move's
+/// reverse. A file both moved and edited is left as it stands; what the
+/// landing then offers is undecided.
 pub fn dc11_drift_before_dirt() -> Scenario {
     scenario(
         "dc11 drift before dirt",
         vec![
             create("w"),
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
-            Step::hand_commit(&ww("w"), Repo::Lib, "proj--w", &[("moved.txt", "moved\n")]),
+            Step::hand_commit(&a(), Repo::Lib, "proj--w", &[("moved.txt", "moved\n")]),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("refreshed drift"))
@@ -6254,13 +6255,35 @@ pub fn dc11_drift_before_dirt() -> Scenario {
             Step::git(&ww("w"), Repo::Lib, &["status", "--porcelain"])
                 .claim(Claim::OutputLacks("moved.txt")),
             Step::hand_edit(&ww("w"), Repo::Lib, "w-lib.txt", "w-lib", "edited"),
-            Step::hand_commit(
+            Step::hand_commit(&a(), Repo::Lib, "proj--w", &[("moved-again.txt", "x\n")]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::OutputContains("refreshed drift"))
+                .claim(Claim::OutputContains("moved-again.txt"))
+                .claim(Claim::OutputLacks("    moved-again.txt")),
+            Step::git(
                 &ww("w"),
                 Repo::Lib,
-                "proj--w",
-                &[("moved-again.txt", "x\n")],
+                &["grep", "-q", "edited", "--", "w-lib.txt"],
             ),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "moved-again.txt"],
+            ),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["commit", "-q", "-a", "-m", "w-lib edited"],
+            ),
+            Step::hand_edit(&ww("w"), Repo::Lib, "moved-again.txt", "x", "mine"),
+            Step::hand_commit(&a(), Repo::Lib, "proj--w", &[("moved-again.txt", "y\n")]),
             Step::rwv(&ww("w"), &["land"]),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["grep", "-q", "mine", "--", "moved-again.txt"],
+            ),
         ],
     )
 }
