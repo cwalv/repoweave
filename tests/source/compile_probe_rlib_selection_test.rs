@@ -23,11 +23,19 @@ use common::compile_probe::{
 use std::path::PathBuf;
 
 /// Build a `Cs<id>_9repoweave` marker for a synthetic base62 id.
+///
+/// Assembled at run time, never written whole: the probe reads this test
+/// binary's own bytes for the marker, so a marker spelled as one literal
+/// anywhere in the binary is a second identity it refuses to choose between.
 fn identity(id: &str) -> CrateIdentity {
-    let mut bytes = b"Cs".to_vec();
+    let mut bytes = std::hint::black_box(b"Cs").to_vec();
     bytes.extend_from_slice(id.as_bytes());
-    bytes.extend_from_slice(b"_9repoweave");
+    bytes.extend_from_slice(std::hint::black_box(b"_9repoweave"));
     CrateIdentity(bytes)
+}
+
+fn bytes_with(parts: &[&[u8]]) -> Vec<u8> {
+    parts.concat()
 }
 
 #[test]
@@ -212,8 +220,9 @@ fn two_candidates_with_same_wanted_identity_refuses_with_both_named() {
 
 #[test]
 fn extract_finds_a_single_embedded_marker() {
-    let bytes = b"prelude junk Cs2WVz16tfe57_9repoweave more junk";
-    let id = extract_crate_identity(bytes).expect("one marker is present");
+    let marker = identity("2WVz16tfe57").0;
+    let bytes = bytes_with(&[b"prelude junk ", &marker, b" more junk"]);
+    let id = extract_crate_identity(&bytes).expect("one marker is present");
     assert_eq!(id, identity("2WVz16tfe57"));
 }
 
@@ -230,13 +239,13 @@ fn extract_returns_none_when_no_marker_is_present() {
 fn extract_reports_multiple_distinct_markers() {
     // A binary linked against two repoweave crates (different StableCrateIds)
     // would surface as two markers; the primitive must not pick one.
-    let bytes = b"Cs2WVz16tfe57_9repoweave and also Cs2oYmEFI80sP_9repoweave here";
-    match extract_crate_identity(bytes) {
+    let (first, second) = (identity("2WVz16tfe57"), identity("2oYmEFI80sP"));
+    let bytes = bytes_with(&[&first.0, b" and also ", &second.0, b" here"]);
+    match extract_crate_identity(&bytes) {
         Err(Some(all)) => {
             assert_eq!(all.len(), 2);
-            let strings: Vec<String> = all.iter().map(|id| id.to_string()).collect();
-            assert!(strings.contains(&"Cs2WVz16tfe57_9repoweave".to_string()));
-            assert!(strings.contains(&"Cs2oYmEFI80sP_9repoweave".to_string()));
+            assert!(all.contains(&first));
+            assert!(all.contains(&second));
         }
         other => panic!("expected Err(Some(_)) with two ids, got {other:?}"),
     }
@@ -247,8 +256,9 @@ fn extract_deduplicates_repeated_occurrences_of_the_same_marker() {
     // Every symbol from the crate carries the marker, so a real binary has
     // thousands of copies of the SAME marker. That is one identity, not
     // many, and must not trip the "multiple distinct markers" refusal.
-    let bytes = b"Cs2WVz16tfe57_9repoweave x2: Cs2WVz16tfe57_9repoweave";
-    let id = extract_crate_identity(bytes).expect("one distinct marker despite two occurrences");
+    let marker = identity("2WVz16tfe57").0;
+    let bytes = bytes_with(&[&marker, b" x2: ", &marker]);
+    let id = extract_crate_identity(&bytes).expect("one distinct marker despite two occurrences");
     assert_eq!(id, identity("2WVz16tfe57"));
 }
 
