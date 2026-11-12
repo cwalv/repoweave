@@ -268,8 +268,14 @@ longer recorded is taken over by the next landing.
 `rwv abort` restores every ref a landing moved, at any phase. Stopped in its
 retire, the landing has given up the target: abort, from this workspace or the
 target's, first takes the claim and the target's workspace back, refusing
-while another operation holds either, then restores. A ref another landing has
-since built on is a foreign tip.
+while another operation holds either, then restores. The target is restored
+whole or not at all. Where any branch the landing moved there, in a checkout,
+in place or as a ref, stands somewhere other than where the landing left it
+(another landing built on it, a commit, a deletion), or is checked out where
+abort may not move it, abort refuses before either side moves, naming each
+and the commits on it since. `rwv abort --leave-target` then ends the landing
+with its source restored and its target left as it stands; at the retire,
+`rwv land --continue` finishes it instead.
 
 A resume recorded at `advance-target` re-enters `relock` first, and says so:
 relock is what makes the lock it lands agree with the tips it lands.

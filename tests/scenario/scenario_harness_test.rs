@@ -837,8 +837,11 @@ every_scenario!(
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
-    abort_after_another_landing_built_on_the_target(scenarios::TargetSide::InCheckout),
-    abort_after_another_landing_built_on_the_target(scenarios::TargetSide::AsRefs),
+    abort_after_another_landing_built_on_the_target(
+        scenarios::BuiltOn::OtherMember,
+        scenarios::TargetAt::Primary,
+        scenarios::EndedBy::LeaveTarget
+    ),
     abort_at_retire_waits_for_the_target_back,
     abort_at_retire_after_the_in_place_workspace_went,
     a_landing_meets_a_landing_stopped_as_refs,
@@ -2848,17 +2851,38 @@ holding_rwv! {
             .assert_fully_decided_green();
     }
 
-    /// A ref another landing built on after the first released it is a
-    /// foreign tip to the first's abort.
-    fn abort_after_another_landing_built_on_the_target_refuses_it_as_foreign() {
-        runner::run(scenarios::abort_after_another_landing_built_on_the_target(
-            scenarios::TargetSide::AsRefs,
-        ))
-        .assert_fully_decided_green();
-        runner::run(scenarios::abort_after_another_landing_built_on_the_target(
-            scenarios::TargetSide::InCheckout,
-        ))
-        .assert_green();
+    /// A target another landing built on after the first released it is
+    /// restored whole or not at all: the first's abort refuses before
+    /// anything moves, a landing into the target still lands, and
+    /// `--leave-target` ends the first leaving the target as it stands.
+    fn abort_after_another_landing_built_on_the_target_leaves_it() {
+        for on in [scenarios::BuiltOn::SameMember, scenarios::BuiltOn::OtherMember] {
+            for at in [
+                scenarios::TargetAt::Nowhere,
+                scenarios::TargetAt::InPlace,
+                scenarios::TargetAt::Primary,
+            ] {
+                runner::run(scenarios::abort_after_another_landing_built_on_the_target(
+                    on,
+                    at,
+                    scenarios::EndedBy::LeaveTarget,
+                ))
+                .assert_fully_decided_green();
+            }
+        }
+    }
+
+    /// The other choice the same refusal prints: finish the first
+    /// landing's retire.
+    fn abort_after_another_landing_built_on_the_target_continues() {
+        for on in [scenarios::BuiltOn::SameMember, scenarios::BuiltOn::OtherMember] {
+            runner::run(scenarios::abort_after_another_landing_built_on_the_target(
+                on,
+                scenarios::TargetAt::Primary,
+                scenarios::EndedBy::ContinueTheRetire,
+            ))
+            .assert_fully_decided_green();
+        }
     }
 
     /// Abort at retire skips an in-place workspace that is gone, and

@@ -276,12 +276,21 @@ from.
 never wrote means something else moved that ref, and restoring would discard a
 change the operation is not responsible for.
 
+A landing's target is restored whole or not at all: where a branch the landing
+moved there stands elsewhere, or is checked out where abort may not move it,
+abort refuses before either side moves.
+
 **Exits.** Inspect the named repos and decide: if the foreign commits are
 wanted, move them somewhere safe first; if not, reset the ref yourself and
 re-run `rwv abort`, or pass `--abandon-foreign-tip <repo>` to restore that repo
 anyway, first keeping the abandoned commits as a backup marked `abandoned`,
 which `rwv backup list` shows and `rwv backup drop` drops. Name the project
-repo as `projects/<name>`. The refusal moves nothing and writes nothing.
+repo as `projects/<name>`. For a landing's target, the abandon names every
+moved repo, and is not offered where the target's project branch moved; there
+`rwv abort --leave-target` ends the landing with its source restored and its
+target left as it stands, and a landing stopped in its retire can instead
+finish with `rwv land --continue`. The refusal moves nothing and writes
+nothing.
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 

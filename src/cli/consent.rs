@@ -258,12 +258,12 @@ pub enum DriftConsent {
 /// mint from, and the empty set — the operator passing nothing — covers
 /// nothing rather than everything.
 ///
-/// It also carries the repos `--leave-foreign-tip` names, whose branches abort
-/// cannot put back are left as they stand, the operation ending without them.
+/// It also carries `--leave-target`, which ends a landing leaving a target
+/// something else moved as it stands.
 #[derive(Debug, Clone, Default)]
 pub struct AbandonForeignTipConsent {
     abandon: std::collections::BTreeSet<RepoOperand>,
-    leave: std::collections::BTreeSet<RepoOperand>,
+    leave_target: bool,
 }
 
 impl AbandonForeignTipConsent {
@@ -279,17 +279,16 @@ impl AbandonForeignTipConsent {
     /// repo abort's own per-repo output names.
     pub(in crate::cli) fn from_flag(
         abandon_foreign_tip: &[RepoOperand],
-        leave_foreign_tip: &[RepoOperand],
+        leave_target: bool,
     ) -> Self {
         Self {
             abandon: abandon_foreign_tip.iter().cloned().collect(),
-            leave: leave_foreign_tip.iter().cloned().collect(),
+            leave_target,
         }
     }
 
-    /// Whether the operator named this repo on `--leave-foreign-tip`.
-    pub fn leaves(&self, repo_key: &RepoKey, project: &ProjectName) -> bool {
-        self.leave.contains(&RepoOperand::of(repo_key, project))
+    pub fn leaves_target(&self) -> bool {
+        self.leave_target
     }
 
     /// Whether the operator named this repo of the op of `project`.
@@ -305,7 +304,6 @@ impl AbandonForeignTipConsent {
     pub fn names_another_project(&self, project: &ProjectName) -> Option<&ProjectName> {
         self.abandon
             .iter()
-            .chain(&self.leave)
             .filter_map(RepoOperand::project)
             .find(|named| *named != project)
     }

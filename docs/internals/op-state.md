@@ -103,7 +103,14 @@ at the tip the landing read before it composes. `rwv abort` puts a checkout
 the op switched back on its saved branch before any reset, resets no branch
 but the one a savepoint names, and only once every checkout is back puts
 each branch moved as a ref back by compare-and-swap against the tip the op
-wrote. A savepoint at the key's own name, with nothing below it, was filed
+wrote. For a landing it first reads every receiving branch it moved, by the
+branch's tip wherever it moved it, and every checkout of `T`'s workspace that
+aligning moved off the receiving branches by its HEAD, against the tip it
+wrote (`moved_refs`, `wrote_in_target`, `created_refs`) and the tip it found
+(`receiving`, or the savepoint): one elsewhere, or a ref-moved branch
+checked out outside both workspaces, refuses the whole abort before anything
+moves, and `--leave-target` drops the target's savepoints instead of
+consuming them. A savepoint at the key's own name, with nothing below it, was filed
 by an earlier release; only `rwv doctor --fix` reads one. Savepoints live
 exactly as long as the record: cleanup drops them with it, over every member
 either side listed before the op and after it, and `rwv abort` consumes

@@ -551,14 +551,14 @@ The record is published as one commit on the push target's records branch as las
 
 See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
-### `rwv abort [--abandon-foreign-tip <repo>] [--leave-foreign-tip <repo>]`
+### `rwv abort [--abandon-foreign-tip <repo>] [--leave-target]`
 
 Roll an in-flight `sync` or `land` back to its savepoints in every workspace the op touched: one per ref the op may move, under `refs/rwv/pre-op/<op-id>`, and under `refs/rwv/pre-op/<op-id>-target` for a landing's target, whose checkouts share a ref store with the workweave's. A checkout's savepoint names the branch it was on, so a checkout the op switched is switched back before anything is reset, and no other branch is reset; a branch a landing moved without a checkout is put back afterwards, by compare-and-swap against the tip the landing wrote. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for operations the op left in progress in the source (`git rebase --abort`, `git merge --abort`); a repo of the target the landing never moved is left as it stands, an operation in progress there included. Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`. A repo is named as the flag takes it: its workspace-relative path, or `projects/<name>` for the project repo.
 
 | Flag | Effect |
 |---|---|
 | `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `projects/<name>` for the project repo (the project of the op in progress; another project's repo is refused). The abandoned commits are first kept as a backup marked `abandoned`, which [`rwv backup list`](#rwv-backup-list---json) shows and `rwv backup drop` drops. |
-| `--leave-foreign-tip <repo>` | End the op leaving this repo's branches that abort cannot put back (a branch the landing moved as a ref that others moved on, deleted, or checked out since; a branch the op created that a checkout now holds) as they stand: every other repo is restored, this repo's savepoints are dropped, and a commit only a dropped savepoint reached is first kept as a backup. Repeatable, one repo per occurrence; spelled as for `--abandon-foreign-tip`. |
+| `--leave-target` | End a landing whose target something else moved since (another landing built on it, a commit, a deletion, a checkout abort may not move): the source is restored and the whole target left as it stands, each tip the landing wrote there and each savepoint's tip first kept as a backup where no branch reaches it, the target's savepoints dropped. Refused where abort can restore the target, and for an operation that is not a landing. |
 
 Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset, and the refusal writes nothing. A restore over the op's own tips writes no backup either: what abort throws away is what the op made.
 

@@ -1275,14 +1275,14 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Abort {
             abandon_foreign_tip,
-            leave_foreign_tip,
+            leave_target,
         }) => {
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             sync::run_abort(
                 &ctx,
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(
                     &abandon_foreign_tip,
-                    &leave_foreign_tip,
+                    leave_target,
                 ),
             )?;
         }

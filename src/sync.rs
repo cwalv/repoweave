@@ -7916,9 +7916,6 @@ struct AbortTally {
     any_failure: bool,
     /// The repos left at a tip `--abandon-foreign-tip` restores over.
     abandonable: Vec<RepoOperand>,
-    /// The repos with a branch abort cannot put back, which
-    /// `--leave-foreign-tip` leaves as it stands.
-    leavable: Vec<RepoOperand>,
     /// The repos left stopped in an operation abort may not cancel unasked,
     /// with the VCS action that shows how to end it there.
     stopped: Vec<(RepoOperand, ConflictOp, String)>,
@@ -8049,8 +8046,66 @@ fn abort_op(
     if let Some(other) = &other_workspace {
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }
+    let stores = MemberStores {
+        workspaces: [
+            header.target.as_ref().map(|t| t.as_path().to_path_buf()),
+            Some(header.source.as_path().to_path_buf()),
+            Some(ctx.primary_path().to_path_buf()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    };
+    let judge = || match &reading {
+        op_state::OwnerReading::Whole(record) if record.verb == OpVerb::Land => {
+            Some(judge_target(record, &stores))
+        }
+        _ => None,
+    };
+    let target_label = if header.target.as_ref() == Some(ctx.active_root()) {
+        ""
+    } else {
+        AbortSide::LandTarget.label()
+    };
+    let standing = judge();
+    if abandon.leaves_target() {
+        return match (&reading, &standing) {
+            (op_state::OwnerReading::Whole(record), Some(standing)) if !standing.restorable() => {
+                abort_leaving_target(ctx, record, &owner_workspace, standing, &stores, abandon)
+            }
+            (op_state::OwnerReading::Whole(_), Some(_)) => crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "--leave-target leaves a landing's target as it stands where something other \
+                 than the landing moved it, and every branch this landing moved there is where \
+                 it left it; drop the flag, and `rwv abort` restores the target"
+            ),
+            (op_state::OwnerReading::HeaderOnly { .. }, _) if header.verb == OpVerb::Land => {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "--leave-target needs to know what the landing wrote in its target, and \
+                     abort cannot read the landing's record past its header; drop the flag"
+                )
+            }
+            _ => crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "--leave-target ends a landing, and the operation in progress is not one; \
+                 drop the flag"
+            ),
+        };
+    }
+    if let (op_state::OwnerReading::Whole(record), Some(standing)) = (&reading, &standing) {
+        if !standing.restorable() && !standing.abandoned_by(abandon, &op_project_name) {
+            return refuse_moved_target(record, standing, target_label, abandon);
+        }
+    }
     if header.verb == OpVerb::Land {
         *retaken = Some(retake_target(&reading, &owner_workspace, &cwd_project_dir)?);
+    }
+    let standing = judge();
+    if let (op_state::OwnerReading::Whole(record), Some(standing)) = (&reading, &standing) {
+        if !standing.restorable() && !standing.abandoned_by(abandon, &op_project_name) {
+            return refuse_moved_target(record, standing, target_label, abandon);
+        }
     }
 
     if let op_state::OwnerReading::Whole(_) = &reading {
@@ -8168,99 +8223,16 @@ fn abort_op(
             .as_ref()
             .map(|take_in| take_in.ref_moves.as_slice())
             .unwrap_or_default();
-        for left in crate::merge_upstream::restore_ref_moves(
+        restore_op_ref_moves(
             &workspace_dir,
-            Some(&cwd_project_dir),
+            &cwd_project_dir,
             ref_moves,
-            &|repo| abandon.covers(repo, &op_project_name),
-        ) {
-            match left {
-                crate::merge_upstream::RefMoveLeft::Abandoned {
-                    repo,
-                    branch,
-                    tip,
-                    backup,
-                } => outln!(
-                    "  {}: '{branch}' restored (abandoned foreign tip {}, kept as backup {backup})",
-                    RepoOperand::of(&repo, &op_project_name),
-                    tip.short()
-                ),
-                crate::merge_upstream::RefMoveLeft::Foreign {
-                    repo,
-                    branch,
-                    dir,
-                    now,
-                    held_at,
-                    error,
-                } => {
-                    let named = RepoOperand::of(&repo, &op_project_name);
-                    let vcs = crate::vcs::probe_vcs();
-                    let checkout = dir.display().to_string();
-                    tally.any_foreign = true;
-                    if !held_at.is_empty() {
-                        let held = held_at
-                            .iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        eprintln!(
-                            "  {named}: '{branch}' is checked out at {held}, so it is left where \
-                             it is"
-                        );
-                        tally.blocked.push((
-                            named,
-                            format!(
-                                "free the checkout at {held} of '{branch}' (switch it to \
-                                 another branch, or detach it), as this shows:\n\t{}\n\
-                                 then rerun:\n\trwv abort",
-                                vcs.hint(crate::vcs::VcsAction::Status)
-                                    .replace("<checkout>", &held)
-                            ),
-                        ));
-                    } else if now.is_none() {
-                        let from = ref_moves
-                            .iter()
-                            .rev()
-                            .find(|m| m.repo == repo && m.branch == branch)
-                            .map(|m| m.from.as_str().to_owned())
-                            .unwrap_or_default();
-                        eprintln!("  {named}: '{branch}' is gone, so it is left as it is");
-                        tally.blocked.push((
-                            named,
-                            format!(
-                                "put '{branch}' back where the op found it:\n\t{}\n\
-                                 then rerun:\n\trwv abort",
-                                vcs.hint(crate::vcs::VcsAction::BranchAt)
-                                    .replace("<checkout>", &checkout)
-                                    .replace("<name>", &branch)
-                                    .replace("<sha>", &from)
-                            ),
-                        ));
-                    } else {
-                        let why = error.map(|e| format!(": {e:#}")).unwrap_or_default();
-                        eprintln!(
-                            "  {named}: '{branch}' moved since the op wrote it, so it is left \
-                             where it is{why}"
-                        );
-                        if !tally.abandonable.contains(&named) {
-                            tally.abandonable.push(named);
-                        }
-                    }
-                }
-            }
-        }
+            abandon,
+            &op_project_name,
+            &mut tally,
+        );
         if record.verb == OpVerb::Land {
             members.take_record(record);
-            let stores = MemberStores {
-                workspaces: [
-                    header.target.as_ref().map(|t| t.as_path().to_path_buf()),
-                    Some(header.source.as_path().to_path_buf()),
-                    Some(ctx.primary_path().to_path_buf()),
-                ]
-                .into_iter()
-                .flatten()
-                .collect(),
-            };
             restore_landing_refs(record, &members, &stores, abandon, &mut tally);
         }
     }
@@ -8334,6 +8306,98 @@ fn abort_op(
     }
 
     Ok(())
+}
+
+/// Put back each branch the op moved as a ref outside a landing's target.
+fn restore_op_ref_moves(
+    workspace_dir: &Path,
+    project_dir: &Path,
+    ref_moves: &[op_state::RefMove],
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    project: &ProjectName,
+    tally: &mut AbortTally,
+) {
+    for left in crate::merge_upstream::restore_ref_moves(
+        workspace_dir,
+        Some(project_dir),
+        ref_moves,
+        &|repo| abandon.covers(repo, project),
+    ) {
+        match left {
+            crate::merge_upstream::RefMoveLeft::Abandoned {
+                repo,
+                branch,
+                tip,
+                backup,
+            } => outln!(
+                "  {}: '{branch}' restored (abandoned foreign tip {}, kept as backup {backup})",
+                RepoOperand::of(&repo, project),
+                tip.short()
+            ),
+            crate::merge_upstream::RefMoveLeft::Foreign {
+                repo,
+                branch,
+                dir,
+                now,
+                held_at,
+                error,
+            } => {
+                let named = RepoOperand::of(&repo, project);
+                let vcs = crate::vcs::probe_vcs();
+                let checkout = dir.display().to_string();
+                tally.any_foreign = true;
+                if !held_at.is_empty() {
+                    let held = held_at
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "  {named}: '{branch}' is checked out at {held}, so it is left where \
+                         it is"
+                    );
+                    tally.blocked.push((
+                        named,
+                        format!(
+                            "free the checkout at {held} of '{branch}' (switch it to \
+                             another branch, or detach it), as this shows:\n\t{}\n\
+                             then rerun:\n\trwv abort",
+                            vcs.hint(crate::vcs::VcsAction::Status)
+                                .replace("<checkout>", &held)
+                        ),
+                    ));
+                } else if now.is_none() {
+                    let from = ref_moves
+                        .iter()
+                        .rev()
+                        .find(|m| m.repo == repo && m.branch == branch)
+                        .map(|m| m.from.as_str().to_owned())
+                        .unwrap_or_default();
+                    eprintln!("  {named}: '{branch}' is gone, so it is left as it is");
+                    tally.blocked.push((
+                        named,
+                        format!(
+                            "put '{branch}' back where the op found it:\n\t{}\n\
+                             then rerun:\n\trwv abort",
+                            vcs.hint(crate::vcs::VcsAction::BranchAt)
+                                .replace("<checkout>", &checkout)
+                                .replace("<name>", &branch)
+                                .replace("<sha>", &from)
+                        ),
+                    ));
+                } else {
+                    let why = error.map(|e| format!(": {e:#}")).unwrap_or_default();
+                    eprintln!(
+                        "  {named}: '{branch}' moved since the op wrote it, so it is left \
+                         where it is{why}"
+                    );
+                    if !tally.abandonable.contains(&named) {
+                        tally.abandonable.push(named);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Restore one of the op's workspaces: its member repos, then its project
@@ -8795,6 +8859,553 @@ fn retake_target(
     Ok(retaken)
 }
 
+/// A branch a landing moved in its target, or a checkout of `T`'s workspace
+/// it aligned, read against the tip the landing wrote there.
+struct TargetWrite {
+    repo: RepoKey,
+    dir: PathBuf,
+    branch: Option<crate::vcs::RawRefName>,
+    in_place: Option<PathBuf>,
+    wrote: CommitId,
+    now: Option<CommitId>,
+    held_at: Vec<PathBuf>,
+}
+
+impl TargetWrite {
+    fn what(&self) -> String {
+        match &self.branch {
+            Some(branch) => format!("'{branch}'"),
+            None => "its checkout".to_owned(),
+        }
+    }
+
+    fn label(&self, target_label: &str, project: &ProjectName) -> String {
+        let named = RepoOperand::of(&self.repo, project);
+        match &self.in_place {
+            Some(workspace) => format!("[{}] {named}", workspace.display()),
+            None => format!("{target_label}{named}"),
+        }
+    }
+}
+
+/// A landing's target as abort finds it. The target is one unit, its
+/// project commit pinning its members' tips: abort restores all of it or
+/// none.
+#[derive(Default)]
+struct TargetStanding {
+    as_left: Vec<TargetWrite>,
+    /// Moved since by something other than this landing, or gone.
+    moved: Vec<TargetWrite>,
+    /// Where this landing left it, checked out outside both of its
+    /// workspaces, so no restore may move it.
+    held: Vec<TargetWrite>,
+}
+
+impl TargetStanding {
+    fn restorable(&self) -> bool {
+        self.moved.is_empty() && self.held.is_empty()
+    }
+
+    fn abandoned_by(
+        &self,
+        abandon: &crate::cli::consent::AbandonForeignTipConsent,
+        project: &ProjectName,
+    ) -> bool {
+        self.abandonable()
+            && self
+                .moved
+                .iter()
+                .all(|moved| abandon.covers(&moved.repo, project))
+    }
+
+    /// Whether giving up every moved tip puts the whole target back: not
+    /// where the project branch moved, since its lock pins whatever its
+    /// commits moved, this landing's or not.
+    fn abandonable(&self) -> bool {
+        self.held.is_empty()
+            && self
+                .moved
+                .iter()
+                .all(|moved| moved.now.is_some() && moved.repo != RepoKey::Project)
+    }
+
+    fn writes(&self) -> impl Iterator<Item = &TargetWrite> {
+        self.as_left.iter().chain(&self.moved).chain(&self.held)
+    }
+}
+
+/// Read each branch a landing moved in its target, wherever it moved it: in
+/// `T`'s checkout, in place in a third workspace, or as a ref; and each
+/// checkout of `T`'s workspace that aligning it moved off any branch the
+/// landing names.
+fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> TargetStanding {
+    let mut standing = TargetStanding::default();
+    let Some(take_in) = &record.take_in else {
+        return standing;
+    };
+    let vcs = crate::vcs::probe_vcs();
+    let ours: Vec<&CanonicalPath> = std::iter::once(&record.source)
+        .chain(record.target.as_ref())
+        .collect();
+    let project_repo = stores
+        .workspaces
+        .iter()
+        .map(|ws| project_dir(ws, &record.project))
+        .find(|dir| project_vcs().is_repo(dir));
+    for (repo, receiving) in &take_in.receiving {
+        let created = take_in
+            .created_refs
+            .iter()
+            .find(|made| made.repo == *repo && made.branch == receiving.branch);
+        let as_ref = take_in
+            .moved_refs
+            .iter()
+            .find(|moved| moved.repo == *repo && moved.branch == receiving.branch);
+        let wrote = match (as_ref, created, &receiving.moves) {
+            (Some(moved), _, _) => moved.to.clone(),
+            (None, Some(made), _) => made.at.clone(),
+            (None, None, op_state::Moves::InCheckout | op_state::Moves::InPlace { .. }) => {
+                match take_in.wrote_in_target.get(repo) {
+                    Some(wrote) => wrote.clone(),
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        let in_place = match &receiving.moves {
+            op_state::Moves::InPlace { workspace } => Some(workspace.clone()),
+            _ => None,
+        };
+        let dir = match (repo, &in_place) {
+            (RepoKey::Project, _) => project_repo.clone(),
+            (RepoKey::Member(path), Some(workspace)) => Some(workspace.join(path.as_path()))
+                .filter(|dir| vcs.is_repo(dir))
+                .or_else(|| stores.dir(vcs.as_ref(), path)),
+            (RepoKey::Member(path), None) => stores.dir(vcs.as_ref(), path),
+        };
+        let Some(dir) = dir else {
+            continue;
+        };
+        let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
+        let now = vcs
+            .resolve_local_branch_tip(&dir, &branch)
+            .ok()
+            .flatten()
+            .map(|tip| tip.id().clone());
+        let before = created.is_none().then_some(&receiving.tip);
+        let as_left = now.as_ref() == Some(&wrote)
+            || (now.is_some() && now.as_ref() == before)
+            || created.is_some_and(|made| now.is_none() || now.as_ref() == Some(&made.at));
+        let held_at =
+            if as_left && now.as_ref() == Some(&wrote) && (as_ref.is_some() || created.is_some()) {
+                vcs.checkouts_of_branch(&dir, &branch)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|held| {
+                        let held = CanonicalPath::of(held);
+                        !ours.iter().any(|ws| ws.contains(&held))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let write = TargetWrite {
+            repo: repo.clone(),
+            dir,
+            branch: Some(branch),
+            in_place,
+            wrote,
+            now,
+            held_at,
+        };
+        if !as_left {
+            standing.moved.push(write);
+        } else if write.held_at.is_empty() {
+            standing.as_left.push(write);
+        } else {
+            standing.held.push(write);
+        }
+    }
+    let Some(target) = &record.target else {
+        return standing;
+    };
+    let key = SavepointKey::LandTarget(record.id.clone());
+    for repo in take_in
+        .moved_in_target
+        .iter()
+        .filter(|repo| !take_in.receiving.contains_key(repo))
+    {
+        let (RepoKey::Member(path), Some(wrote)) = (repo, take_in.wrote_in_target.get(repo)) else {
+            continue;
+        };
+        let dir = target.as_path().join(path.as_path());
+        let Some(saved) = vcs
+            .is_repo(&dir)
+            .then(|| vcs.resolve_savepoint(&dir, &key))
+            .flatten()
+        else {
+            continue;
+        };
+        let now = vcs.head_revision(&dir).ok().map(|head| head.id().clone());
+        let as_left = now.as_ref() == Some(wrote) || now.as_ref() == Some(saved.id());
+        let write = TargetWrite {
+            repo: repo.clone(),
+            dir,
+            branch: None,
+            in_place: None,
+            wrote: wrote.clone(),
+            now,
+            held_at: Vec::new(),
+        };
+        if as_left {
+            standing.as_left.push(write);
+        } else {
+            standing.moved.push(write);
+        }
+    }
+    standing
+}
+
+/// Refuse to restore a target something other than the landing moved,
+/// before anything of either side moves, naming what moved and each choice
+/// that clears it.
+fn refuse_moved_target(
+    record: &op_state::OwnerRecord,
+    standing: &TargetStanding,
+    target_label: &str,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+) -> anyhow::Result<()> {
+    let vcs = crate::vcs::probe_vcs();
+    let project = &record.project;
+    let mut lines = Vec::new();
+    for moved in &standing.moved {
+        let label = moved.label(target_label, project);
+        let what = moved.what();
+        let Some(now) = &moved.now else {
+            eprintln!(
+                "  {label}: {what} is gone, where this landing left it at {}",
+                moved.wrote.short()
+            );
+            if let Some(branch) = &moved.branch {
+                lines.push(format!(
+                    "  {}: put {what} back where this landing left it:\n\t{}\nthen rerun:\n\trwv abort",
+                    RepoOperand::of(&moved.repo, project),
+                    vcs.hint(crate::vcs::VcsAction::BranchAt)
+                        .replace("<checkout>", &moved.dir.display().to_string())
+                        .replace("<name>", branch.as_str())
+                        .replace("<sha>", moved.wrote.as_str())
+                ));
+            }
+            continue;
+        };
+        let (commits, total) =
+            vcs.commits_in_range(&moved.dir, &moved.wrote, now, BLOCKING_COMMITS_CAP);
+        let mut since = commits
+            .iter()
+            .map(|c| format!("\n\t  {} {}", c.id.short(), c.subject))
+            .collect::<String>();
+        if total > BLOCKING_COMMITS_CAP {
+            since.push_str(&format!(
+                "\n\t  ... and {} more",
+                total - BLOCKING_COMMITS_CAP
+            ));
+        }
+        eprintln!(
+            "  {label}: {what} is at {}, not at {}, where this landing left it{}{since}",
+            now.short(),
+            moved.wrote.short(),
+            if since.is_empty() {
+                ""
+            } else {
+                "; on it since:"
+            }
+        );
+    }
+    for held in &standing.held {
+        let at = held
+            .held_at
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let what = held.what();
+        eprintln!(
+            "  {}: {what} is checked out at {at}, so this landing cannot put it back",
+            held.label(target_label, project)
+        );
+        lines.push(format!(
+            "  {}: free the checkout at {at} of {what} (switch it to another branch, or detach \
+             it), as this shows:\n\t{}\nthen rerun:\n\trwv abort",
+            RepoOperand::of(&held.repo, project),
+            vcs.hint(crate::vcs::VcsAction::Status)
+                .replace("<checkout>", &at)
+        ));
+    }
+    eprintln!(
+        "\nnothing of either side is restored: abort restores a landing's target whole or not \
+         at all"
+    );
+    if !standing.abandonable()
+        && standing
+            .moved
+            .iter()
+            .any(|moved| abandon.covers(&moved.repo, project))
+    {
+        eprintln!(
+            "--abandon-foreign-tip cannot put this target back whole: its project branch has \
+             moved on, and its lock pins what those commits moved, so abort gives none of it up"
+        );
+    }
+    if standing.abandonable() {
+        let abandons = standing
+            .moved
+            .iter()
+            .map(|moved| RepoOperand::of(&moved.repo, project))
+            .collect::<std::collections::BTreeSet<_>>()
+            .iter()
+            .map(|named| format!("--abandon-foreign-tip {named}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!(
+            "  return the target to where this landing found it, giving up what was built on it, \
+             each moved tip kept as an `abandoned` backup that `rwv backup list` shows and `rwv \
+             backup drop` drops:\n\trwv abort {abandons}"
+        ));
+    }
+    if record.phase == op_state::OpPhase::Retire {
+        lines.push(format!(
+            "  keep the landing and finish its retire, in {}:\n\trwv land --continue",
+            record.source.as_path().display()
+        ));
+    }
+    lines.push(
+        "  end the operation leaving the target as it stands, the source restored, a commit only \
+         a savepoint of the target reached kept as a backup first:\n\trwv abort --leave-target"
+            .to_owned(),
+    );
+    eprintln!("\nrecovery options:\n{}", lines.join("\n"));
+    crate::refuse!(
+        RefusalKind::ForeignTip,
+        "abort refused: something other than this landing has moved its target since"
+    )
+}
+
+/// `rwv abort --leave-target`: restore the source, leave the target as it
+/// stands, and end the landing.
+fn abort_leaving_target(
+    ctx: &WorkspaceContext,
+    record: &op_state::OwnerRecord,
+    owner: &CanonicalPath,
+    standing: &TargetStanding,
+    stores: &MemberStores,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+) -> anyhow::Result<()> {
+    let project = &record.project;
+    op_state::mark_abort_begun(owner.as_path()).context("could not record that abort began")?;
+    let source = WorkspaceContext::resolve_for_project(owner.as_path(), project)?;
+    let source_dir = source.active_path().to_path_buf();
+    let source_project_dir = project_dir(&source_dir, project);
+    let source_project = Project::from_dir_skip_lock(&source_project_dir, project.clone())
+        .context("failed to load the source's project")?;
+    refuse_symlinked_members(&source_dir, project)?;
+    let label = if ctx.active_root() == owner {
+        ""
+    } else {
+        AbortSide::Replay.label()
+    };
+    let empty_wrote = std::collections::BTreeMap::new();
+    let take_in = record.take_in.as_ref();
+    let mut tally = AbortTally::default();
+    restore_abort_workspace(
+        &source_dir,
+        &source_project_dir,
+        &source_project,
+        AbortSide::Replay,
+        label,
+        &record.id,
+        Some(&record.tips),
+        take_in.map(|t| t.moved_in_target.as_slice()),
+        take_in.map_or(&empty_wrote, |t| &t.wrote_in_target),
+        record.operates_in().as_ref(),
+        take_in.and_then(|t| t.source_tip.as_ref()),
+        take_in.map(|t| t.rebases.as_slice()).unwrap_or_default(),
+        take_in.map(|t| t.carries.as_slice()).unwrap_or_default(),
+        abandon,
+        &mut tally,
+    );
+    restore_op_ref_moves(
+        &source_dir,
+        &source_project_dir,
+        take_in.map(|t| t.ref_moves.as_slice()).unwrap_or_default(),
+        abandon,
+        project,
+        &mut tally,
+    );
+    leave_target(record, standing, stores, &mut tally);
+    for leased in record
+        .target
+        .iter()
+        .map(|t| t.as_path().to_path_buf())
+        .chain(
+            take_in
+                .into_iter()
+                .flat_map(op_state::TakeInRecord::in_place_workspaces),
+        )
+    {
+        op_state::clear_lease_owned_by(&leased, owner.as_path());
+    }
+    if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
+        project_vcs().as_ref(),
+        &source_project_dir,
+        &record.id,
+    ) {
+        eprintln!("  {e:#}");
+        tally.any_failure = true;
+    }
+    print_abort_noise_summary(&tally.noise);
+    if tally.any_foreign {
+        print_abort_recovery_options(&tally);
+    }
+    if tally.clean() {
+        let kept = take_in
+            .map(|t| t.rebased_backups.clone())
+            .unwrap_or_default();
+        crate::backup::drop_rebased(ctx.primary_path(), owner.as_path(), project, kept.iter());
+        op_state::clear_all_at(owner.as_path());
+    } else if tally.any_foreign {
+        eprintln!(
+            "\nabort refused on at least one repo of the source (foreign-tip violation); \
+             op-state retained at {} so you can re-run `rwv abort --leave-target` after \
+             reconciling.",
+            owner.as_path().display()
+        );
+        crate::refuse!(
+            RefusalKind::ForeignTip,
+            "abort refused: foreign tip on at least one repo"
+        );
+    }
+    if tally.any_failure {
+        return Err(crate::untokened!(Tally, "abort completed with failures"));
+    }
+    Ok(())
+}
+
+/// Leave a landing's target as it stands: each tip the landing wrote there,
+/// which the target's lock may pin, and each savepoint's tip is kept as a
+/// backup where no branch reaches it, then the savepoints are dropped.
+fn leave_target(
+    record: &op_state::OwnerRecord,
+    standing: &TargetStanding,
+    stores: &MemberStores,
+    tally: &mut AbortTally,
+) {
+    let vcs = crate::vcs::probe_vcs();
+    let project = &record.project;
+    for write in standing.writes() {
+        let named = RepoOperand::of(&write.repo, project);
+        if !write.held_at.is_empty() || write.now.as_ref() != Some(&write.wrote) {
+            outln!(
+                "  {}: {} is left as it stands{}",
+                write.label(AbortSide::LandTarget.label(), project),
+                write.what(),
+                write
+                    .now
+                    .as_ref()
+                    .map_or_else(|| ", gone".to_owned(), |now| format!(" at {}", now.short()))
+            );
+        }
+        let source = match &write.branch {
+            Some(branch) => crate::vcs::BackupSource::Branch(branch.clone()),
+            None => vcs
+                .head_backup_source(&write.dir)
+                .unwrap_or(crate::vcs::BackupSource::DetachedHead),
+        };
+        if let Err(e) = keep_unreached(vcs.as_ref(), &write.dir, &source, &write.wrote, &named) {
+            eprintln!("  {named}: {e:#}");
+            tally.any_failure = true;
+        }
+    }
+    let mut members = OpMembers::default();
+    members.take_record(record);
+    if let Some(take_in) = &record.take_in {
+        for repo in &take_in.moved_in_target {
+            if let RepoKey::Member(path) = repo {
+                members.0.entry(path.clone()).or_insert(None);
+            }
+        }
+    }
+    let target_key = SavepointKey::LandTarget(record.id.clone());
+    let mut dirs: Vec<(RepoKey, PathBuf)> = stores
+        .workspaces
+        .iter()
+        .map(|ws| (RepoKey::Project, project_dir(ws, project)))
+        .collect();
+    for (path, vcs_type) in &members.0 {
+        let member_vcs = OpMembers::vcs(*vcs_type);
+        dirs.extend(
+            record
+                .target
+                .iter()
+                .map(|t| t.as_path().join(path.as_path()))
+                .chain(stores.dir(member_vcs.as_ref(), path))
+                .map(|dir| (RepoKey::Member(path.clone()), dir)),
+        );
+    }
+    let in_place_key = SavepointKey::LandInPlace(record.id.clone());
+    let in_place = record.take_in.iter().flat_map(|take_in| {
+        take_in
+            .receiving
+            .iter()
+            .filter_map(|(repo, receiving)| match (repo, &receiving.moves) {
+                (RepoKey::Member(path), op_state::Moves::InPlace { workspace }) => {
+                    Some((repo.clone(), workspace.join(path.as_path())))
+                }
+                _ => None,
+            })
+    });
+    let keyed = dirs
+        .into_iter()
+        .map(|(repo, dir)| (repo, dir, &target_key))
+        .chain(in_place.map(|(repo, dir)| (repo, dir, &in_place_key)))
+        .collect::<Vec<_>>();
+    for (repo, dir, key) in keyed {
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let named = RepoOperand::of(&repo, project);
+        let checkout = vcs.resolve_savepoint(&dir, key).map(|saved| {
+            (
+                vcs.head_backup_source(&dir)
+                    .unwrap_or(crate::vcs::BackupSource::DetachedHead),
+                saved.id().clone(),
+            )
+        });
+        let branches = match vcs.ref_savepoints(&dir, key) {
+            Ok(saved) => saved,
+            Err(e) => {
+                eprintln!("  {named}: could not read its branch savepoints: {e:#}");
+                tally.any_failure = true;
+                continue;
+            }
+        };
+        let kept = checkout
+            .into_iter()
+            .chain(
+                branches
+                    .into_iter()
+                    .map(|saved| (crate::vcs::BackupSource::Branch(saved.branch), saved.at)),
+            )
+            .try_for_each(|(source, at)| keep_unreached(vcs.as_ref(), &dir, &source, &at, &named));
+        match kept {
+            Ok(()) => vcs.drop_savepoint(&dir, key),
+            Err(e) => {
+                eprintln!("  {named}: {e:#}");
+                tally.any_failure = true;
+            }
+        }
+    }
+}
+
 /// Put back each branch a landing moved or created as a ref, once every
 /// checkout is restored, so no branch moves under a checkout the landing
 /// switched onto it.
@@ -8890,27 +9501,6 @@ fn restore_landing_refs(
                     let at = observed
                         .as_ref()
                         .map_or(String::new(), |o| format!(" at {}", o.short()));
-                    if abandon.leaves(&repo_key, &record.project) {
-                        match keep_unreached(
-                            vcs.as_ref(),
-                            &dir,
-                            &crate::vcs::BackupSource::Branch(branch.clone()),
-                            &saved.at,
-                            &named,
-                        )
-                        .and_then(|()| Ok(vcs.drop_ref_savepoint(&dir, &key, branch)?))
-                        {
-                            Ok(()) => outln!(
-                                "  {named}: '{branch}'{at} is left as it is, as \
-                                 --leave-foreign-tip names it: {why}"
-                            ),
-                            Err(e) => {
-                                eprintln!("  {named}: '{branch}': {e:#}");
-                                tally.any_failure = true;
-                            }
-                        }
-                        continue;
-                    }
                     eprintln!(
                         "  {named}: '{branch}'{at} is left where it is, not restored to {}: {why}",
                         saved.at.short()
@@ -8936,7 +9526,6 @@ fn restore_landing_refs(
                     } else if observed.is_some() && !tally.abandonable.contains(&named) {
                         tally.abandonable.push(named.clone());
                     }
-                    tally.leavable.push(named.clone());
                 }
                 Err(e) => {
                     eprintln!("  {named}: '{branch}' could not be restored: {e:#}");
@@ -8961,16 +9550,11 @@ fn restore_landing_refs(
         wrote,
     ) {
         let named = RepoOperand::of(&repo, &record.project);
-        if abandon.leaves(&repo, &record.project) {
-            outln!(
-                "  {named}: '{branch}', which the op created, is left as it is, as \
-                 --leave-foreign-tip names it: {why}"
-            );
-            continue;
-        }
         eprintln!("  {named}: '{branch}', which the op created, is left where it is: {why}");
         tally.any_foreign = true;
-        tally.leavable.push(named);
+        tally
+            .blocked
+            .push((named, "then rerun:\n\trwv abort".to_owned()));
     }
 }
 
@@ -9301,17 +9885,6 @@ fn print_abort_recovery_options(tally: &AbortTally) {
     }
     for (named, choice) in &tally.blocked {
         lines.push(format!("  {named}: {choice}"));
-    }
-    for named in tally
-        .leavable
-        .iter()
-        .collect::<std::collections::BTreeSet<_>>()
-    {
-        lines.push(format!(
-            "  {named}: end the operation leaving that branch as it is, every other repo \
-             restored, a commit only its savepoint reached kept as a backup first:\n\
-             \trwv abort --leave-foreign-tip {named}"
-        ));
     }
     for named in &tally.abandonable {
         lines.push(format!(

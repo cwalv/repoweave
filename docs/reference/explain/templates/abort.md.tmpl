@@ -92,15 +92,31 @@ This can happen if:
 cannot be attributed to the op. In that case op-state is retained so the
 operator can re-run after reconciling.
 
-### Leaving a branch as it stands
+### A landing's target is restored whole or not at all
 
-A branch a landing moved as a ref, or created, that abort cannot put back
-(others moved it on, deleted it, or checked it out since) is a foreign tip,
-and `--abandon-foreign-tip` cannot move it. `--leave-foreign-tip <repo>` ends
-the operation without it: every other repo is restored, that repo's branches
-abort cannot put back stay as they stand, its savepoints are dropped, and a
-commit only a dropped savepoint reached is kept as a backup first. The
-refusal prints it for each such repo.
+A landing's target is one unit: its project commit's lock pins its members'
+tips. Before abort moves anything of a landing, it reads every branch the
+landing moved in the target, in the target's checkouts, in place in another
+workspace, or as refs. Where one stands somewhere other than where the landing
+left it (another landing built on it, a commit, a deletion), or is checked out
+where abort may not move it, abort refuses as `foreign-tip` before either side
+moves, naming each and the commits on it since, and prints the choices:
+
+- free the checkout, or put the deleted branch back where the landing left it,
+  then rerun `rwv abort`, which restores the whole target;
+- `rwv abort --abandon-foreign-tip <repo>`, naming every moved repo, where the
+  target's project branch has not moved: the target's repos are restored over
+  those tips, each kept first as an `abandoned` backup. Where the project
+  branch moved, its lock pins whatever those commits moved, and abort gives
+  none of it up;
+- `rwv land --continue`, from the landing's workspace, where the landing
+  stopped in its retire: the landing stands and the retire finishes;
+- `rwv abort --leave-target`: the source is restored and the landing ends,
+  its whole target left as it stands. Each tip the landing wrote there, and
+  each savepoint's tip, is kept as a backup first where no branch reaches it;
+  the target's savepoints are dropped and the landing's claim and leases end.
+  It is refused, before anything moves, where abort can restore the target,
+  and for an operation that is not a landing.
 
 ### Abandoning a foreign tip on purpose
 
