@@ -66,7 +66,10 @@ nothing could be landed into. Then, under an op record:
    workspace, the primary or another workweave, whichever project it
    presents, fast-forwards in place in that checkout, which must be clean
    (`edits`); the landing leases that workspace until it releases the target,
-   and `rwv abort`, from any of the three, puts that checkout back. A
+   and `rwv abort`, run in the landing's own workspace or in a workspace the
+   landing leases, puts that checkout back with the rest: it rolls the landing
+   back whole, or refuses before anything moves, naming what is in the way and
+   the command that ends it. A
    receiving branch checked out anywhere else refuses (`checkout`). For a
    project the target's workspace does not present, a member the presented
    project shares is that project's checkout there: the landing judges
@@ -266,9 +269,12 @@ before it released the claim leaves it to its operation, which `rwv land
 longer recorded is taken over by the next landing.
 
 `rwv abort` restores every ref a landing moved, at any phase. Stopped in its
-retire, the landing has given up the target: abort, from this workspace or the
-target's, first takes the claim and the target's workspace back, refusing
-while another operation holds either, then restores. The target is restored
+retire, the landing has given up the target: abort, from this workspace, first
+takes the claim and the target's workspace back, refusing while another
+operation holds either, then restores. Typed in the target's workspace, `rwv
+abort` takes up only a landing whose retire is recorded as stopped; for any
+other landing it refuses, printing `rwv -C <workspace> abort` to run from the
+landing's own workspace. The target is restored
 whole or not at all. Where any branch the landing moved there, in a checkout,
 in place or as a ref, stands somewhere other than where the landing left it
 (another landing built on it, a commit, a deletion), or is checked out where
