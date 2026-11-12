@@ -186,6 +186,12 @@ fn a_dependency_moved_off_its_pin_is_refused_by_alignment_before_the_op_start_re
 }
 
 #[test]
+fn an_owned_member_the_landing_cannot_plan_is_refused_before_it_is_planned() {
+    runner::run(scenarios::an_unplannable_member_is_refused_before_it_is_planned())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -646,6 +652,7 @@ every_scenario!(
     every_printed_setter_restores_the_target_value,
     a_followed_receiving_branch_that_exists_nowhere_is_created,
     a_dependency_moved_off_its_pin_is_refused_before_the_relock,
+    an_unplannable_member_is_refused_before_it_is_planned,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,

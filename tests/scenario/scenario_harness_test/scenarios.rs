@@ -7881,6 +7881,42 @@ pub fn a_dependency_moved_off_its_pin_is_refused_before_the_relock() -> Scenario
     }
 }
 
+/// An `owned` member the landing could not plan is refused before it is
+/// planned: detached in the feature's workspace, or pinned on neither side
+/// while its receiving branch exists nowhere.
+pub fn an_unplannable_member_is_refused_before_it_is_planned() -> Scenario {
+    scenario(
+        "an unplannable member is refused before it is planned",
+        vec![
+            create("w"),
+            create("v"),
+            Step::git(&ww("w"), Repo::Lib, &["checkout", "-q", "--detach"]),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentDetachedUnpushed))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::hand_edit(
+                &ww("v"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "lib-next"),
+            ),
+            Step::drop_lock_entry(&ww("v"), Repo::Proj, Repo::Lib),
+            Step::git(
+                &ww("v"),
+                Repo::Proj,
+                &["commit", "-qam", "lib onto lib-next"],
+            ),
+            Step::drop_lock_entry(&a(), Repo::Proj, Repo::Lib),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "unpinned"]),
+            Step::rwv(&ww("v"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::refuses(Repo::Lib, State::PinNone))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
 /// A landing leaves the target ahead of its push branch and says so, naming
 /// the push that publishes it; running it publishes the landing.
 pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {
