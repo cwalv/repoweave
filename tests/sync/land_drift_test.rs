@@ -243,7 +243,7 @@ fn refuses_and_keeps(f: &Fixture, shape: Shape, checkout: &Path) {
     let before = snapshot(checkout);
     let primary_lib_head = common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]);
 
-    let out = common::cli::run(&["land"], &f.ww);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww);
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if stderr.contains("edits mid-operation") {
@@ -274,7 +274,7 @@ fn refuses_early_and_keeps(f: &Fixture, shape: Shape) {
     shape.apply(&f.primary_lib);
     let before = snapshot(&f.primary_lib);
 
-    let out = common::cli::run(&["land"], &f.primary);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.primary);
 
     let stderr = common::cli::refused(&out, State::TargetNoTarget);
     assert!(
@@ -341,7 +341,7 @@ fn drift_survives_a_landing_refused_early() {
     f.move_from_elsewhere("main", "notes.txt", "three\n");
     let before = snapshot(&f.primary_lib);
 
-    let out = common::cli::run(&["land"], &f.primary);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.primary);
 
     let stderr = common::cli::refused(&out, State::TargetNoTarget);
     assert!(!stderr.contains("refreshed"), "{stderr}");
@@ -352,7 +352,7 @@ fn drift_survives_a_landing_refused_early() {
 #[test]
 fn a_clean_workweave_lands() {
     let f = fixture();
-    common::cli::succeed(&["land"], &f.ww);
+    common::cli::succeed(&["land", "--history", "linear"], &f.ww);
     assert_eq!(
         read(&f.primary_lib.join("feature.txt")).as_deref(),
         Some("feature\n")
@@ -372,7 +372,7 @@ fn drift_changing_a_file_in_the_source_is_refreshed() {
         "the drift must show a changed file, so the content path is what is tested"
     );
 
-    let out = common::cli::succeed(&["land"], &f.ww);
+    let out = common::cli::succeed(&["land", "--history", "linear"], &f.ww);
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
@@ -411,7 +411,7 @@ fn drift_in_the_target_is_refreshed_and_the_landing_proceeds() {
         "M\tnotes.txt"
     );
 
-    let out = common::cli::succeed(&["land"], &f.ww);
+    let out = common::cli::succeed(&["land", "--history", "linear"], &f.ww);
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
@@ -441,7 +441,7 @@ fn drift_beside_an_edit_refuses_the_edit_alone() {
     std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
     f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
 
-    let out = common::cli::run(&["land"], &f.ww);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsDirty);
     let listing: Vec<&str> = stderr
@@ -485,7 +485,7 @@ fn drift_is_left_alone_when_another_checkout_refuses() {
     std::fs::write(&manifest, text).unwrap();
     let before = snapshot(&f.ww_lib);
 
-    let out = common::cli::run(&["land"], &f.ww);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsDirty);
     assert!(!stderr.contains("refreshed"), "{stderr}");
@@ -499,7 +499,7 @@ fn json_carries_what_was_refreshed() {
     let moved = f.move_from_elsewhere("main", "notes.txt", "three\n");
     f.pin_primary(&moved);
 
-    let out = common::cli::succeed(&["land", "--json"], &f.ww);
+    let out = common::cli::succeed(&["land", "--history", "linear", "--json"], &f.ww);
 
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let refreshed: Vec<&serde_json::Value> = json["reports"]
