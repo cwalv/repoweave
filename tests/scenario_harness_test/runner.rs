@@ -170,6 +170,11 @@ pub enum Action {
     TruncateWorkspaceState {
         at: Place,
     },
+    /// Remove the workspace-state file the project repo at `at` keeps in its
+    /// private directory.
+    DeleteWorkspaceState {
+        at: Place,
+    },
     /// An edit to one of rwv's own records, made behind its back.
     Tamper(Tamper),
     /// An empty weave root on `machine`, filled by `rwv clone` from `proj`'s
@@ -640,6 +645,14 @@ impl Step {
         Step::new(
             "truncate the workspace state",
             Action::TruncateWorkspaceState { at: at.clone() },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn delete_workspace_state(at: &Place) -> Step {
+        Step::new(
+            "delete the workspace state",
+            Action::DeleteWorkspaceState { at: at.clone() },
             Expect::succeeds(),
         )
     }
@@ -1179,6 +1192,15 @@ impl Run<'_> {
                 };
                 std::fs::write(&state, &bytes[..bytes.len() / 2]).unwrap();
                 (true, String::new())
+            }
+            Action::DeleteWorkspaceState { at } => {
+                let project = sb.checkout(at, Repo::Proj);
+                let private = sb.git_ok(&project, &["rev-parse", "--absolute-git-dir"]);
+                let state = std::path::Path::new(&private).join("rwv-workspace-state");
+                match std::fs::remove_file(&state) {
+                    Ok(()) => (true, String::new()),
+                    Err(e) => (false, format!("{}: {e}", state.display())),
+                }
             }
             Action::Tamper(tamper) => match self.tamper(tamper) {
                 Ok(()) => (true, String::new()),

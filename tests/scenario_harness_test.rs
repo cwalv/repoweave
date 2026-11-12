@@ -2609,3 +2609,25 @@ fn a_delete_leaving_an_unlanded_branch_exits_3_naming_each_survivor() {
 fn sync_takes_in_the_records_target_and_relocks() {
     runner::run(scenarios::sync_takes_in_the_target()).assert_fully_decided_green();
 }
+
+#[test]
+fn a_record_retargeted_on_another_machine_is_reported_and_sync_refuses_it() {
+    runner::run(scenarios::record_retargeted_elsewhere_is_reported_and_refused())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn update_accepts_a_record_changed_elsewhere_and_sync_then_takes_in_its_target() {
+    runner::run(scenarios::record_retargeted_elsewhere_accepted_by_update())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_record_written_in_this_workspace_is_never_reported_to_it() {
+    runner::run(scenarios::record_retargeted_here_is_not_reported()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_stores_the_record_silently_where_none_is_stored() {
+    runner::run(scenarios::record_unstored_is_stored_by_sync()).assert_fully_decided_green();
+}

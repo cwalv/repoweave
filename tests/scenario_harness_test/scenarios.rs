@@ -4199,3 +4199,150 @@ pub fn lock_commit_whole_file() -> Scenario {
         ],
     )
 }
+
+/// `feat-x` in A's primary, onto `main`, published with its members; `stable`
+/// recorded `declared` and published from B.
+fn feat_x_published_beside_stable() -> Vec<Step> {
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    steps.extend(feature_branch_in_primary());
+    steps.extend([
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["branch", "stable"]),
+        Step::rwv(&b(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "stable"]))
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds),
+    ]);
+    steps
+}
+
+/// B retargets `feat-x` onto `stable` and publishes the record; A fetches it.
+fn feat_x_retargeted_on_b() -> Vec<Step> {
+    vec![
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["branch", "feat-x", "origin/feat-x"]),
+        Step::rwv(
+            &b(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "feat-x"])).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A record retargeted on another machine reaches this one by fetch: `status`
+/// reports it, and `sync` refuses before anything moves, offering to accept
+/// it or to restore the old target, until one of them is taken.
+pub fn record_retargeted_elsewhere_is_reported_and_refused() -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            ))
+            .claim(Claim::OutputContains("rwv update"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode feat-x feature --target main",
+            ))
+    };
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend(feat_x_retargeted_on_b());
+    steps.extend([
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            ))
+            .claim(Claim::OutputContains(
+                "was: feature onto main (as declared)",
+            ))
+            .claim(Claim::OutputContains(
+                "now: feature onto stable (as declared)",
+            ))
+            .claim(Claim::OutputContains("arrived by fetch")),
+        refused(Step::rwv(&a(), &["sync"])).claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::App,
+            branch: "feat-x",
+        }),
+        refused(Step::rwv(&a(), &["sync"])).claim(Claim::LocalStateUnchanged(a())),
+    ]);
+    scenario("a record retargeted on another machine", steps)
+}
+
+/// `rwv update` accepts a record changed elsewhere: it reports the change once
+/// and stores it, and the next `sync` takes in the new target.
+pub fn record_retargeted_elsewhere_accepted_by_update() -> Scenario {
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend(feat_x_retargeted_on_b());
+    steps.extend([
+        Step::rwv(&a(), &["update"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: target record changed (feat-x)",
+            )),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed"))
+            .claim(Claim::OutputContains(
+                "projects/proj: already contains stable",
+            )),
+    ]);
+    scenario("a record changed elsewhere, accepted", steps)
+}
+
+/// A record this workspace writes is never reported to it.
+pub fn record_retargeted_here_is_not_reported() -> Scenario {
+    let mut steps = feature_branch_in_primary();
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["branch", "stable", "main"]),
+        Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed"))
+            .claim(Claim::OutputContains(
+                "projects/proj: already contains stable",
+            )),
+    ]);
+    scenario("a record changed here", steps)
+}
+
+/// A workspace that stored no record takes the one `sync` reads without a
+/// word, and a later change elsewhere is reported against it.
+pub fn record_unstored_is_stored_by_sync() -> Scenario {
+    let mut steps = feat_x_published_beside_stable();
+    steps.extend([
+        Step::delete_workspace_state(&a()),
+        Step::rwv(&a(), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("record changed")),
+    ]);
+    steps.extend(feat_x_retargeted_on_b());
+    steps.push(
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "was: feature onto main (as declared)",
+            )),
+    );
+    scenario("no stored record", steps)
+}
