@@ -1,13 +1,13 @@
-//! Integration tests anchoring documented behavior of `rwv sync --json`.
+//! Integration tests anchoring documented behavior of `rwv sync-to --json`.
 //!
 //! Doc claims pinned here:
 //!
-//!   - `rwv sync --json` emits the envelope
+//!   - `rwv sync-to --json` emits the envelope
 //!     `{"$schema": "<url>", "outcomes": [<RepoSyncOutcome>, ...]}`
 //!     whatever `-j` is. The field is `outcomes` (we pin to the actual
 //!     implementation rather than the informal "results" phrasing in prose).
 //!   - The `$schema` URL is embedded in the envelope, pinning consumers at
-//!     `docs/reference/schemas/sync.json` under repoweave's main branch.
+//!     `docs/reference/schemas/sync-to.json` under repoweave's main branch.
 //!   - Per-failure records carry a stable kebab-case `kind` tag at
 //!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`).
 //!     The outcome's own `kind` is `failed` in that case.
@@ -136,17 +136,17 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 /// Schema fragment for the serial envelope (`-j 1`).
-const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
+const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-to.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
 //
-// Doc claim: `rwv sync --json` (no `-j` or `-j 1`) emits an object with
+// Doc claim: `rwv sync-to --json` (no `-j` or `-j 1`) emits an object with
 // `$schema` + `outcomes` (an array). The $schema URL is embedded.
 // ===========================================================================
 
 #[test]
-fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
+fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
@@ -160,8 +160,8 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json"])
-        .current_dir(&primary.root)
+        .args(["sync-to", &primary.root.to_string_lossy(), "--json"])
+        .current_dir(&ww.root)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -171,7 +171,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
         .unwrap_or_else(|e| panic!("envelope must parse as one JSON doc ({e}):\n{stdout}"));
     let obj = parsed.as_object().expect("envelope is an object");
 
-    // `$schema` URL points at the committed status/sync schema artifact.
+    // `$schema` URL points at the committed sync-to schema artifact.
     let schema = obj["$schema"]
         .as_str()
         .expect("envelope must carry `$schema` string");
@@ -207,7 +207,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
 // ===========================================================================
 
 #[test]
-fn sync_json_parallel_emits_the_envelope() {
+fn sync_to_json_parallel_emits_the_envelope() {
     // Two repos, so the parallel pool runs more than one worker. Reuse the
     // sync_json_test.rs multi-repo fixture shape but inline-trimmed for
     // the four claims we need to anchor.
@@ -318,8 +318,8 @@ fn sync_json_parallel_emits_the_envelope() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args(["sync", &ww.to_string_lossy(), "--json", "-j", "2"])
-        .current_dir(&primary)
+        .args(["sync-to", &primary.to_string_lossy(), "--json", "-j", "2"])
+        .current_dir(&ww)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -343,62 +343,50 @@ fn sync_json_parallel_emits_the_envelope() {
 //
 // Doc claim: when a per-repo sync fails, the outcome's `kind` is `failed`
 // and the inner `failure.kind` is a stable kebab-case tag (e.g.
-// `ff-impossible`). Consumers branch on these tags without parsing prose.
+// `rebase-failed`). Consumers branch on these tags without parsing prose.
 // ===========================================================================
 
-/// The one-repo manifest diverged under the default strategy mints exactly
-/// one outcome, `failed`, whose `failure.kind` is `ff-impossible`.
+/// The one-repo manifest whose two sides edit the same file under the rebase
+/// strategy mints exactly one outcome, `failed`, whose `failure.kind` is
+/// `rebase-failed`.
 ///
 /// The value is what the fixture was measured to produce, not what the
-/// documented tag set permits: an OR over the three tags is satisfied by a
-/// default strategy that silently became `rebase`, and by a divergence the
-/// engine mistook for an unreadable HEAD. Both mint a documented tag.
-///
-/// The three wire tags themselves — that `FastForwardImpossible` serializes
-/// `ff-impossible` and not `fast-forward-impossible` — are pinned by direct
+/// documented tag set permits. The wire tags themselves are pinned by direct
 /// serde round-trip in `sync_json_test.rs`, which is why this test asserts a
 /// value rather than a character class.
 #[test]
-fn sync_json_failed_outcome_has_stable_kebab_kind() {
+fn sync_to_json_failed_outcome_has_stable_kebab_kind() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
-    // Primary advances to C2; workweave diverges. Strategy=ff cannot
-    // resolve the divergence; the per-repo outcome is `failed` with
-    // `failure.kind = "ff-impossible"`.
-    let c2 = make_commit(
-        &primary.server_dir,
-        "primary.txt",
-        "primary\n",
-        "primary: C2",
-    );
+    let c2 = make_commit(&primary.server_dir, "clash.txt", "primary\n", "primary: C2");
     common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
-    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverge");
+    let c_ww = make_commit(&ww.server_dir, "clash.txt", "ww\n", "ww: diverge");
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
-    // --discard-local-commits bypasses Phase 1 ancestor check so the ff
-    // failure surfaces in Phase 2 (where the per-repo outcome is produced)
-    // rather than failing fast pre-outcome-generation.
-    // (Adapted from --force.)
     let assert = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--json",
-            "--discard-local-commits",
+            "--strategy=rebase",
         ])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("envelope must parse ({e}):\n{stdout}"));
+    let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "envelope must parse ({e}):\n{stdout}\n{}",
+            String::from_utf8_lossy(&assert.get_output().stderr)
+        )
+    });
     let outcomes = parsed["outcomes"]
         .as_array()
         .expect("envelope must carry outcomes");
@@ -418,16 +406,16 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     let kind = failure["kind"]
         .as_str()
         .unwrap_or_else(|| panic!("failure.kind must be a string:\n{stdout}"));
-    assert_eq!(kind, "ff-impossible", "\n{stdout}");
+    assert_eq!(kind, "rebase-failed", "\n{stdout}");
 }
 
-/// `sync --discard-local-commits` consents to discarding committed divergence
+/// `sync-to --discard-local-commits` consents to discarding committed divergence
 /// (recoverable via the pre-op savepoint), not uncommitted work — a dirty
 /// CWD project repo must refuse before any side effects, and the content must
 /// survive. (Adapted from sync_force_refuses_when_cwd_project_dirty —
 /// same end-state assertions, new flag spelling.)
 #[test]
-fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
+fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared(tmp.path());
 
@@ -438,7 +426,7 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
 
     let assert = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--discard-local-commits",
         ])
@@ -447,8 +435,8 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("rwv sync: projects/web-app: edits dirty\n    README.md\n"),
-        "sync --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
+        stderr.contains("rwv sync-to: projects/web-app: edits dirty\n    README.md\n"),
+        "sync-to --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
     );
     assert!(
         !stderr.contains("--force"),
@@ -473,7 +461,7 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
     common::git_in(&ww.project_dir, &["commit", "-m", "ww: readme"]);
     rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--discard-local-commits",
         ])
@@ -486,27 +474,26 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
 // 4. --allow-stale-lock: refusal names condition + flag; flag bypasses both
 //    source and destination preconditions.
 //
-// Doc claim (cli.md §sync, --allow-stale-lock row):
+// Doc claim (cli.md §sync-to, --allow-stale-lock row):
 //   "Consent: skip the lock-freshness precondition on both source and
 //   destination."
 //
-// (i)  Without --allow-stale-lock, a stale lock produces an error message
+// (i)  Without --allow-stale-lock, a stale CWD lock produces an error message
 //      that names the condition ("lock-freshness precondition") AND the flag
-//      ("--allow-stale-lock").
-// (ii) With --allow-stale-lock, the sync succeeds despite the stale lock
-//      on both source and destination.
+//      ("--allow-stale-lock"); a stale target lock names the condition and
+//      the `rwv lock --commit` fix.
+// (ii) With --allow-stale-lock, sync-to gets past the precondition on both
+//      sides.
 // ===========================================================================
 
-/// Helper: build the two-workspace fixture with a stale destination (CWD) lock.
+/// Helper: build the two-workspace fixture with a stale source (CWD) lock.
 ///
 /// Both workspaces start at SHA_INIT, but ww's lock is patched to a fabricated
 /// SHA that does not match the actual server HEAD. Primary's lock is fresh.
 ///
-/// When syncing from primary → ww: the lock-freshness check fires on the
-/// destination because ww's lock doesn't match ww's actual server HEAD.
-/// With --allow-stale-lock, the sync proceeds using primary's lock (SHA_INIT)
-/// to converge ww's server, which is already at SHA_INIT → no-op → success.
-fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
+/// The lock-freshness check fires on the source because ww's lock doesn't
+/// match ww's actual server HEAD.
+fn make_shared_with_stale_source(parent: &Path) -> (Workspace, Workspace) {
     let (primary, ww, initial_sha) = make_shared(parent);
 
     // Patch ww's lock to a fabricated SHA that doesn't match server HEAD.
@@ -536,15 +523,15 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
     (primary, ww)
 }
 
-/// (i) Stale lock on the *destination* (CWD) produces a refusal that names
+/// (i) Stale lock on the *source* (CWD) produces a refusal that names
 /// "lock-freshness precondition" AND "--allow-stale-lock".
 #[test]
-fn sync_stale_destination_lock_names_condition_and_flag() {
+fn sync_to_stale_source_lock_names_condition_and_flag() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_with_stale_destination(tmp.path());
+    let (primary, ww) = make_shared_with_stale_source(tmp.path());
 
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync-to", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -560,21 +547,21 @@ fn sync_stale_destination_lock_names_condition_and_flag() {
     );
 }
 
-/// (ii) --allow-stale-lock bypasses the destination stale-lock precondition.
+/// (ii) --allow-stale-lock bypasses the source stale-lock precondition.
 ///
-/// With the same stale-destination fixture, passing --allow-stale-lock makes
-/// `rwv sync` succeed. The fixture commits the stale lock so the project repo
+/// With the same stale-source fixture, passing --allow-stale-lock makes
+/// `rwv sync-to` succeed. The fixture commits the stale lock so the project repo
 /// is clean for the pre-flight dirt scan; a --strategy=rebase is used because
 /// the stale-lock commit makes ww's project branch 1 commit ahead of primary
 /// (the ff ancestry precondition would fire without it).
 #[test]
-fn sync_allow_stale_lock_bypasses_destination_precondition() {
+fn sync_to_allow_stale_lock_bypasses_source_precondition() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_with_stale_destination(tmp.path());
+    let (primary, ww) = make_shared_with_stale_source(tmp.path());
 
     rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--allow-stale-lock",
             "--strategy=rebase",
@@ -584,54 +571,30 @@ fn sync_allow_stale_lock_bypasses_destination_precondition() {
         .success();
 }
 
-/// Helper: build a fixture where the *source* (primary) has a stale lock.
+/// Helper: build a fixture where the *target* (primary) has a stale lock.
 ///
-/// Both workspaces start at SHA_INIT. Primary's lock is patched to a fabricated
-/// SHA that does not match the actual server HEAD. WW's lock is fresh.
-///
-/// When syncing from primary → ww: the lock-freshness check fires on the source
-/// because primary's lock doesn't match primary's actual server HEAD.
-/// With --allow-stale-lock, sync proceeds using primary's lock as-is. The lock
-/// says a fake SHA for the server — the server repo in ww is already clean and
-/// at the initial state, so the sync resolves without content conflicts.
-///
-/// Note: because primary's lock has a fake SHA, the sync may encounter an
-/// unknown-ref error during convergence. To avoid this, we make the source
-/// lock point at the SAME real SHA as the ww server HEAD (but via a different
-/// written string that still doesn't match primary's server HEAD), so that
-/// the convergence step can find the target SHA in the ww clone.
-fn make_shared_with_stale_source(parent: &Path) -> (Workspace, Workspace) {
-    let (primary, ww, initial_sha) = make_shared(parent);
-
-    // Advance primary's server to C2 (without relocking primary's lock).
-    // Primary's lock still says initial_sha (stale); server is at C2.
-    // The WW's lock says initial_sha and its server IS at initial_sha (clean).
+/// Primary's server advances to C2 without a relock, so its committed lock
+/// names the initial SHA while its server HEAD is C2.
+fn make_shared_with_stale_target(parent: &Path) -> (Workspace, Workspace) {
+    let (primary, ww, _initial_sha) = make_shared(parent);
     make_commit(
         &primary.server_dir,
         "primary_advance.txt",
         "primary\n",
         "primary: advance without relock",
     );
-    // primary's project lock still records initial_sha — stale (server is at C2).
-    // primary's project dir has the old lock committed; the stale check reads
-    // the lock from the source's project dir on disk (from the last commit).
-    // For the stale-lock check to fire, we don't need to commit the change;
-    // we just need lock-on-disk != server-HEAD. Since we didn't relock,
-    // primary's lock (committed) = initial_sha, and primary's server HEAD = C2.
-    drop(initial_sha);
-
     (primary, ww)
 }
 
-/// (i) Stale lock on the *source* produces a refusal that names both the
-/// condition and the flag — establishing that the check runs on both sides.
+/// Stale lock on the *target* names the condition and the `rwv lock --commit`
+/// fix.
 #[test]
-fn sync_stale_source_lock_names_condition_and_flag() {
+fn sync_to_stale_target_lock_names_condition_and_fix() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_with_stale_source(tmp.path());
+    let (primary, ww) = make_shared_with_stale_target(tmp.path());
 
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync-to", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -639,27 +602,37 @@ fn sync_stale_source_lock_names_condition_and_flag() {
 
     assert!(
         stderr.contains("lock-freshness precondition"),
-        "source stale-lock refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+        "target stale-lock refusal must name 'lock-freshness precondition'; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("--allow-stale-lock"),
-        "source stale-lock refusal must name the '--allow-stale-lock' flag; got:\n{stderr}"
+        stderr.contains("rwv lock --commit --project web-app"),
+        "target stale-lock refusal must name the `rwv lock --commit` fix; got:\n{stderr}"
     );
 }
 
-/// (ii) --allow-stale-lock bypasses the source stale-lock precondition.
+/// `--allow-stale-lock` lets the run past the target's stale-lock
+/// precondition.
 #[test]
-fn sync_allow_stale_lock_bypasses_source_precondition() {
+fn sync_to_allow_stale_lock_bypasses_target_precondition() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_with_stale_source(tmp.path());
+    let (primary, ww) = make_shared_with_stale_target(tmp.path());
 
-    rwv()
+    let out = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--allow-stale-lock",
         ])
         .current_dir(&ww.root)
-        .assert()
-        .success();
+        .output()
+        .expect("rwv runs");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !stderr.contains("lock-freshness precondition"),
+        "--allow-stale-lock must skip the target's lock-freshness precondition; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rebasing CWD against target"),
+        "the run must proceed into step 1; got:\n{stderr}"
+    );
 }
