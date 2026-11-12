@@ -14549,6 +14549,56 @@ pub fn a_carry_stopped_in_the_project_continues() -> Scenario {
     )
 }
 
+/// A landing of `w1` whose carry of `w2` stops in the project repo, `w2`'s
+/// project commit also changing `app`'s entry: `rwv land --continue` judges
+/// the landing's own entries, not the `rwv.toml` the stopped carry left in
+/// the checkout, and completes with `w2` carried.
+pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
+    let declared = declared_branch_text(Repo::App, "main");
+    let edited = format!("{declared}\nrecurse-submodules = false");
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Proj, "notes"),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::Proj, "notes.txt", "notes\n", "notes on w2\n"),
+        Step::hand_edit(&ww("w1"), Repo::Proj, "rwv.toml", &declared, &edited),
+        Step::git(&ww("w1"), Repo::Proj, &["commit", "-qam", "w2-proj"]),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::Proj, "notes.txt", "notes\n", "notes on main\n"),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carrying 'w2' along"))
+            .claim(Claim::OutputContains("rwv land --continue")),
+        Step::git(&ww("w1"), Repo::Proj, &["checkout", "--theirs", "notes.txt"]),
+        Step::git(&ww("w1"), Repo::Proj, &["add", "notes.txt"]),
+        Step::rwv(&ww("w1"), &["land", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::OutputLacks("member change")),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["grep", "-q", "recurse-submodules", "main", "--", "rwv.toml"])
+            .expect(Exit::Code(1)),
+    ]);
+    scenario(
+        "stack: a landing whose carry stopped in the project repo continues",
+        steps,
+    )
+}
+
 /// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
 /// third workweave meanwhile: the stopped carry holds `w2` as a landing
 /// would, so the landing refuses naming the carry's op, and once the

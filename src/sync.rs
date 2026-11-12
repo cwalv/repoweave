@@ -4525,12 +4525,19 @@ fn rejudge_entries(
             .unwrap_or_default(),
     };
     let target = target_branch.as_str();
-    if matches!(record.phase, op_state::OpPhase::Retire) {
+    let settled = if matches!(record.phase, op_state::OpPhase::Retire) {
+        Some("it has already landed into it")
+    } else if !take_in.carries.is_empty() {
+        Some("they were settled before it began carrying its dependents along")
+    } else {
+        None
+    };
+    if let Some(why) = settled {
         if let Some(named) = added.first() {
             crate::refuse!(
                 RefusalKind::InapplicableFlag,
                 "`--allow-member-change {named}` names no change this landing makes to \
-                 '{target}''s entries: it has already landed into '{target}'"
+                 '{target}''s entries: {why}"
             );
         }
         return Ok(());

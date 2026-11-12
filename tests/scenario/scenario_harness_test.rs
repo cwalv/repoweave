@@ -713,6 +713,7 @@ every_scenario!(
     a_landing_into_a_dependent_waits_on_its_stopped_carry,
     a_landing_killed_after_its_carry_continues,
     a_carry_stopped_in_the_project_continues,
+    a_landing_whose_carry_stopped_in_the_project_continues,
     abort_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
@@ -4984,6 +4985,12 @@ fn a_landing_killed_after_its_carry_continues() {
 #[test]
 fn a_carry_stopped_in_the_project_continues() {
     runner::run(scenarios::a_carry_stopped_in_the_project_continues()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_whose_carry_stopped_in_the_project_continues() {
+    runner::run(scenarios::a_landing_whose_carry_stopped_in_the_project_continues())
+        .assert_fully_decided_green();
 }
 
 #[test]
