@@ -43,6 +43,12 @@ pub enum Forge {
         branch: &'static str,
         mark: &'static str,
     },
+    /// A commit of `files` on `branch`, pushed.
+    Files {
+        repo: Repo,
+        branch: &'static str,
+        files: &'static [(&'static str, &'static str)],
+    },
     Merge {
         repo: Repo,
         branch: &'static str,
@@ -70,6 +76,12 @@ impl Forge {
     fn writes(&self) -> Vec<RemoteWrite> {
         match self {
             Forge::Commit { repo, branch, .. } => {
+                vec![RemoteWrite::Push(
+                    Remote::origin(*repo),
+                    (*branch).to_owned(),
+                )]
+            }
+            Forge::Files { repo, branch, .. } => {
                 vec![RemoteWrite::Push(
                     Remote::origin(*repo),
                     (*branch).to_owned(),
@@ -1549,6 +1561,30 @@ impl Run<'_> {
                 let result = self.commit_in(dir.clone(), mark);
                 let out = sb.git(&dir, &["push", "origin", branch]);
                 (result.0 && out.status.success(), result.1 + &rendered(&out))
+            }
+            Forge::Files {
+                repo,
+                branch,
+                files,
+            } => {
+                let dir = self.forge_clone(*repo);
+                sb.git_ok(
+                    &dir,
+                    &[
+                        "switch",
+                        "-C",
+                        branch,
+                        &format!("refs/remotes/origin/{branch}"),
+                    ],
+                );
+                let owned: Vec<(String, String)> = files
+                    .iter()
+                    .map(|(path, content)| ((*path).to_owned(), (*content).to_owned()))
+                    .collect();
+                let commit = sb.hand_commit(&dir, branch, &owned);
+                sb.git_ok(&dir, &["reset", "-q", "--hard"]);
+                let out = sb.git(&dir, &["push", "origin", branch]);
+                (out.status.success(), commit + &rendered(&out))
             }
             Forge::Merge { repo, branch, how } => {
                 let dir = self.forge_clone(*repo);

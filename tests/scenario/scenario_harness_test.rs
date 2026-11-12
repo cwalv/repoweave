@@ -78,6 +78,17 @@ fn a_diverged_main_left_by_a_member_change_resets_to_its_upstream_keeping_a_back
 }
 
 #[test]
+fn a_diverged_main_resolves_a_derived_path_to_its_upstream() {
+    runner::run(scenarios::main_diverged_resolves_derived_to_the_upstream())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_diverged_main_still_stops_on_an_undeclared_path_both_sides_changed() {
+    runner::run(scenarios::main_diverged_still_stops_on_an_undeclared_path()).assert_green();
+}
+
+#[test]
 fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
     runner::run(scenarios::shared_checkout_detached()).assert_fully_decided_green();
 }
@@ -937,6 +948,8 @@ every_scenario!(
     main_diverged_after_member_change,
     stray_commits_copied_onto_the_checked_out_branch,
     main_diverged_after_member_change_reset,
+    main_diverged_resolves_derived_to_the_upstream,
+    main_diverged_still_stops_on_an_undeclared_path,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
     backward_pin_reported_in_json,

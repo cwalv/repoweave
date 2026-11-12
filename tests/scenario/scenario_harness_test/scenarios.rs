@@ -6998,6 +6998,94 @@ pub fn main_diverged_after_member_change() -> Scenario {
     scenario("main diverged after member change", steps)
 }
 
+/// `main-diverged-after-member-change` where `lib` declares `DERIVED`
+/// regenerated: `main` and its push branch each changed it, and `OTHER` too
+/// where `other` is set. The merge as refs resolves `DERIVED` to the
+/// upstream's content, as it does in a checkout, and stops on `OTHER`.
+fn main_diverged_deriving(other: bool) -> Scenario {
+    let upstream: &'static [(&'static str, &'static str)] = if other {
+        &[("DERIVED", "upstream\n"), ("OTHER", "upstream-other\n")]
+    } else {
+        &[("DERIVED", "upstream\n")]
+    };
+    let local: &'static [(&'static str, &'static str)] = if other {
+        &[("DERIVED", "local\n"), ("OTHER", "local-other\n")]
+    } else {
+        &[("DERIVED", "local\n")]
+    };
+    let mut steps = vec![
+        Step::new_machine(Machine::B),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "main",
+            &[
+                (".gitattributes", "DERIVED merge=rwv-ours\n"),
+                ("DERIVED", "base\n"),
+                ("OTHER", "base\n"),
+            ],
+        ),
+        Step::git(&a(), Repo::Lib, &["reset", "-q", "--hard"]),
+        Step::git(&a(), Repo::Lib, &["push", "-q", "origin", "main"])
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    steps.extend([
+        create("seat"),
+        Step::hand_commit(&a(), Repo::Lib, "main", local),
+        Step::git(&a(), Repo::Lib, &["reset", "-q", "--hard"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("seat"), &["sync"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("seat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+        Step::commit(&ww("seat"), Repo::App, "feat-app"),
+        Step::rwv(
+            &ww("seat"),
+            &["land", "--history", "linear", "--allow-member-change", LIB],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::Lib]),
+        Step::forge(Forge::Files {
+            repo: Repo::Lib,
+            branch: "main",
+            files: upstream,
+        }),
+        push_refuses_main_diverged(),
+    ]);
+    let merge = Step::rwv_printed(&a(), "rwv update --remote --merge-upstream");
+    if other {
+        steps.extend([
+            merge.claim(Claim::OutputContains("the merge conflicts in OTHER")),
+            Step::git(&a(), Repo::Lib, &["show", "main:OTHER"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local-other")),
+        ]);
+    } else {
+        steps.extend([
+            merge.expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["show", "main:DERIVED"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("upstream")),
+        ]);
+    }
+    scenario(
+        if other {
+            "main diverged after member change, an undeclared path both sides changed"
+        } else {
+            "main diverged after member change, a derived path both sides regenerated"
+        },
+        steps,
+    )
+}
+
+pub fn main_diverged_resolves_derived_to_the_upstream() -> Scenario {
+    main_diverged_deriving(false)
+}
+
+pub fn main_diverged_still_stops_on_an_undeclared_path() -> Scenario {
+    main_diverged_deriving(true)
+}
+
 /// The same, settled by the printed reset: `main` takes its upstream, `alpha`
 /// kept in a backup, and the push publishes nothing of `main`.
 pub fn main_diverged_after_member_change_reset() -> Scenario {
