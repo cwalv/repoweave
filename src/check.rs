@@ -11,7 +11,7 @@ use crate::manifest::{
 use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{RawRevisionId, ResolvedRevisionId};
+use crate::vcs::{CommitId, Holds, PathStanding, RawRevisionId, ResolvedRevisionId, VcsError};
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -7065,69 +7065,185 @@ impl CheckViolation {
 }
 
 // ---------------------------------------------------------------------------
-// Index-drift helpers
+// Drift: a checkout whose branch moved under it, read path by path
 // ---------------------------------------------------------------------------
 
-/// Combined index + working-tree drift classification using one git
-/// invocation for the common "clean worktree" fast path.
-///
-/// The doctor's per-worktree scan calls both [`classify_index_drift`] and
-/// [`classify_working_tree_drift`] for every worktree it sees. Each of those
-/// functions previously paid the cost of a fresh `git diff-index` subprocess
-/// just to determine "clean vs dirty" before doing any further work — so the
-/// minimum cost per worktree was two `git` invocations, and at workspace
-/// scale (80+ workweaves × ~13 repos = ~1000 worktrees) the doubled
-/// process-startup overhead dominated wall-clock time.
-///
-/// This helper runs `git status --porcelain` once. If the output is empty
-/// (workspace and index both clean against HEAD), both classifiers return
-/// `None` without spawning any further subprocesses. If the output is
-/// non-empty, the caller falls back to the per-kind classifiers, which
-/// continue to issue the detail probes needed to bucket the drift into
-/// `SafeToFix` / `LiveStaged` / `LiveEdits`.
-///
-/// Returns `(index_drift, working_tree_drift)`. Either side may be `None`
-/// independently — e.g., index dirty but working tree clean.
-pub fn classify_drift(repo: &Path) -> (Option<IndexDriftKind>, Option<WorkingTreeDriftKind>) {
-    // One dirty/clean read covers both classifiers, which is the whole point
-    // of this helper: in a healthy workspace almost every repo is clean and
-    // answers with a single subprocess. A read that fails is not evidence of
-    // cleanliness, so it falls through to the per-kind classifiers, which are
-    // already defensive about transient git failures.
-    if crate::git::repo_is_dirty(repo) == Some(false) {
-        return (None, None);
-    }
-    (
-        classify_index_drift(repo),
-        classify_working_tree_drift(repo),
-    )
+/// What may be done with one path of a checkout that differs from its HEAD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathDrift {
+    /// The branch moved under the checkout changed this path, and its index
+    /// entry and file both still hold the moved-from tip's content: both take
+    /// HEAD's, and nothing is lost that a commit does not hold.
+    Stale,
+    /// As [`PathDrift::Stale`], but the file already holds HEAD's content:
+    /// only the index entry takes HEAD's.
+    StaleIndexEntry,
+    /// The move changed this path and so did something else. Left as it
+    /// stands.
+    MovedAndEdited,
+    /// A change to a path the move did not touch, or any change in a checkout
+    /// no move under it is evidenced for: an uncommitted edit.
+    Edited,
 }
 
-/// Classify the index-drift state of a git repo at `repo`.
-///
-/// Returns `None` when the index matches HEAD (no drift).  Otherwise returns
-/// `Some(IndexDriftKind)` — either `SafeToFix` (index tree is an ancestor
-/// commit's tree, safely replaceable) or `LiveStaged` (user has staged content
-/// that is not a committed tree; must not be auto-fixed).
-///
-/// For workspace-scale scans (where most worktrees are clean), prefer
-/// [`classify_drift`] — it short-circuits both this check and
-/// [`classify_working_tree_drift`] with a single `git status` invocation.
-pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
-    match crate::git::index_tree_state(repo) {
-        crate::git::IndexTreeState::MatchesHead => None,
-        crate::git::IndexTreeState::RecentAncestorTree => Some(IndexDriftKind::SafeToFix),
-        crate::git::IndexTreeState::Unrecognized => Some(IndexDriftKind::LiveStaged),
+/// One checkout's differences from its HEAD, each path classified.
+#[derive(Debug, Clone, Default)]
+pub struct DriftReading {
+    /// Where the checkout's branch moved from, when it moved under it.
+    pub left: Option<CommitId>,
+    pub paths: Vec<(PathStanding, PathDrift)>,
+}
+
+impl DriftReading {
+    fn named(&self, drift: PathDrift) -> Vec<String> {
+        self.paths
+            .iter()
+            .filter(|(_, d)| *d == drift)
+            .map(|(p, _)| p.path.clone())
+            .collect()
+    }
+
+    /// The paths whose index entry and file a refresh replaces.
+    pub fn stale_files(&self) -> Vec<String> {
+        self.named(PathDrift::Stale)
+    }
+
+    /// The paths whose index entry alone a refresh replaces.
+    pub fn stale_index_entries(&self) -> Vec<String> {
+        self.named(PathDrift::StaleIndexEntry)
+    }
+
+    pub fn is_refreshable(&self) -> bool {
+        self.paths
+            .iter()
+            .any(|(_, d)| matches!(d, PathDrift::Stale | PathDrift::StaleIndexEntry))
+    }
+
+    /// The paths a refresh leaves differing from HEAD.
+    pub fn kept(&self) -> impl Iterator<Item = &PathStanding> {
+        self.paths
+            .iter()
+            .filter(|(_, d)| matches!(d, PathDrift::MovedAndEdited | PathDrift::Edited))
+            .map(|(p, _)| p)
+    }
+
+    /// Whether a refresh replaces `path` in index or working tree.
+    pub fn refreshes(&self, path: &str) -> bool {
+        self.paths.iter().any(|(p, d)| {
+            p.path == path && matches!(d, PathDrift::Stale | PathDrift::StaleIndexEntry)
+        })
     }
 }
 
-/// Reset the index to match HEAD, leaving the working tree and HEAD untouched.
+/// Read `repo`'s checkout: where its branch moved from, when it moved under
+/// it, and each differing path classified against that.
 ///
-/// Only call after confirming `classify_index_drift` returns `SafeToFix`.
-/// Uses bare `git reset` (equivalent to `git reset --mixed HEAD`).
-pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
-    crate::git::reset_index(repo)
-        .with_context(|| format!("failed to reset the index in {}", repo.display()))
+/// A path is drift only where both are shown: the branch moved under the
+/// checkout, and the path still holds what the moved-from tip held. Without
+/// that every difference is an edit.
+pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
+    let left = vcs.left_behind_at(repo)?;
+    let paths = vcs
+        .path_standings(repo, left.as_ref())?
+        .into_iter()
+        .map(|standing| {
+            let drift = match (standing.moved, standing.index, standing.file) {
+                (false, _, _) => PathDrift::Edited,
+                (true, Holds::LeftTip, Holds::LeftTip) => PathDrift::Stale,
+                (true, Holds::LeftTip, Holds::Head) => PathDrift::StaleIndexEntry,
+                (true, _, _) => PathDrift::MovedAndEdited,
+            };
+            (standing, drift)
+        })
+        .collect();
+    Ok(DriftReading { left, paths })
+}
+
+/// What [`refresh_drift`] replaced in one checkout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refreshed {
+    pub moved_from: CommitId,
+    pub moved_to: CommitId,
+    pub files: Vec<String>,
+    pub index_entries: Vec<String>,
+}
+
+impl Refreshed {
+    /// The report line, after the checkout's label.
+    pub fn describe(&self) -> String {
+        let mut said = format!(
+            "refreshed drift: its branch moved from {} to {} outside this checkout",
+            self.moved_from.short(),
+            self.moved_to.short()
+        );
+        if !self.files.is_empty() {
+            said.push_str(&format!(
+                "; these files and their index entries held {}'s content and now hold {}'s: {}",
+                self.moved_from.short(),
+                self.moved_to.short(),
+                self.files.join(", ")
+            ));
+        }
+        if !self.index_entries.is_empty() {
+            said.push_str(&format!(
+                "; these index entries were reset to {}'s, whose content the files already held: {}",
+                self.moved_to.short(),
+                self.index_entries.join(", ")
+            ));
+        }
+        said
+    }
+}
+
+/// Replace what `reading` found stale, and only what a reading taken now
+/// still finds stale in the same way. `None` when nothing was replaced.
+pub fn refresh_drift(
+    vcs: &dyn crate::vcs::Vcs,
+    repo: &Path,
+    reading: &DriftReading,
+) -> Result<Option<Refreshed>, VcsError> {
+    let Some(moved_from) = reading.left.clone() else {
+        return Ok(None);
+    };
+    let now = read_drift(vcs, repo)?;
+    if now.left.as_ref() != Some(&moved_from) {
+        return Ok(None);
+    }
+    let still = |paths: Vec<String>, now: Vec<String>| -> Vec<String> {
+        paths.into_iter().filter(|p| now.contains(p)).collect()
+    };
+    let files = still(reading.stale_files(), now.stale_files());
+    let index_entries = still(reading.stale_index_entries(), now.stale_index_entries());
+    if files.is_empty() && index_entries.is_empty() {
+        return Ok(None);
+    }
+    vcs.refresh_paths_from_head(repo, &files, &index_entries)?;
+    Ok(Some(Refreshed {
+        moved_from,
+        moved_to: vcs.head_revision(repo)?.id().clone(),
+        files,
+        index_entries,
+    }))
+}
+
+/// The `index-drift` and `working-tree-drift` findings one checkout's reading
+/// yields: safe-to-fix for what a refresh replaces, live for what it keeps.
+pub fn drift_findings(reading: &DriftReading) -> (Vec<IndexDriftKind>, Vec<WorkingTreeDriftKind>) {
+    let mut index = Vec::new();
+    let mut working_tree = Vec::new();
+    if reading.is_refreshable() {
+        index.push(IndexDriftKind::SafeToFix);
+    }
+    if !reading.stale_files().is_empty() {
+        working_tree.push(WorkingTreeDriftKind::SafeToFix);
+    }
+    if reading.kept().any(|p| p.index != Holds::Head) {
+        index.push(IndexDriftKind::LiveStaged);
+    }
+    if reading.kept().any(|p| p.file != Holds::Head) {
+        working_tree.push(WorkingTreeDriftKind::LiveEdits);
+    }
+    (index, working_tree)
 }
 
 // ---------------------------------------------------------------------------
@@ -7162,51 +7278,6 @@ pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
     } else {
         Some(canonical.to_path_buf())
     }
-}
-
-// ---------------------------------------------------------------------------
-// Working-tree-drift helpers
-// ---------------------------------------------------------------------------
-
-/// Classify the working-tree-drift state of a git repo at `repo`.
-///
-/// Returns `None` when the working tree matches HEAD (no drift). Otherwise
-/// returns `Some(WorkingTreeDriftKind)` — either `SafeToFix` (all modified
-/// files' on-disk content matches a reachable committed blob) or `LiveEdits`
-/// (at least one file has content not found in recent ancestors; must not be
-/// auto-fixed).
-///
-/// Uses `git diff-index HEAD` (without `--cached`) so detection works
-/// regardless of whether index drift has already been resolved.
-///
-/// For workspace-scale scans, prefer [`classify_drift`] — it short-circuits
-/// the clean-worktree case with a single `git status` invocation that
-/// covers both this check and [`classify_index_drift`].
-pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> {
-    // A probe that cannot answer classifies as `LiveEdits`, which is what
-    // stops an auto-fix from overwriting content nothing inspected. The
-    // canonical-clone-missing case is pre-classified upstream via
-    // `worktree_canonical_clone_missing`, so that root cause does not reach
-    // here in practice.
-    match crate::git::working_tree_state(repo) {
-        crate::git::WorkingTreeState::MatchesHead => None,
-        crate::git::WorkingTreeState::RestorableFromHead(_) => {
-            Some(WorkingTreeDriftKind::SafeToFix)
-        }
-        crate::git::WorkingTreeState::Unrecognized => Some(WorkingTreeDriftKind::LiveEdits),
-    }
-}
-
-/// Restore working-tree files to match HEAD.
-///
-/// Only call after confirming `classify_working_tree_drift` returns `SafeToFix`.
-/// Restores each tracked file that differs from HEAD using
-/// `git checkout HEAD -- <files>`, leaving unstaged files and the index alone.
-pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
-    let files = crate::git::paths_differing_from_head(repo)
-        .with_context(|| format!("failed to list drifted paths in {}", repo.display()))?;
-    crate::git::restore_paths_from_head(repo, &files)
-        .with_context(|| format!("failed to restore drifted paths in {}", repo.display()))
 }
 
 /// Execute `rwv doctor --locked` for the current workspace context.
@@ -7562,6 +7633,8 @@ fn apply_finding_repairs(
         }
     }
 
+    let mut refreshed_checkouts: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
     for v in violations {
         if matches!(v.fix_disposition(), FixDisposition::ReportOnly) {
             kept.push(v);
@@ -7675,29 +7748,24 @@ fn apply_finding_repairs(
                 workweave,
                 repo,
                 kind: IndexDriftKind::SafeToFix,
-            } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
-                Some(repo_abs) => {
-                    let location = location_of(workweave, repo);
-                    match reset_index_to_head(repo_abs) {
-                        Ok(()) => outln!("[fixed] core: index refreshed for {location}"),
-                        Err(e) => fix_errors.push(format!("{location}: index fix failed: {e:#}")),
-                    }
-                    true
-                }
-                None => false,
-            },
-
-            CheckViolation::WorkingTreeDrift {
+            }
+            | CheckViolation::WorkingTreeDrift {
                 workweave,
                 repo,
                 kind: WorkingTreeDriftKind::SafeToFix,
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) if !refreshed_checkouts.insert(repo_abs.clone()) => true,
                 Some(repo_abs) => {
                     let location = location_of(workweave, repo);
-                    match restore_working_tree_to_head(repo_abs) {
-                        Ok(()) => outln!("[fixed] core: working tree refreshed for {location}"),
+                    let refreshed = read_drift(vcs, repo_abs)
+                        .and_then(|reading| refresh_drift(vcs, repo_abs, &reading));
+                    match refreshed {
+                        Ok(Some(refreshed)) => {
+                            outln!("[fixed] core: {location}: {}", refreshed.describe())
+                        }
+                        Ok(None) => outln!("[fixed] core: {location}: no drift left to refresh"),
                         Err(e) => {
-                            fix_errors.push(format!("{location}: working-tree fix failed: {e:#}"))
+                            fix_errors.push(format!("{location}: drift refresh failed: {e:#}"))
                         }
                     }
                     true
@@ -9087,19 +9155,25 @@ fn collect_doctor_violations(
             continue;
         }
 
-        let (idx_drift, wt_drift) = classify_drift(repo_abs);
-        if let Some(drift_kind) = idx_drift {
+        if crate::git::repo_is_dirty(repo_abs) == Some(false) {
+            continue;
+        }
+        let (index_kinds, working_tree_kinds) = match read_drift(vcs, repo_abs) {
+            Ok(reading) => drift_findings(&reading),
+            Err(_) => (Vec::new(), vec![WorkingTreeDriftKind::LiveEdits]),
+        };
+        for kind in index_kinds {
             violations.push(CheckViolation::IndexDrift {
                 workweave: ww_label.clone(),
                 repo: repo_path.clone(),
-                kind: drift_kind,
+                kind,
             });
         }
-        if let Some(drift_kind) = wt_drift {
+        for kind in working_tree_kinds {
             violations.push(CheckViolation::WorkingTreeDrift {
                 workweave: ww_label.clone(),
                 repo: repo_path.clone(),
-                kind: drift_kind,
+                kind,
             });
         }
     }

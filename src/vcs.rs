@@ -2129,6 +2129,29 @@ pub enum RemoteBranchCopies {
 /// [`Vcs::head_attachment`] is total over the remaining three and every
 /// caller's `match` is exhaustive. The value that meant all four does not
 /// exist.
+/// What one of a path's index entry or file holds, against `HEAD` and the
+/// tip the checkout's branch moved from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holds {
+    /// `HEAD`'s content, or its absence where `HEAD` lacks the path.
+    Head,
+    /// The moved-from tip's content, or its absence where that tip lacks the
+    /// path, and not `HEAD`'s.
+    LeftTip,
+    /// Anything else, a conflicted entry and an unreadable one included.
+    Other,
+}
+
+/// One path of a checkout whose index entry or file differs from `HEAD`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathStanding {
+    pub path: String,
+    /// The moved-from tip and `HEAD` differ at this path.
+    pub moved: bool,
+    pub index: Holds,
+    pub file: Holds,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadAttachment {
     /// HEAD is symbolic and the branch has at least one commit.
@@ -3464,35 +3487,36 @@ pub trait Vcs: Send + Sync {
     /// if the fetch was needed but didn't run.
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path);
 
-    /// Refresh `repo`'s index to match `HEAD` when the divergence is the
-    /// auto-fixable class — every drifted tree must already be a committed
-    /// tree reachable from `HEAD`. No-op when the index already matches
-    /// `HEAD` or when any divergent tree is unverifiable.
+    /// The commit `repo`'s checkout last recorded itself at, when the branch
+    /// it has checked out has since moved forward from there by a move the
+    /// checkout did not make. `None` when HEAD is where the checkout last put
+    /// it, when HEAD is not on a branch, when the branch moved anywhere but
+    /// forward, and when nothing records where the checkout was.
     ///
-    /// Safety invariant: never replaces index content that is not already
-    /// a committed tree reachable from `HEAD`. Live staged content is left
-    /// untouched.
-    ///
-    /// For git: runs `git reset` (mixed) after
-    /// verifying via `git write-tree` + `git log` that the index tree is
-    /// among the last 200 commits' trees. Infallible — failures along the
-    /// way silently leave the index alone.
-    fn refresh_index_to_head_if_safe(&self, repo: &Path);
+    /// For git: the newest entry of the worktree's own `HEAD` reflog, which
+    /// every move made in that worktree appends to and a move made from
+    /// another worktree does not.
+    fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError>;
 
-    /// Restore `repo`'s working tree to match `HEAD` when the divergence
-    /// is the auto-fixable class — every drifted file's on-disk blob must
-    /// already be reachable from `HEAD`. No-op when the working tree
-    /// already matches `HEAD` or when any divergent file is unverifiable.
-    ///
-    /// Safety invariant: never replaces on-disk content that is not already
-    /// a committed blob reachable from `HEAD`. Live edits are left
-    /// untouched.
-    ///
-    /// For git: runs `git checkout HEAD --
-    /// <files>` after verifying each modified file's blob is reachable
-    /// via `git rev-list --objects` of the last 200 commits. Infallible —
-    /// failures along the way silently leave the working tree alone.
-    fn refresh_working_tree_to_head_if_safe(&self, repo: &Path);
+    /// Each path whose index entry or file differs from `HEAD`, with what
+    /// each holds measured against `HEAD` and against `left` — where the
+    /// checkout's branch moved from, or `None` when it did not move under the
+    /// checkout.
+    fn path_standings(
+        &self,
+        repo: &Path,
+        left: Option<&CommitId>,
+    ) -> Result<Vec<PathStanding>, VcsError>;
+
+    /// Give `files` `HEAD`'s content in both the index and the working tree,
+    /// removing those `HEAD` lacks, and give `index_entries` `HEAD`'s content
+    /// in the index alone. Nothing else in the checkout changes.
+    fn refresh_paths_from_head(
+        &self,
+        repo: &Path,
+        files: &[String],
+        index_entries: &[String],
+    ) -> Result<(), VcsError>;
 
     /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.

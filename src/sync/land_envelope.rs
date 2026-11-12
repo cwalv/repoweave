@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use super::{
     in_manifest_order, ContainmentOutput, LandJsonOutput, LandingReportOutput, LeftBehindOutput,
-    MemberOutput, OpCoordinates, OutputHandler, RepoSyncOutcome, RetiredWorkweave,
+    MemberOutput, OpCoordinates, OutputHandler, RefreshedOutput, RepoSyncOutcome, RetiredWorkweave,
     Step3AdvanceOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
 };
 use crate::manifest::{RepoKey, WorkweaveName};
@@ -34,6 +34,7 @@ pub(super) struct LandOutcome {
     members: Vec<MemberOutput>,
     left_behind: Vec<LeftBehindOutput>,
     reports: Vec<LandingReportOutput>,
+    refreshed: Vec<RefreshedOutput>,
     complete: bool,
 }
 
@@ -43,15 +44,16 @@ impl LandOutcome {
     }
 
     /// `None` when there is nothing to describe: the machine refused before it
-    /// resolved its coordinates, or `failed` before recording an outcome or
-    /// running its last phase, where the error is the whole story.
+    /// resolved its coordinates, or `failed` before recording an outcome,
+    /// refreshing a checkout or running its last phase, where the error is the
+    /// whole story.
     pub(super) fn envelope(
         self,
         refused: Vec<crate::diagnosis::JudgedOutput>,
         failed: bool,
         resolution: Option<Resolution>,
     ) -> Option<LandJsonOutput> {
-        if self.records.is_empty() && failed && !self.complete {
+        if self.records.is_empty() && self.refreshed.is_empty() && failed && !self.complete {
             return None;
         }
         let coordinates = self.coordinates?;
@@ -79,6 +81,7 @@ impl LandOutcome {
             members: self.members,
             complete: self.complete,
             refused,
+            refreshed: self.refreshed,
             project_repo_advance: self.project_repo_advance,
             left_behind: self.left_behind,
             reports: self.reports,
@@ -142,6 +145,10 @@ impl OutputHandler for LandRecorder {
 
     fn record_member(&self, member: MemberOutput) {
         self.with(|o| o.members.push(member));
+    }
+
+    fn record_refreshed(&self, refreshed: RefreshedOutput, _line: &str) {
+        self.with(|o| o.refreshed.push(refreshed));
     }
 
     fn record_coordinates(&self, coordinates: OpCoordinates) {

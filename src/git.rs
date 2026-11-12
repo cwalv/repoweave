@@ -6,7 +6,7 @@ use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
-    ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
+    ContentIdentity, Copied, Holds, PathStanding, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
     DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
     ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
     NamedBranch, PatchEquivalents, PinOutcome, PruningFetch, PublishRef, RangeCommit, RangeListing,
@@ -600,202 +600,155 @@ pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Drift probes — index and working tree against HEAD
+// Drift probes: where a checkout's branch moved from, and each path against it
 // ---------------------------------------------------------------------------
-//
-// Two callers each: the `refresh_*_if_safe` methods below, which act on the
-// answer, and `check`'s drift classifiers, which name it for the operator.
-// Both used to carry their own copy of these argv.
 
-/// Commits scanned when deciding whether content already exists in history.
+/// [`Vcs::left_behind_at`] for git.
 ///
-/// A bound on cost, not a correctness parameter: content older than this reads
-/// as unrecognized, and every caller treats unrecognized as "do not overwrite".
-const RECENT_HISTORY_COMMITS: usize = 200;
-
-/// Where the index tree sits relative to HEAD and to recent history.
-pub enum IndexTreeState {
-    MatchesHead,
-    /// The index tree is the tree of a commit within the scanned window, so
-    /// resetting the index to HEAD cannot lose content no commit holds.
-    RecentAncestorTree,
-    /// Staged content no scanned commit carries — or a probe that failed,
-    /// which is indistinguishable from here and means the same thing to a
-    /// caller deciding whether to overwrite.
-    Unrecognized,
-}
-
-/// Where the working tree sits relative to HEAD.
-pub enum WorkingTreeState {
-    MatchesHead,
-    /// Every changed path is either absent from the working tree (HEAD holds
-    /// the content) or carries a blob recent history still reaches. Carries
-    /// the changed paths, in the order git reported them.
-    RestorableFromHead(Vec<String>),
-    /// A path carries content no scanned commit holds, or a probe failed.
-    Unrecognized,
-}
-
-/// True when the index matches HEAD's tree.
-///
-/// An unreadable answer reads as "matches": every caller uses this to decide
-/// whether to look closer, and guessing "dirty" on a broken probe would send
-/// them on to probes that are equally broken.
-fn index_matches_head(repo: &Path) -> bool {
-    git_command()
-        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true)
-}
-
-/// Classify the index against HEAD and recent history.
-pub fn index_tree_state(repo: &Path) -> IndexTreeState {
-    if index_matches_head(repo) {
-        return IndexTreeState::MatchesHead;
-    }
-    let index_tree = match git_command()
-        .args(["write-tree"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-        _ => return IndexTreeState::Unrecognized,
+/// A worktree's `HEAD` reflog gains an entry for each move made in that
+/// worktree, `update-ref` of its checked-out branch included, and none for a
+/// move of the same branch made from another worktree; the newest entry's
+/// commit is where the worktree last put HEAD.
+fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+    let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
+        return Ok(None);
     };
-    let ancestor_trees = match git_command()
-        .args([
+    let recorded = GitVcs::run_trimmed(
+        [
             "log",
-            "--format=%T",
-            &format!("-{RECENT_HISTORY_COMMITS}"),
+            "-g",
+            "-n1",
+            "--no-show-signature",
+            "--format=%H",
             "HEAD",
-        ])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
-        _ => return IndexTreeState::Unrecognized,
+        ],
+        repo,
+    )?;
+    let Ok(recorded) = CommitId::parse(&recorded) else {
+        return Ok(None);
     };
-    if ancestor_trees.lines().any(|t| t.trim() == index_tree) {
-        IndexTreeState::RecentAncestorTree
-    } else {
-        IndexTreeState::Unrecognized
+    let head = GitVcs.head_revision(repo)?;
+    if *head.id() == recorded {
+        return Ok(None);
     }
+    let forward = GitVcs.is_ancestor(repo, &ResolvedRevisionId::from(recorded.clone()), &head)?;
+    Ok(forward.then_some(recorded))
 }
 
-/// Reset the index to HEAD, leaving the working tree and HEAD untouched.
-pub fn reset_index(repo: &Path) -> Result<(), VcsError> {
-    GitVcs::run(["reset"], repo).map(|_| ())
-}
-
-/// Classify the working tree against HEAD and recent history.
-pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
-    let clean = git_command()
-        .args(["diff-index", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true);
-    if clean {
-        return WorkingTreeState::MatchesHead;
+/// Each path `diff-index` reports between `rev` and the index (`cached`) or
+/// the working tree, with its status letter.
+fn changed_against(
+    repo: &Path,
+    rev: &str,
+    cached: bool,
+) -> Result<BTreeMap<String, String>, VcsError> {
+    let mut args = vec!["diff-index", "--name-status", "-z", "--no-renames"];
+    if cached {
+        args.push("--cached");
     }
-
-    let status_out = match git_command()
-        .args(["diff-index", "--name-status", "-z", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        _ => return WorkingTreeState::Unrecognized,
-    };
-    let mut changed: Vec<String> = Vec::new();
-    let mut modified: Vec<String> = Vec::new();
-    let fields = nul_terminated_fields(&String::from_utf8_lossy(&status_out.stdout));
+    args.push(rev);
+    let fields = nul_terminated_fields(&GitVcs::run(&args, repo)?);
+    let mut changed = BTreeMap::new();
     for record in fields.chunks(2) {
         let [status, path] = record else {
-            return WorkingTreeState::Unrecognized;
+            return Err(VcsError::Io {
+                ctx: format!("unpaired diff-index record in {}", repo.display()),
+                source: std::io::Error::new(std::io::ErrorKind::InvalidData, "odd -z stream"),
+            });
         };
-        let path = path.as_str();
-        match status.as_str() {
-            // Absent from the working tree: HEAD holds the content, so
-            // restoring it cannot lose anything.
-            "D" => changed.push(path.to_owned()),
-            "M" | "T" => {
-                changed.push(path.to_owned());
-                modified.push(path.to_owned());
-            }
-            _ => return WorkingTreeState::Unrecognized,
-        }
+        changed.insert(path.clone(), status.clone());
     }
-    if changed.is_empty() {
-        return WorkingTreeState::MatchesHead;
-    }
-    if modified.is_empty() {
-        return WorkingTreeState::RestorableFromHead(changed);
-    }
+    Ok(changed)
+}
 
-    let objects_out = match git_command()
-        .args([
-            "rev-list",
-            "--objects",
-            "-n",
-            &RECENT_HISTORY_COMMITS.to_string(),
-            "HEAD",
-        ])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        _ => return WorkingTreeState::Unrecognized,
+/// [`Vcs::path_standings`] for git.
+///
+/// `diff-index` against a tree reads a path the index lacks as absent from
+/// the working tree whatever is on disk there, so a path it reports deleted
+/// that something on disk still occupies holds [`Holds::Other`].
+fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStanding>, VcsError> {
+    let file_vs_head = changed_against(repo, "HEAD", false)?;
+    let index_vs_head = changed_against(repo, "HEAD", true)?;
+    let (moved, file_vs_left, index_vs_left) = match left {
+        Some(left) => (
+            nul_terminated_fields(&GitVcs::run(
+                [
+                    "diff-tree",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    "--name-only",
+                    left.as_str(),
+                    "HEAD",
+                ],
+                repo,
+            )?)
+            .into_iter()
+            .collect::<BTreeSet<String>>(),
+            changed_against(repo, left.as_str(), false)?,
+            changed_against(repo, left.as_str(), true)?,
+        ),
+        None => Default::default(),
     };
-    let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-        .collect();
-
-    for file in &modified {
-        let hash_out = match git_command()
-            .args(["hash-object", file])
-            .current_dir(repo)
-            .output()
-        {
-            Ok(out) if out.status.success() => out,
-            _ => return WorkingTreeState::Unrecognized,
+    let side =
+        |vs_head: &BTreeMap<String, String>, vs_left: &BTreeMap<String, String>, path: &str| {
+            if [vs_head.get(path), vs_left.get(path)]
+                .into_iter()
+                .flatten()
+                .any(|status| status == "U")
+            {
+                Holds::Other
+            } else if !vs_head.contains_key(path) {
+                Holds::Head
+            } else if left.is_some() && !vs_left.contains_key(path) {
+                Holds::LeftTip
+            } else {
+                Holds::Other
+            }
         };
-        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
-        if !reachable.contains(&blob_sha) {
-            return WorkingTreeState::Unrecognized;
-        }
-    }
-
-    WorkingTreeState::RestorableFromHead(changed)
+    let paths: BTreeSet<&String> = file_vs_head.keys().chain(index_vs_head.keys()).collect();
+    Ok(paths
+        .into_iter()
+        .map(|path| {
+            let mut file = side(&file_vs_head, &file_vs_left, path);
+            let occupied = std::fs::symlink_metadata(repo.join(path)).is_ok();
+            if file_vs_head.get(path).is_some_and(|s| s == "D") && occupied {
+                file = Holds::Other;
+            }
+            PathStanding {
+                path: path.clone(),
+                moved: moved.contains(path),
+                index: side(&index_vs_head, &index_vs_left, path),
+                file,
+            }
+        })
+        .collect())
 }
 
-/// Every tracked path whose working-tree content differs from HEAD.
-pub fn paths_differing_from_head(repo: &Path) -> Result<Vec<String>, VcsError> {
-    Ok(nul_terminated_fields(&GitVcs::run(
-        ["diff-index", "--name-only", "-z", "HEAD"],
-        repo,
-    )?))
-}
-
-/// Overwrite `paths` in the working tree with HEAD's content, leaving the
-/// index and untracked files alone.
-pub fn restore_paths_from_head(repo: &Path, paths: &[String]) -> Result<(), VcsError> {
-    if paths.is_empty() {
-        return Ok(());
+/// [`Vcs::refresh_paths_from_head`] for git. `checkout --no-overlay` removes a
+/// path `HEAD` lacks where plain `checkout` would leave it.
+fn refresh_paths_from_head(
+    repo: &Path,
+    files: &[String],
+    index_entries: &[String],
+) -> Result<(), VcsError> {
+    if !files.is_empty() {
+        let mut args = vec![
+            "--literal-pathspecs",
+            "checkout",
+            "--no-overlay",
+            "HEAD",
+            "--",
+        ];
+        args.extend(files.iter().map(String::as_str));
+        GitVcs::run(&args, repo)?;
     }
-    let mut args: Vec<&str> = vec!["checkout", "HEAD", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    GitVcs::run(&args, repo).map(|_| ())
+    if !index_entries.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "reset", "-q", "HEAD", "--"];
+        args.extend(index_entries.iter().map(String::as_str));
+        GitVcs::run(&args, repo)?;
+    }
+    Ok(())
 }
 
 /// True when the repo has any index or working-tree change against HEAD.
@@ -3175,16 +3128,25 @@ impl Vcs for GitVcs {
             .status();
     }
 
-    fn refresh_index_to_head_if_safe(&self, repo: &Path) {
-        if matches!(index_tree_state(repo), IndexTreeState::RecentAncestorTree) {
-            let _ = reset_index(repo);
-        }
+    fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError> {
+        left_behind_at(repo)
     }
 
-    fn refresh_working_tree_to_head_if_safe(&self, repo: &Path) {
-        if let WorkingTreeState::RestorableFromHead(paths) = working_tree_state(repo) {
-            let _ = restore_paths_from_head(repo, &paths);
-        }
+    fn path_standings(
+        &self,
+        repo: &Path,
+        left: Option<&CommitId>,
+    ) -> Result<Vec<PathStanding>, VcsError> {
+        path_standings(repo, left)
+    }
+
+    fn refresh_paths_from_head(
+        &self,
+        repo: &Path,
+        files: &[String],
+        index_entries: &[String],
+    ) -> Result<(), VcsError> {
+        refresh_paths_from_head(repo, files, index_entries)
     }
 
     fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {
@@ -9439,18 +9401,40 @@ mod name_reading_tests {
     }
 
     #[test]
-    fn an_awkward_path_differing_from_head_is_named_as_it_is() {
-        let (_tmp, repo) = diverged();
-        std::fs::write(repo.join(AWKWARD), "edited\n").unwrap();
-
-        assert_eq!(
-            paths_differing_from_head(&repo).unwrap(),
-            vec![AWKWARD.to_owned()]
+    fn an_awkward_path_drifted_under_a_worktree_is_named_and_refreshed_as_it_is() {
+        let (tmp, repo) = diverged();
+        let worktree = tmp.path().join("elsewhere");
+        let base = tip(&repo, "main~1");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat",
+                worktree.to_str().unwrap(),
+                base.as_str(),
+            ],
         );
-        std::fs::remove_file(repo.join(AWKWARD)).unwrap();
-        assert!(matches!(
-            working_tree_state(&repo),
-            WorkingTreeState::RestorableFromHead(paths) if paths == [AWKWARD]
-        ));
+        git(&repo, &["update-ref", "refs/heads/feat", "main"]);
+
+        let left = left_behind_at(&worktree).unwrap();
+        assert_eq!(left.as_ref(), Some(&base));
+        assert_eq!(
+            path_standings(&worktree, left.as_ref()).unwrap(),
+            vec![PathStanding {
+                path: AWKWARD.to_owned(),
+                moved: true,
+                index: Holds::LeftTip,
+                file: Holds::LeftTip,
+            }]
+        );
+        refresh_paths_from_head(&worktree, &[AWKWARD.to_owned()], &[]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(worktree.join(AWKWARD)).unwrap(),
+            "ours\n"
+        );
+        assert!(path_standings(&worktree, left.as_ref()).unwrap().is_empty());
     }
 }

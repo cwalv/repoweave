@@ -1073,12 +1073,25 @@ impl Vcs for FakeVcs {
         unsupported("file_versions")
     }
 
-    fn refresh_index_to_head_if_safe(&self, _repo: &Path) {
-        unsupported("refresh_index_to_head_if_safe")
+    fn left_behind_at(&self, _repo: &Path) -> Result<Option<CommitId>, VcsError> {
+        unsupported("left_behind_at")
     }
 
-    fn refresh_working_tree_to_head_if_safe(&self, _repo: &Path) {
-        unsupported("refresh_working_tree_to_head_if_safe")
+    fn path_standings(
+        &self,
+        _repo: &Path,
+        _left: Option<&CommitId>,
+    ) -> Result<Vec<crate::vcs::PathStanding>, VcsError> {
+        unsupported("path_standings")
+    }
+
+    fn refresh_paths_from_head(
+        &self,
+        _repo: &Path,
+        _files: &[String],
+        _index_entries: &[String],
+    ) -> Result<(), VcsError> {
+        unsupported("refresh_paths_from_head")
     }
 
     fn commit_object_exists(&self, _repo: &Path, _id: &CommitId) -> Result<bool, VcsError> {

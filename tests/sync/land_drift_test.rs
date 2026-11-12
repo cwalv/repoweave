@@ -152,7 +152,10 @@ impl Fixture {
     fn pin_primary(&self, sha: &str) {
         let url = common::file_url(&self.primary_lib);
         common::fixture_lock(&self.primary_project, &[(LIB, &url, sha)]);
-        common::git_in(&self.primary_project, &["commit", "-q", "-am", "lock: moved"]);
+        common::git_in(
+            &self.primary_project,
+            &["commit", "-q", "-am", "lock: moved"],
+        );
     }
 }
 
@@ -326,13 +329,19 @@ fn drift_changing_a_file_in_the_source_is_refreshed() {
         stderr.contains("refreshed drift") && stderr.contains("notes.txt"),
         "the refresh is reported with its file:\n{stderr}"
     );
-    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("three\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
         "",
         "the refresh leaves the source's checkout clean"
     );
-    assert_eq!(common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]), moved);
+    assert_eq!(
+        common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]),
+        moved
+    );
     assert_eq!(
         read(&f.primary_lib.join("notes.txt")).as_deref(),
         Some("three\n")
@@ -403,7 +412,10 @@ fn drift_beside_an_edit_refuses_the_edit_alone() {
         read(&f.ww_lib.join("README.md")).as_deref(),
         Some("edited\n")
     );
-    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("three\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
         "M README.md",

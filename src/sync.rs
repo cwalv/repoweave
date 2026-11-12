@@ -581,6 +581,28 @@ pub struct SyncJsonOutput {
     pub resolution: Option<Resolution>,
 }
 
+/// One checkout whose shared-ref drift a landing refreshed: its branch was
+/// moved forward from outside it, and these paths still held the content of
+/// the tip it moved from.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RefreshedOutput {
+    /// The repo as the landing's refusal lines name it: a member's path, or
+    /// `projects/<project>`.
+    pub path: String,
+    pub absolute_path: crate::path_spelling::WirePath,
+    /// The commit the checkout's branch moved from.
+    pub moved_from: String,
+    /// The commit the checkout's branch is at, whose content the paths now
+    /// hold.
+    pub moved_to: String,
+    /// Files whose content and index entry were replaced with `moved_to`'s,
+    /// a file `moved_to` lacks removed.
+    pub files: Vec<String>,
+    /// Index entries reset to `moved_to`'s, whose files already held its
+    /// content.
+    pub index_entries: Vec<String>,
+}
+
 /// Top-level envelope for `rwv land --json`.
 ///
 /// Extends [`SyncJsonOutput`] with land-specific observability fields:
@@ -652,6 +674,11 @@ pub struct LandJsonOutput {
     /// Each repo the op judged when it refused, with that state's choices.
     /// Empty, not absent, when it refused on none.
     pub refused: Vec<crate::diagnosis::JudgedOutput>,
+    /// Each checkout, in either workspace, whose shared-ref drift the landing
+    /// refreshed before judging its edits. Empty, not absent, when it
+    /// refreshed none. A refused landing refreshes only a checkout whose own
+    /// edits it refused.
+    pub refreshed: Vec<RefreshedOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1463,11 +1490,23 @@ fn per_conflict_bail_message(
     )
 }
 
-// Post-sync index/working-tree refresh is delegated to
-// [`Vcs::refresh_index_to_head_if_safe`] and
-// [`Vcs::refresh_working_tree_to_head_if_safe`]; the safety logic
-// (reachability check before any clobber) lives in the VCS impl rather
-// than being inlined here. See those trait method doc-comments.
+/// Refresh the shared-ref drift of a checkout an op has finished with,
+/// reporting what it replaced under `verb`. A checkout whose branch did not
+/// move under it is left alone, edits and all.
+pub(crate) fn refresh_drift_after(
+    verb: impl std::fmt::Display,
+    repo: impl std::fmt::Display,
+    vcs: &dyn Vcs,
+    dir: &Path,
+) {
+    let refreshed = crate::check::read_drift(vcs, dir)
+        .and_then(|reading| crate::check::refresh_drift(vcs, dir, &reading));
+    match refreshed {
+        Ok(Some(refreshed)) => eprintln!("rwv {verb}: {repo}: {}", refreshed.describe()),
+        Ok(None) => {}
+        Err(e) => eprintln!("warning: rwv {verb}: {repo}: drift left in place: {e:#}"),
+    }
+}
 
 /// CWD's project as Phase 1' left it: the manifest the op ends with.
 fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
@@ -2068,6 +2107,14 @@ pub trait OutputHandler: Send + Sync {
     /// Default implementation is a no-op: the text handler prints placement
     /// at the call site.
     fn record_placement(&self, _placement: PlacementOutput) {}
+
+    /// Record the drift a landing refreshed in one checkout; `line` is its
+    /// report.
+    ///
+    /// Default implementation prints `line` to stderr.
+    fn record_refreshed(&self, _refreshed: RefreshedOutput, line: &str) {
+        eprintln!("{line}");
+    }
 
     /// Record what replay did with one member checkout outside its per-repo
     /// strategy.
@@ -2871,7 +2918,8 @@ pub(crate) fn judge_landing_source(
     let dir = project_dir(root, &project);
     let vcs = project_vcs();
     let source = Project::from_dir(&dir, project)?;
-    judge_edits_source_preflight(vcs.as_ref(), &source, root, &dir, report);
+    let mut drifted = Vec::new();
+    judge_edits_source_preflight(&source, root, &dir, report, &mut drifted);
     let class = {
         let (resolved, unresolvable) = match source.lock.as_ref() {
             Some(raw) => {
@@ -2979,11 +3027,13 @@ fn judge_target_pins(
 /// judged refusal collected into one report so the operator sees them
 /// together.
 ///
-/// This function must remain a **pure precondition**: nothing here mutates
-/// workspace-wide state; on refusal the workspace looks exactly like it did
-/// before acquisition (once the caller releases the acquired records).
+/// Nothing here writes: each checkout's shared-ref drift is classified into
+/// `drifted`, and the caller refreshes it once the outcome is known, so on
+/// refusal every checkout this left `drifted` alone looks exactly as it did
+/// before acquisition.
 #[allow(clippy::too_many_arguments)]
 fn run_preconditions_after_acquire(
+    drifted: &mut Vec<DriftedCheckout>,
     project_vcs: &dyn Vcs,
     landing: &crate::land::Landing,
     strategy: SyncStrategy,
@@ -3008,11 +3058,11 @@ fn run_preconditions_after_acquire(
     let cwd_project = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
         .context("failed to load CWD project for guard preconditions")?;
     judge_edits_source_preflight(
-        project_vcs,
         &cwd_project,
         cwd_workspace_dir,
         cwd_project_dir,
         &mut report,
+        drifted,
     );
     if retire {
         if let Checkout::Workweave { dir, project, .. } = &cwd_ctx.checkout {
@@ -3026,7 +3076,12 @@ fn run_preconditions_after_acquire(
             let project_repo = project_rel_path(project);
             for line in dirty.lines() {
                 let judged = report.lines().iter().any(|l| l.repo() == line.repo());
-                if !judged && line.repo() != project_repo {
+                let drift_alone = drifted.iter().any(|d| {
+                    d.elsewhere.is_none()
+                        && d.repo == line.repo()
+                        && line.listed().iter().all(|f| d.reading.refreshes(f))
+                });
+                if !judged && !drift_alone && line.repo() != project_repo {
                     report.add(line.clone());
                 }
             }
@@ -3128,12 +3183,12 @@ fn run_preconditions_after_acquire(
         &mut report,
     )?;
     judge_edits_target_preflight(
-        project_vcs,
         &cwd_project,
         plan.receiving.keys(),
         dest_workspace_dir,
         dest_project_dir,
         &mut report,
+        drifted,
     );
     if strategy == SyncStrategy::Ff {
         hold(
@@ -3241,7 +3296,9 @@ fn guard_and_mark<'a>(
     let acquired = op_state::acquire_op(&touched, &initial_record)?;
 
     let project_vcs = project_vcs();
+    let mut drifted = Vec::new();
     let precondition_result = run_preconditions_after_acquire(
+        &mut drifted,
         project_vcs.as_ref(),
         &landing,
         strategy,
@@ -3260,9 +3317,16 @@ fn guard_and_mark<'a>(
         cwd_workspace_name_str,
         cwd_lock_behind,
         plan,
-    } = match precondition_result {
+    } = match precondition_result
+        .and_then(|outcome| refresh_drifted(&drifted, false, handler).map(|()| outcome))
+    {
         Ok(v) => v,
         Err(e) => {
+            if crate::diagnosis::report_of(&e).is_some() {
+                if let Err(refresh) = refresh_drifted(&drifted, true, handler) {
+                    eprintln!("warning: {refresh:#}");
+                }
+            }
             op_state::release_acquired(&acquired);
             return Err(e);
         }
@@ -3590,8 +3654,8 @@ fn load_continuing_context<'a>(
             Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
                 .context("failed to load CWD project for the resumed op's dirt scan")?;
         let mut edits = Report::default();
+        let mut drifted = Vec::new();
         judge_edits_target_preflight(
-            project_vcs.as_ref(),
             &cwd_project_preflight,
             take_in.upstream_tips.keys().filter_map(|key| match key {
                 RepoKey::Member(path) => Some(path),
@@ -3600,7 +3664,9 @@ fn load_continuing_context<'a>(
             &dest_workspace_dir,
             &dest_project_dir,
             &mut edits,
+            &mut drifted,
         );
+        refresh_drifted(&drifted, !edits.is_empty(), handler)?;
         edits.note(parked_note(record.verb));
         edits.into_result()?;
     }
@@ -3909,12 +3975,12 @@ fn refuse_members_that_need_composing(
 /// this preflight runs; [`ff_advance_repo`] catches an actual collision at
 /// advance time instead, where git itself refuses to clobber it.
 fn judge_edits_target_preflight<'m>(
-    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     moving: impl IntoIterator<Item = &'m RepoPath>,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
     report: &mut Report,
+    drifted: &mut Vec<DriftedCheckout>,
 ) {
     for repo_path in moving {
         let Some(entry) = cwd_project.manifest.get_entry(repo_path) else {
@@ -3922,61 +3988,121 @@ fn judge_edits_target_preflight<'m>(
         };
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         if target_repo.exists() {
-            let vcs = vcs_for(entry.vcs_type);
-            refresh_drift(vcs.as_ref(), repo_path, &target_repo);
-            let tracked = tracked_or_unreadable(vcs.as_ref(), &target_repo);
-            judge_edits_in(
-                vcs.as_ref(),
-                repo_path,
+            judge_edits_beside_drift(
+                vcs_for(entry.vcs_type),
+                repo_path.to_string(),
                 &target_repo,
-                tracked,
                 Some(target_workspace_dir),
+                |dirt| dirt,
                 report,
+                drifted,
             );
         }
     }
-    let project_tracked = tracked_or_unreadable(project_vcs, target_project_dir);
-    judge_edits_in(
-        project_vcs,
+    judge_edits_beside_drift(
+        project_vcs(),
         project_rel_path(&cwd_project.name),
         target_project_dir,
-        project_tracked,
         Some(target_workspace_dir),
+        |dirt| dirt,
         report,
+        drifted,
     );
 }
 
-/// Refresh a member checkout whose branch moved under it (shared-ref drift)
-/// where every file it would replace holds content already committed, before
-/// its edits are judged, so that drift is neither refused as edits nor
-/// committed back by the choice that commits edits. Reported per file.
-fn refresh_drift(vcs: &dyn Vcs, repo: impl std::fmt::Display, dir: &Path) {
-    // Refreshing the index ends a merge, cherry-pick or revert in progress;
-    // a checkout stopped in one is judged as it stands.
-    if vcs.mid_operation(dir).is_some() {
-        return;
-    }
-    let Ok(before) = vcs.tracked_dirty_file_names(dir) else {
-        return;
+/// A checkout a landing found drift in while judging its edits.
+pub(crate) struct DriftedCheckout {
+    vcs: Box<dyn Vcs>,
+    repo: String,
+    dir: PathBuf,
+    elsewhere: Option<PathBuf>,
+    reading: crate::check::DriftReading,
+    edits_refused: bool,
+}
+
+/// Judge `dir`'s edits on what a drift refresh would leave: shared-ref drift
+/// is classified first, so a path drift explains is neither refused as an
+/// edit nor listed under the choice that commits edits. A checkout stopped
+/// in an operation, or one whose reading fails, is judged on all its dirt.
+/// `keep` narrows the dirt judged, as the source's project repo does for its
+/// lock.
+fn judge_edits_beside_drift(
+    vcs: Box<dyn Vcs>,
+    repo: String,
+    dir: &Path,
+    elsewhere: Option<&Path>,
+    keep: impl Fn(Vec<String>) -> Vec<String>,
+    report: &mut Report,
+    drifted: &mut Vec<DriftedCheckout>,
+) {
+    let reading = match vcs.mid_operation(dir) {
+        Some(_) => crate::check::DriftReading::default(),
+        None => crate::check::read_drift(vcs.as_ref(), dir).unwrap_or_default(),
     };
-    if before.is_empty() {
-        return;
+    let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), dir))
+        .into_iter()
+        .filter(|file| !reading.refreshes(file))
+        .collect();
+    let judged = crate::diagnosis::judge_edits(vcs.as_ref(), &repo, dir, dirt, elsewhere);
+    let edits_refused = judged.is_some();
+    if let Some(judged) = judged {
+        report.add(judged);
     }
-    vcs.refresh_index_to_head_if_safe(dir);
-    vcs.refresh_working_tree_to_head_if_safe(dir);
-    let after = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
-    let refreshed: Vec<&String> = before.iter().filter(|f| !after.contains(f)).collect();
-    if !refreshed.is_empty() {
-        eprintln!(
-            "rwv land: {repo}: refreshed drift: its branch moved under the checkout, and \
-             these files held only committed content: {}",
-            refreshed
-                .iter()
-                .map(|f| f.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+    if reading.is_refreshable() {
+        drifted.push(DriftedCheckout {
+            vcs,
+            repo,
+            dir: dir.to_path_buf(),
+            elsewhere: elsewhere.map(Path::to_path_buf),
+            reading,
+            edits_refused,
+        });
     }
+}
+
+/// Refresh the drift `drifted` classified, reporting each checkout's files.
+///
+/// A landing that proceeds refreshes every one. A landing that refuses
+/// refreshes only the checkouts whose own edits it refused, so the commit or
+/// stash it offers there cannot carry the drift's stale content; every other
+/// checkout is left as the refusal found it.
+fn refresh_drifted(
+    drifted: &[DriftedCheckout],
+    landing_refused: bool,
+    handler: &dyn OutputHandler,
+) -> anyhow::Result<()> {
+    for checkout in drifted {
+        if landing_refused && !checkout.edits_refused {
+            continue;
+        }
+        let refreshed =
+            crate::check::refresh_drift(checkout.vcs.as_ref(), &checkout.dir, &checkout.reading)
+                .map_err(|e| {
+                    crate::untokened!(
+                        EnvironmentPassthrough,
+                        "refreshing the drift in {} failed: {e:#}",
+                        checkout.dir.display()
+                    )
+                })?;
+        if let Some(refreshed) = refreshed {
+            let at = match &checkout.elsewhere {
+                Some(workspace) => format!("{} in {}", checkout.repo, workspace.display()),
+                None => checkout.repo.clone(),
+            };
+            handler.record_refreshed(
+                RefreshedOutput {
+                    path: checkout.repo.clone(),
+                    absolute_path: crate::path_spelling::WirePath::of(&checkout.dir),
+                    moved_from: refreshed.moved_from.to_string(),
+                    moved_to: refreshed.moved_to.to_string(),
+                    files: refreshed.files.clone(),
+                    index_entries: refreshed.index_entries.clone(),
+                },
+                &format!("rwv land: {at}: {}", refreshed.describe()),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// A repo's tracked dirt, or a status that could not be read standing in as
@@ -4039,35 +4165,41 @@ fn follows_its_pin_detached(role: crate::manifest::Role, vcs: &dyn Vcs, repo: &P
 ///   still refuses (and the project entry names the specific files so the lock
 ///   carve-out is auditable).
 fn judge_edits_source_preflight(
-    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
     report: &mut Report,
+    drifted: &mut Vec<DriftedCheckout>,
 ) {
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         if repo.exists() {
-            let vcs = vcs_for(entry.vcs_type);
-            refresh_drift(vcs.as_ref(), repo_path, &repo);
-            let tracked = tracked_or_unreadable(vcs.as_ref(), &repo);
-            judge_edits_in(vcs.as_ref(), repo_path, &repo, tracked, None, report);
+            judge_edits_beside_drift(
+                vcs_for(entry.vcs_type),
+                repo_path.to_string(),
+                &repo,
+                None,
+                |dirt| dirt,
+                report,
+                drifted,
+            );
         }
     }
 
     // Project repo: apply the rwv.lock carve-out. A project repo dirty ONLY in
     // rwv.lock is the auto-relock's expected input, not dirt.
-    let non_lock: Vec<String> = tracked_or_unreadable(project_vcs, cwd_project_dir)
-        .into_iter()
-        .filter(|p| p.as_str() != LockFile::FILE_NAME)
-        .collect();
-    judge_edits_in(
-        project_vcs,
+    judge_edits_beside_drift(
+        project_vcs(),
         project_rel_path(&cwd_project.name),
         cwd_project_dir,
-        non_lock,
         None,
+        |dirt| {
+            dirt.into_iter()
+                .filter(|p| p.as_str() != LockFile::FILE_NAME)
+                .collect()
+        },
         report,
+        drifted,
     );
 }
 
@@ -4568,8 +4700,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 None
             };
             if !is_failure {
-                task.vcs.refresh_index_to_head_if_safe(&task.abs);
-                task.vcs.refresh_working_tree_to_head_if_safe(&task.abs);
+                refresh_drift_after(ctx.verb, &task.repo_path, task.vcs.as_ref(), &task.abs);
             }
             ctx.handler.record(
                 task.repo_path.as_str(),

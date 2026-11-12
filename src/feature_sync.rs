@@ -1366,8 +1366,7 @@ fn act(
         let dir = sync.ctx.active_path().join(path.as_path());
         let vcs = vcs_for(entry.vcs_type);
         if vcs.is_repo(&dir) {
-            vcs.refresh_index_to_head_if_safe(&dir);
-            vcs.refresh_working_tree_to_head_if_safe(&dir);
+            crate::sync::refresh_drift_after("sync", path, vcs.as_ref(), &dir);
         }
     }
 
