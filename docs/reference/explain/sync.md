@@ -430,7 +430,7 @@ Schema:
       }
     },
     "ConflictOp": {
-      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — `Vcs::mid_op` constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
+      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\n`Vcs::mid_op` constructs any variant from a repo's on-disk state, but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
       "oneOf": [
         {
           "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv land --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
@@ -451,6 +451,13 @@ Schema:
           "type": "string",
           "enum": [
             "cherry-pick"
+          ]
+        },
+        {
+          "description": "Revert (`git revert`) — resumes with `git revert --continue`.",
+          "type": "string",
+          "enum": [
+            "revert"
           ]
         }
       ]
@@ -870,6 +877,7 @@ Schema:
         "mid-rebase",
         "mid-merge",
         "mid-cherry-pick",
+        "mid-revert",
         "mid-bisect"
       ]
     },

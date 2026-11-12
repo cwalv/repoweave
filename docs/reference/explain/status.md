@@ -712,6 +712,7 @@ Schema:
         "mid-rebase",
         "mid-merge",
         "mid-cherry-pick",
+        "mid-revert",
         "mid-bisect"
       ]
     },
