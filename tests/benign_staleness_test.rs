@@ -752,7 +752,12 @@ fn sync_with_lock_behind_head_proceeds_and_keeps_member_work() {
     let f = fixture();
     let base_pin = head(&f.ww.manifest_repo);
     let ww_tip = commit_file(&f.ww.manifest_repo, "f.txt", "f\n", "ww: feature");
-    commit_file(&f.main.project_dir, "notes.txt", "n\n", "main: project note");
+    commit_file(
+        &f.main.project_dir,
+        "notes.txt",
+        "n\n",
+        "main: project note",
+    );
 
     rwv()
         .args(["sync"])
@@ -1322,7 +1327,11 @@ fn the_already_ahead_line_states_how_far_the_source_moved_past_its_lock() {
     // refusing or by pulling the tips, and neither leaves a lock entry the
     // source has moved past.
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy(), "--allow-stale-lock"])
+        .args([
+            "sync-to",
+            &f.main.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
