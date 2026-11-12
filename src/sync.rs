@@ -2983,8 +2983,8 @@ fn judge_unreachable_target_pins(
 /// Where each checkout of `T`'s workspace stands to the lock that workspace
 /// has checked out, never the upstream's, whose moves the landing takes in:
 /// one beyond its pin by commits no live lock and no remote reaches refuses
-/// (`pin` unpinned in `T`); one behind or diverged is not where that lock
-/// says.
+/// (`pin` unpinned in `T`). One behind or diverged refuses nothing: the
+/// landing aligns `T`'s workspace once it lands, and reports what it leaves.
 fn judge_target_pins(
     class: &LockClassification,
     root: &Path,
@@ -3002,24 +3002,16 @@ fn judge_target_pins(
         let Some(entry) = manifest.get_entry(&r.repo_path) else {
             continue;
         };
-        let vcs = vcs_for(entry.vcs_type);
-        if !matches!(r.relation, LockRelation::Ahead)
-            && (!matches!(
-                entry.role,
-                crate::manifest::Role::Owned | crate::manifest::Role::Fork
-            ) || follows_its_pin_detached(entry.role, vcs.as_ref(), &dir))
-        {
+        if !matches!(r.relation, LockRelation::Ahead) {
             continue;
         }
+        let vcs = vcs_for(entry.vcs_type);
         let held = live
             .get(&r.repo_path)
             .map(Vec::as_slice)
             .unwrap_or_default();
         let standing = crate::pins::standing(vcs.as_ref(), &dir, head, pin, held)?;
-        if matches!(
-            standing,
-            crate::pins::Standing::At | crate::pins::Standing::Ahead(_)
-        ) {
+        if !matches!(standing, crate::pins::Standing::Unpinned(_)) {
             continue;
         }
         if let Some(judged) = crate::pins::judge_elsewhere(
@@ -3189,7 +3181,6 @@ fn run_preconditions_after_acquire(
     let plan = crate::land::judge(
         landing,
         cwd_workspace_dir,
-        cwd_ctx.primary_path(),
         match strategy {
             SyncStrategy::Rebase => crate::land::Composing::Rebase,
             SyncStrategy::Ff => crate::land::Composing::FastForwardOnly,
@@ -4166,25 +4157,6 @@ fn judge_edits_in(
 ) {
     if let Some(judged) = crate::diagnosis::judge_edits(vcs, repo, dir, dirty, elsewhere) {
         report.add(judged);
-    }
-}
-
-/// A `dependency` or `reference` member sitting detached with no commit of
-/// its own: the state alignment puts such a member in wherever its branch is
-/// checked out elsewhere. It holds nothing a branch lacks, so a verb that
-/// needs every member on a branch passes over it.
-fn follows_its_pin_detached(role: crate::manifest::Role, vcs: &dyn Vcs, repo: &Path) -> bool {
-    if !matches!(
-        role,
-        crate::manifest::Role::Dependency | crate::manifest::Role::Reference
-    ) {
-        return false;
-    }
-    match vcs.head_attachment(repo) {
-        Ok(HeadAttachment::Detached(d)) => vcs
-            .stray_commits(repo, d.at(), None, None)
-            .is_ok_and(|stray| stray.is_empty()),
-        _ => false,
     }
 }
 
@@ -5853,7 +5825,9 @@ fn report_target_ahead(ctx: &OpContext<'_>) {
 
 /// Align the workspace `ctx` names to the branch the landing left it on.
 /// The landing itself is done by then, so a member alignment leaves where it
-/// was is reported, with `rwv update` there to finish it, and fails nothing.
+/// was is reported and fails nothing: a refusal with the choices it judged,
+/// anything else with the `rwv update` that finishes it, naming the project,
+/// since that workspace may present another.
 fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
     let output = if op.handler.emit_text() {
         OutputMode::Text
@@ -5871,8 +5845,16 @@ fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
         Err(e) => Some(e),
     };
     if let (Some(e), true) = (left, op.handler.emit_text()) {
+        let finish = if crate::diagnosis::refused_output(&e).is_empty() {
+            format!(
+                "; `rwv update --project {}` there finishes it",
+                op.cwd_project_name
+            )
+        } else {
+            String::new()
+        };
         eprintln!(
-            "land: {} did not finish aligning; `rwv update` there finishes it:\n{e:#}",
+            "land: {} did not finish aligning{finish}:\n{e:#}",
             ctx.active_path().display()
         );
     }

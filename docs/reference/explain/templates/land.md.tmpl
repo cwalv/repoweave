@@ -50,7 +50,10 @@ nothing could be landed into. Then, under an op record:
 4. **Align.** The workspace with the target checked out aligns its members as
    `rwv update` does, storing the entries without reporting them; then this
    workspace's members follow the target's new pins. A member alignment leaves
-   where it was is reported, with `rwv update` there to finish it.
+   where it was is reported: by the state that kept it there, with that
+   state's choices, or else with `rwv update --project <project>` there to
+   finish it. A member the target's workspace shares with a project it
+   presents stays where that project has it.
 5. **Retire** (`--retire`). The workweave is removed, and the deletion rule
    decides each of the feature's branches: one that landed is deleted, one
    that did not survives and is listed with its reason.
@@ -173,7 +176,7 @@ the landing.
 | `pin` | `backwards` | the source's relock would move a pin backward |
 | `pin` | `none` | the source's lock has no pin for a member |
 | `push-branch` | `diverged` | the target or a receiving branch has diverged from its upstream |
-| `protected` | `declared` | a rebase would rewrite a member branch some weave branch declares |
+| `name` | `declared` | a member branch of the feature's name is one some weave branch declares, so the landing would rebase a declared branch |
 | `edits` | `dirty` | a repo the landing moves holds uncommitted changes; under `--retire`, any checkout of the workweave |
 | `edits` | `mid-operation` | a repo the landing moves is in the middle of a rebase, merge or other operation |
 | `checkout` | `in another workspace` | a receiving branch, or from the primary the target, is checked out elsewhere |

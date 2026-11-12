@@ -589,6 +589,9 @@ every_scenario!(
     land_from_the_primary_refuses_a_target_in_a_workweave,
     land_refuses_a_target_member_off_its_receiving_branch,
     land_refuses_a_target_checkout_diverged_from_its_pin,
+    land_leaves_a_shared_member_where_the_presented_project_has_it,
+    land_into_a_workspace_presenting_another_project,
+    land_names_a_member_composing_cannot_materialize,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
@@ -3863,4 +3866,22 @@ fn cherry_pick_stopped_on_a_conflict_is_put_back_by_abort() {
 #[test]
 fn cherry_pick_refuses_before_anything_moves_and_the_printed_hand_port_completes() {
     runner::run(scenarios::cherry_pick_refusals()).assert_fully_decided_green();
+}
+
+#[test]
+fn land_leaves_a_shared_member_where_the_presented_project_has_it_scenario() {
+    runner::run(scenarios::land_leaves_a_shared_member_where_the_presented_project_has_it())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_into_a_workspace_presenting_another_project_scenario() {
+    runner::run(scenarios::land_into_a_workspace_presenting_another_project())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_names_a_member_composing_cannot_materialize_scenario() {
+    runner::run(scenarios::land_names_a_member_composing_cannot_materialize())
+        .assert_fully_decided_green();
 }

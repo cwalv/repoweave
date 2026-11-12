@@ -1433,8 +1433,8 @@ impl State {
                              renamed name; `rwv push --overwrite`, for a member; `rwv branch \
                              delete` and `rwv workweave delete` with `--delete-remote` or \
                              `--delete-remote-unlanded`, for a member branch of the deleted \
-                             name; `rwv sync` and `rwv land` with `--strategy rebase`, for \
-                             a member on the branch that has commits to replay",
+                             name; `rwv sync` with `--strategy rebase`, for a member on the \
+                             branch that has commits to replay",
                 offers: &[Form::C2UpdateRemote],
                 verb_offers: &[],
             },

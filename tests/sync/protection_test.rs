@@ -119,3 +119,50 @@ fn a_sync_of_a_feature_whose_member_branch_another_branch_declares_is_refused_an
     assert!(text.contains("line (projects/p)"), "{text}");
     assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
 }
+
+/// A landing rebases only the feature's own member branches, so the Names
+/// rule, refusing a feature whose member branch a live weave branch declares,
+/// is what keeps it from rewriting a declared branch. Declaring the branch,
+/// as printed, makes it one no landing takes.
+#[test]
+fn a_landing_that_would_rebase_a_member_branch_another_branch_declares_is_refused_and_moves_nothing(
+) {
+    let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
+    succeed(
+        &["workweave", "create", "--project", PROJECT, "anon"],
+        &w.workspace,
+    );
+    let ww = w
+        .workspace
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("p--anon");
+    commit_in(&ww.join(LIB), "theirs");
+    succeed(&["lock", "--commit"], &ww);
+    commit_in(&w.workspace.join(LIB), "ours");
+    succeed(&["lock", "--commit"], &w.workspace);
+    declare_lib_on(&w.workspace, "line", "p--anon");
+    let before = common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]);
+    let target_before = common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]);
+
+    let text = common::cli::refused(
+        &run(&["land"], &ww),
+        repoweave::diagnosis::State::NameDeclared,
+    );
+
+    assert!(text.contains("line (projects/p)"), "{text}");
+    assert!(text.contains("rwv branch rename <new>"), "{text}");
+    assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]),
+        target_before
+    );
+
+    succeed(&["branch", "set-mode", "p--anon", "declared"], &ww);
+    common::cli::refused(
+        &run(&["land"], &ww),
+        repoweave::diagnosis::State::TargetNoTarget,
+    );
+    assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
+}

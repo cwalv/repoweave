@@ -531,7 +531,6 @@ fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
 pub fn judge(
     landing: &Landing,
     source_root: &Path,
-    primary: &Path,
     composing: Composing,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
@@ -588,7 +587,6 @@ pub fn judge(
         Some(&landing.target),
         report,
     )?;
-    let accounting = crate::alignment::Accounting::scan(primary)?;
     let target_aligner = crate::alignment::Aligner::open(
         &landing.target_workspace,
         &landing.project,
@@ -622,7 +620,6 @@ pub fn judge(
         let judging = Judging {
             landing,
             sides: &sides,
-            accounting: &accounting,
             target_aligner: &target_aligner,
             as_mode,
             composing,
@@ -1231,7 +1228,6 @@ fn judge_carried_pin(
 struct Judging<'a> {
     landing: &'a Landing,
     sides: &'a Sides,
-    accounting: &'a crate::alignment::Accounting,
     target_aligner: &'a crate::alignment::Aligner,
     as_mode: Mode,
     composing: Composing,
@@ -1250,7 +1246,6 @@ fn judge_member(
     let Judging {
         landing,
         sides,
-        accounting,
         target_aligner,
         as_mode,
         composing,
@@ -1261,9 +1256,9 @@ fn judge_member(
         dir,
         vcs,
     } = *member;
-    let HeadAttachment::Attached(attached) = vcs.head_attachment(dir)? else {
+    if !matches!(vcs.head_attachment(dir)?, HeadAttachment::Attached(_)) {
         return Ok(());
-    };
+    }
     let Some(their_entry) = sides.theirs.get_entry(path) else {
         return Ok(());
     };
@@ -1380,9 +1375,7 @@ fn judge_member(
         }
     }
     if moved {
-        judge_moved(
-            landing, sides, member, &attached, &receiving, &head, &tip, accounting, report,
-        )?;
+        judge_moved(landing, sides, member, &receiving, &head, &tip, report)?;
         judge_merge_in_range(
             composing,
             vcs,
@@ -1417,18 +1410,16 @@ fn judge_member(
     Ok(())
 }
 
-/// The lineage rule for a member the landing moves, and the protection of
-/// the branch its work is rebased off.
-#[allow(clippy::too_many_arguments)]
+/// The lineage rule for a member the landing moves. The branch its work is
+/// rebased off is the feature's own, which the Names rule has already refused
+/// wherever a live weave branch declares it, so no protection is judged here.
 fn judge_moved(
     landing: &Landing,
     sides: &Sides,
     member: &Member<'_>,
-    attached: &crate::vcs::AttachedRef,
     receiving: &RawRefName,
     head: &CommitId,
     tip: &CommitId,
-    accounting: &crate::alignment::Accounting,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let Member { path, dir, vcs, .. } = *member;
@@ -1473,22 +1464,6 @@ fn judge_moved(
                 .by_verb("land")
                 .judge(vcs),
         ),
-    }
-    if !vcs.is_ancestor(dir, &rev(tip), &rev(head))? {
-        let on = attached.to_string();
-        let declarers = accounting.declarers(path, &on);
-        if !declarers.is_empty() {
-            report.add(
-                State::ProtectedDeclared
-                    .of(path)
-                    .member()
-                    .subject(&on)
-                    .listing(declarers)
-                    .bind("<m>", path)
-                    .by_verb("land")
-                    .judge(vcs),
-            );
-        }
     }
     Ok(())
 }

@@ -7585,7 +7585,8 @@ pub fn land_refuses_a_target_member_off_its_receiving_branch() -> Scenario {
 }
 
 /// The target's checkout of a moved member diverged from the target's pin:
-/// the landing refuses; re-pinning it there as printed lets it land.
+/// its receiving branch does not reach the pin, which is what the landing
+/// refuses; re-pinning it there as printed lets it land.
 pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
     scenario(
         "land refuses a target checkout diverged from its pin",
@@ -7601,7 +7602,8 @@ pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
                 .may_leave_unresolved(&[Repo::Lib]),
             Step::commit(&a(), Repo::Lib, "a-lib-again"),
             Step::rwv(&ww("w"), &["land"])
-                .expect(Exit::refuses(Repo::Lib, State::PinDiverged))
+                .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+                .claim(Claim::OutputLacks("pin diverged"))
                 .claim(Claim::OutputContains(
                     "rwv member pin local/remotes/lib <rev> --commit",
                 ))
@@ -7998,4 +8000,149 @@ pub fn cherry_pick_refusals() -> Scenario {
             .claim(Claim::OutputContains("Rwv-Picked-From: ")),
     ]);
     scenario("cherry-pick refusals", steps)
+}
+
+/// `A` presents `proj2`, which declares the shared `lib` on `dev`, behind
+/// `proj`'s pin. A landing into `proj`'s `main` there lands what it moves, is
+/// not refused for `lib`'s pin, and leaves `lib` where `proj2` has it: it did
+/// not finish aligning, and says so with the state that kept `lib` and that
+/// state's choice. Running the choice aligns `lib` for `proj`.
+pub fn land_leaves_a_shared_member_where_the_presented_project_has_it() -> Scenario {
+    Scenario {
+        name: "land leaves a shared member where the presented project has it",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["activate", "proj2", "--update"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("pin behind"))
+                .claim(Claim::OutputContains("did not finish aligning:"))
+                .claim(Claim::OutputLacks("finishes it"))
+                .claim(Claim::Judged(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv activate proj --update"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+            Step::rwv(&a(), &["activate", "proj", "--update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj,
+                }),
+        ],
+    }
+}
+
+/// A fresh landing whose target's workspace presents another project lands
+/// under its own: `proj`'s `main` and the members it moves, the shared `lib`
+/// among them, which both projects have on `main`; the workspace still
+/// presents `proj2`.
+pub fn land_into_a_workspace_presenting_another_project() -> Scenario {
+    Scenario {
+        name: "land into a workspace presenting another project",
+        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["activate", "proj2"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("did not finish aligning"))
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::App,
+                    mark: "w-app",
+                })
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "w-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "w-lib",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+        ],
+    }
+}
+
+/// `main` lists `docs`, which another machine added and this machine took in
+/// with git alone, so it has no clone of it. Composing the workspace onto
+/// `main` cannot make `docs`' checkout: the member's line names the failure
+/// and its route, the op parks, and `--json` records it as
+/// `materialize-failed`. Making the clone as printed lets the landing finish.
+pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
+    scenario(
+        "land names a member composing cannot materialize",
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            create("w"),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["merge", "--ff-only", "origin/main"])
+                .may_leave_unresolved(&[Repo::Docs]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_leave_unresolved(&[Repo::Docs])
+                .claim(Claim::OutputContains(
+                    "  local/remotes/docs: materialize failed:",
+                ))
+                .claim(Claim::OutputLine("rwv explain missing-canonical-clone"))
+                .claim(Claim::OutputContains("rwv update --project proj")),
+            Step::rwv(&ww("w"), &["explain", "missing-canonical-clone"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("canonical")),
+            Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--json"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_leave_unresolved(&[Repo::Docs])
+                .claim(Claim::OutputContains("\"kind\": \"materialize-failed\""))
+                .claim(Claim::OutputContains(
+                    "\"refusal\": \"missing-canonical-clone\"",
+                )),
+            Step::rwv(&a(), &["update", "--project", "proj"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    )
 }
