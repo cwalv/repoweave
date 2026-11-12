@@ -480,6 +480,8 @@ every_scenario!(
     land_never_resolves_a_published_record_to_an_unrelated_branch,
     land_refuses_work_built_on_another_lineage,
     land_never_rewrites_a_declared_mode_branch,
+    dc01_mid_operation_land,
+    deletion_offline_unpublished,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2797,4 +2799,14 @@ fn a_landing_refuses_work_built_on_another_lineage() {
 fn a_landing_never_rewrites_a_declared_mode_branch() {
     runner::run(scenarios::land_never_rewrites_a_declared_mode_branch())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_mid_operation_refuses_the_landing_with_its_own_status() {
+    runner::run(scenarios::dc01_mid_operation_land()).assert_fully_decided_green();
+}
+
+#[test]
+fn deletion_offline_unpublished_lands_and_retires_by_local_refs() {
+    runner::run(scenarios::deletion_offline_unpublished()).assert_fully_decided_green();
 }

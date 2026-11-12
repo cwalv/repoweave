@@ -5247,3 +5247,47 @@ pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
         ],
     )
 }
+
+/// `dc01-mid-operation`, for the landing: a member stopped mid-bisect refuses
+/// `edits` mid-operation, offering only the VCS's own status, and moves
+/// nothing.
+pub fn dc01_mid_operation_land() -> Scenario {
+    scenario(
+        "dc01 a member mid-operation refuses the landing",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(&ww("w"), Repo::Lib, &["bisect", "start"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation))
+                .claim(Claim::OutputLacks("commit your edits"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// `deletion-offline-unpublished`: a minted seat never pushed, every remote
+/// unreachable: `land --retire` lands, deletes the seat's branches by local
+/// refs, and removes the workweave.
+pub fn deletion_offline_unpublished() -> Scenario {
+    scenario(
+        "deletion offline, unpublished",
+        vec![
+            create("seat"),
+            Step::commit(&ww("seat"), Repo::App, "seat-app"),
+            Step::unreachable(Remote::origin(Repo::App)),
+            Step::unreachable(Remote::origin(Repo::Lib)),
+            Step::unreachable(Remote::origin(Repo::Docs)),
+            Step::unreachable(Remote::origin(Repo::Proj)),
+            Step::rwv(&ww("seat"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("seat")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "seat-app",
+                }),
+        ],
+    )
+}

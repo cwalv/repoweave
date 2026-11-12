@@ -2008,7 +2008,11 @@ fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
 
     let ww_server_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let out = common::cli::run(&["land", "--continue"], &ww.root);
-    common::cli::refused(&out, State::TargetMovedMidOperation);
+    let stderr = common::cli::refused(&out, State::TargetMovedMidOperation);
+    assert!(
+        !stderr.contains("land: composing"),
+        "the resume refuses before it composes anything: {stderr}"
+    );
     assert!(
         ww.root.join(".rwv-op").exists(),
         "the refused resume keeps the op"

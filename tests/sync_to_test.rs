@@ -1488,3 +1488,15 @@ fn land_takes_no_target_operand() {
         before
     );
 }
+
+/// `sync-to` is gone: no verb answers to it.
+#[test]
+fn sync_to_is_no_verb() {
+    let out = common::rwv().args(["sync-to"]).output().unwrap();
+    assert!(!out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("external command"),
+        "{}",
+        common::cli::describe(&out)
+    );
+}
