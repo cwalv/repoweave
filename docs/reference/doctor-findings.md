@@ -1459,25 +1459,27 @@ lost. Committing drift records the move's reverse on the branch. Then re-run.
 
 ### `orphaned-savepoint`
 
-A `refs/rwv/pre-op/<op-id>` savepoint whose op id matches no `.rwv-op` file in
-this workspace tree.
+The savepoints filed under a `refs/rwv/pre-op/<op-id>` key whose op id matches
+no `.rwv-op` file in this workspace tree: a checkout's, and one per branch the
+operation moved without a checkout. The finding judges every tip filed under
+the key.
 
 #### `redundant`
 
-**Warning. Auto-fixable.** The savepoint tip is reachable from the current
-branch tip, so the commits are still anchored by a live branch.
+**Warning. Auto-fixable.** A branch reaches every tip filed under the key.
 
-**What to do:** `rwv doctor --fix` drops the ref. No objects are lost.
+**What to do:** `rwv doctor --fix` drops the key's savepoints, first keeping as
+a backup any tip that no branch reaches by the time it runs. No commit is lost.
 
 #### `live`
 
-**Warning. Auto-fixable.** The savepoint tip is *not* reachable. The ref is the
-last pointer to commits that would otherwise become unreachable — the same
-reason the reflog is never cut. A savepoint an earlier release kept after its
-operation ended (a tombstone) is one.
+**Warning. Auto-fixable.** Some tip filed under the key is reached by no
+branch: a savepoint is the last pointer to it, the same reason the reflog is
+never cut. A savepoint an earlier release kept after its operation ended (a
+tombstone) is one.
 
-**What to do:** `rwv doctor --fix` keeps the commits as a backup, then drops the
-savepoint: `rwv backup list` shows what it holds and `rwv backup drop` drops it
+**What to do:** `rwv doctor --fix` keeps each such tip as a backup, then drops
+the key's savepoints: `rwv backup list` shows what it holds and `rwv backup drop` drops it
 when it is not wanted. Nothing reads a savepoint as a backup before `--fix`
 converts it, and no commit is lost in the conversion.
 

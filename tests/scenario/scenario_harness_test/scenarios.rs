@@ -9429,6 +9429,44 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() -> Scenario {
 }
 
 /// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
+/// the operator detaches `app` and deletes the branch the copy went onto.
+/// Abort cannot switch `app` back, so it refuses and prints the command that
+/// puts the branch back at the savepoint; run, it lets the rerun restore.
+pub fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::App, &["switch", "-q", "--detach"]),
+        Step::git(&ww("p"), Repo::App, &["branch", "-D", "proj--p"]),
+        Step::rwv(&ww("p"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(
+                "local/remotes/app: is off 'proj--p', where its savepoint was taken",
+            )),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::ResumeContradictsRecord))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
+        Step::rwv_printed(&ww("p"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .claim(Claim::OnBranch {
+                at: ww("p"),
+                repo: Repo::App,
+                branch: "proj--p",
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            }),
+    ]);
+    scenario(
+        "cherry-pick abort names how to put back a deleted branch",
+        steps,
+    )
+}
+
+/// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
 /// the operator edits the copied file in `app`: abort resets `app` to its
 /// savepoint, keeping the edit as a backup first.
 pub fn cherry_pick_abort_keeps_edits_made_after_the_stop() -> Scenario {

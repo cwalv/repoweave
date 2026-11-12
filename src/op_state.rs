@@ -529,6 +529,10 @@ pub struct TakeInRecord {
     /// Each repo the op started a merge in, written before it starts.
     #[serde(default)]
     pub integrating: Vec<RepoKey>,
+    /// `rwv abort` began restoring: written before it moves anything, so a
+    /// refused or interrupted abort leaves a record only `rwv abort` takes up.
+    #[serde(default)]
+    pub abort_begun: bool,
 }
 
 /// One move a landing reports as it makes it.
@@ -1403,6 +1407,19 @@ pub fn journal_integrating(workspace_dir: &Path, repo: RepoKey) -> anyhow::Resul
     write_owner(workspace_dir, &record)
 }
 
+/// Mark the op recorded at `workspace_dir` as one `rwv abort` began rolling
+/// back.
+pub fn mark_abort_begun(workspace_dir: &Path) -> anyhow::Result<()> {
+    let Some(mut record) = read_owner(workspace_dir)? else {
+        return Ok(());
+    };
+    record
+        .take_in
+        .get_or_insert_with(TakeInRecord::default)
+        .abort_begun = true;
+    write_owner(workspace_dir, &record)
+}
+
 /// Journal a branch the op moved as a ref, checked out nowhere.
 pub fn journal_ref_move(workspace_dir: &Path, moved: RefMove) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
@@ -1954,6 +1971,20 @@ pub fn fix_dead_lease(workspace_dir: &Path) {
 /// Returns an error if no op-state is present.
 pub fn resume(workspace_dir: &Path) -> anyhow::Result<ResolvedOwner> {
     match resolve_to_owner(workspace_dir)? {
+        Some(resolved)
+            if resolved
+                .record
+                .take_in
+                .as_ref()
+                .is_some_and(|take_in| take_in.abort_begun) =>
+        {
+            crate::refuse!(
+                RefusalKind::ResumeContradictsRecord,
+                "`rwv abort` began rolling this operation back at {}, so it cannot be continued; \
+                 run `rwv abort` to finish rolling it back",
+                resolved.owner_workspace.as_path().display()
+            );
+        }
         Some(resolved) => Ok(resolved),
         None => {
             crate::refuse!(

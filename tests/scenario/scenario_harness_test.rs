@@ -699,6 +699,7 @@ every_scenario!(
     abort_keeps_edits_made_in_the_target_after_the_stop,
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
+    cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2482,6 +2483,12 @@ fn update_remote_abort_leaves_a_merge_in_a_member_it_never_merges() {
 #[test]
 fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() {
     runner::run(scenarios::update_remote_abort_refuses_a_merge_in_a_member_it_never_merges())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
+    runner::run(scenarios::cherry_pick_abort_names_how_to_put_back_a_deleted_branch())
         .assert_fully_decided_green();
 }
 

@@ -4959,6 +4959,21 @@ impl GitVcs {
             (_, HeadObservation::Detached { .. } | HeadObservation::Unborn { .. }) => Some(None),
         };
         if let Some(off) = off {
+            if let SavedCheckout::On(branch) = &on {
+                let held_at: Vec<PathBuf> = self
+                    .checkouts_of_branch(repo, branch)?
+                    .into_iter()
+                    .filter(|held| !same_location(held, repo))
+                    .collect();
+                let gone = self.resolve_local_branch_tip(repo, branch)?.is_none();
+                if gone || !held_at.is_empty() {
+                    return Ok(VerifiedRestoreOutcome::CannotSwitchBack {
+                        branch: branch.clone(),
+                        savepoint: savepoint.id().clone(),
+                        held_at,
+                    });
+                }
+            }
             if !attributable(head_id) && foreign_tip_policy == ForeignTipPolicy::Refuse {
                 return Ok(VerifiedRestoreOutcome::ForeignTip {
                     observed_tip: head_id.clone(),

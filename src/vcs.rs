@@ -1087,6 +1087,15 @@ pub enum VerifiedRestoreOutcome {
         returns_to: CommitId,
         savepoint: CommitId,
     },
+    /// The checkout, at a tip abort may restore, is off the branch its
+    /// savepoint names, and that branch cannot be checked out here: it is
+    /// gone, or another checkout holds it. Nothing was touched.
+    CannotSwitchBack {
+        branch: RawRefName,
+        savepoint: CommitId,
+        /// The checkouts holding the branch; empty where it is gone.
+        held_at: Vec<PathBuf>,
+    },
     /// Work was kept as backups before the steps that would have discarded
     /// it; `then` is what the restore did.
     Kept {

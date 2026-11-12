@@ -6776,6 +6776,9 @@ struct AbortTally {
     /// The repos left stopped in an operation abort may not cancel unasked,
     /// with the VCS action that shows how to end it there.
     stopped: Vec<(RepoOperand, ConflictOp, String)>,
+    /// The repos abort cannot switch back onto their saved branch, with the
+    /// choice that frees it.
+    blocked: Vec<(RepoOperand, String)>,
 }
 
 impl AbortTally {
@@ -6870,6 +6873,10 @@ pub fn run_abort(
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }
 
+    if let op_state::OwnerReading::Whole(_) = &reading {
+        op_state::mark_abort_begun(owner_workspace.as_path())
+            .context("could not record that abort began")?;
+    }
     let mut tally = AbortTally::default();
     let operates_in = match &reading {
         op_state::OwnerReading::Whole(record) => record.operates_in(),
@@ -7508,6 +7515,46 @@ fn report_abort_outcome(
                  operation, so it is left as it is"
             );
         }
+        VerifiedRestoreOutcome::CannotSwitchBack {
+            branch,
+            savepoint,
+            held_at,
+        } => {
+            tally.any_foreign = true;
+            let dir = repo_abs.display().to_string();
+            let (why, choice) = if held_at.is_empty() {
+                (
+                    "it is gone".to_owned(),
+                    format!(
+                        "put '{branch}' back at the savepoint:\n\t{}",
+                        vcs.hint(crate::vcs::VcsAction::BranchAt)
+                            .replace("<checkout>", &dir)
+                            .replace("<name>", branch.as_str())
+                            .replace("<sha>", savepoint.as_str())
+                    ),
+                )
+            } else {
+                let held = held_at
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    format!("it is checked out at {held}"),
+                    format!(
+                        "free the checkout at {held} of '{branch}' (switch it to another \
+                         branch, or detach it), as this shows:\n\t{}",
+                        vcs.hint(crate::vcs::VcsAction::Status)
+                            .replace("<checkout>", &held)
+                    ),
+                )
+            };
+            eprintln!(
+                "  {label}: is off '{branch}', where its savepoint was taken, and cannot be \
+                 switched back: {why}; it is left as it is"
+            );
+            tally.blocked.push((named.clone(), choice));
+        }
         VerifiedRestoreOutcome::Kept { kept, then } => {
             for work in kept {
                 match work {
@@ -7604,6 +7651,9 @@ fn print_abort_recovery_options(tally: &AbortTally) {
              or give it up, its uncommitted edits and its commits kept as backups first:\n\
              \trwv abort --abandon-foreign-tip {named}"
         ));
+    }
+    for (named, choice) in &tally.blocked {
+        lines.push(format!("  {named}: {choice}\nthen rerun:\n\trwv abort"));
     }
     for named in &tally.abandonable {
         lines.push(format!(

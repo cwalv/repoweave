@@ -760,6 +760,65 @@ fn fix_is_idempotent_across_all_three_kinds() {
 /// A savepoint whose op_id is present in a live `.rwv-op` belongs to a
 /// sync that is in flight or paused; doctor must NOT report it as
 /// orphaned regardless of the savepoint tip's reachability.
+/// An orphaned key is judged by every savepoint filed under it, a branch's
+/// included: one whose checkout savepoint HEAD reaches but whose branch
+/// savepoint holds a commit no branch reaches, and one holding only a branch
+/// savepoint, each have that commit kept as a backup before `--fix` drops
+/// the key.
+#[test]
+fn orphaned_branch_savepoints_are_kept_as_backups_by_fix() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let first_sha = init_git_repo(&repo_abs);
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    let side_sha = add_empty_commit(&repo_abs, "side");
+    let other_sha = add_empty_commit(&repo_abs, "other");
+    let git_ok = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&repo_abs)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+    };
+    git_ok(&["update-ref", "refs/heads/main", &first_sha]);
+    git_ok(&["reset", "-q", "--hard", &first_sha]);
+    let with_checkout = "333333333333333333";
+    add_savepoint(&repo_abs, with_checkout, &first_sha);
+    git_ok(&[
+        "update-ref",
+        &format!("refs/rwv/pre-op/{with_checkout}/ref/side"),
+        &side_sha,
+    ]);
+    let branch_only = "444444444444444444";
+    git_ok(&[
+        "update-ref",
+        &format!("refs/rwv/pre-op/{branch_only}/ref/other"),
+        &other_sha,
+    ]);
+
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[fixed]"), "{stdout}");
+    assert!(!savepoint_exists(&repo_abs, with_checkout), "{stdout}");
+    assert!(!savepoint_exists(&repo_abs, branch_only), "{stdout}");
+    let kept: Vec<String> = backups_of(&root, repo_rel)
+        .into_iter()
+        .map(|(_, tip)| tip)
+        .collect();
+    assert!(kept.contains(&side_sha), "{kept:?}\n{stdout}");
+    assert!(kept.contains(&other_sha), "{kept:?}\n{stdout}");
+}
+
 #[test]
 fn live_op_state_protects_matching_savepoint() {
     let tmp = common::tempdir().unwrap();

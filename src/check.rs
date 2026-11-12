@@ -966,16 +966,12 @@ impl std::fmt::Display for ViolationKind {
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum OrphanedSavepointKind {
-    /// The savepoint tip is reachable from the current branch tip, so
-    /// the ref is redundant — the underlying commits are still anchored
-    /// by the live branch and dropping the savepoint loses no objects.
-    /// `--fix` may drop redundant savepoints.
+    /// Every tip filed under the key, the checkout's and each branch's, is
+    /// reached by a branch, so dropping the savepoints loses no commit.
     Redundant,
-    /// The savepoint tip is **not** reachable from the current branch
-    /// tip. The ref is the last pointer to commits that would otherwise
-    /// become unreachable. Auto-fixable: `--fix` keeps them as a backup,
-    /// then drops the savepoint, so the commits stay reachable and
-    /// `rwv backup` reaches them.
+    /// Some tip filed under the key is reached by no branch: a savepoint
+    /// is the last pointer to it. `--fix` keeps each such tip as a backup,
+    /// then drops the key's savepoints.
     Live,
 }
 
@@ -5550,14 +5546,8 @@ pub struct StateHygieneOpStateTarget {
 /// - **orphaned-savepoint**: a `refs/rwv/pre-op/<op-id>` ref whose
 ///   `op_id` is not present in any live `.rwv-op` file inside
 ///   `op_state_targets`. Classified as
-///   [`OrphanedSavepointKind::Redundant`] when the savepoint tip is an
-///   ancestor of the repo's current ref (the underlying commits remain
-///   anchored by the live branch, so dropping the savepoint loses no
-///   objects), and [`OrphanedSavepointKind::Live`] otherwise. Only
-///   `Redundant` savepoints are `--fix`-eligible — dropping a `Live`
-///   savepoint would discard the last pointer to commits not held by
-///   any other ref, same rationale that put reflog on the FORBIDDEN
-///   tripwire list.
+///   [`OrphanedSavepointKind::Redundant`] when a branch reaches every tip
+///   filed under the key, and [`OrphanedSavepointKind::Live`] otherwise.
 ///
 /// Returns the violations in the canonical order produced by iterating
 /// `repos` and then `op_state_targets`; the caller is responsible for
@@ -5645,11 +5635,6 @@ pub fn scan_state_hygiene(
             }
         }
 
-        // Orphaned savepoints. Resolve current HEAD up front so we can
-        // classify each ref; if HEAD itself is unreadable, we report
-        // every savepoint as Live (conservative — we cannot prove
-        // reachability, so we keep the ref).
-        let head = vcs.head_revision(&repo.abs).ok();
         let listing = match vcs.list_savepoints(&repo.abs) {
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
@@ -5672,23 +5657,9 @@ pub fn scan_state_hygiene(
             if live_savepoints.contains(&key) {
                 continue;
             }
-            let sub_kind = match (&head, vcs.resolve_savepoint(&repo.abs, &key)) {
-                (Some(head_rev), Some(sp_rev)) => {
-                    // `is_ancestor(sp, head)` is non-strict: equal revisions
-                    // return true, which is what we want — a savepoint
-                    // pointing at the same commit as HEAD is trivially
-                    // redundant.
-                    match vcs.is_ancestor(&repo.abs, &sp_rev, head_rev) {
-                        Ok(true) => OrphanedSavepointKind::Redundant,
-                        // Not reachable from HEAD, or git couldn't decide:
-                        // assume Live to stay on the safe side. The
-                        // "couldn't decide" branch is conservative — we
-                        // don't have proof of reachability.
-                        Ok(false) | Err(_) => OrphanedSavepointKind::Live,
-                    }
-                }
-                // No HEAD or no savepoint SHA → conservative: keep the ref.
-                _ => OrphanedSavepointKind::Live,
+            let sub_kind = match unreached_savepoint_tips(vcs, &repo.abs, &key) {
+                Ok(unreached) if unreached.is_empty() => OrphanedSavepointKind::Redundant,
+                Ok(_) | Err(_) => OrphanedSavepointKind::Live,
             };
             violations.push(CheckViolation::OrphanedSavepoint {
                 workweave: repo.workweave.clone(),
@@ -5702,6 +5673,36 @@ pub fn scan_state_hygiene(
     violations
 }
 
+/// Each tip filed under `key` in `repo`'s store, the checkout's and every
+/// branch's, that no branch reaches, with what a backup of it backs up.
+fn unreached_savepoint_tips(
+    vcs: &dyn crate::vcs::Vcs,
+    repo: &Path,
+    key: &SavepointKey,
+) -> Result<Vec<(crate::vcs::BackupSource, ResolvedRevisionId)>, crate::vcs::VcsError> {
+    let mut tips: Vec<(crate::vcs::BackupSource, ResolvedRevisionId)> = vcs
+        .resolve_savepoint(repo, key)
+        .map(|tip| (crate::vcs::BackupSource::DetachedHead, tip))
+        .into_iter()
+        .collect();
+    for saved in vcs.ref_savepoints(repo, key)? {
+        tips.push((
+            crate::vcs::BackupSource::Branch(saved.branch),
+            ResolvedRevisionId::from(saved.at),
+        ));
+    }
+    let mut unreached = Vec::new();
+    for (source, tip) in tips {
+        if !vcs
+            .reached_by_no_branch(repo, &tip, crate::vcs::RemoteTracking::Counted)?
+            .is_empty()
+        {
+            unreached.push((source, tip));
+        }
+    }
+    Ok(unreached)
+}
+
 /// Apply the `--fix` for a single state-hygiene violation.
 ///
 /// The accepted `--fix` paths are deliberately narrow:
@@ -5712,14 +5713,11 @@ pub fn scan_state_hygiene(
 ///   the registering repo. Information-preserving by construction: the only
 ///   state dropped is a pointer to a directory that does not exist, and a
 ///   locked registration, or one whose directory has come back, is kept.
-/// - [`CheckViolation::OrphanedSavepoint`] with
-///   [`OrphanedSavepointKind::Redundant`] → [`crate::vcs::Vcs::drop_savepoint`].
-///   The ref tip is reachable from the current branch, so dropping the
-///   ref does not unanchor any commits.
-/// - [`CheckViolation::OrphanedSavepoint`] with
-///   [`OrphanedSavepointKind::Live`] → the tip is kept as a backup, then the
-///   savepoint is dropped. This is the only route from a savepoint to a
-///   backup; nothing reads a savepoint as one.
+/// - [`CheckViolation::OrphanedSavepoint`], either kind → each tip filed
+///   under the key that no branch reaches when the fix runs is kept as a
+///   backup, then every savepoint under the key is dropped. This is the
+///   only route from a savepoint to a backup; nothing reads a savepoint as
+///   one.
 /// - [`CheckViolation::DeadOpLease`] → [`crate::op_state::fix_dead_lease`]
 ///   removes the dangling `.rwv-op-lease`. Safe by construction: the
 ///   classification proved the lease is paired with no live owner record
@@ -5748,36 +5746,22 @@ pub fn fix_state_hygiene(
                 .with_context(|| format!("worktree prune failed in {}", repo_abs.display()))?;
             Ok(outcome == crate::vcs::RegistrationPrune::Pruned)
         }
-        CheckViolation::OrphanedSavepoint {
-            key,
-            sub_kind: OrphanedSavepointKind::Redundant,
-            ..
-        } => {
-            // drop_savepoint swallows ref-update errors by design — the
-            // savepoint is purely a recovery aid.
-            vcs.drop_savepoint(repo_abs, key);
-            Ok(true)
-        }
-        CheckViolation::OrphanedSavepoint {
-            key,
-            sub_kind: OrphanedSavepointKind::Live,
-            ..
-        } => {
-            let Some(tip) = vcs.resolve_savepoint(repo_abs, key) else {
-                return Ok(false);
-            };
-            vcs.create_backup(
-                repo_abs,
-                &crate::vcs::BackupSource::DetachedHead,
-                &tip,
-                None,
-            )
-            .with_context(|| {
+        CheckViolation::OrphanedSavepoint { key, .. } => {
+            let unreached = unreached_savepoint_tips(vcs, repo_abs, key).with_context(|| {
                 format!(
-                    "could not keep the savepoint {key} as a backup in {}",
+                    "could not read the savepoints filed under {key} in {}",
                     repo_abs.display()
                 )
             })?;
+            for (source, tip) in &unreached {
+                vcs.create_backup(repo_abs, source, tip, None)
+                    .with_context(|| {
+                        format!(
+                            "could not keep the savepoint {key} as a backup in {}",
+                            repo_abs.display()
+                        )
+                    })?;
+            }
             vcs.drop_savepoint(repo_abs, key);
             Ok(true)
         }
@@ -6930,7 +6914,7 @@ impl CheckViolation {
                 };
                 let detail = match sub_kind {
                     OrphanedSavepointKind::Redundant => {
-                        "orphaned-savepoint (redundant — tip reachable from HEAD; \
+                        "orphaned-savepoint (redundant — every tip it holds reached by a branch; \
                              run `rwv doctor --fix` to drop)"
                     }
                     OrphanedSavepointKind::Live => {
