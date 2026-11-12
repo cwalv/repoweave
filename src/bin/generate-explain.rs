@@ -8713,7 +8713,7 @@ mod tests {
             "[`alignment`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n",
             "`legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",
-            "`rwv -w myproj--hotfix sync primary`, `rwv workweave\n",
+            "`rwv -w myproj--hotfix sync-to primary`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
             "`rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n",

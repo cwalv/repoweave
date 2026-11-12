@@ -2742,6 +2742,7 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 cleanup(ctx)?;
                 ctx.handler.record_complete();
                 announce_completion(ctx);
+                let stranded: Vec<&str> = stranded.iter().map(RepoPath::as_str).collect();
                 fail_on_stranded_checkouts(ctx.verb, &stranded)?;
                 if ctx.retire_left.load(std::sync::atomic::Ordering::Relaxed) {
                     return Err(crate::exit_status::CompletedWithRemainder.into());
@@ -2779,17 +2780,17 @@ fn stranded_checkouts(ctx: &OpContext<'_>) -> anyhow::Result<Vec<RepoPath>> {
 /// A merge or sync completed but left the dropped checkouts named in
 /// `members` on disk.
 pub(crate) fn fail_on_refused_prunes(members: &[MemberOutput]) -> anyhow::Result<()> {
-    let stranded: Vec<RepoPath> = members
+    let stranded: Vec<&str> = members
         .iter()
         .filter_map(|member| match member {
-            MemberOutput::PruneRefused { path, .. } => RepoPath::new(path).ok(),
+            MemberOutput::PruneRefused { path, .. } => Some(path.as_str()),
             _ => None,
         })
         .collect();
     fail_on_stranded_checkouts(op_state::OpVerb::Sync, &stranded)
 }
 
-fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> anyhow::Result<()> {
+fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[&str]) -> anyhow::Result<()> {
     if stranded.is_empty() {
         return Ok(());
     }
@@ -2806,11 +2807,7 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> 
          names, and {them} {are} still on disk:\n  {list}\n\
          Re-running {verb} will not prune {them}. Once nothing in {them} is needed, remove {them} \
          by hand.",
-        list = stranded
-            .iter()
-            .map(RepoPath::as_str)
-            .collect::<Vec<_>>()
-            .join("\n  "),
+        list = stranded.join("\n  "),
     ))
 }
 
@@ -8051,7 +8048,7 @@ mod tests {
         );
         assert!(
             !msg.contains("rwv sync primary") && !msg.contains("rwv sync /"),
-            "must NOT hardcode `rwv sync <source>`: {msg}"
+            "must NOT hardcode a workspace to sync from: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
@@ -8104,7 +8101,7 @@ mod tests {
         );
         assert!(
             !msg.contains("rwv sync ww1") && !msg.contains("rwv sync /"),
-            "must NOT hardcode `rwv sync <source>`: {msg}"
+            "must NOT hardcode a workspace to sync from: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
@@ -8159,7 +8156,7 @@ mod tests {
         );
         assert!(
             !msg.contains("rwv sync /abs/source"),
-            "must NOT hardcode `rwv sync <source>`: {msg}"
+            "must NOT hardcode a workspace to sync from: {msg}"
         );
     }
 
@@ -8196,7 +8193,7 @@ mod tests {
         );
         assert!(
             !msg.contains("rwv sync primary"),
-            "must NOT hardcode `rwv sync <source>`: {msg}"
+            "must NOT hardcode a workspace to sync from: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
@@ -8270,7 +8267,7 @@ mod tests {
         );
         assert!(
             !msg.contains("rwv sync primary"),
-            "must NOT hardcode `rwv sync <source>`: {msg}"
+            "must NOT hardcode a workspace to sync from: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
