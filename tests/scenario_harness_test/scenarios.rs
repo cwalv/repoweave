@@ -3427,3 +3427,122 @@ pub fn dc15_moved_reports() -> Scenario {
         ],
     }
 }
+
+fn delete_with(name: &str, flags: &[&str]) -> Step {
+    let mut args = vec!["workweave", "delete", "--project", "proj", name];
+    args.extend_from_slice(flags);
+    Step::rwv(&a(), &args)
+}
+
+/// dc16-destroys-name-repos: `--delete-remote` deletes only push branches
+/// that landed; an unlanded one is deleted only in the repo
+/// `--delete-remote-unlanded` names, after a backup; `backup drop` needs a
+/// repo.
+pub fn dc16_destroys_name_repos() -> Scenario {
+    let pushed = |at: &Place, repo: Repo, branch: &'static str| {
+        Step::git(at, repo, &["push", "origin", branch]).pushes(Remote::origin(repo), branch)
+    };
+    scenario(
+        "dc16: a delete destroys only what landed, or the repos it names",
+        vec![
+            create("feat"),
+            Step::commit(&ww("feat"), Repo::Lib, "feat-lib"),
+            pushed(&ww("feat"), Repo::Lib, "proj--feat"),
+            pushed(&ww("feat"), Repo::App, "proj--feat"),
+            pushed(&ww("feat"), Repo::Proj, "proj--feat"),
+            delete_with("feat", &["--discard-unlanded", "--delete-remote"])
+                .deletes(Remote::origin(Repo::App), "proj--feat")
+                .deletes(Remote::origin(Repo::Proj), "proj--feat")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("feat")))
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::App,
+                    branch: "proj--feat",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "proj--feat",
+                    mark: "feat-lib",
+                })
+                .claim(Claim::BackedUp {
+                    repo: Repo::Lib,
+                    mark: "feat-lib",
+                    marked: None,
+                }),
+            create("feat2"),
+            Step::commit(&ww("feat2"), Repo::Lib, "feat2-lib"),
+            Step::commit(&ww("feat2"), Repo::App, "feat2-app"),
+            pushed(&ww("feat2"), Repo::Lib, "proj--feat2"),
+            pushed(&ww("feat2"), Repo::App, "proj--feat2"),
+            delete_with(
+                "feat2",
+                &[
+                    "--discard-unlanded",
+                    "--delete-remote-unlanded",
+                    "local/remotes/lib",
+                ],
+            )
+            .deletes(Remote::origin(Repo::Lib), "proj--feat2")
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("feat2")))
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Lib,
+                branch: "proj--feat2",
+            })
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "proj--feat2",
+                mark: "feat2-app",
+            })
+            .claim(Claim::BackedUp {
+                repo: Repo::Lib,
+                mark: "feat2-lib",
+                marked: None,
+            })
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "feat2-app",
+                marked: None,
+            }),
+            Step::rwv(&a(), &["backup", "drop", "--project", "proj"])
+                .expect(Exit::Code(2))
+                .claim(Claim::OutputContains("<REPO>"))
+                .claim(Claim::BackedUp {
+                    repo: Repo::Lib,
+                    mark: "feat2-lib",
+                    marked: None,
+                }),
+        ],
+    )
+}
+
+/// dc18-partial-delete-status: a delete that leaves an unlanded member
+/// branch exits with its own status and names each survivor and why.
+pub fn dc18_partial_delete_status() -> Scenario {
+    scenario(
+        "dc18: a partial delete exits 3 naming its survivors",
+        vec![
+            create("feat"),
+            Step::commit(&ww("feat"), Repo::Lib, "unlanded-lib"),
+            delete_with("feat", &["--json"])
+                .expect(Exit::Code(3))
+                .claim(Claim::WorkweaveGone(ww("feat")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "proj--feat",
+                    mark: "unlanded-lib",
+                })
+                .claim(Claim::OutputContains("\"reason\": \"unlanded\""))
+                .claim(Claim::OutputContains("\"reason\": \"members\""))
+                .claim(Claim::OutputContains("unlanded-lib")),
+            create("feat2"),
+            Step::commit(&ww("feat2"), Repo::Lib, "unlanded-lib2"),
+            delete_with("feat2", &[])
+                .expect(Exit::Code(3))
+                .claim(Claim::OutputContains(
+                    "left: local/remotes/lib proj--feat2: unlanded",
+                )),
+        ],
+    )
+}

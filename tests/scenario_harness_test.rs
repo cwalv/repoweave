@@ -531,6 +531,8 @@ every_scenario!(
     update_remote_writes_lock,
     detached_create_start,
     dc15_moved_reports,
+    dc16_destroys_name_repos,
+    dc18_partial_delete_status,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source.
@@ -2496,4 +2498,14 @@ fn member_pin_behind() {
 #[test]
 fn update_reports_a_member_moved_off_a_branch_nothing_accounts_for() {
     runner::run(scenarios::dc15_moved_reports()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_delete_destroys_only_landed_push_branches_or_the_repos_it_names() {
+    runner::run(scenarios::dc16_destroys_name_repos()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_delete_leaving_an_unlanded_branch_exits_3_naming_each_survivor() {
+    runner::run(scenarios::dc18_partial_delete_status()).assert_fully_decided_green();
 }
