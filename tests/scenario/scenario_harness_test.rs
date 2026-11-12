@@ -2692,8 +2692,9 @@ holding_rwv! {
 }
 
 holding_rwv! {
-    /// A branch `main` declares, checked out nowhere and beyond `main`'s pin,
-    /// refuses the landing as `pin` unpinned; its printed choices clear it.
+    /// A receiving branch the landing moves as a ref, beyond `main`'s pin by
+    /// commits no lock records, refuses the landing as `pin` unpinned; its
+    /// printed choices clear it.
     fn a_target_branch_beyond_its_pin_refuses_a_landing_as_refs() {
         runner::run(scenarios::landing_as_refs_unpinned()).assert_fully_decided_green();
     }

@@ -356,9 +356,11 @@ nowhere, and the savepoint step files a ref savepoint for the target's
 project branch as for a member's (`advance_receiving_ref` moves both by
 compare-and-swap). The snapshot reads the target's lock at its tip through
 the source's project repo and resolves it in the primary
-(`ClassifySource::Refs`), and `judge_unpinned_refs` judges each branch the
-target declares for a member the plan leaves alone against its pin, as
-`judge_target_pins` judges a checkout of it. A primary that is the source
+(`ClassifySource::Refs`), and `judge_unpinned_refs` judges each receiving
+branch the plan moves as a ref against its pin: one holding commits beyond
+it that no live lock and no remote reaches refuses `pin` unpinned, since the
+landing would compose onto them and pin them unrecorded. A branch the plan
+leaves alone is not judged. A primary that is the source
 switches to the target (`switch_primary_to_target`) and aligns.
 
 **Ordering rule: member repos first, project repo last, and the project
