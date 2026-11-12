@@ -8385,13 +8385,15 @@ pub fn land_continue_judges_target_edits_where_it_moves() -> Scenario {
         vec![
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::rwv_paused(&ww("w"), &["land"], "advance-target", "landing"),
             Step::kill("landing"),
-            Step::hand_edit(&a(), Repo::App, "README", "app", "app edited"),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "lib edited"),
             Step::rwv(&ww("w"), &["land", "--continue"])
-                .expect(Exit::refuses(Repo::App, State::EditsDirty))
-                .claim(Claim::LocalStateUnchanged(a())),
-            Step::hand_edit(&a(), Repo::App, "README", "app edited", "app"),
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib edited", "lib"),
             Step::rwv(&ww("w"), &["land", "--continue"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
