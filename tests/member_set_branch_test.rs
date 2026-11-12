@@ -541,7 +541,7 @@ fn update_remote_refuses_a_declared_branch_that_exists_nowhere_as_lock_does_and_
 }
 
 #[test]
-fn update_reports_a_declared_branch_that_exists_nowhere_by_the_same_judgement() {
+fn update_reports_a_declared_branch_that_exists_nowhere_by_the_same_judgment() {
     let w = two_members();
     declare_by_hand(&w, LIB, "nowhere");
 

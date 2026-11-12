@@ -71,9 +71,11 @@ single repo) to record the new cross-repo state. Common patterns:
   to capture the joint state.
 - After a hand edit of `rwv.toml`: `rwv lock --commit` commits the whole file.
   It first runs the step of each setter for the entries that changed (a
-  declared branch is pinned at its tip and the member switched onto it, a
-  branch that exists nowhere refusing as `name` `no-such-branch`; a url
-  relinks; a hand-added member gets its first pin), then commits every other
+  declared branch is pinned at its tip and the member switched onto it, a pin
+  moved backward reported as `re-pinned <old> to <new>, by name`, a branch
+  that exists nowhere refusing as `name` `no-such-branch`; a url relinks, or
+  is reported waiting for a fetch, naming `rwv fetch`; a hand-added member
+  gets its first pin), then commits every other
   change as it stands, `[integrations]` and `[workweave]` included, with the
   files its regeneration rewrites. Every refusal is judged before anything is
   written. The `member` verbs commit their own change.

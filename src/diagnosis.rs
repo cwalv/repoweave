@@ -766,8 +766,9 @@ impl State {
                              branch `--against` names; `rwv branch set-mode`, for a branch the \
                              project repo has neither locally nor on a remote as last fetched; \
                              `rwv member set-branch`, for a branch the member's repo has neither \
-                             locally nor on a remote as last fetched; `rwv lock --commit`, for a \
-                             declared branch a hand edit named that exists nowhere; `rwv switch`, \
+                             locally nor on a remote as last fetched; `rwv lock --commit` and `rwv \
+                             update --remote`, for a declared branch a hand edit named that \
+                             exists nowhere; `rwv switch`, \
                              for a branch the project repo lacks, and `rwv branch create`, for a \
                              `--target` or `--at` that names nothing here",
                 offers: &[Form::C33, Form::C11SetBranchNew, Form::C18],
