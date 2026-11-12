@@ -466,7 +466,7 @@ fn a_workweave_create_from_an_unrecorded_branch_refuses_before_it_makes_anything
     let weave = Weave::new();
     weave.raw_branch("raw");
     let before = weave.state();
-    refused(
+    let stderr = refused(
         &run(
             &["workweave", "create", "--project", "demo", "ww"],
             &weave.ws,
