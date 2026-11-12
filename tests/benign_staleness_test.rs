@@ -1,7 +1,7 @@
 //! Adversarial coverage for Design-B Corrections 2 & 3:
 //! source-side cleanliness preflight, benign-staleness classification (reusing
 //! `status::LockRelation`), op-start auto-relock with commit-count output, and
-//! tips-as-truth pulls from a workweave source.
+//! the lock-freshness gates of landings.
 //!
 //! TERMINOLOGY (load-bearing): `LockRelation` names the relation from the TIP's
 //! vantage point, which is inverted from the spec's prose.
@@ -15,7 +15,6 @@
 //! on both `sync` and `sync-to`.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::vcs::{ConflictOp, MidOperation};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -190,7 +189,7 @@ fn relation_ok_sync_to_succeeds() {
 #[test]
 fn relation_ok_sync_succeeds() {
     let f = fixture();
-    // main advances + relocks so a `rwv sync primary` from ww has content to pull,
+    // main advances + relocks so a `rwv sync` from ww has content to take in,
     // with both sides at a fresh (ok) lock relation.
     commit_file(&f.main.manifest_repo, "m.txt", "m\n", "main: advance");
     rwv()
@@ -199,7 +198,7 @@ fn relation_ok_sync_succeeds() {
         .assert()
         .success();
     rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -740,473 +739,40 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
     );
 }
 
-/// sync (pull) from a WORKWEAVE source whose lock is behind HEAD (`Ahead`):
-/// tips-as-truth. The pull prints a NOTE naming the source's lag, pulls the
-/// source's committed tips, and leaves the source's lock file alone (no
-/// cross-workspace mutation on a read verb).
-#[test]
-fn relation_ahead_sync_from_workweave_source_pulls_tips_with_note() {
-    let f = fixture();
-    // Second workweave acts as the pull SOURCE; the primary (main) is CWD.
-    let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
-    let src = create_workweave(&f.main, &weaveroot, "src");
-
-    // src advances its manifest repo by 3 commits WITHOUT relocking → src's
-    // committed lock is behind src's HEAD (LockRelation::Ahead on the source).
-    commit_file(&src.manifest_repo, "x.txt", "x\n", "src: x");
-    commit_file(&src.manifest_repo, "y.txt", "y\n", "src: y");
-    commit_file(&src.manifest_repo, "z.txt", "z\n", "src: z");
-    let src_lock_before = std::fs::read_to_string(src.project_dir.join("rwv.lock")).unwrap();
-
-    let assert = rwv()
-        .args(["sync", &src.root.to_string_lossy()])
-        .current_dir(&f.main.root)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    assert!(
-        stderr.contains("source lock behind HEAD by 3 commits")
-            && stderr.contains("pulling committed tips"),
-        "expected tips-as-truth note naming the source lag; got stderr:\n{stderr}"
-    );
-
-    // The source's lock file was NOT mutated (read-side verb; source heals itself).
-    let src_lock_after = std::fs::read_to_string(src.project_dir.join("rwv.lock")).unwrap();
-    assert_eq!(
-        src_lock_before, src_lock_after,
-        "tips-as-truth must NOT touch the source's lock file"
-    );
-
-    // The pull DELIVERED the tips the note announced: main's manifest repo
-    // landed on src's committed HEAD (not src's stale lock), and main's
-    // relock pinned it.
-    let main_lib = head(&f.main.manifest_repo);
-    let src_lib = head(&src.manifest_repo);
-    assert_eq!(
-        main_lib, src_lib,
-        "pull must deliver the source's committed tips"
-    );
-    let main_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
-    assert!(
-        main_lock.contains(&src_lib),
-        "destination lock must pin the delivered tip; lock:\n{main_lock}"
-    );
-}
-
-/// A pull from an `Ahead` workweave source, stranded mid-replay and made ready
-/// to resume.
-///
-/// The source relocks once and then commits again, so its lock and its tip are
-/// distinct revisions the destination starts at neither of: what the resume
-/// leaves behind names which of the two replay targeted.
-///
-/// The strand is a project-repo conflict. Replay replays the project repo
-/// before any member repo, so this stops the op with the members where they
-/// started, and the source then commits again inside the operator's window.
-/// The resume re-pins at its own T0, so that later commit is what tips-as-truth
-/// must reach and what the recorded consent must decline to chase. Without it
-/// both outcomes would look identical to "the resume did nothing".
-struct StrandedPull {
-    f: Fixture,
-    /// The source's committed lock revision: replay's target under the
-    /// recorded `allow-stale-lock` consent.
-    locked: String,
-    /// The source's member tip at the moment the resume re-pins: replay's
-    /// target under tips-as-truth.
-    tip_at_resume: String,
-    /// Where the fresh invocation left the destination's member repo.
-    dest_after_strand: String,
-}
-
-fn strand_a_pull_from_an_ahead_workweave(extra: &[&str]) -> StrandedPull {
-    let f = fixture();
-    let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
-    let src = create_workweave(&f.main, &weaveroot, "src");
-    let dest_before = head(&f.main.manifest_repo);
-
-    commit_file(&src.manifest_repo, "x.txt", "x\n", "src: x");
-    rwv()
-        .args(["lock", "--commit"])
-        .current_dir(&src.root)
-        .assert()
-        .success();
-    let locked = head(&src.manifest_repo);
-    commit_file(&src.manifest_repo, "y.txt", "y\n", "src: y");
-
-    commit_file(
-        &src.project_dir,
-        "notes/shared.md",
-        "src take\n",
-        "docs: src take",
-    );
-    commit_file(
-        &f.main.project_dir,
-        "notes/shared.md",
-        "main take\n",
-        "docs: main take",
-    );
-
-    let mut args: Vec<String> = ["sync", &src.root.to_string_lossy(), "--strategy", "rebase"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    args.extend(extra.iter().map(|s| s.to_string()));
-    rwv()
-        .args(&args)
-        .current_dir(&f.main.root)
-        .assert()
-        .failure();
-
-    assert_eq!(
-        repoweave::git::git_vcs().mid_operation(&f.main.project_dir),
-        Some(MidOperation::Conflict(ConflictOp::Rebase)),
-        "the pull must strand mid-replay, or there is nothing for `--continue` to resume"
-    );
-    let dest_after_strand = head(&f.main.manifest_repo);
-    assert_eq!(
-        dest_after_strand, dest_before,
-        "a project-repo strand must come before any member repo moves"
-    );
-
-    std::fs::write(
-        f.main.project_dir.join("notes/shared.md"),
-        "operator-resolved\n",
-    )
-    .unwrap();
-    common::git_in(&f.main.project_dir, &["add", "notes/shared.md"]);
-    common::git_in(&f.main.project_dir, &["rebase", "--continue"]);
-
-    commit_file(&src.manifest_repo, "z.txt", "z\n", "src: z");
-    let tip_at_resume = head(&src.manifest_repo);
-
-    StrandedPull {
-        f,
-        locked,
-        tip_at_resume,
-        dest_after_strand,
-    }
-}
-
-/// Read the `overrides` array off the in-progress owner record.
-fn recorded_overrides(workspace_root: &Path) -> Vec<String> {
-    let raw = std::fs::read_to_string(workspace_root.join(".rwv-op"))
-        .expect("a stranded op must leave an owner record");
-    let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    doc["overrides"]
-        .as_array()
-        .expect("owner record must carry an overrides array")
-        .iter()
-        .map(|v| v.as_str().unwrap().to_owned())
-        .collect()
-}
-
-/// A tips-as-truth pull that was interrupted and resumed still targets the
-/// source's committed tips.
-///
-/// The fresh path's coverage above cannot see this one: `--continue` re-pins
-/// the snapshot from scratch, so the classification the fresh guard reached is
-/// thrown away and reached again from the persisted record. A regression here
-/// is a state-reconstruction bug — no signature and no call site changes.
-#[test]
-fn a_resumed_pull_from_an_ahead_workweave_source_still_targets_the_tips() {
-    let sp = strand_a_pull_from_an_ahead_workweave(&[]);
-    assert_ne!(
-        sp.dest_after_strand, sp.tip_at_resume,
-        "setup: the source must have moved in the window, or the resume has nowhere to go"
-    );
-    assert!(
-        recorded_overrides(&sp.f.main.root).is_empty(),
-        "setup: the record must carry no consent, or this is the sibling test"
-    );
-
-    rwv()
-        .args(["sync", "--continue"])
-        .current_dir(&sp.f.main.root)
-        .assert()
-        .success();
-
-    let delivered = head(&sp.f.main.manifest_repo);
-    assert_eq!(
-        delivered, sp.tip_at_resume,
-        "the resumed pull must deliver the source's committed tip, not its lock ({})",
-        sp.locked
-    );
-    let lock = std::fs::read_to_string(sp.f.main.project_dir.join("rwv.lock")).unwrap();
-    assert!(
-        lock.contains(&sp.tip_at_resume),
-        "the destination lock must pin what the resume delivered; lock:\n{lock}"
-    );
-}
-
-/// The negative half, and the one that pins the read-back specifically: the
-/// consent was spelled on the fresh invocation only, so the resume can honor
-/// it solely by recovering `allow-stale-lock` from the owner record. Under it
-/// the source's later commit must NOT be chased — replay's target stays the
-/// lock.
-#[test]
-fn a_resumed_pull_carrying_allow_stale_lock_still_targets_the_lock() {
-    let sp = strand_a_pull_from_an_ahead_workweave(&["--allow-stale-lock"]);
-    assert_eq!(
-        recorded_overrides(&sp.f.main.root),
-        vec!["allow-stale-lock".to_string()],
-        "the consent must reach the record, or the resume has nothing to read back"
-    );
-    assert_ne!(
-        sp.locked, sp.tip_at_resume,
-        "setup: the source must have moved past its lock in the window, or the two \
-         targets cannot be told apart"
-    );
-
-    rwv()
-        .args(["sync", "--continue"])
-        .current_dir(&sp.f.main.root)
-        .assert()
-        .success();
-
-    let delivered = head(&sp.f.main.manifest_repo);
-    assert_eq!(
-        delivered, sp.locked,
-        "under the recorded consent the resumed pull must keep the lock as replay's target"
-    );
-    assert_ne!(
-        delivered, sp.tip_at_resume,
-        "the recorded consent must survive the resume; chasing the tip means it did not"
-    );
-}
-
-/// sync (pull) from a PRIMARY-weave source whose lock is behind HEAD (`Ahead`):
-/// tips-as-truth is scoped to workweave sources, so a primary source keeps the
-/// REFUSAL (naming the relation + `--allow-stale-lock`).
-#[test]
-fn relation_ahead_sync_from_primary_source_refuses() {
-    let f = fixture();
-    // main (primary) advances its manifest repo WITHOUT relocking → lock behind
-    // HEAD on the primary source.
-    let ww_lib_before = head(&f.ww.manifest_repo);
-    commit_file(&f.main.manifest_repo, "p.txt", "p\n", "main: advance");
-
-    let assert = rwv()
-        .args(["sync", "primary"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("lock-freshness precondition failed")
-            && stderr.contains("--allow-stale-lock"),
-        "primary source lock-behind-HEAD must refuse naming the flag; got:\n{stderr}"
-    );
-    // The refusal delivered NOTHING: ww's manifest repo did not move.
-    assert_eq!(
-        head(&f.ww.manifest_repo),
-        ww_lib_before,
-        "a refused pull must leave the destination untouched"
-    );
-}
-
 // ===========================================================================
 // LockRelation::Ahead on the pull DESTINATION — benign
 // ===========================================================================
 
-/// The two-step trap, driven whole. A workweave commits member work, so its own
-/// lock is behind its HEAD; the destination's lock is not replay's input and
-/// Phase 3 regenerates it, so the pull proceeds and performs the relock the old
-/// refusal used to demand.
-///
-/// The refusal this replaces named `rwv lock --commit` as the remedy, and that
-/// relock commit then tripped the ancestry gate on the retry — the two
-/// preconditions were mutually unsatisfiable for the bare form. Pinning only
-/// "step 1 no longer refuses" would pass on a fix that leaves the operator at
-/// step 3, so this asserts what the op DELIVERED: the lock pins the tip.
+/// A workweave commits member work, so its own lock is behind its HEAD. A sync
+/// that takes in new project work proceeds anyway: the work survives, and the
+/// lock the sync leaves is the three-way merge of the pins, which neither side
+/// moved.
 #[test]
-fn pull_destination_lock_behind_head_syncs_and_performs_the_relock_itself() {
+fn sync_with_lock_behind_head_proceeds_and_keeps_member_work() {
     let f = fixture();
-    // The ordinary thing a workweave does: commit member work, do not relock.
+    let base_pin = head(&f.ww.manifest_repo);
     let ww_tip = commit_file(&f.ww.manifest_repo, "f.txt", "f\n", "ww: feature");
-
-    let assert = rwv()
-        .args(["sync", "primary"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    // Accepted, not silently: the relation and its commit count are announced.
-    assert!(
-        stderr.contains("lock behind HEAD by 1 commits"),
-        "the accepted destination relation must be announced with its count; got:\n{stderr}"
-    );
-
-    // DELIVERED — the op relocked, so the destination's lock now pins the
-    // destination's member tip. This is the state the old first refusal was
-    // demanding the operator reach by hand.
-    let lock = repoweave::manifest::LockFile::from_json_str(
-        &std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap(),
-    )
-    .unwrap();
-    let pinned = lock
-        .iter_entries()
-        .find(|(p, _)| p.as_str() == MANIFEST_REPO_PATH)
-        .expect("the fixture's one manifest repo must be in the lock")
-        .1
-        .version
-        .as_str()
-        .to_owned();
-    assert_eq!(
-        pinned, ww_tip,
-        "after the pull the destination's lock must pin the destination's member tip"
-    );
-    // The local member work survived the pull.
-    assert_eq!(
-        head(&f.ww.manifest_repo),
-        ww_tip,
-        "a pull must not rewind the destination's own committed member work"
-    );
-}
-
-/// The trap's second act. The relaxed pull's own relock leaves the
-/// destination's project repo one commit ahead of the source, so a second bare
-/// pull refuses at the ancestry gate — over rwv's own bookkeeping. The gate is
-/// correct to refuse (a bare pull fast-forwards, and ff cannot advance past a
-/// destination-only commit without discarding it), so what carries the
-/// operator is the refusal's evidence: it must quote the relock commit's
-/// subject, making the blocking commit recognizable as rwv's own, and the
-/// strategy it names must then converge rather than manufacture a third
-/// refusal.
-#[test]
-fn second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges() {
-    let f = fixture();
-    let ww_tip = commit_file(&f.ww.manifest_repo, "f.txt", "f\n", "ww: feature");
-    rwv()
-        .args(["sync", "primary"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
-
-    let assert = rwv()
-        .args(["sync", "primary"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("strictly ahead of source workspace") && stderr.contains("by 1 commit"),
-        "the second pull's refusal must state the destination's relation to the source; \
-         got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("lock: auto-relock after sync from"),
-        "the evidence block must quote the relock commit's subject, so the operator can \
-         recognize the blocking commit as rwv's own bookkeeping; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("--strategy rebase"),
-        "the refusal must name the strategy that lands the relock commit; got:\n{stderr}"
-    );
-    // The refusal must not read as a one-time flag: assertion 5 below proves
-    // the remedy does not retire the shape, and this is what tells the
-    // operator that ahead of time, plus the terminating condition.
-    assert!(
-        stderr.contains("recurs on every fast-forward sync") && stderr.contains("sync-to"),
-        "the refusal must warn that it recurs until the relock reaches the source, and \
-         name `sync-to` as the way to land it there; got:\n{stderr}"
-    );
+    commit_file(&f.main.project_dir, "notes.txt", "n\n", "main: project note");
 
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
-    // DELIVERED — the named remedy converged: the lock still pins the
-    // destination's member tip and the member work survived.
-    let lock = repoweave::manifest::LockFile::from_json_str(
-        &std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap(),
-    )
-    .unwrap();
-    let pinned = lock
-        .iter_entries()
-        .find(|(p, _)| p.as_str() == MANIFEST_REPO_PATH)
-        .expect("the fixture's one manifest repo must be in the lock")
-        .1
-        .version
-        .as_str()
-        .to_owned();
-    assert_eq!(
-        pinned, ww_tip,
-        "after the remedy the destination's lock must still pin the destination's member tip"
+
+    let lock = std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains(&base_pin),
+        "neither side moved the pin, so the merged lock keeps it; lock:\n{lock}"
     );
     assert_eq!(
         head(&f.ww.manifest_repo),
         ww_tip,
-        "the remedy must not rewind the destination's own committed member work"
-    );
-    // The remedy cannot retire the shape: the relock survives the replay, so
-    // the destination is again exactly one bookkeeping commit ahead and the
-    // NEXT bare pull wants the flag again, until the relock lands in the
-    // source. The refusal's evidence block is what carries the operator
-    // through each round.
-    let ahead = common::git_in(
-        &f.ww.project_dir,
-        &[
-            "log",
-            "--oneline",
-            &format!("{}..HEAD", head(&f.main.project_dir)),
-        ],
+        "a sync must not rewind the workweave's own committed member work"
     );
     assert!(
-        ahead.lines().count() == 1 && ahead.contains("lock: auto-relock after sync from"),
-        "after the remedy the destination must be ahead by exactly its own relock; got:\n{ahead}"
-    );
-}
-
-/// The relaxation is scoped to `Ahead`. A destination whose lock records a
-/// commit HEAD lacks is still anomalous and still refuses — and because the
-/// remedy it names lands a project-repo commit, the refusal must also name the
-/// `--strategy rebase` that commit then requires. Naming only the relock is
-/// what made the two gates mutually unsatisfiable.
-#[test]
-fn pull_destination_anomalous_lock_refuses_and_names_the_follow_on_strategy() {
-    let f = fixture();
-    // lock pins C2, HEAD reset to C1 → Behind.
-    let c1 = head(&f.ww.manifest_repo);
-    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
-    rwv()
-        .args(["lock", "--commit"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
-    common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
-
-    let assert = rwv()
-        .args(["sync", "primary"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("lock-freshness precondition failed") && stderr.contains("behind"),
-        "an anomalous destination relation must still refuse, naming it; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("rwv lock --commit"),
-        "the refusal must still name the relock remedy; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("--strategy rebase"),
-        "the refusal must name the strategy its own remedy then requires, or the \
-         operator lands at a second refusal caused by the first one's fix; got:\n{stderr}"
-    );
-    // The landed relock commit is a clean linear addition the replay
-    // reapplies rather than merges away, so it survives every subsequent
-    // rebase the same way an auto-relock does (see
-    // second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges).
-    // This remedy must not read as a one-time fix either.
-    assert!(
-        stderr.contains("recurs on every subsequent fast-forward sync")
-            && stderr.contains("sync-to"),
-        "the relock remedy must warn that it recurs until the relock reaches the source, \
-         and name `sync-to` as the way to land it there; got:\n{stderr}"
+        f.ww.project_dir.join("notes.txt").exists(),
+        "the sync must deliver the target's new project work"
     );
 }
 
@@ -1266,42 +832,6 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
         .success();
 }
 
-/// sync (pull): a `Behind` SOURCE (source's lock records commits its HEAD lacks)
-/// refuses on both source-type paths — it is never benign.
-#[test]
-fn relation_behind_source_sync_refuses() {
-    let f = fixture();
-    let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
-    let src = create_workweave(&f.main, &weaveroot, "src");
-
-    // src advances to C2, relocks (lock pins C2), then resets HEAD back to C1.
-    let c1 = head(&src.manifest_repo);
-    commit_file(&src.manifest_repo, "c2.txt", "c2\n", "src: c2");
-    rwv()
-        .args(["lock", "--commit"])
-        .current_dir(&src.root)
-        .assert()
-        .success();
-    common::git_in(&src.manifest_repo, &["reset", "--hard", &c1]);
-    let dest_lib_before = head(&f.main.manifest_repo);
-
-    let assert = rwv()
-        .args(["sync", &src.root.to_string_lossy()])
-        .current_dir(&f.main.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("lock-freshness precondition failed") && stderr.contains("behind"),
-        "Behind source must refuse naming the relation; got:\n{stderr}"
-    );
-    assert_eq!(
-        head(&f.main.manifest_repo),
-        dest_lib_before,
-        "a refused pull must leave the destination untouched"
-    );
-}
-
 // ===========================================================================
 // LockRelation::Diverged — refuse, additionally hint `rwv lock --commit`
 // ===========================================================================
@@ -1358,10 +888,10 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
 // LockRelation::NoLock / Unknown — refuse
 // ===========================================================================
 
-/// sync (pull): a source lock that pins a tag/branch that does not resolve on
+/// sync-to: a target lock that pins a tag/branch that does not resolve on
 /// disk is a corrupt-lock error — refuse, naming the unknown revision.
 #[test]
-fn unresolvable_source_lock_refuses_naming_unknown_revision() {
+fn unresolvable_target_lock_refuses_naming_unknown_revision() {
     let f = fixture();
     // Rewrite main's committed lock to pin a nonexistent tag.
     let manifest_repo = f.main.manifest_repo.clone();
@@ -1378,14 +908,14 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
 
     let dest_lib_before = head(&f.ww.manifest_repo);
     let assert = rwv()
-        .args(["sync", "primary"])
+        .args(["sync-to", "primary"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
         stderr.contains("unknown revision") && stderr.contains("v9.9.9-nope"),
-        "unresolvable source lock must name the unknown revision; got:\n{stderr}"
+        "unresolvable target lock must name the unknown revision; got:\n{stderr}"
     );
     assert_eq!(
         head(&f.ww.manifest_repo),
@@ -1792,10 +1322,10 @@ fn the_already_ahead_line_states_how_far_the_source_moved_past_its_lock() {
     // refusing or by pulling the tips, and neither leaves a lock entry the
     // source has moved past.
     let assert = rwv()
-        .args(["sync", &f.main.root.to_string_lossy(), "--allow-stale-lock"])
+        .args(["sync-to", &f.main.root.to_string_lossy(), "--allow-stale-lock"])
         .current_dir(&f.ww.root)
         .assert()
-        .success();
+        .failure();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
     assert_eq!(
@@ -1822,7 +1352,7 @@ fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
     commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
 
     let assert = rwv()
-        .args(["sync", &f.main.root.to_string_lossy()])
+        .args(["sync-to", &f.main.root.to_string_lossy()])
         .current_dir(&f.ww.root)
         .assert()
         .success();
