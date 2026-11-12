@@ -11016,6 +11016,50 @@ pub fn sync_continue_merges_a_range_the_stop_gave_a_merge() -> Scenario {
     )
 }
 
+/// `land --continue` re-judges what the stop left: a `linear` landing stops
+/// rebasing `app`; the operator gives up the rebase and merges `main` in by
+/// hand, the seat's branch first. The resumed landing composes a merge commit
+/// whose first parent is `main`'s tip, reported `merged`, so `main`'s
+/// first-parent chain never runs through the seat.
+pub fn land_continue_composes_a_merge_the_stop_left() -> Scenario {
+    scenario(
+        "land --continue composes a merge the stop left",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App]),
+            Step::git(&ww("w"), Repo::App, &["rebase", "--abort"]),
+            Step::git(&ww("w"), Repo::App, &["merge", "main"]).expect(Exit::Code(1)),
+            Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "hand-merge"]),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("local/remotes/app: merged")),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main^1"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("readme-main")),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["log", "--first-parent", "--format=%s", "main"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("hand-merge"))
+            .claim(Claim::OutputLacks("readme-w")),
+        ],
+    )
+}
+
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
 /// conflict, printing each field's setter with each side's value. That the

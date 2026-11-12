@@ -653,6 +653,7 @@ every_scenario!(
     solo_workweave,
     dc04_conflict_setter,
     sync_continue_merges_a_repo_the_stop_diverged,
+    land_continue_composes_a_merge_the_stop_left,
     sync_continue_merges_a_range_the_stop_gave_a_merge,
     landing_names_every_field,
     history_unset_fast_forward,
@@ -4352,6 +4353,12 @@ fn sync_continue_merges_a_repo_the_stop_diverged_scenario() {
 #[test]
 fn sync_continue_merges_a_range_the_stop_gave_a_merge_scenario() {
     runner::run(scenarios::sync_continue_merges_a_range_the_stop_gave_a_merge())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_continue_composes_a_merge_the_stop_left_scenario() {
+    runner::run(scenarios::land_continue_composes_a_merge_the_stop_left())
         .assert_fully_decided_green();
 }
 

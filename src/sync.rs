@@ -2716,13 +2716,101 @@ fn target_name(ctx: &OpContext<'_>) -> String {
 }
 
 impl OpContext<'_> {
-    /// How the landing composes `repo` beyond a fast-forward, as it planned.
-    fn integration(&self, repo: &RepoKey) -> Integration {
+    /// How the landing composes `repo` now: as recorded where it planned a
+    /// merge; else judged from the repository as it stands, so a resume
+    /// re-judges what a stop let the operator change. A source holding the
+    /// receiving tip off its first-parent chain, or whose range now holds a
+    /// merge, is merged; one that needs a rebase under `ff-only` refuses.
+    fn composition_now(
+        &self,
+        repo: &RepoKey,
+        vcs: &dyn Vcs,
+        dir: &Path,
+    ) -> anyhow::Result<Integration> {
         if self.take_in.merged.contains(repo) {
-            Integration::Merge
-        } else {
-            Integration::Rebase
+            return Ok(Integration::Merge);
         }
+        let Some(onto) = self.take_in.receiving.get(repo).map(|r| r.tip.clone()) else {
+            return Ok(Integration::Rebase);
+        };
+        if vcs.mid_op(dir).is_some() {
+            return Ok(Integration::Rebase);
+        }
+        let head = vcs.head_revision(dir)?.id().clone();
+        let (head_rev, onto_rev) = (
+            ResolvedRevisionId::from(head.clone()),
+            ResolvedRevisionId::from(onto.clone()),
+        );
+        if vcs.is_ancestor(dir, &head_rev, &onto_rev)? {
+            return Ok(Integration::Rebase);
+        }
+        let contained = vcs.is_ancestor(dir, &onto_rev, &head_rev)?;
+        if contained && vcs.first_parent_chain(dir, &head)?.contains(&onto) {
+            return Ok(Integration::Rebase);
+        }
+        let target = target_name(self);
+        let label = repo.to_string();
+        let scoped = |state: State| {
+            let judging = state.of(&label);
+            let judging = match repo {
+                RepoKey::Member(path) => judging.member().bind("<m>", path),
+                RepoKey::Project => judging.project_repo(),
+            };
+            judging.checkout(dir).bind("<T>", &target).by_verb("land")
+        };
+        let theirs = self
+            .take_in
+            .receiving
+            .get(&RepoKey::Project)
+            .and_then(|r| {
+                self.project_vcs
+                    .read_file_at_revision(
+                        &self.cwd_project_dir,
+                        &ResolvedRevisionId::from(r.tip.clone()),
+                        Path::new(Manifest::FILE_NAME),
+                    )
+                    .ok()
+            })
+            .and_then(|text| Manifest::from_toml_str(&text).ok());
+        let recorded = theirs.and_then(|m| match repo {
+            RepoKey::Member(path) => m.history_for(path),
+            RepoKey::Project => m.history,
+        });
+        let one_run = op_state::read_owner(&self.owner_workspace_dir)?.and_then(|o| o.history);
+        let history = crate::set_history::governing(
+            recorded,
+            one_run,
+            matches!(repo, RepoKey::Member(_)),
+            &scoped,
+            vcs,
+        )
+        .map_err(|judged| judged.refused())?;
+        let in_range = crate::set_history::merge_in_range(vcs, dir, &head, &onto)?;
+        let (how, merged) = if contained {
+            (Integration::Merge, in_range)
+        } else if history == crate::manifest::History::FfOnly && in_range.is_none() {
+            return Err(scoped(State::HistoryNotFastForward)
+                .subject(format!(
+                    "the target records ff-only, and its tip {} is not an ancestor of this \
+                     branch's {}",
+                    onto.short(),
+                    head.short()
+                ))
+                .judge(vcs)
+                .refused());
+        } else {
+            crate::set_history::integration(history, in_range)
+        };
+        if let Some(merge) = merged {
+            report_landing(
+                self,
+                op_state::LandingReport::Merged {
+                    repo: repo.clone(),
+                    merge,
+                },
+            )?;
+        }
+        Ok(how)
     }
 
     /// The key the op's replay-side savepoints are filed under.
@@ -4743,7 +4831,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === Phase 1' (project repo) — strategy on the project repo ===
 
-    if ctx.integration(&RepoKey::Project) == Integration::Rebase {
+    let project_how = ctx.composition_now(
+        &RepoKey::Project,
+        ctx.project_vcs.as_ref(),
+        &ctx.cwd_project_dir,
+    )?;
+    if project_how == Integration::Rebase {
         keep_before_rebase(
             ctx,
             ctx.project_vcs.as_ref(),
@@ -4757,7 +4850,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_project_dir,
         &snapshot.source_project_tip,
         &cwd_project_tip,
-        ctx.integration(&RepoKey::Project),
+        project_how,
         ctx.verb,
     );
 
@@ -4962,7 +5055,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             )
         });
         sync_tasks.push(SyncTask {
-            how: ctx.integration(key),
+            how: ctx.composition_now(key, vcs.as_ref(), &abs)?,
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, &ctx.savepoint_key()),
             abs,
@@ -5685,9 +5778,10 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     }
     let named = crate::repin::Naming::by_name("land", named_members);
     let head = vcs.head_revision(dir)?;
-    if ctx.integration(&RepoKey::Project) == Integration::Merge
-        && !vcs.first_parent_chain(dir, head.id())?.contains(target)
-    {
+    let staged_merge = vcs.merge_in_flight(dir)?.as_ref() == Some(target)
+        || (vcs.is_ancestor(dir, &ResolvedRevisionId::from(target.clone()), &head)?
+            && !vcs.first_parent_chain(dir, head.id())?.contains(target));
+    if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
         crate::repin::commit_merge(
             vcs,
