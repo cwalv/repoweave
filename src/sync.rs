@@ -10593,7 +10593,15 @@ fn run_step(
             moves,
             project,
             ..
-        } => restore_op_ref_moves(&workspace, &project_dir, &moves, abandon, &project, tally, true),
+        } => restore_op_ref_moves(
+            &workspace,
+            &project_dir,
+            &moves,
+            abandon,
+            &project,
+            tally,
+            true,
+        ),
         AbortStep::UndoCreated {
             project,
             created,
