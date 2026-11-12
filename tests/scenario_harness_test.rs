@@ -569,6 +569,20 @@ every_scenario!(
     history_disagreement,
     history_member_override,
     lock_commit_whole_file,
+    sync_takes_in_the_target,
+    follow_never_backward,
+    no_c3_after_reset,
+    no_empty_merge,
+    sync_refuses_off_lineage,
+    sync_never_rebases_a_merge,
+    sync_refuses_to_rewrite_under_dependents,
+    sync_judges_a_diverged_push_branch(true),
+    sync_judges_a_diverged_push_branch(false),
+    absent_pin_unmerged,
+    record_retargeted_elsewhere_is_reported_and_refused,
+    record_retargeted_elsewhere_accepted_by_update,
+    record_retargeted_here_is_not_reported,
+    record_unstored_is_stored_by_sync,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2146,7 +2160,7 @@ fn explained_choice_ids(sandbox: &Sandbox, kind: &str, state: &str) -> Vec<Strin
 ///
 /// `rwv member remove --delete` judges the clone's edits and every checkout derived
 /// from it before refusing. It has no `--json`, so the JSON half drives the
-/// same judgment where a verb that has one reaches it: a sync whose replay
+/// same judgment where a verb that has one reaches it: a sync whose merge
 /// drops the member prunes its clone through those same guards, and records
 /// the refused prune in its envelope.
 #[test]
@@ -2233,7 +2247,7 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let out = sandbox.rwv(&primary, &["sync", "drops", "--json"]);
+    let out = sandbox.rwv(&primary, &["sync", "--from", "proj--drops", "--json"]);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
         panic!(

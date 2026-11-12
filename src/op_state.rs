@@ -811,7 +811,7 @@ impl OwnerHeader {
 /// the rest does not parse.
 #[derive(Debug)]
 pub enum OwnerReading {
-    Whole(OwnerRecord),
+    Whole(Box<OwnerRecord>),
     HeaderOnly {
         header: OwnerHeader,
         parse_error: String,
@@ -992,7 +992,7 @@ pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result
 pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     match read_owner_for_abort(workspace_dir)? {
         None => Ok(None),
-        Some(OwnerReading::Whole(record)) => Ok(Some(record)),
+        Some(OwnerReading::Whole(record)) => Ok(Some(*record)),
         Some(OwnerReading::HeaderOnly {
             header,
             parse_error,
@@ -1030,7 +1030,7 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
         .with_context(|| format!("failed to read owner record from {path}"))?;
     refuse_other_schema(&path, &json)?;
     let whole_error = match serde_json::from_str::<OwnerRecord>(&json) {
-        Ok(record) => return Ok(Some(OwnerReading::Whole(record))),
+        Ok(record) => return Ok(Some(OwnerReading::Whole(Box::new(record)))),
         Err(e) => e,
     };
     match serde_json::from_str::<OwnerHeader>(&json) {

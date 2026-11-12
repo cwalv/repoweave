@@ -428,7 +428,10 @@ impl Sides {
 }
 
 impl ProjectMerge<'_> {
-    pub(crate) fn run(&self, sides: &Sides) -> anyhow::Result<CommitId> {
+    pub(crate) fn run(
+        &self,
+        sides: &Sides,
+    ) -> anyhow::Result<(CommitId, Vec<crate::sync::MemberOutput>)> {
         let dir = project_dir(self.ctx.active_path(), self.project);
         let vcs = project_vcs();
         let vcs = vcs.as_ref();
@@ -471,14 +474,21 @@ impl ProjectMerge<'_> {
         };
 
         let before = read_manifest_at(vcs, &dir, sides.held(self.head));
+        let mut pruning = Vec::new();
         if let Some(before) = &before {
             for (path, entry) in before.iter_entries() {
                 if !manifest.contains_repo(path) {
-                    crate::sync::prune_dropped_repo(
-                        vcs_for(entry.vcs_type).as_ref(),
-                        self.ctx,
-                        path,
-                    )?;
+                    let checkout = self.ctx.active_path().join(path.as_path());
+                    pruning.push(
+                        match crate::sync::prune_dropped_repo(
+                            vcs_for(entry.vcs_type).as_ref(),
+                            self.ctx,
+                            path,
+                        ) {
+                            Ok(()) => crate::sync::MemberOutput::pruned(path, &checkout),
+                            Err(e) => crate::sync::MemberOutput::prune_refused(path, &checkout, &e),
+                        },
+                    );
                 }
             }
         }
@@ -537,7 +547,7 @@ impl ProjectMerge<'_> {
             crate::manifest::RepoKey::Project,
             &commit,
         )?;
-        Ok(commit)
+        Ok((commit, pruning))
     }
 
     fn read_merged(

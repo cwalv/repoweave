@@ -3669,6 +3669,10 @@ pub fn dc18_partial_delete_status() -> Scenario {
                 .claim(Claim::OutputContains(
                     "left: local/remotes/lib proj--feat2: unlanded",
                 )),
+        ],
+    )
+}
+
 /// A workweave's feature, its target `main` moved in `app` and locked; `sync`
 /// rebases the feature's `app` onto `main`'s and relocks.
 pub fn sync_takes_in_the_target() -> Scenario {
@@ -3682,7 +3686,7 @@ pub fn sync_takes_in_the_target() -> Scenario {
             Step::commit(&a(), Repo::Lib, "main-lib"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
                 .claim(Claim::OutputContains("--strategy rebase")),
             Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
                 .expect(Exit::Succeeds)
@@ -4492,7 +4496,7 @@ pub fn sync_refuses_off_lineage() -> Scenario {
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App]),
             Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::App, State::PinOffLineage))
                 .claim(Claim::OutputContains("local/remotes/app: pin off lineage"))
                 .claim(Claim::OutputContains(
                     "rwv sync --reset-to-target local/remotes/app",
@@ -4540,7 +4544,7 @@ pub fn sync_never_rebases_a_merge() -> Scenario {
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
                 .claim(Claim::OutputContains("rwv sync --from main"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(&ww("w"), &["sync", "--from", "main"])
@@ -4574,7 +4578,7 @@ pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
                 .claim(Claim::OutputContains("target dependents"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
@@ -4605,7 +4609,7 @@ pub fn sync_judges_a_diverged_push_branch(rewritten: bool) -> Scenario {
         ]);
     }
     let mut refusal = Step::rwv(&a(), &["sync"])
-        .expect(Exit::Fails)
+        .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
         .claim(Claim::OutputContains(
             "local/remotes/app: push-branch diverged",
         ))
@@ -4640,7 +4644,7 @@ pub fn absent_pin_unmerged() -> Scenario {
                 .may_leave_unresolved(&[Repo::Lib]),
             Step::rwv(&ww("w"), &["sync"])
                 .may_leave_unresolved(&[Repo::Lib])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Lib, State::PinUnreachable))
                 .claim(Claim::OutputContains("local/remotes/lib: pin unreachable"))
                 .claim(Claim::OutputContains("rwv member pin"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
@@ -4690,7 +4694,7 @@ fn feat_x_retargeted_on_b() -> Vec<Step> {
 /// it or to restore the old target, until one of them is taken.
 pub fn record_retargeted_elsewhere_is_reported_and_refused() -> Scenario {
     let refused = |step: Step| {
-        step.expect(Exit::Fails)
+        step.expect(Exit::refuses(Repo::Proj, State::TargetRecordChanged))
             .claim(Claim::OutputContains(
                 "projects/proj: target record changed (feat-x)",
             ))

@@ -640,6 +640,10 @@ fn merge_project(
         .run(&Sides {
             first: upstream.id().clone(),
             second: head.id().clone(),
+        })
+        .and_then(|(commit, pruning)| {
+            crate::sync::fail_on_refused_prunes(&pruning)?;
+            Ok(commit)
         })?
     };
     op.finish(&repos);

@@ -115,6 +115,38 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
 }
 
 pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow::Result<()> {
+    let mut members = Vec::new();
+    let result = take(ctx, run, output, &mut members);
+    if output.is_json() {
+        let envelope = crate::sync::SyncJsonOutput {
+            schema: crate::sync::SYNC_JSON_SCHEMA_URL.to_owned(),
+            outcomes: Vec::new(),
+            placements: Vec::new(),
+            members: members.clone(),
+            complete: result.is_ok(),
+            refused: result
+                .as_ref()
+                .err()
+                .map(crate::diagnosis::refused_output)
+                .unwrap_or_default(),
+            advisories: Vec::new(),
+            resolution: Some(ctx.resolution()),
+        };
+        outln!(
+            "{}",
+            serde_json::to_string_pretty(&envelope).context("failed to serialize sync output")?
+        );
+    }
+    result?;
+    crate::sync::fail_on_refused_prunes(&members)
+}
+
+fn take(
+    ctx: &WorkspaceContext,
+    run: Run,
+    output: OutputMode,
+    members: &mut Vec<crate::sync::MemberOutput>,
+) -> anyhow::Result<()> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
@@ -131,7 +163,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
         Run::Fresh(args) => {
             crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
             crate::branch::require_recorded(ctx)?;
-            fresh(ctx, project, dir, vcs, branch, args, output)
+            fresh(ctx, project, dir, vcs, branch, args, output, members)
         }
         Run::Continue => {
             let (op, recorded, take_in) = Op::resume(ctx, OpVerb::Sync)?;
@@ -157,7 +189,7 @@ pub fn run_sync(ctx: &WorkspaceContext, run: Run, output: OutputMode) -> anyhow:
                 strategy: owner.strategy,
                 jobs: 1,
             };
-            act(&sync, &op, &take_in, output)
+            act(&sync, &op, &take_in, output, members)
         }
     }
 }
@@ -185,6 +217,7 @@ fn fresh(
     branch: String,
     args: Args,
     output: OutputMode,
+    members: &mut Vec<crate::sync::MemberOutput>,
 ) -> anyhow::Result<()> {
     let name = crate::branch::named(vcs.as_ref(), &project, &dir, &branch)?;
     let record = crate::branch::recorded_value(vcs.as_ref(), &project, &dir, &name)?;
@@ -304,7 +337,7 @@ fn fresh(
             say(output, &line);
         }
     }
-    act(&sync, &op, &take_in, output)
+    act(&sync, &op, &take_in, output, members)
 }
 
 impl Member {
@@ -1029,7 +1062,7 @@ fn plan_member(
     if !follows || (inputs.dependents && !contained) {
         match crate::lineage::judge(mvcs, &mdir, &head, &pins, &source)? {
             Lineage::Passes { .. } => {}
-            Lineage::OffLineage { base } => {
+            Lineage::Off { base } => {
                 let mut judging = State::PinOffLineage
                     .of(path)
                     .member()
@@ -1160,7 +1193,13 @@ fn judge_member_moves(
 
 /// Carry out what was planned, or resume it: every step finds what an
 /// earlier run already did and leaves it.
-fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> anyhow::Result<()> {
+fn act(
+    sync: &Sync<'_>,
+    op: &Op,
+    take_in: &TakeInRecord,
+    output: OutputMode,
+    members: &mut Vec<crate::sync::MemberOutput>,
+) -> anyhow::Result<()> {
     let key = SavepointKey::Op(op.id.clone());
     let source = take_in
         .upstream_tips
@@ -1214,7 +1253,7 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
         if !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))?
             || vcs.merge_in_flight(&sync.dir)?.is_some()
         {
-            let commit = ProjectMerge {
+            let (commit, pruning) = ProjectMerge {
                 ctx: sync.ctx,
                 project: &sync.project,
                 verb: "sync",
@@ -1229,6 +1268,7 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
                 first: head.clone(),
                 second: source.clone(),
             })?;
+            members.extend(pruning);
             say(
                 output,
                 &format!(
@@ -1245,7 +1285,7 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
         take_project(sync, &head, &source, resets_project, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project)?;
     }
-    settle(sync, &pre_manifest)?;
+    settle(sync, &pre_manifest, members, output)?;
     let repos = savepoint_repos(sync);
     op.finish(&repos);
     say(output, &format!("took in {}", sync.source_name()));
@@ -1446,11 +1486,7 @@ fn take_project(
             let kept =
                 vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &here, None)?;
             vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
-            crate::op_state::journal_tip(
-                &sync.ctx.active_path().to_path_buf(),
-                RepoKey::Project,
-                source,
-            )?;
+            crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, source)?;
             say(
                 output,
                 &format!(
@@ -1564,11 +1600,31 @@ fn relock(
 
 /// Align the workspace to the branch as the sync left it: members the new
 /// entries drop are pruned, missing ones cloned, and the rest aligned.
-fn settle(sync: &Sync<'_>, before: &Manifest) -> anyhow::Result<()> {
+fn settle(
+    sync: &Sync<'_>,
+    before: &Manifest,
+    members: &mut Vec<crate::sync::MemberOutput>,
+    output: OutputMode,
+) -> anyhow::Result<()> {
     let now = Manifest::from_path(&sync.dir.join(Manifest::FILE_NAME))?;
     for (path, entry) in before.iter_entries() {
-        if !now.contains_repo(path) {
-            crate::sync::prune_dropped_repo(vcs_for(entry.vcs_type).as_ref(), sync.ctx, path)?;
+        let checkout = sync.ctx.active_path().join(path.as_path());
+        let judged = members.iter().any(|m| match m {
+            crate::sync::MemberOutput::Pruned { path: p, .. }
+            | crate::sync::MemberOutput::PruneRefused { path: p, .. } => p == path.as_str(),
+            _ => false,
+        });
+        if !now.contains_repo(path) && checkout.exists() && !judged {
+            members.push(
+                match crate::sync::prune_dropped_repo(
+                    vcs_for(entry.vcs_type).as_ref(),
+                    sync.ctx,
+                    path,
+                ) {
+                    Ok(()) => crate::sync::MemberOutput::pruned(path, &checkout),
+                    Err(e) => crate::sync::MemberOutput::prune_refused(path, &checkout, &e),
+                },
+            );
         }
     }
     crate::update::update_members(
@@ -1578,7 +1634,7 @@ fn settle(sync: &Sync<'_>, before: &Manifest) -> anyhow::Result<()> {
             false,
         ),
         sync.jobs,
-        OutputMode::Text,
+        output,
         crate::activate::ActivateOptions::default(),
     )?
     .tail
@@ -1644,8 +1700,7 @@ impl FeatureLineage {
         upstream: &CommitId,
     ) -> anyhow::Result<Option<Judged>> {
         let pins = self.pins.of_member(path);
-        let Lineage::OffLineage { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)?
-        else {
+        let Lineage::Off { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)? else {
             return Ok(None);
         };
         let (present, _) = crate::lineage::split_present(vcs, dir, &pins);

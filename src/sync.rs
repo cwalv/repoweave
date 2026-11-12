@@ -853,14 +853,18 @@ impl MemberOutput {
         }
     }
 
-    fn pruned(repo_path: &RepoPath, checkout: &Path) -> Self {
+    pub(crate) fn pruned(repo_path: &RepoPath, checkout: &Path) -> Self {
         Self::Pruned {
             path: repo_path.to_string(),
             absolute_path: crate::path_spelling::WirePath::of(checkout),
         }
     }
 
-    fn prune_refused(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
+    pub(crate) fn prune_refused(
+        repo_path: &RepoPath,
+        checkout: &Path,
+        error: &anyhow::Error,
+    ) -> Self {
         Self::PruneRefused {
             path: repo_path.to_string(),
             absolute_path: crate::path_spelling::WirePath::of(checkout),
@@ -2772,6 +2776,19 @@ fn stranded_checkouts(ctx: &OpContext<'_>) -> anyhow::Result<Vec<RepoPath>> {
 
 /// A completed op that left a dropped checkout on disk partially failed, and
 /// nothing the op can still do repairs it: its op-state is already gone.
+/// A merge or sync completed but left the dropped checkouts named in
+/// `members` on disk.
+pub(crate) fn fail_on_refused_prunes(members: &[MemberOutput]) -> anyhow::Result<()> {
+    let stranded: Vec<RepoPath> = members
+        .iter()
+        .filter_map(|member| match member {
+            MemberOutput::PruneRefused { path, .. } => RepoPath::new(path).ok(),
+            _ => None,
+        })
+        .collect();
+    fail_on_stranded_checkouts(op_state::OpVerb::Sync, &stranded)
+}
+
 fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> anyhow::Result<()> {
     if stranded.is_empty() {
         return Ok(());

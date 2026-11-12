@@ -55,7 +55,7 @@ pub(crate) enum Lineage {
     /// the member, so it has none.
     Passes { base: Option<CommitId> },
     /// The receiving branch lacks the base.
-    OffLineage { base: CommitId },
+    Off { base: CommitId },
     /// A pin this clone lacks could make the base newer than any commit the
     /// receiving branch holds, so the answer is not this clone's to give.
     Unreachable { absent: Vec<CommitId> },
@@ -133,7 +133,7 @@ pub(crate) fn judge(
     let receiving_rev = ResolvedRevisionId::from(receiving.clone());
     if let Some(base) = &base {
         if !vcs.is_ancestor(dir, &ResolvedRevisionId::from(base.clone()), &receiving_rev)? {
-            return Ok(Lineage::OffLineage { base: base.clone() });
+            return Ok(Lineage::Off { base: base.clone() });
         }
     }
     if !absent.is_empty()
@@ -230,7 +230,7 @@ mod tests {
         let u = commit(&dir, "b");
         assert_eq!(
             judge(vcs.as_ref(), &dir, &work, &pins(&[&root, &old_pin]), &u).unwrap(),
-            Lineage::OffLineage { base: old_pin }
+            Lineage::Off { base: old_pin }
         );
     }
 
