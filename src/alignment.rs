@@ -262,6 +262,11 @@ pub fn rename_branch(
     if let Some(record) = state.records.remove(from) {
         state.records.insert(to.to_owned(), record);
     }
+    for record in state.records.values_mut() {
+        if record.target.as_deref() == Some(from) {
+            record.target = Some(to.to_owned());
+        }
+    }
     store_state(vcs, project_dir, &state)?;
     Ok(None)
 }
