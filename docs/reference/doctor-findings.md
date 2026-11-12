@@ -117,6 +117,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
+| [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
 
@@ -1565,6 +1566,24 @@ workspace.
 **What to do:** if the operation still runs where its workspace is, end it
 there with its `--continue` or `rwv abort`. If it is gone, `rwv doctor --fix`
 releases the claim, and the next landing into the target runs.
+
+### `claim-unreadable`
+
+**Warning. Report-only by default.** A target's landing claim, or a takeover
+guard beside one, holds what this rwv does not read: an rwv of another release
+wrote it in a form this one does not know, or the file is corrupt. The finding
+names the file and shows what it holds. Whether the operation it stands for
+still runs cannot be told, so no landing takes it over: a landing into the
+target waits on it and then refuses with this kind. Bare `--fix` reports it
+and changes nothing.
+
+**What to do:** if a landing of another rwv release holds it, end that landing
+with the release that started it, by its `--continue` or `rwv abort`. If none
+does, `rwv doctor --fix --release-unreadable-claims` releases every claim and
+guard this run reports here, and the next landing into the target runs. It
+gives up the claim a live landing of another release would hold, which is the
+consent the flag stands for. A file that holds something else by the time the
+release reaches it, readable again or not, is left for the next report.
 
 ---
 

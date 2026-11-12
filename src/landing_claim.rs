@@ -13,7 +13,10 @@
 //! with no process id consulted, and the next landing takes it over; a claim
 //! whose op is recorded is never taken from it. A claim whose workspace is
 //! not here to read is never judged dead: a landing waits on it and refuses,
-//! and `rwv doctor --fix` releases it.
+//! and `rwv doctor --fix` releases it. Nor is a claim or takeover guard whose
+//! bytes this rwv does not read: `rwv doctor --fix
+//! --release-unreadable-claims` releases it, on the operator's word that no
+//! operation of another release holds it.
 
 use crate::durable_file::CreateNewError;
 use crate::manifest::{ProjectName, RepoKey};
@@ -339,6 +342,63 @@ pub fn release_unreachable(claim: &UnreachableClaim, fixer: &Path) -> anyhow::Re
     Ok(remove_dead(Removable::Claim(&path), &seen, &claim.op, &mine)?.is_none())
 }
 
+/// A claim, or a takeover guard beside one, holding bytes this rwv does not
+/// read, as `rwv doctor` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableClaim {
+    pub file: std::path::PathBuf,
+    /// The bytes it held when it was reported.
+    pub seen: Vec<u8>,
+}
+
+/// Every claim and takeover guard in the store of `repo_dir` whose bytes this
+/// rwv does not read.
+pub fn unreadable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreadableClaim> {
+    match claims_dir(vcs, repo_dir) {
+        Ok(dir) => unreadable_in(&dir),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn unreadable_in(dir: &Path) -> Vec<UnreadableClaim> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .flat_map(|entry| {
+            let claim = StateFile::LandingClaim.in_dir(&entry.path()).reported();
+            std::iter::once(claim).chain(takeover_guards(&entry.path()))
+        })
+        .filter_map(|file| {
+            let seen = std::fs::read(&file).ok()?;
+            Holder::parse(&seen)
+                .is_none()
+                .then_some(UnreadableClaim { file, seen })
+        })
+        .collect()
+}
+
+/// Release `claim`, which `rwv doctor --fix --release-unreadable-claims` was
+/// asked to clear, if it still holds the bytes it was reported with: one that
+/// changed since, readable again or not, is left for the next report. Returns
+/// whether it is gone.
+pub fn release_unreadable(claim: &UnreadableClaim) -> anyhow::Result<bool> {
+    match std::fs::read(&claim.file) {
+        Ok(now) if now == claim.seen => {}
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e) => {
+            return Err(anyhow::Error::new(e)
+                .context(format!("failed to read the claim {}", claim.file.display())))
+        }
+    }
+    crate::durable_file::remove_named(&claim.file)
+        .with_context(|| format!("failed to release the claim {}", claim.file.display()))?;
+    Ok(true)
+}
+
 fn take_within(
     path: StatePath,
     target: &str,
@@ -447,11 +507,13 @@ fn take_within(
                     ),
                 ),
                 Standing::Unread(text) => crate::refuse!(
-                    RefusalKind::StateClaimHeld,
-                    "another landing into '{target}' holds it, and {path} names it in a form \
-                     this rwv does not read ({text}): an rwv of another release took it. End \
-                     that landing with the release that started it, resuming or aborting it, \
-                     then rerun."
+                    RefusalKind::ClaimUnreadable,
+                    "another landing into '{target}' holds it, and {path} or a takeover guard \
+                     beside it names it in a form this rwv does not read ({text}): an rwv of \
+                     another release took it, or the file is corrupt. End that landing with the \
+                     release that started it, resuming or aborting it, then rerun. If no such \
+                     landing stands, `rwv doctor --fix --release-unreadable-claims` run here \
+                     releases the claim; a live landing of another release would lose it."
                 ),
             }
         }
@@ -1071,6 +1133,82 @@ mod tests {
         assert!(release_unreachable(&unreachable, &next).unwrap());
         assert!(!path.exists());
         take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_claim_is_never_taken_over_and_the_consented_fix_releases_it() {
+        let tmp = crate::tempdir().unwrap();
+        let path = claim_in(tmp.path());
+        std::fs::create_dir_all(path.dir()).unwrap();
+        std::fs::write(path.reported(), b"{\"format\": 2}").unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(2));
+
+        let refused = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimUnreadable));
+        assert!(format!("{refused:#}").contains("rwv doctor --fix --release-unreadable-claims"));
+        assert_eq!(path.read().unwrap(), b"{\"format\": 2}");
+
+        let reported = unreadable_in(&tmp.path().join("claims"));
+        assert_eq!(
+            reported,
+            vec![UnreadableClaim {
+                file: path.reported(),
+                seen: b"{\"format\": 2}".to_vec(),
+            }]
+        );
+        assert!(release_unreadable(&reported[0]).unwrap());
+        assert!(!path.exists());
+        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_claim_that_changed_since_its_report_is_not_released() {
+        let tmp = crate::tempdir().unwrap();
+        let path = claim_in(tmp.path());
+        std::fs::create_dir_all(path.dir()).unwrap();
+        std::fs::write(path.reported(), b"garbage").unwrap();
+        let [reported] = unreadable_in(&tmp.path().join("claims"))
+            .try_into()
+            .unwrap();
+
+        let owner = tmp.path().join("owner");
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
+        record(&owner, &op(1));
+        std::fs::remove_file(path.reported()).unwrap();
+        let live = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+
+        assert!(!release_unreadable(&reported).unwrap());
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
+        live.release().unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_takeover_guard_blocks_the_takeover_and_the_consented_fix_releases_it() {
+        let tmp = crate::tempdir().unwrap();
+        let (path, _, dead) = dead_claim(tmp.path());
+        let guard = path
+            .dir()
+            .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
+        std::fs::write(&guard, b"not a holder").unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(3));
+
+        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimUnreadable));
+        let reported = unreadable_in(&tmp.path().join("claims"));
+        assert_eq!(
+            reported,
+            vec![UnreadableClaim {
+                file: guard.clone(),
+                seen: b"not a holder".to_vec(),
+            }]
+        );
+        assert!(release_unreadable(&reported[0]).unwrap());
+        take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(3));
     }
 
     #[test]

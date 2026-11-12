@@ -765,7 +765,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
-        count: 5,
+        count: 7,
         callers: &[],
         justification: "Temp-file cleanup for the two publish modes, never \
             able to name the published file itself, plus the claim release. \
@@ -785,11 +785,21 @@ const ALLOWLIST: &[Allowed] = &[
             remove_named, the landing claim's takeover lock: called only on \
             a lock its own op created with create_new, or one `rwv abort` \
             of that op finds naming it, so it removes rwv-internal \
-            bookkeeping of an op that is ending, never user data. Sites \
-            (1)-(3): every site \
-            unlinks only the sibling temp this call created moments earlier, \
-            named <file>.tmp.<pid>.<serial>: the pid keeps processes apart and \
-            a process-local AtomicU64 keeps threads within one process apart, \
+            bookkeeping of an op that is ending, never user data. (6) and \
+            (7) remove_if_abandoned, unix and Windows: the sweep a publish \
+            runs over temps beside its target named <a name beginning with \
+            the target's>.tmp.<pid>.<16 hex digits>.<serial>, a spelling only \
+            staged_temp makes. It removes one only once no writer holds it: \
+            on unix after taking the advisory lock its writer holds for the \
+            whole publish, which the kernel drops when the writer dies; on \
+            Windows the delete itself fails while its writer holds it open \
+            without sharing deletion. A writer whose temp a sweep met in the \
+            instant before it held it stages it again. Sites (1)-(3): every \
+            site unlinks only the sibling temp this call created moments \
+            earlier, named <file>.tmp.<pid>.<key>.<serial>: the pid keeps \
+            processes apart, a key drawn once per process keeps a process \
+            that reuses a pid from spelling a dead one's temp, and a \
+            process-local AtomicU64 keeps threads within one process apart, \
             so no other writer can be holding that name. Both components are \
             structural — an earlier revision used a nanosecond timestamp for \
             the intra-process half and two barrier-synchronized threads \

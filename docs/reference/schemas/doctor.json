@@ -2178,6 +2178,34 @@
         {
           "type": "object",
           "required": [
+            "content",
+            "file",
+            "kind"
+          ],
+          "properties": {
+            "content": {
+              "description": "What it holds, as text, invalid UTF-8 replaced.",
+              "type": "string"
+            },
+            "file": {
+              "description": "Absolute path to the claim or takeover guard.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "absolute_path",
             "kind",
             "op_id",

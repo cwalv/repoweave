@@ -1439,6 +1439,10 @@ mod doctor_json {
             op_id: String,
             recorded_owner: String,
         },
+        ClaimUnreadable {
+            file: String,
+            content: String,
+        },
         OrphanedSavepoint {
             path: String,
             absolute_path: String,
@@ -2451,6 +2455,64 @@ fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
     assert!(
         !claim_dir.join(".rwv-landing.lock").exists(),
         "--fix released the claim: {combined}"
+    );
+}
+
+/// A landing claim this rwv cannot read is reported, left by a bare `--fix`,
+/// and released only under `--release-unreadable-claims`, which says what it
+/// gave up.
+#[test]
+fn an_unreadable_claim_is_reported_and_released_only_by_its_named_flag() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let claim = project_dir
+        .join(".git")
+        .join("rwv-landings")
+        .join("0")
+        .join(".rwv-landing.lock");
+    std::fs::create_dir_all(claim.parent().unwrap()).unwrap();
+    std::fs::write(&claim, "{\"format\":2,\"op\":\"4242\"}").unwrap();
+
+    let doctor = |args: &[&str]| {
+        let out = rwv_cmd()
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("failed to spawn rwv doctor");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    let json = doctor(&["doctor", "--json"]);
+    assert!(
+        json.contains("\"claim-unreadable\"") && json.contains("format"),
+        "doctor reports the claim and what it holds: {json}"
+    );
+
+    let bare = doctor(&["doctor", "--fix"]);
+    assert!(claim.exists(), "a bare --fix releases nothing: {bare}");
+    assert!(
+        bare.contains("--release-unreadable-claims"),
+        "the report names the flag that releases it: {bare}"
+    );
+
+    let released = doctor(&["doctor", "--fix", "--release-unreadable-claims"]);
+    assert!(
+        !claim.exists(),
+        "the named flag released the claim: {released}"
+    );
+    assert!(
+        released.contains("claim-unreadable") && released.contains("lost its claim"),
+        "the release names what it released and what that gave up: {released}"
     );
 }
 

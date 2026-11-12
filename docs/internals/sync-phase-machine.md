@@ -136,8 +136,10 @@ in-flight refusal (verb, age, phase, `--continue` / `rwv abort` exits)
 reading the *existing* holder. Every precondition that follows runs
 after acquisition; on refusal, the acquired records are cleared, which
 is the op-state lifecycle table's "no trace left" row. Content is
-published via a sibling temp file + `link(2)` so a loser never reads a
-half-written owner file.
+published via a sibling temp file and an exclusive publish of it
+(`durable_file::create_new`: `link(2)`, or a no-replace rename where the
+filesystem makes no hard link) so a loser never reads a half-written owner
+file.
 
 Time is never a decision input: crash between acquisition and Mark
 leaves records with no savepoints. That partial state is diagnosed by

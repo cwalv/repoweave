@@ -54,10 +54,12 @@ surfacing entry is out of reach by construction. A hardlink strategy could at
 best cover part of the sites, which means shipping two mechanisms and two
 behaviors to test.
 
-(`durable_file::create_new` does call `hard_link`, and that is not an exception
-to this. It links a staged temp into place to get an atomic exclusive publish
-and immediately removes the temp, so the link exists for the duration of one
-call and no second name survives it.)
+(rwv's exclusive publish of its records and claims does make a hard link, and
+that is not an exception to this. It links a staged temp into place to get an
+atomic exclusive publish and immediately removes the temp, so the link exists
+for the duration of one call and no second name survives it. Where the
+filesystem makes no hard link, a rename that refuses an occupied target does
+the same job.)
 
 That orphaning is exactly what makes a hardlink safe where rwv does use one:
 sharing a `reference` repo's read-only files between two workspaces' checkouts

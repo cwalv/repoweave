@@ -24,4 +24,5 @@ env-input:RWV_WORKSPACE  # read by the bundled rwv-each plugin, which is the chi
 env-input:RWV_WORKWEAVE  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
 env-input:RWV_WORKWEAVE_UNREGISTERED  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
 env-input:RWV_TEST_PAUSE  # read only in a build with the test-pause cargo feature, which no release enables, to arm a pause point a test drives a race through; the shipped binary carries no read of it, which scripts/ci-local.sh's no-test-pause stage holds
+env-input:RWV_TEST_WITHHOLD  # read only in a build with the test-pause cargo feature, which no release enables, to stand in a filesystem that lacks hard links or a no-replace rename, which no unprivileged test can mount; the shipped binary carries no read of it, which scripts/ci-local.sh's no-test-pause stage holds
 env-input:RWV_PROJECT  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it

@@ -480,6 +480,18 @@ pub enum CheckViolation {
         recorded_owner: PathBuf,
     },
 
+    /// A landing claim, or a takeover guard beside one, holding bytes this rwv
+    /// does not read: an rwv of another release wrote it, or it is corrupt.
+    /// Never judged dead, so no landing takes it over; `--fix
+    /// --release-unreadable-claims` releases it, the operator's word that no
+    /// operation of another release holds it.
+    ClaimUnreadable {
+        file: PathBuf,
+        /// The bytes it held when it was reported; the release removes it only
+        /// while it still holds them.
+        seen: Vec<u8>,
+    },
+
     /// Two recorded sibling identities that differ only by ASCII case fold.
     ///
     /// A portability lint over the record, not an identity equivalence:
@@ -682,6 +694,8 @@ impl CheckViolation {
             | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::MemberPermissions { .. } => Auto,
 
+            CheckViolation::ClaimUnreadable { .. } => Consented("--release-unreadable-claims"),
+
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -789,6 +803,7 @@ impl CheckViolation {
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::ClaimOwnerUnreachable { .. }
+            | CheckViolation::ClaimUnreadable { .. }
             | CheckViolation::OrphanedSavepoint { .. }
             | CheckViolation::UnrecognizedSavepointRef { .. }
             | CheckViolation::ConfusableSiblings { .. }
@@ -865,6 +880,7 @@ impl CheckViolation {
             CheckViolation::StaleOpState { .. } => ViolationKind::StaleOpState,
             CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
             CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
+            CheckViolation::ClaimUnreadable { .. } => ViolationKind::ClaimUnreadable,
             CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
             CheckViolation::UnrecognizedSavepointRef { .. } => {
                 ViolationKind::UnrecognizedSavepointRef
@@ -918,6 +934,7 @@ pub enum ViolationKind {
     StaleOpState,
     DeadOpLease,
     ClaimOwnerUnreachable,
+    ClaimUnreadable,
     OrphanedSavepoint,
     UnrecognizedSavepointRef,
     ConfusableSiblings,
@@ -929,7 +946,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -964,6 +981,7 @@ impl ViolationKind {
         Self::StaleOpState,
         Self::DeadOpLease,
         Self::ClaimOwnerUnreachable,
+        Self::ClaimUnreadable,
         Self::OrphanedSavepoint,
         Self::UnrecognizedSavepointRef,
         Self::ConfusableSiblings,
@@ -2202,6 +2220,12 @@ pub enum ViolationOutput {
         /// Owner workspace the claim names.
         recorded_owner: WirePath,
     },
+    ClaimUnreadable {
+        /// Absolute path to the claim or takeover guard.
+        file: WirePath,
+        /// What it holds, as text, invalid UTF-8 replaced.
+        content: String,
+    },
     OrphanedSavepoint {
         path: String,
         absolute_path: WirePath,
@@ -2668,6 +2692,10 @@ impl ViolationOutput {
                 claim_dir: WirePath::of(&claim_dir),
                 op_id,
                 recorded_owner: WirePath::of(&recorded_owner),
+            },
+            CheckViolation::ClaimUnreadable { file, seen } => Self::ClaimUnreadable {
+                file: WirePath::of(&file),
+                content: unreadable_claim_text(&seen),
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -5686,6 +5714,14 @@ pub fn scan_state_hygiene(
                             recorded_owner: claim.owner,
                         }),
                 );
+                violations.extend(
+                    crate::landing_claim::unreadable_claims(vcs, &repo.abs)
+                        .into_iter()
+                        .map(|claim| CheckViolation::ClaimUnreadable {
+                            file: claim.file,
+                            seen: claim.seen,
+                        }),
+                );
             }
         }
 
@@ -6968,6 +7004,15 @@ impl CheckViolation {
                 claim_dir.display(),
                 recorded_owner.display()
             ),
+            CheckViolation::ClaimUnreadable { file, seen } => format!(
+                "{}: claim-unreadable — it holds what this rwv does not read ({}): an rwv of \
+                 another release took it, or it is corrupt. No landing takes it over. End that \
+                 landing with the release that started it; if none stands, `rwv doctor --fix \
+                 --release-unreadable-claims` releases it, and a live landing of another \
+                 release would lose its claim.",
+                file.display(),
+                unreadable_claim_text(&seen)
+            ),
             CheckViolation::OrphanedSavepoint {
                 workweave,
                 repo,
@@ -7866,11 +7911,25 @@ fn apply_workspace_repairs(
 /// Nothing here can act on a finding [`CheckViolation::fix_disposition`] calls
 /// report-only, so the register can narrow what this repairs but never widen
 /// it.
+/// What an unreadable claim holds, as a report prints it: trimmed, invalid
+/// UTF-8 replaced, and cut short where it runs long.
+fn unreadable_claim_text(seen: &[u8]) -> String {
+    const SHOWN: usize = 120;
+    let text = String::from_utf8_lossy(seen);
+    let text = text.trim();
+    match text.char_indices().nth(SHOWN) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None if text.is_empty() => "nothing".to_owned(),
+        None => text.to_owned(),
+    }
+}
+
 fn apply_finding_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
     violations: Vec<CheckViolation>,
     repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
+    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let vcs = world.vcs.as_ref();
@@ -8138,6 +8197,31 @@ fn apply_finding_repairs(
                     }
                 }
             }
+
+            CheckViolation::ClaimUnreadable { file, seen } => match release_unreadable_claims {
+                None => false,
+                Some(_) => match crate::landing_claim::release_unreadable(
+                    &crate::landing_claim::UnreadableClaim {
+                        file: file.clone(),
+                        seen: seen.clone(),
+                    },
+                ) {
+                    Ok(true) => {
+                        outln!(
+                            "[fixed] core: claim-unreadable at {}: released it ({}); a landing \
+                             of another rwv release that held it has lost its claim",
+                            file.display(),
+                            unreadable_claim_text(seen)
+                        );
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(e) => {
+                        fix_errors.push(format!("unreadable claim release failed: {e:#}"));
+                        false
+                    }
+                },
+            },
 
             // Operates on the lease's own workspace dir, so no repo lookup.
             CheckViolation::DeadOpLease {
@@ -8780,6 +8864,7 @@ pub fn run_check(
     repair: Repair,
     scope: Scope,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
+    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
@@ -8818,6 +8903,7 @@ pub fn run_check(
             &world,
             violations,
             &findings.repo_locations,
+            release_unreadable_claims,
             &mut fix_errors,
         );
         findings.violations = repair_member_permissions(

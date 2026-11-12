@@ -28,8 +28,8 @@ the analogy fails, not that a failure is imaginable.
 
 **rwv's own metadata: sound.** The records only rwv writes — op-state records,
 ownership ledgers, workspace markers, lock snapshots — get the treatment git
-gives its index and refs: atomic publication (write-then-rename, or a `link(2)`
-claim where exclusivity is the point), and serialized read-modify-write. A
+gives its index and refs: atomic publication (write-then-rename, or an
+exclusive publish where exclusivity is the point), and serialized read-modify-write. A
 crash must not tear them, and a concurrent rwv must not silently drop another
 invocation's write. A missing property here is a defect, not a hardening
 opportunity. The lease machinery in [op-state.md](op-state.md) is this tier's
@@ -50,6 +50,68 @@ file. The publish retries the replacement for the claim budget
 (`rename_over` in `src/durable_file.rs`), as git for Windows retries its own
 rename, rather than make every reader take the claim git's readers never
 take.
+
+**An exclusive publish has two modes and a refusal, chosen per call.** The
+op record, every lease, every claim and every takeover guard is written
+whole into a sibling temp, fsynced, and published by `durable_file::create_new`
+in one step that fails on an occupied path: a reader sees nothing or the whole
+file, and of two racing writers exactly one wins and the other reads the
+winner's complete file. The first mode is a hard link of the temp. The second,
+reached only when the link fails with an error that says this filesystem
+makes no links, is a rename that refuses to replace: Linux
+`renameat2(RENAME_NOREPLACE)`, macOS `renamex_np(RENAME_EXCL)`, Windows
+`MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`. Both are atomic and
+exclusive within one filesystem; the rename's exclusivity is the kernel's
+check under the parent directory's lock on Linux, and the server's on SMB.
+Where the rename is not made either, the publish refuses
+`filesystem-without-exclusive-publish`, naming the filesystem as the OS
+reports it (`statfs` on Linux and macOS, `GetVolumeInformationW` on Windows).
+An exclusive create followed by a write is never a fallback: a writer killed
+between the two leaves an empty file that every reader of an op record or a
+claim refuses, and no verb clears it. The first publish of an operation is
+its record, so an operation refused here has written nothing.
+
+Which errors select the rename is a list of raw codes, never an
+`ErrorKind`, because `PermissionDenied` covers both a filesystem without links
+and a permission truly denied:
+
+| Call | Selects the next mode | Platform |
+|---|---|---|
+| `link(2)` | `EPERM` (vfat, exfat: no link operation), `EOPNOTSUPP`/`ENOTSUP`, `ENOSYS` (some FUSE and SMB mounts) | unix |
+| `CreateHardLinkW` | `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` (FAT, exFAT) | Windows |
+| `renameat2` / `renamex_np` | `EINVAL` (no `RENAME_NOREPLACE`: NFS, FUSE without rename2), `ENOSYS` (kernel before 3.15, or a platform with no such call), `EOPNOTSUPP`/`ENOTSUP` (no `RENAME_EXCL`) | unix |
+| `MoveFileExW` | `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` | Windows |
+
+`EPERM` from `link(2)` is not a permission rwv could be granted: a denied
+directory write is `EACCES`, and the temp beside the target was created a
+moment before, so a directory rwv cannot write fails at the temp, before any
+link. Every other error, `EACCES` and `ERROR_ACCESS_DENIED` included, is
+reported as it is and never retried in another mode. A filesystem that makes
+links never reaches the rename.
+
+FUSE without rename2 that also has no links, and FAT on macOS, refuse. No
+filesystem without hard links can be mounted in the gate without privilege,
+so the suite stands one in by withholding a mode from a test build
+(`RWV_TEST_WITHHOLD`, read only with the `test-pause` feature), and the error
+it returns is the one such a filesystem returns.
+
+**A killed writer's temp is removed by the next publish of its name.** A temp
+is never at a published name, so one left behind blocks nothing. Every
+publish, `create_new` and `replace` alike, first removes each temp beside its
+target whose name begins with the target's and that no writer holds. A temp's
+name carries the pid, a key drawn once per process and a per-process serial,
+so a name is never reused. On unix a writer holds an advisory `flock` on its
+temp from its creation until the publish ends, which the kernel drops when the
+writer dies, and the sweep removes only a temp whose lock it takes. On Windows
+a writer holds its temp open without sharing deletion until just before it
+publishes, so the sweep's delete fails while it is held. The lock decides
+nothing but that a temp is garbage: no record's or claim's standing reads it.
+A writer whose temp a sweep met in the instant before it held it, or after it
+let go on Windows, finds it gone at the publish and stages it again. Where
+the filesystem takes no lock, or honors it only on one host (some NFS and
+SMB mounts), the sweep takes no temp it cannot lock, or removes one a writer
+on another host still holds, which that writer then stages again: temps may
+be left, and nothing else changes.
 
 **A fetch into an object store is claimed: one at a time per store.** Two
 fetches into one store race on the refs they update, and the loser dies on a
@@ -157,9 +219,17 @@ again. The claim path is never emptied while it holds a live claim
 (`tests/process/landing_claim_contention_test.rs` drives this with takers in
 separate processes). No process id, host or clock is consulted, so a
 claim whose op is recorded is never taken from it. A claim whose bytes this
-rwv does not read is never judged dead. Taking it is a hard-link publish of a
-fully written temp (`durable_file::create_new`), which fails on an occupied
-path, as the op record's is. The compare-and-swap of each move stays the
+rwv does not read, or a takeover guard beside it that this rwv does not read,
+is never judged dead either: a landing waits on it and refuses
+`claim-unreadable`, and `rwv doctor` reports it and releases it only under
+`--fix --release-unreadable-claims` (`unreadable_claims`,
+`release_unreadable`), which removes a file only while it holds the bytes the
+same run reported. The removal is a compare and then an unlink, not one step:
+a landing of another release that releases its claim, and a taker that claims
+the target, both inside that instant, would lose the new claim. The flag is
+the operator's word that no such landing stands. Taking a claim is an
+exclusive publish of a fully written temp (`durable_file::create_new`, below),
+which fails on an occupied path, as the op record's is. The compare-and-swap of each move stays the
 guard against every writer that takes no claim.
 
 **A landing waits on the claim holding only its record.** The record is

@@ -235,6 +235,12 @@ pub enum Commands {
         /// stand as edits. Without this flag, `--fix` reports the checkout.
         #[arg(long)]
         abandon_lost_pins: bool,
+        /// With `--fix`, release every landing claim and takeover guard this
+        /// run reports as `claim-unreadable` and that still holds what it
+        /// held when reported: a landing of another rwv release that holds
+        /// one loses its claim. Without this flag, `--fix` reports them.
+        #[arg(long)]
+        release_unreadable_claims: bool,
         /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,

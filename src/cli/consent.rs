@@ -155,6 +155,24 @@ impl AbandonLostPinsConsent {
     }
 }
 
+/// Proof that the operator consented to releasing every landing claim and
+/// takeover guard `rwv doctor` reports as unreadable, giving up the claim a
+/// live landing of another rwv release may hold. Minted from
+/// `--release-unreadable-claims`.
+///
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct ReleaseUnreadableClaimsConsent(());
+
+impl ReleaseUnreadableClaimsConsent {
+    /// Mint from the parsed `--release-unreadable-claims` value: `Some` iff
+    /// the operator passed it. `pub(in crate::cli)`: see
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(release_unreadable_claims: bool) -> Option<Self> {
+        release_unreadable_claims.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to discarding the current content of
 /// an rwv-attested generated file and regenerating it from the current
 /// inputs. Minted from `--regenerate-drifted`.
