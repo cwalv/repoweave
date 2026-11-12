@@ -1129,18 +1129,7 @@ pub fn run_set_branch(
         eprintln!("rwv {VERB}: {member}: {note}");
     }
     if let (Some(pin), Some(was)) = (&step.pin, &step.was_pin) {
-        if pin != was
-            && matches!(
-                vcs.relation(&dir, pin, was)?,
-                Relation::Behind | Relation::Diverged
-            )
-        {
-            eprintln!(
-                "rwv {VERB}: {member}: re-pinned {} to {}, by name",
-                was.id().short(),
-                pin.id().short()
-            );
-        }
+        crate::lock::report_backward_repin(vcs, &dir, VERB, &member, was, pin)?;
     }
     let own = loaded.aligner.checked_out().map(|branch| {
         format!(

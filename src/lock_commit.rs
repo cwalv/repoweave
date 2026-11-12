@@ -306,14 +306,19 @@ pub(crate) fn run(
         ),
         commit,
     )?;
-    report(&changes, &moving);
+    report(ctx, &loaded, &changes, &moving)?;
     if let Some(pending) = pending {
         crate::lock::commit_project_lock(&pending, &authored)?;
     }
     Ok(())
 }
 
-fn report(changes: &WholeChanges, moving: &[Moving]) {
+fn report(
+    ctx: &WorkspaceContext,
+    loaded: &Loaded,
+    changes: &WholeChanges,
+    moving: &[Moving],
+) -> anyhow::Result<()> {
     for change in &changes.changed {
         for field in &change.fields {
             eprintln!(
@@ -330,6 +335,16 @@ fn report(changes: &WholeChanges, moving: &[Moving]) {
                 pin.id().short(),
                 entry.after.branch
             );
+            if let Some(was) = &entry.step.was_pin {
+                crate::lock::report_backward_repin(
+                    vcs_for(entry.after.vcs_type).as_ref(),
+                    &loaded.checkout(ctx, &entry.member).dir,
+                    VERB,
+                    &entry.member,
+                    was,
+                    pin,
+                )?;
+            }
         }
     }
     for path in &changes.added {
@@ -344,4 +359,5 @@ fn report(changes: &WholeChanges, moving: &[Moving]) {
              files regenerated from them"
         );
     }
+    Ok(())
 }

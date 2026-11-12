@@ -602,3 +602,29 @@ fn set_url_with_no_remote_at_the_new_url_reports_the_relink_waiting_for_a_fetch_
         "{relinked}"
     );
 }
+
+#[test]
+fn lock_commit_over_a_hand_declared_branch_behind_the_pin_reports_the_re_pin_as_member_pin_does() {
+    let w = two_members();
+    let lib = member(&w, LIB);
+    git_in(&lib, &["branch", "dev"]);
+    publish_branch(&lib, "dev");
+    commit_in(&lib, "main-ahead");
+    publish_branch(&lib, "main");
+    succeeded(&run(&w, &["lock", "--commit"]));
+    let was = pin_of(&w, LIB).unwrap();
+    let dev = git_in(&lib, &["rev-parse", "dev"]);
+    declare_by_hand(&w, LIB, "dev");
+
+    let text = succeeded(&run(&w, &["lock", "--commit"]));
+
+    assert_eq!(pin_of(&w, LIB).as_deref(), Some(dev.as_str()), "{text}");
+    assert!(
+        text.contains(&format!(
+            "rwv lock: {LIB}: re-pinned {} to {}, by name",
+            &was[..12],
+            &dev[..12]
+        )),
+        "{text}"
+    );
+}

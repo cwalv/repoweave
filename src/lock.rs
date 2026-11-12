@@ -872,6 +872,35 @@ pub(crate) fn with_pins<'a>(
     new
 }
 
+/// The line for a pin moved by name from `was` to `to`.
+fn repinned_line(verb: &str, path: &RepoPath, was: &str, to: &str) -> String {
+    format!("rwv {verb}: {path}: re-pinned {was} to {to}, by name")
+}
+
+/// Report a pin moved by name from `was` to `to` where `to` does not descend
+/// from `was`.
+pub(crate) fn report_backward_repin(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    verb: &str,
+    path: &RepoPath,
+    was: &ResolvedRevisionId,
+    to: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
+    if was != to
+        && matches!(
+            vcs.relation(dir, to, was)?,
+            Relation::Behind | Relation::Diverged
+        )
+    {
+        eprintln!(
+            "{}",
+            repinned_line(verb, path, was.id().short(), to.id().short())
+        );
+    }
+    Ok(())
+}
+
 /// Say what the relock did that the lock file does not show: a first pin, a
 /// pin moved backward by name, and a forward move over commits another
 /// project's lock does not pin.
@@ -890,8 +919,13 @@ fn report_recorded(
             How::Same => {}
             How::First => eprintln!("rwv {verb}: {path}: pinned at {to}; it had no pin"),
             How::Backward => eprintln!(
-                "rwv {verb}: {path}: re-pinned {} to {to}, by name",
-                one.was.as_ref().map_or("none", |was| was.short_display())
+                "{}",
+                repinned_line(
+                    verb,
+                    path,
+                    one.was.as_ref().map_or("none", |was| was.short_display()),
+                    to
+                )
             ),
             How::Forward => {
                 let vcs = vcs_for(one.vcs_type);

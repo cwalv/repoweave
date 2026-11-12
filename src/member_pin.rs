@@ -6,7 +6,7 @@ use crate::diagnosis::{Judged, Report, State};
 use crate::lock::{self, CommitMessage};
 use crate::manifest::{LockFile, Project, RepoPath};
 use crate::refusal::RefusalKind;
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Relation};
+use crate::vcs::{project_vcs, vcs_for, HeadAttachment};
 use crate::workspace::{project_dir, WorkspaceContext};
 use anyhow::Context;
 use std::collections::BTreeSet;
@@ -144,16 +144,7 @@ pub fn run_pin(
         was.as_ref().map_or("none", |was| was.short_display())
     );
     if let Pin::At(was) = crate::alignment::pin_of(vcs.as_ref(), dir, old.as_ref(), &path) {
-        if matches!(
-            vcs.relation(dir, &to, &was)?,
-            Relation::Behind | Relation::Diverged
-        ) {
-            eprintln!(
-                "rwv member pin: {path}: re-pinned {} to {}, by name",
-                was.id().short(),
-                to.id().short()
-            );
-        }
+        lock::report_backward_repin(vcs.as_ref(), dir, "member pin", &path, &was, &to)?;
     }
 
     if aligns {
