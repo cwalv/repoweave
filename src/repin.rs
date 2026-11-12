@@ -147,11 +147,25 @@ pub(crate) fn commit(
     lock: Option<&LockFile>,
     naming: &Naming,
 ) -> Result<bool, VcsError> {
-    let annotations = match lock {
+    commit_annotated(vcs, dir, paths, message, lock, naming, Vec::new())
+}
+
+/// [`commit`], recording `annotations` too, after the re-pins.
+pub(crate) fn commit_annotated(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    paths: &[&str],
+    message: &str,
+    lock: Option<&LockFile>,
+    naming: &Naming,
+    annotations: Vec<Annotation>,
+) -> Result<bool, VcsError> {
+    let mut recorded = match lock {
         Some(lock) => repins(vcs, dir, vcs.head_revision(dir).ok(), lock, naming),
         None => Vec::new(),
     };
-    vcs.commit_only(dir, paths, message, &annotations)
+    recorded.extend(annotations);
+    vcs.commit_only(dir, paths, message, &recorded)
 }
 
 /// Commit the merge staged in `dir`, whose `rwv.lock` stages `lock`,

@@ -6,12 +6,12 @@ use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
-    ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond,
-    DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
-    LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation, NamedBranch,
-    PatchEquivalents, PinOutcome, PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName,
-    RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite,
-    RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
+    ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
+    DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
+    ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
+    NamedBranch, PatchEquivalents, PinOutcome, PruningFetch, PublishRef, RangeCommit, RangeListing,
+    RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish,
+    RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
     RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
     Replace, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth,
     SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
@@ -26,6 +26,7 @@ use std::process::Stdio;
 mod argv;
 mod backup;
 mod merge;
+mod pick;
 mod records;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
@@ -4383,6 +4384,41 @@ impl Vcs for GitVcs {
 
     fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
         Self::merge_head(checkout)
+    }
+
+    fn copy_commit(
+        &self,
+        checkout: &Path,
+        commit: &CommitId,
+        mainline: Option<usize>,
+    ) -> Result<Copied, VcsError> {
+        Self::copy_commit_onto(checkout, commit, mainline)
+    }
+
+    fn continue_copy(&self, checkout: &Path) -> Result<Copied, VcsError> {
+        Self::continue_copy_in(checkout)
+    }
+
+    fn copy_uncommitted(
+        &self,
+        checkout: &Path,
+        commit: &CommitId,
+        mainline: Option<usize>,
+    ) -> Result<Vec<String>, VcsError> {
+        Self::copy_without_commit(checkout, commit, mainline)
+    }
+
+    fn parents(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {
+        Self::parents_of(repo, commit)
+    }
+
+    fn message_without(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        keys: &[&str],
+    ) -> Result<String, VcsError> {
+        Self::commit_message_without(repo, commit, keys)
     }
 
     fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError> {

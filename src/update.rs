@@ -293,6 +293,17 @@ pub(crate) fn align_after_sync(
     jobs: usize,
     output: OutputMode,
 ) -> anyhow::Result<UpdateRun> {
+    align_after(ctx, jobs, output, "sync")
+}
+
+/// Align every member of the project `ctx` is bound to after `verb` moved
+/// the project branch, as `rwv update` aligns them.
+pub(crate) fn align_after(
+    ctx: &WorkspaceContext,
+    jobs: usize,
+    output: OutputMode,
+    verb: &'static str,
+) -> anyhow::Result<UpdateRun> {
     update_members_for(
         ctx,
         &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
@@ -301,7 +312,7 @@ pub(crate) fn align_after_sync(
         ActivateOptions::default(),
         SharedMembers::Refuse,
         Flavor {
-            verb: "sync",
+            verb,
             carry_edits: false,
         },
     )

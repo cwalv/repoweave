@@ -413,6 +413,7 @@ fn writes_project(command: Option<&Commands>) -> bool {
         | Some(Commands::Lock { .. })
         | Some(Commands::Sync { .. })
         | Some(Commands::Land { .. })
+        | Some(Commands::CherryPick { .. })
         | Some(Commands::Pull { .. }) => true,
         Some(Commands::Update { remote, .. }) => *remote,
         Some(Commands::Branch { action }) => !matches!(action, BranchAction::List { .. }),
@@ -608,6 +609,7 @@ fn drives_repositories(command: Option<&Commands>) -> bool {
             | Commands::Backup { .. }
             | Commands::Sync { .. }
             | Commands::Land { .. }
+            | Commands::CherryPick { .. }
             | Commands::Fetch { .. }
             | Commands::Pull { .. }
             | Commands::Update { .. }
@@ -1426,6 +1428,26 @@ pub fn run() -> anyhow::Result<()> {
                 })
             };
             crate::feature_sync::run_sync(&ctx, run, OutputMode::from_flag(json))?;
+        }
+        Some(Commands::CherryPick {
+            rev,
+            mainline,
+            except,
+            json,
+            project,
+            do_continue,
+        }) => {
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
+            let run = match (do_continue, rev) {
+                (false, Some(rev)) => crate::cherry_pick::Run::Fresh(crate::cherry_pick::Args {
+                    rev,
+                    mainline,
+                    except,
+                }),
+                _ => crate::cherry_pick::Run::Continue,
+            };
+            crate::cherry_pick::run_cherry_pick(&ctx, run, OutputMode::from_flag(json))?;
         }
         Some(Commands::Land {
             target,

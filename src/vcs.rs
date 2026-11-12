@@ -350,6 +350,18 @@ pub struct Annotation {
     pub value: String,
 }
 
+/// What copying one commit onto a checkout came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Copied {
+    /// The new commit, which records the one it copies.
+    Commit(CommitId),
+    /// Its change was already on the checkout: nothing was committed.
+    Empty,
+    /// The copy stopped on a conflict in these paths, the checkout left in
+    /// the VCS's own copy in progress for the operator to resolve and stage.
+    Conflicted(Vec<String>),
+}
+
 /// A commit of a pushed range and the commits it joins: one for an ordinary
 /// commit, several for a merge, the first the branch the merge was made on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4514,6 +4526,58 @@ pub trait Vcs: Send + Sync {
 
     /// The commit a merge in flight in `checkout` is merging in.
     fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// Apply what `commit` introduced, against its parent number `mainline`
+    /// (from 1; a merge commit needs one), as a new commit on the checkout,
+    /// recording which commit it copies. A copy holding no change is dropped;
+    /// a conflict stops in the VCS's own copy in progress, as a merge does.
+    ///
+    /// For git: `git cherry-pick -x [-m <n>] <commit>`, and `--skip` for a
+    /// copy that comes out empty.
+    fn copy_commit(
+        &self,
+        checkout: &Path,
+        commit: &CommitId,
+        mainline: Option<usize>,
+    ) -> Result<Copied, VcsError>;
+
+    /// Finish the copy a conflict stopped in `checkout`, once the operator
+    /// staged the resolution; a resolution holding no change drops it.
+    ///
+    /// For git: `git cherry-pick --continue`, or `--skip` for an empty one.
+    fn continue_copy(&self, checkout: &Path) -> Result<Copied, VcsError>;
+
+    /// Apply what `commit` introduced, against `mainline` as in
+    /// [`Vcs::copy_commit`], to the checkout's index and files and stop
+    /// before the commit, leaving the copy in progress: the next commit made
+    /// there ends it, as the copy's, and canceling the operation in flight
+    /// undoes it. The lock is held as it is in a merge rwv makes. Returns the
+    /// paths left conflicted.
+    ///
+    /// For git: `git cherry-pick --no-commit [-m <n>] <commit>`, with
+    /// `CHERRY_PICK_HEAD` written.
+    fn copy_uncommitted(
+        &self,
+        checkout: &Path,
+        commit: &CommitId,
+        mainline: Option<usize>,
+    ) -> Result<Vec<String>, VcsError>;
+
+    /// The parents of `commit`, in order; none for a root commit.
+    ///
+    /// For git: `git rev-list --parents -n 1 <commit>`.
+    fn parents(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommitId>, VcsError>;
+
+    /// The message of `commit`, without the annotations it records under
+    /// `keys`.
+    ///
+    /// For git: `git log -1 --format=%B`, less each `<key>:` line.
+    fn message_without(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        keys: &[&str],
+    ) -> Result<String, VcsError>;
 
     /// The paths of `checkout` a merge left conflicted and nothing has staged.
     fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError>;

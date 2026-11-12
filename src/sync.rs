@@ -2544,7 +2544,10 @@ fn announce_completion(ctx: &OpContext<'_>) {
         return;
     }
     match ctx.verb {
-        op_state::OpVerb::Sync | op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => {}
+        op_state::OpVerb::Sync
+        | op_state::OpVerb::Pull
+        | op_state::OpVerb::UpdateRemote
+        | op_state::OpVerb::CherryPick => {}
         op_state::OpVerb::Land => {
             eprintln!(
                 "land complete: {} fast-forwarded to this workspace's tip",
@@ -2584,7 +2587,10 @@ fn run_phase(
 /// After relock, `land` continues with advance-target.
 fn next_after_relock(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
     match ctx.verb {
-        op_state::OpVerb::Sync | op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => None,
+        op_state::OpVerb::Sync
+        | op_state::OpVerb::Pull
+        | op_state::OpVerb::UpdateRemote
+        | op_state::OpVerb::CherryPick => None,
         op_state::OpVerb::Land => Some(op_state::OpPhase::AdvanceTarget),
     }
 }

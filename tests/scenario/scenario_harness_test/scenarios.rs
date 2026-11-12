@@ -7310,3 +7310,352 @@ pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
         ],
     )
 }
+
+const APP: &str = "local/remotes/app";
+
+/// `stable`, declared from `main` with its own `stable-app` and `stable-lib`
+/// lines, and the primary back on `main`.
+fn stable_lines() -> Vec<Step> {
+    vec![
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "create",
+                "stable",
+                "--declared",
+                "--set-new-branch",
+                "local/remotes/app=stable-app",
+                "--set-new-branch",
+                "local/remotes/lib=stable-lib",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// The primary on `stable`, and a workweave `p` holding a feature onto it.
+fn feature_onto_stable() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["switch", "stable"]).expect(Exit::Succeeds),
+        create("p"),
+    ]
+}
+
+/// One project commit on `main`, `port-me`: `app` two commits forward, `lib`
+/// one, the `dependency` `docs` re-pinned one forward, `lib`'s entry and the
+/// top-level `history` changed, and a project file added.
+fn port_me_on_main() -> Vec<Step> {
+    let lib_main = declared_branch_text(Repo::Lib, "main");
+    vec![
+        Step::commit(&a(), Repo::App, "fix-app-1"),
+        Step::commit(&a(), Repo::App, "fix-app-2"),
+        Step::commit(&a(), Repo::Lib, "fix-lib"),
+        Step::commit(&a(), Repo::Docs, "docs-bump"),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]",
+            "history = \"linear\"\n\n[integrations.vscode-workspace]",
+        ),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &lib_main,
+            &format!("{lib_main}\nrecurse-submodules = false"),
+        ),
+        Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["add", "rwv.toml", "rwv.lock"]),
+        Step::commit(&a(), Repo::Proj, "port-me"),
+    ]
+}
+
+/// `cherry-pick-port`: a project commit on `main` ported onto a feature off
+/// `stable`: each owned member's range copied in order and recording its
+/// source, the dependency's pin carried by name, one project commit
+/// mirroring the original with the relock and its source, the entry and
+/// `history` changes reported `not-ported` with their setters while the
+/// feature's stay; a rerun changes nothing, and the feature lands.
+pub fn cherry_pick_port() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(port_me_on_main());
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: copied"))
+            .claim(Claim::OutputContains("local/remotes/lib: copied"))
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: not-ported recurse-submodules: true -> false",
+            ))
+            .claim(Claim::OutputContains(
+                "rwv member set-recurse-submodules local/remotes/lib false",
+            ))
+            .claim(Claim::OutputContains(
+                "projects/proj: not-ported history: unset -> linear",
+            ))
+            .claim(Claim::OutputContains("rwv branch set-history linear"))
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(ww("p"), Repo::Proj, "proj--p".to_owned()),
+                member: Repo::Docs,
+                mark: "docs-bump",
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            }),
+        Step::git(&ww("p"), Repo::App, &["log", "-2", "--format=%s"])
+            .claim(Claim::OutputInOrder(&["fix-app-2", "fix-app-1"])),
+        Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%b"])
+            .claim(Claim::OutputContains("cherry picked from commit")),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("fix-lib")),
+        Step::git(&ww("p"), Repo::Proj, &["log", "-1", "--format=%B"])
+            .claim(Claim::OutputContains("port-me"))
+            .claim(Claim::OutputContains("Rwv-Picked-From: "))
+            .claim(Claim::OutputContains("Rwv-Repin: \"local/remotes/docs\"")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-me.txt"])
+            .claim(Claim::OutputLine("port-me")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputLacks("recurse-submodules"))
+            .claim(Claim::OutputLacks("history")),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("already holds what"))
+            .claim(Claim::OutputContains("not-ported"))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["land"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "stable-app"])
+            .claim(Claim::OutputContains("fix-app-2")),
+        Step::git(&a(), Repo::Lib, &["log", "--format=%s", "stable-lib"])
+            .claim(Claim::OutputContains("fix-lib")),
+        Step::git(&a(), Repo::Proj, &["show", "stable:rwv.toml"])
+            .claim(Claim::OutputLacks("recurse-submodules")),
+    ]);
+    Scenario {
+        name: "cherry-pick port",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
+/// `cherry-pick-port` under a `merge` setting: a landing into `main` made by
+/// merge ports whole with `-m 1`, each landed member's merge copied against
+/// its first parent, and the port lands.
+pub fn cherry_pick_port_landing_merge() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
+    steps.extend(stable_lines());
+    steps.extend([
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-moved"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main^2"]),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Proj, State::PortMainline))
+            .claim(Claim::OutputContains("rwv cherry-pick main -m <n>"))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "-m", "1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: copied"))
+            .claim(Claim::OutputContains("local/remotes/lib: copied"))
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            }),
+        Step::git(
+            &ww("p"),
+            Repo::App,
+            &["show", "--stat", "--format=%b", "HEAD"],
+        )
+        .claim(Claim::OutputContains("w-app.txt"))
+        .claim(Claim::OutputLacks("main-moved.txt"))
+        .claim(Claim::OutputContains("cherry picked from commit")),
+        Step::rwv(&ww("p"), &["land"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["show", "stable-app:w-app.txt"])
+            .claim(Claim::OutputLine("w-app")),
+        Step::git(&a(), Repo::Lib, &["show", "stable-lib:w-lib.txt"])
+            .claim(Claim::OutputLine("w-lib")),
+    ]);
+    scenario("cherry-pick port of a landing merge", steps)
+}
+
+/// A feature off `stable` holding its own edit of `lib`'s README, and a
+/// commit on `main` moving `app` cleanly and `lib` by a conflicting edit of
+/// the same line.
+fn conflicting_port() -> Vec<Step> {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib on main\n"),
+        Step::git(&a(), Repo::Lib, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::hand_edit(&ww("p"), Repo::Lib, "README", "lib\n", "lib in p\n"),
+        Step::git(&ww("p"), Repo::Lib, &["commit", "-qam", "readme-p"]),
+        Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("local/remotes/app: copied"))
+            .claim(Claim::OutputContains("stopped on a conflict (README)"))
+            .claim(Claim::OutputContains("rwv cherry-pick --continue"))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::OutputLacks("git cherry-pick --continue")),
+    ]);
+    steps
+}
+
+/// `cherry-pick-conflict`: one member's copy conflicts; the conflict stop
+/// prints the backend's hint up to staging, and `--continue` completes the
+/// copy, the project commit and the relock.
+pub fn cherry_pick_conflict() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::Lib, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("p"), Repo::Lib, &["add", "README"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported"))
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            }),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("readme-main")),
+        Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("main-app")),
+        Step::rwv(&ww("p"), &["status"]).expect(Exit::Succeeds),
+    ]);
+    scenario("cherry-pick conflict continued", steps)
+}
+
+/// `cherry-pick-conflict`, abandoned: `rwv abort` puts every repo back,
+/// the copy that went through included.
+pub fn cherry_pick_conflict_aborts() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::rwv(&ww("p"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            }),
+        Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLacks("main-app")),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("readme-p")),
+        Step::git(&ww("p"), Repo::Lib, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("README")),
+    ]);
+    scenario("cherry-pick conflict aborted", steps)
+}
+
+/// `cherry-pick-refusals`: outside a feature, a merge commit without `-m`
+/// and an `-m` on a commit that is no merge, a backward pin, and a member
+/// range holding a merge are each refused before anything moves, naming the
+/// way out; the merge's printed path, the hand cherry-pick then the rerun
+/// with `--except`, completes, recording that member's tip.
+pub fn cherry_pick_refusals() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::rwv(&a(), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetNoTarget))
+            .claim(Claim::OutputContains("rwv workweave create <ww>"))
+            .claim(Claim::OutputContains("rwv branch create <W>"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::git(&a(), Repo::App, &["branch", "side"]),
+        Step::hand_commit(&a(), Repo::App, "side", &[("side.txt", "side\n")]),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["merge", "--no-ff", "-m", "app-merge", "side"],
+        ),
+        Step::commit(&a(), Repo::Lib, "lib-fix"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "pin", LIB, "HEAD~1", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["branch", "proj-side"]),
+        Step::hand_commit(&a(), Repo::Proj, "proj-side", &[("side.txt", "side\n")]),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["merge", "--no-ff", "-m", "proj-merge", "proj-side"],
+        ),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Proj, State::PortMainline))
+            .claim(Claim::OutputContains("rwv cherry-pick main -m <n>"))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main", "-m", "3"])
+            .expect(Exit::refuses(Repo::Proj, State::PortMainline))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1", "-m", "1"])
+            .expect(Exit::refuses(Repo::Proj, State::PortMainline))
+            .claim(Claim::OutputContains("rwv cherry-pick main~1\n"))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1"])
+            .expect(Exit::refuses(Repo::Lib, State::PortBackward))
+            .claim(Claim::OutputContains("lib-fix"))
+            .claim(Claim::OutputContains("revert"))
+            .claim(Claim::OutputContains(
+                "rerun with --except local/remotes/lib",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~2"])
+            .expect(Exit::refuses(Repo::App, State::PortMergeInRange))
+            .claim(Claim::OutputContains("app-merge (merge)"))
+            .claim(Claim::OutputContains("cherry-pick -m 1"))
+            .claim(Claim::OutputContains(
+                "rerun with --except local/remotes/app",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~2", "--except", DOCS])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::git(
+            &ww("p"),
+            Repo::App,
+            &["cherry-pick", "-m", "1", ":/app-merge"],
+        ),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~2", "--except", APP])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/lib: copied"))
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::Lib,
+            }),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("lib-fix")),
+    ]);
+    scenario("cherry-pick refusals", steps)
+}

@@ -435,6 +435,55 @@ pub enum Commands {
         #[arg(long = "continue")]
         do_continue: bool,
     },
+    /// Port one project commit onto this feature: copy each member's change, carry each dependency's pin, and commit the project change with the relock
+    ///
+    /// The commit's lock is read against its parent's (`-m`'s parent for a merge). Each
+    /// `owned` or `fork` member whose pin it moves gains copies of the commits of that
+    /// range its branch lacks, oldest first, each recording the commit it copies; each
+    /// `dependency` or `reference` member's new pin is carried by name. Then one project
+    /// commit applies the commit's other project files and records the relock and the
+    /// commit it mirrors. Changes the commit made to member entries or the top-level
+    /// `history` are never ported: each is reported `not-ported` with its setter. Every
+    /// refusal is reported before anything moves; a conflict stops the port until
+    /// `--continue`, and `rwv abort` puts every repo back.
+    ///
+    /// Examples:
+    ///
+    ///   rwv cherry-pick 4f2a9c1
+    ///
+    ///   rwv cherry-pick 4f2a9c1 -m 1
+    ///
+    ///   rwv cherry-pick 4f2a9c1 --except github/o/lib
+    #[command(name = "cherry-pick")]
+    CherryPick {
+        /// The project commit to port, as the project repo resolves it
+        #[arg(
+            value_name = "PROJECT-REV",
+            required_unless_present = "do_continue",
+            conflicts_with = "do_continue"
+        )]
+        rev: Option<String>,
+        /// Pick a merge commit against its parent number N (from 1), as the VCS's cherry-pick does
+        #[arg(
+            short = 'm',
+            long = "mainline",
+            value_name = "N",
+            conflicts_with = "do_continue"
+        )]
+        mainline: Option<usize>,
+        /// Leave this member out of the port, recording its checked-out tip as `rwv lock` would, forward only; for a member ported by hand. Repeat per member
+        #[arg(long = "except", value_name = "REPO", conflicts_with = "do_continue")]
+        except: Vec<crate::manifest::RepoOperand>,
+        /// Emit what the port copied, carried and left as JSON. See `rwv explain cherry-pick`.
+        #[arg(long)]
+        json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Resume a port a conflict stopped, after resolving and staging it; every parameter comes from the op record
+        #[arg(long = "continue")]
+        do_continue: bool,
+    },
 
     // ── Network & publishing ──────────────────────────────────────────────────
     /// Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved.

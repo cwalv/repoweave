@@ -135,6 +135,7 @@ pub mod backup;
 pub mod branch;
 pub mod branch_ref;
 pub mod check;
+pub mod cherry_pick;
 pub mod cli;
 pub mod clone;
 pub mod declarations;

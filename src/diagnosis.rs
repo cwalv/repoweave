@@ -69,6 +69,8 @@ pub enum Axis {
     /// A project repo whose lock merge driver is not set up as this release
     /// sets it up.
     MissingLockMergeDriver,
+    /// A project commit `rwv cherry-pick` cannot port as it stands.
+    Port,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -79,7 +81,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 14] = [
+    pub const ALL: [Axis; 15] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -94,6 +96,7 @@ impl Axis {
         Self::LegacyWorkweaveIndex,
         Self::Protected,
         Self::MissingLockMergeDriver,
+        Self::Port,
     ];
 
     pub fn token(self) -> String {
@@ -300,6 +303,22 @@ impl Axis {
                 sits: "[Lock as derived](../explanation/joints/lock-as-derived.md); \
                        [Upgrade rwv](../how-to/upgrade-rwv.md).",
             },
+            Self::Port => &KindRow {
+                condition: "`rwv cherry-pick` cannot port the commit it was given as it stands: \
+                            the commit is a merge and no parent was named to pick it against, \
+                            or a member's change in it cannot be copied or carried, because it \
+                            moves the member's pin backward, the commits it would copy hold a \
+                            merge, or this branch does not list the member.",
+                why: "A port applies what one project commit introduced, in every repo it \
+                      moves, as new commits on this branch, and it ports the commit whole or \
+                      not at all. Picking a merge against a parent nobody named would be a \
+                      guess; copying a range that holds a merge commit by commit would flatten \
+                      it; a pin moved backward is work undone, which only a revert ports; and a \
+                      member this branch does not list has nowhere to go. Each line lists what \
+                      the member's change holds and its port by hand, then the rerun that \
+                      leaves the member out of the pick and records it as it stands.",
+                sits: "[Lock as derived](../explanation/joints/lock-as-derived.md).",
+            },
         }
     }
 
@@ -314,7 +333,8 @@ impl Axis {
             | Self::Publish
             | Self::Protected
             | Self::Target
-            | Self::History => None,
+            | Self::History
+            | Self::Port => None,
             Self::HistoryDisagreement => Some(Finding::whole(
                 crate::check::ViolationKind::HistoryDisagreement,
                 FindingMarks {
@@ -567,6 +587,10 @@ pub enum State {
     HistoryContradicted,
     HistoryNotFastForward,
     HistoryDisagreement,
+    PortMainline,
+    PortMergeInRange,
+    PortBackward,
+    PortNotListed,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -584,7 +608,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 74] = [
+    pub const ALL: [State; 78] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -659,6 +683,10 @@ impl State {
         Self::AlignmentProjectMoved,
         Self::AlignmentProjectUnaligned,
         Self::AlignmentProjectDetached,
+        Self::PortMainline,
+        Self::PortMergeInRange,
+        Self::PortBackward,
+        Self::PortNotListed,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -1575,6 +1603,48 @@ impl State {
                 offers: &[Form::C12Feature],
                 verb_offers: &[],
             },
+            Self::PortMainline => &StateRow {
+                axis: Axis::Port,
+                name: "mainline",
+                means: "the commit is a merge and no `-m` names the parent to pick it against, \
+                        or `-m` names a parent it does not have, or names one for a commit that \
+                        is no merge; its parents are listed, numbered from 1",
+                refused_by: "`rwv cherry-pick`, before anything moves",
+                offers: &[Form::C38, Form::C38NoMainline],
+                verb_offers: &[],
+            },
+            Self::PortMergeInRange => &StateRow {
+                axis: Axis::Port,
+                name: "merge in range",
+                means: "the commits the member's copy would make hold a merge commit, listed \
+                        with the whole range: copied commit by commit it would be flattened. \
+                        A member whose new pin is a merge on the parent's pin, picked against \
+                        the parent `-m` names, ports as that one merge and is not refused",
+                refused_by: "`rwv cherry-pick`, before anything moves, unless `--except` names \
+                             the member",
+                offers: &[Form::C15AtCherryPick, Form::C26AtCherryPick],
+                verb_offers: &[],
+            },
+            Self::PortBackward => &StateRow {
+                axis: Axis::Port,
+                name: "backward",
+                means: "the commit moves the member's pin backward: the parent's pin is not an \
+                        ancestor of the commit's, a diverged change included, and the commits \
+                        it drops are listed",
+                refused_by: "`rwv cherry-pick`, before anything moves, unless `--except` names \
+                             the member",
+                offers: &[Form::C39, Form::C25AtCherryPick],
+                verb_offers: &[],
+            },
+            Self::PortNotListed => &StateRow {
+                axis: Axis::Port,
+                name: "not listed",
+                means: "the commit moves the pin of a member this branch does not list",
+                refused_by: "`rwv cherry-pick`, before anything moves, unless `--except` names \
+                             the member",
+                offers: &[Form::C11MemberAdd, Form::C40],
+                verb_offers: &[],
+            },
         }
     }
 
@@ -1824,7 +1894,8 @@ impl ChoiceId {
             },
             Self::C38 => &ChoiceRow {
                 id: Some("C38"),
-                phrase: "pick it against parent `<n>`",
+                phrase: "pick it against the parent you name, or with no `-m` where it is no \
+                         merge",
                 keeps_work: "ports only",
             },
             Self::C39 => &ChoiceRow {
@@ -2011,7 +2082,9 @@ pub enum Form {
     C23Rerun,
     C24,
     C25,
+    C25AtCherryPick,
     C26,
+    C26AtCherryPick,
     C27,
     C30Switch,
     C30BranchCreate,
@@ -2025,6 +2098,7 @@ pub enum Form {
     C37BranchCreate,
     C37WorkweaveCreate,
     C38,
+    C38NoMainline,
     C39,
     C40,
     AnotherName,
@@ -2049,7 +2123,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 80] = [
+    pub const ALL: [Form; 83] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2103,7 +2177,9 @@ impl Form {
         Self::C23Rerun,
         Self::C24,
         Self::C25,
+        Self::C25AtCherryPick,
         Self::C26,
+        Self::C26AtCherryPick,
         Self::C27,
         Self::C30Switch,
         Self::C30BranchCreate,
@@ -2117,6 +2193,7 @@ impl Form {
         Self::C37BranchCreate,
         Self::C37WorkweaveCreate,
         Self::C38,
+        Self::C38NoMainline,
         Self::C39,
         Self::C40,
         Self::AnotherName,
@@ -2462,9 +2539,21 @@ impl Form {
                 at: W::WithBranch,
                 shipped: true,
             },
+            Self::C25AtCherryPick => &FormRow {
+                choice: C::C25,
+                steps: &[Rwv("rwv member pin <m> <rev> --commit"), Then(Self::C40)],
+                at: W::Here,
+                shipped: true,
+            },
             Self::C26 => &FormRow {
                 choice: C::C26,
                 steps: &[Vcs(A::MergeNoFastForward)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C26AtCherryPick => &FormRow {
+                choice: C::C26,
+                steps: &[Vcs(A::MergeNoFastForward), Then(Self::C40)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -2547,7 +2636,13 @@ impl Form {
                 choice: C::C38,
                 steps: &[Rwv("rwv cherry-pick <rev> -m <n>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
+            },
+            Self::C38NoMainline => &FormRow {
+                choice: C::C38,
+                steps: &[Rwv("rwv cherry-pick <rev>")],
+                at: W::Here,
+                shipped: true,
             },
             Self::C39 => &FormRow {
                 choice: C::C39,
@@ -2557,9 +2652,9 @@ impl Form {
             },
             Self::C40 => &FormRow {
                 choice: C::C40,
-                steps: &[Rwv("rwv cherry-pick <rev> --except <m>")],
+                steps: &[Rerun("--except <m>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::AnotherName => &FormRow {
                 choice: C::AnotherName,

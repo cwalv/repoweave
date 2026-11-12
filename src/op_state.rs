@@ -311,6 +311,9 @@ pub enum OpVerb {
     Pull,
     /// `rwv update --remote` with `--merge-upstream` or `--reset-to-upstream`.
     UpdateRemote,
+    /// `rwv cherry-pick`: copy each member's range of a project commit, then
+    /// the project commit with the relock.
+    CherryPick,
 }
 
 impl std::fmt::Display for OpVerb {
@@ -532,6 +535,9 @@ pub struct TakeInRecord {
     /// reports it again.
     #[serde(default)]
     pub reports: Vec<LandingReport>,
+    /// What a `cherry-pick` ports, and how far it got.
+    #[serde(default)]
+    pub pick: Option<PickRecord>,
 }
 
 /// One move a landing reports as it makes it.
@@ -571,6 +577,45 @@ pub struct LeftBehind {
     /// Where the new branch is checked out once the landing aligns the
     /// target's workspace.
     pub checkout: PathBuf,
+}
+
+/// The port a `cherry-pick` planned, and each member's copies so far.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PickRecord {
+    /// The project commit ported.
+    pub rev: CommitId,
+    /// The parent it is ported against, from 1, where it is a merge.
+    pub mainline: Option<usize>,
+    /// The repos `--except` names, spelled as an operand.
+    pub except: Vec<String>,
+    /// Each member's copies, in the order they run.
+    pub members: Vec<MemberPick>,
+    /// Each `dependency` or `reference` member's carried pin.
+    pub carried: BTreeMap<RepoKey, CommitId>,
+    /// Each excepted member's tip, recorded as it stands.
+    pub excepted: BTreeMap<RepoKey, CommitId>,
+    /// The project commit's copy has started in the project repo.
+    pub project_started: bool,
+}
+
+/// One member's copies: the commits to copy, oldest first, each against
+/// `mainline` where set, and what each copy came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberPick {
+    pub repo: RepoKey,
+    pub commits: Vec<CommitId>,
+    pub mainline: Option<usize>,
+    pub copied: Vec<(CommitId, CommitId)>,
+    pub dropped: Vec<CommitId>,
+    /// The commits of the range the branch already held, not copied.
+    pub left_out: Vec<CommitId>,
+}
+
+impl MemberPick {
+    /// The commits not copied or dropped yet.
+    pub fn remaining(&self) -> &[CommitId] {
+        &self.commits[(self.copied.len() + self.dropped.len()).min(self.commits.len())..]
+    }
 }
 
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
@@ -890,7 +935,7 @@ impl OwnerHeader {
     /// as long as its record exists.
     pub fn savepoint_keys(&self) -> Vec<SavepointKey> {
         match self.verb {
-            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => {
+            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote | OpVerb::CherryPick => {
                 vec![SavepointKey::Op(self.id.clone())]
             }
             OpVerb::Land => vec![
@@ -1448,7 +1493,7 @@ pub struct TouchedWorkspaces {
 impl TouchedWorkspaces {
     pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: &Path) -> Self {
         let leases = match verb {
-            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => Vec::new(),
+            OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote | OpVerb::CherryPick => Vec::new(),
             OpVerb::Land => vec![dest_workspace_dir.to_path_buf()],
         };
         Self {

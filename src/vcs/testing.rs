@@ -781,6 +781,41 @@ impl Vcs for FakeVcs {
         unsupported("merge_in_flight")
     }
 
+    fn copy_commit(
+        &self,
+        _checkout: &Path,
+        _commit: &CommitId,
+        _mainline: Option<usize>,
+    ) -> Result<crate::vcs::Copied, VcsError> {
+        unsupported("copy_commit")
+    }
+
+    fn continue_copy(&self, _checkout: &Path) -> Result<crate::vcs::Copied, VcsError> {
+        unsupported("continue_copy")
+    }
+
+    fn copy_uncommitted(
+        &self,
+        _checkout: &Path,
+        _commit: &CommitId,
+        _mainline: Option<usize>,
+    ) -> Result<Vec<String>, VcsError> {
+        unsupported("copy_uncommitted")
+    }
+
+    fn parents(&self, _repo: &Path, _commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {
+        unsupported("parents")
+    }
+
+    fn message_without(
+        &self,
+        _repo: &Path,
+        _commit: &CommitId,
+        _keys: &[&str],
+    ) -> Result<String, VcsError> {
+        unsupported("message_without")
+    }
+
     fn unmerged_paths(&self, _checkout: &Path) -> Result<Vec<String>, VcsError> {
         unsupported("unmerged_paths")
     }

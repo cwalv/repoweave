@@ -617,6 +617,11 @@ every_scenario!(
     hand_edit_declaration_to_missing_branch,
     worktree_add_force_on_weave_branch,
     cherry_pick_onto_stable,
+    cherry_pick_port,
+    cherry_pick_port_landing_merge,
+    cherry_pick_conflict,
+    cherry_pick_conflict_aborts,
+    cherry_pick_refusals,
     pr_closed_unmerged,
     feature_whose_target_moved,
     feature_branches_in_some_members,
@@ -3472,4 +3477,29 @@ fn land_refuses_a_target_member_off_its_receiving_branch_scenario() {
 fn land_refuses_a_target_checkout_diverged_from_its_pin_scenario() {
     runner::run(scenarios::land_refuses_a_target_checkout_diverged_from_its_pin())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_port_copies_member_ranges_carries_dependencies_and_reports_entries_not_ported() {
+    runner::run(scenarios::cherry_pick_port()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_of_a_landing_merge_ports_whole_against_its_first_parent() {
+    runner::run(scenarios::cherry_pick_port_landing_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_stops_on_a_member_conflict_and_continue_completes_the_port() {
+    runner::run(scenarios::cherry_pick_conflict()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_stopped_on_a_conflict_is_put_back_by_abort() {
+    runner::run(scenarios::cherry_pick_conflict_aborts()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_refuses_before_anything_moves_and_the_printed_hand_port_completes() {
+    runner::run(scenarios::cherry_pick_refusals()).assert_fully_decided_green();
 }
