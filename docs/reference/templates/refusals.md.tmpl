@@ -989,8 +989,8 @@ characters and the rule each one protects.
 
 ### `unresolvable-lock-entry`
 
-**Condition.** `rwv sync` or `rwv sync-to` found a lock entry that names a
-revision this clone cannot resolve.
+**Condition.** `rwv sync-to` found a lock entry that names a revision this
+clone cannot resolve.
 
 **Why.** A lock written against history that was never fetched here, or
 rewritten or garbage-collected upstream, pins nothing the clone can compare its
