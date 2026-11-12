@@ -89,6 +89,12 @@ fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_li
 }
 
 #[test]
+fn unpresented_project_choices_carry_the_project() {
+    runner::run(scenarios::unpresented_project_choices_carry_the_project())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn abort_after_aligning_leaves_a_member_the_landing_never_moved() {
     runner::run(scenarios::abort_leaves_a_target_member_the_alignment_never_moved())
         .assert_fully_decided_green();
@@ -971,6 +977,7 @@ every_scenario!(
     main_change_into_stable,
     shared_member_declared_dev,
     an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists,
+    unpresented_project_choices_carry_the_project,
     inactive_project_choices,
     shared_member_pinned_behind,
     nested_workweaves,

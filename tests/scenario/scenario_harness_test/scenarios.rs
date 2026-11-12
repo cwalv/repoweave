@@ -773,6 +773,30 @@ pub fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_projec
     }
 }
 
+/// A verb run with `--project` for a project the primary does not present
+/// prints its choices for that project, and they run as printed.
+pub fn unpresented_project_choices_carry_the_project() -> Scenario {
+    Scenario {
+        name: "unpresented project choices carry the project",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["push", "--project", "proj2"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv update --project proj2")),
+            Step::rwv_printed(&a(), "rwv update --project proj2")
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            Step::rwv_printed(&a(), "rwv activate proj2 --update")
+                .expect(Exit::Succeeds)
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+        ],
+    }
+}
+
 pub fn inactive_project_choices() -> Scenario {
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
     Scenario {

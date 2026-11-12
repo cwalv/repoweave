@@ -422,7 +422,17 @@ pub fn routes(err: &anyhow::Error) -> Vec<String> {
 /// command and nothing else: a reader who has learned to skip it must be able
 /// to skip it on shape alone.
 pub fn render(err: &anyhow::Error, verb: &str) -> String {
-    if let Some(report) = crate::diagnosis::report_of(err) {
+    render_for(err, verb, None)
+}
+
+/// [`render`], each printed choice spelled for `project` where its verb
+/// takes `--project`.
+pub fn render_for(
+    err: &anyhow::Error,
+    verb: &str,
+    project: Option<&crate::manifest::ProjectName>,
+) -> String {
+    if let Some(report) = spelled_report(err, project) {
         let prefix = if verb.is_empty() {
             "rwv: ".to_owned()
         } else {
@@ -476,8 +486,24 @@ fn headline_and_causes(err: &anyhow::Error) -> String {
 
 /// [`render`], to stderr; and, for a `--json` invocation refused on the
 /// repos it judged before it printed anything, those repos to stdout.
-pub fn report(err: &anyhow::Error, verb: &str, output: crate::parallel::OutputMode) {
-    if let Some(report) = crate::diagnosis::report_of(err) {
+fn spelled_report<'e>(
+    err: &'e anyhow::Error,
+    project: Option<&crate::manifest::ProjectName>,
+) -> Option<std::borrow::Cow<'e, crate::diagnosis::Report>> {
+    let report = crate::diagnosis::report_of(err)?;
+    Some(match project {
+        Some(project) => std::borrow::Cow::Owned(report.into_owned().for_project(project)),
+        None => report,
+    })
+}
+
+pub fn report(
+    err: &anyhow::Error,
+    verb: &str,
+    output: crate::parallel::OutputMode,
+    project: Option<&crate::manifest::ProjectName>,
+) {
+    if let Some(report) = spelled_report(err, project) {
         if output.is_json() && !crate::stdout::written() {
             let envelope = crate::diagnosis::RefusalJsonOutput {
                 schema: crate::diagnosis::REFUSAL_SCHEMA_URL.to_owned(),
@@ -488,7 +514,7 @@ pub fn report(err: &anyhow::Error, verb: &str, output: crate::parallel::OutputMo
             }
         }
     }
-    eprint!("{}", render(err, verb));
+    eprint!("{}", render_for(err, verb, project));
 }
 
 #[cfg(test)]

@@ -551,20 +551,45 @@ pub fn run_and_report() -> std::process::ExitCode {
             std::process::ExitCode::from(crate::exit_status::COMPLETED_WITH_REMAINDER)
         }
         Err(err) => {
-            let (verb, output) = invocation();
-            crate::refusal::report(&err, &verb, output);
+            let (verb, output, unpresented) = invocation();
+            crate::refusal::report(&err, &verb, output, unpresented.as_ref());
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// The project `--project` names, where the workspace the invocation
+/// resolves to presents another or none: the choices printed for it must
+/// name it too.
+fn unpresented_project(matches: &clap::ArgMatches, at: &clap::ArgMatches) -> Option<ProjectName> {
+    let named = at.try_get_one::<String>("project").ok().flatten()?;
+    let named = ProjectName::new(named).ok()?;
+    let here = std::env::current_dir().ok()?;
+    let from = match matches
+        .try_get_one::<Operand>("cwd_override")
+        .ok()
+        .flatten()
+    {
+        Some(operand) => here.join(operand.text()),
+        None => here,
+    };
+    let root = from
+        .ancestors()
+        .find(|dir| crate::workspace::is_workspace_root(dir))?;
+    let presented = crate::workspace::observe_root(root)
+        .as_ref()
+        .and_then(crate::workspace::RootObservation::presented_project)
+        .cloned();
+    (presented.as_ref() != Some(&named)).then_some(named)
 }
 
 /// The subcommand path this process was invoked with — `workweave delete` for
 /// `rwv workweave delete <name>` — and the output mode it asked for,
 /// read again from argv: `run` takes none, and a parse it already passed
 /// passes here the same way.
-fn invocation() -> (String, OutputMode) {
+fn invocation() -> (String, OutputMode, Option<ProjectName>) {
     let Ok(matches) = Cli::command().try_get_matches_from(std::env::args_os()) else {
-        return (String::new(), OutputMode::Text);
+        return (String::new(), OutputMode::Text, None);
     };
     let mut path: Vec<String> = Vec::new();
     let mut at = &matches;
@@ -573,7 +598,11 @@ fn invocation() -> (String, OutputMode) {
         at = sub;
     }
     let json = matches!(at.try_get_one::<bool>("json"), Ok(Some(true)));
-    (path.join(" "), OutputMode::from_flag(json))
+    (
+        path.join(" "),
+        OutputMode::from_flag(json),
+        unpresented_project(&matches, at),
+    )
 }
 
 /// Whether the verb reads or writes a repository, and so needs the VCS tools
