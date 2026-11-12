@@ -1821,6 +1821,7 @@ impl Where {
         let placeholder = match self {
             Self::Primary => "<primary>",
             Self::OtherCheckout => "<other>",
+            Self::WhereBranchCheckedOut => "<b-checkout>",
             _ => return None,
         };
         places.get(placeholder).cloned()

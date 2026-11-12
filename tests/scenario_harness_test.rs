@@ -583,6 +583,7 @@ every_scenario!(
     record_retargeted_elsewhere_accepted_by_update,
     record_retargeted_here_is_not_reported,
     record_unstored_is_stored_by_sync,
+    sync_refuses_a_pre_schema_target_tip,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2662,6 +2663,11 @@ fn sync_refuses_a_member_whose_upstream_was_rewritten() {
 #[test]
 fn sync_refuses_a_member_holding_unpushed_commits_beside_its_upstreams() {
     runner::run(scenarios::sync_judges_a_diverged_push_branch(false)).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refuses_a_pre_schema_target_tip_at_that_branch() {
+    runner::run(scenarios::sync_refuses_a_pre_schema_target_tip()).assert_fully_decided_green();
 }
 
 #[test]

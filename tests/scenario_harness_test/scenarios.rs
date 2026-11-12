@@ -4672,3 +4672,32 @@ pub fn absent_pin_unmerged() -> Scenario {
         ],
     )
 }
+
+/// A target whose live tip names the member-entry keys an earlier release
+/// wrote refuses `sync` at that branch, naming the repair where it is checked
+/// out; that repair clears it.
+pub fn sync_refuses_a_pre_schema_target_tip() -> Scenario {
+    scenario(
+        "sync refuses a pre-schema target tip",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::App, "main"),
+                "app.git\"\nversion = \"main\"",
+            ),
+            Step::git(&a(), Repo::Proj, &["commit", "-am", "old keys"]),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .claim(Claim::OutputContains("only that, in "))
+                .claim(Claim::OutputContains(
+                    "machine-a/weave\n    rwv doctor --fix",
+                ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
+        ],
+    )
+}

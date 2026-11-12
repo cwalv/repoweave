@@ -466,6 +466,12 @@ struct Planned {
     members: Vec<Member>,
 }
 
+/// The workspace whose project checkout `checkout` is.
+fn workspace_holding(checkout: &Path, project: &ProjectName) -> Option<PathBuf> {
+    let root = checkout.parent()?.parent()?;
+    (project_dir(root, project) == checkout).then(|| root.to_path_buf())
+}
+
 fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
     let text = vcs
         .read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
@@ -566,23 +572,33 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let head = vcs.head_revision(dir)?.id().clone();
     let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
     let our_lock = lock_at(vcs, dir, &head);
-    let theirs = manifest_at(vcs, dir, &source);
+    let theirs = match vcs
+        .read_file_at_revision(dir, &rev(&source), Path::new(Manifest::FILE_NAME))
+        .map_err(anyhow::Error::from)
+        .and_then(|text| Manifest::from_toml_str(&text))
+    {
+        Ok(theirs) => Some(theirs),
+        Err(e) => {
+            let mut judging = State::UnparseableProjectAt
+                .of(&label)
+                .project_repo()
+                .subject(sync.source_name())
+                .listing([format!("{e:#}")])
+                .bind("<b>", sync.source_name())
+                .by_verb("sync");
+            if let Some(there) = vcs
+                .checkouts_of_branch(dir, &source_branch)?
+                .into_iter()
+                .find_map(|checkout| workspace_holding(&checkout, &sync.project))
+            {
+                judging = judging.bind_place("<b-checkout>", &there);
+            }
+            return Err(judging.judge(vcs).refused());
+        }
+    };
     let their_lock = lock_at(vcs, dir, &source);
     let base_commit = vcs.merge_bases(dir, &head, &source)?.into_iter().next();
     let base_manifest = base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b));
-    if theirs.is_none() {
-        return Err(State::UnparseableProjectMalformed
-            .of(&label)
-            .project_repo()
-            .subject(format!(
-                "{}'s rwv.toml at {} does not parse",
-                sync.source_name(),
-                source.short()
-            ))
-            .checkout(dir)
-            .judge(vcs)
-            .refused());
-    }
     let history = match &sync.from {
         SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?,
         SyncFrom::From(_) => PinHistory::default(),
