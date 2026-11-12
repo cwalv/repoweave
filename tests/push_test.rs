@@ -644,6 +644,85 @@ fn push_publishes_a_recorded_feature_branch_from_the_primary() {
     );
 }
 
+/// Another machine's entry that reaches this clone's view of the remote while
+/// a push is publishing a record, by a fetch run beside it, is still on the
+/// remote after the push: the push never drops an entry its own merge of the
+/// records did not see.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_record_another_machine_published_survives_a_fetch_during_the_publish() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["checkout", "-b", "feat/x"]);
+    common::record_feature(&project_dir, "feat/x", "main");
+    rwv()
+        .args(["update"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+    let member = ws.workspace.join("local/org/a");
+    std::fs::write(member.join("x.txt"), "x").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "feature work"]);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let on_remote = common::git()
+        .args(["rev-parse", "-q", "--verify", "refs/heads/rwv-records"])
+        .current_dir(&ws.project_bare)
+        .output()
+        .unwrap();
+    let parent = String::from_utf8(on_remote.stdout).unwrap().trim().to_owned();
+    let theirs = common::records::commit(
+        &project_dir,
+        (!parent.is_empty()).then_some(parent.as_str()),
+        &[("colleague", "mode = \"declared\"\n")],
+        &[],
+        "another machine's record",
+    );
+    common::git_in(
+        &ws.project_bare,
+        &["fetch", "-q", &common::file_url(&project_dir), &theirs],
+    );
+    common::git_in(
+        &ws.project_bare,
+        &["update-ref", "refs/heads/rwv-records", &theirs],
+    );
+
+    let mut push = common::rwv_std();
+    push.args(["push"]).current_dir(&ws.workspace);
+    let held = common::pause::Paused::spawn(
+        push,
+        "records-publish-settled",
+        &ws._tmp.path().join("pause"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    common::git_in(&project_dir, &["fetch", "-q", "origin"]);
+    let out = held.release();
+    assert!(
+        out.status.success(),
+        "push failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let listing = common::git_in(
+        &ws.project_bare,
+        &["ls-tree", "-r", "--name-only", "rwv-records"],
+    );
+    assert!(
+        listing.lines().any(|name| name == "colleague"),
+        "the other machine's entry was dropped from the remote; it holds:\n{listing}\npush said:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        listing.lines().any(|name| name == "feat/x"),
+        "the pushed branch's record is on the remote; it holds:\n{listing}"
+    );
+}
+
 // ============================================================================
 // Negative: project repo detached or unborn — `head-not-on-branch`
 // ============================================================================

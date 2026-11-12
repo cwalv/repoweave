@@ -504,6 +504,29 @@ pub fn chain_text(chain: &[BranchName]) -> String {
         .join(" -> ")
 }
 
+/// Each records remote's tip, as one reading of them.
+#[derive(Clone)]
+struct RemoteTips(Vec<(RemoteHandle, CommitId)>);
+
+impl RemoteTips {
+    fn of(&self, remote: &RemoteHandle) -> Option<&CommitId> {
+        self.0
+            .iter()
+            .find(|(held, _)| held == remote)
+            .map(|(_, tip)| tip)
+    }
+
+    fn distinct(&self) -> Vec<CommitId> {
+        let mut tips: Vec<CommitId> = Vec::new();
+        for (_, tip) in &self.0 {
+            if !tips.contains(tip) {
+                tips.push(tip.clone());
+            }
+        }
+        tips
+    }
+}
+
 /// A fold of the local records branch and the records remotes' tips.
 struct Fold {
     heads: Vec<CommitId>,
@@ -542,19 +565,17 @@ impl<'a> Store<'a> {
         self.vcs.files_at(self.repo, commit).map(snapshot_of)
     }
 
-    fn remote_tips(&self) -> Result<Vec<CommitId>, VcsError> {
-        let mut tips: Vec<CommitId> = Vec::new();
+    fn remote_tips(&self) -> Result<RemoteTips, VcsError> {
+        let mut tips = Vec::new();
         for remote in &self.remotes {
             if let Some(tip) = self
                 .vcs
                 .records_tip(self.repo, RecordsSite::Remote(remote))?
             {
-                if !tips.contains(&tip) {
-                    tips.push(tip);
-                }
+                tips.push((remote.clone(), tip));
             }
         }
-        Ok(tips)
+        Ok(RemoteTips(tips))
     }
 
     fn is_ancestor(&self, ancestor: &CommitId, of: &CommitId) -> Result<bool, VcsError> {
@@ -567,9 +588,9 @@ impl<'a> Store<'a> {
             .contains(ancestor))
     }
 
-    fn fold(&self, local: Option<CommitId>) -> Result<Fold, VcsError> {
+    fn fold(&self, local: Option<CommitId>, remotes: &RemoteTips) -> Result<Fold, VcsError> {
         let mut heads: Vec<CommitId> = local.iter().cloned().collect();
-        for tip in self.remote_tips()? {
+        for tip in remotes.distinct() {
             let mut covered = false;
             for head in &heads {
                 if self.is_ancestor(&tip, head)? {
@@ -641,7 +662,7 @@ impl<'a> Store<'a> {
     pub fn view(&self) -> Result<View, VcsError> {
         let local = self.vcs.records_tip(self.repo, RecordsSite::Local)?;
         Ok(View {
-            snapshot: self.fold(local)?.snapshot,
+            snapshot: self.fold(local, &self.remote_tips()?)?.snapshot,
         })
     }
 
@@ -670,9 +691,20 @@ impl<'a> Store<'a> {
         decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
         droppable: &dyn Fn(&str) -> bool,
     ) -> Result<Written, WriteError> {
+        self.write_folding(&|| self.remote_tips(), decide, droppable)
+    }
+
+    /// [`Store::write_dropping`], folding in the remotes' tips `remotes`
+    /// reads on each attempt.
+    fn write_folding(
+        &self,
+        remotes: &dyn Fn() -> Result<RemoteTips, VcsError>,
+        decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
+        droppable: &dyn Fn(&str) -> bool,
+    ) -> Result<Written, WriteError> {
         for _ in 0..WRITE_ATTEMPTS {
             let local = self.vcs.records_tip(self.repo, RecordsSite::Local)?;
-            let fold = self.fold(local.clone())?;
+            let fold = self.fold(local.clone(), &remotes()?)?;
             let folded = View {
                 snapshot: fold.snapshot.clone(),
             };
@@ -800,8 +832,10 @@ impl<'a> Store<'a> {
 
     /// Publish `branch`'s record, and the drops this machine has made, to
     /// `remote`: one commit on the tip of `remote`'s records branch as last
-    /// fetched, pushed as a fast-forward. It changes `branch`'s own entry and
-    /// removes the entries the local branch no longer holds; no other entry
+    /// fetched, pushed as a fast-forward. The tip the commit is built on is the
+    /// one the records merged before it folded in: an entry is dropped only
+    /// when the merge of that same tip left it out. It changes `branch`'s own
+    /// entry and removes the entries the local branch no longer holds; no other entry
     /// of the local branch is sent, and a conflicted or unreadable one is
     /// never sent. A remote that moved meanwhile is fetched through `refetch`,
     /// the records merged again and the commit rebuilt.
@@ -812,11 +846,14 @@ impl<'a> Store<'a> {
         refetch: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<Published> {
         for _ in 0..WRITE_ATTEMPTS {
-            let settled = self.settle().map_err(anyhow::Error::new)?;
+            let tips = self.remote_tips()?;
+            let settled = self
+                .write_folding(&|| Ok(tips.clone()), |_| Ok(Vec::new()), &|_| false)
+                .map_err(anyhow::Error::new)?
+                .view;
             let settled = SettledView { view: settled };
-            let remote_tip = self
-                .vcs
-                .records_tip(self.repo, RecordsSite::Remote(remote))?;
+            crate::test_pause::point("records-publish-settled");
+            let remote_tip = tips.of(remote).cloned();
             let base = match &remote_tip {
                 Some(tip) => self.snapshot_at(tip)?,
                 None => Snapshot::new(),
@@ -874,7 +911,7 @@ impl<'a> Store<'a> {
             .records_tip(self.repo, RecordsSite::Local)?
             .into_iter()
             .collect();
-        tips.extend(self.remote_tips()?);
+        tips.extend(self.remote_tips()?.distinct());
         for tip in tips {
             if let Some(message) =
                 self.vcs
@@ -894,7 +931,7 @@ impl<'a> Store<'a> {
     /// holds exactly.
     pub fn published_names(&self, view: &View) -> Result<BTreeSet<String>, VcsError> {
         let mut names = BTreeSet::new();
-        for tip in self.remote_tips()? {
+        for tip in self.remote_tips()?.distinct() {
             let theirs = self.snapshot_at(&tip)?;
             for (name, held) in &view.snapshot {
                 if theirs

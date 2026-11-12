@@ -3342,9 +3342,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             );
             continue;
         }
-        if let Err(e) =
-            crate::workspace::reparent(primary_root, &child_dir, marker, &new_parent)
-        {
+        if let Err(e) = crate::workspace::reparent(primary_root, &child_dir, marker, &new_parent) {
             eprintln!(
                 "warning: failed to adopt child workweave {child}: could not rewrite \
                  marker ({e:#}); run `rwv doctor --fix` to re-point its parent"
