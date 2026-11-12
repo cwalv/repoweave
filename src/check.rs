@@ -4712,7 +4712,15 @@ pub fn scan_alignment(
     unjudged: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let mut out = Vec::new();
-    let accounting = crate::alignment::Accounting::scan(ws_root);
+    let accounting = match crate::alignment::Accounting::scan(ws_root) {
+        Ok(accounting) => accounting,
+        Err(e) => {
+            unjudged.push(format!(
+                "what the weave's live branches declare could not be read: {e:#}"
+            ));
+            return out;
+        }
+    };
     for project in projects {
         let mut workspaces: Vec<PathBuf> = vec![ws_root.to_path_buf()];
         workspaces.extend(
@@ -5218,12 +5226,22 @@ fn scan_role_disagreements(
 fn scan_history_disagreements(
     ctx: &crate::workspace::WorkspaceContext,
     projects: &[Project],
+    unjudged: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let listed: BTreeSet<&RepoPath> = projects
         .iter()
         .flat_map(|project| project.manifest.iter_repo_paths())
         .collect();
-    crate::alignment::Accounting::scan(ctx.primary_path())
+    let accounting = match crate::alignment::Accounting::scan(ctx.primary_path()) {
+        Ok(accounting) => accounting,
+        Err(e) => {
+            unjudged.push(format!(
+                "the history the weave's live branches record could not be read: {e:#}"
+            ));
+            return Vec::new();
+        }
+    };
+    accounting
         .history_disagreements()
         .into_iter()
         .filter(|(repo, _)| listed.contains(repo))
@@ -9040,7 +9058,6 @@ fn collect_doctor_violations(
             .filter_map(member_permissions_finding),
     );
     violations.extend(scan_role_disagreements(ctx, &input.projects));
-    violations.extend(scan_history_disagreements(ctx, &input.projects));
     let leftovers = scan_leftover_checkouts(ctx, project_scope, &input.projects);
     violations.retain(|v| match v {
         CheckViolation::OrphanedClone { path } => !leftovers.iter().any(|l| {
@@ -9051,6 +9068,11 @@ fn collect_doctor_violations(
     violations.extend(leftovers);
     violations.extend(scan_locks_pinned_by_name(&input.projects));
     let mut unjudged: Vec<String> = Vec::new();
+    violations.extend(scan_history_disagreements(
+        ctx,
+        &input.projects,
+        &mut unjudged,
+    ));
     violations.extend(scan_pins(ctx, world, &mut unjudged));
 
     match primary_pointer(ctx.primary_path()) {

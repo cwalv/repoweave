@@ -258,96 +258,31 @@ pub fn record(root: &Path, project: &ProjectName) -> anyhow::Result<bool> {
 /// lists is read with them.
 #[derive(Debug, Clone, Default)]
 pub struct Accounting {
-    declared: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
+    declarations: crate::declarations::LiveDeclarations,
     recorded: BTreeSet<String>,
-    histories: BTreeMap<RepoPath, Vec<RecordedHistory>>,
 }
 
-/// The `history` one project's live weave branch records for a member: the
-/// member's own, else the top-level one.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RecordedHistory {
-    pub project: ProjectName,
-    pub branch: String,
-    pub history: crate::manifest::History,
-}
+pub use crate::declarations::RecordedHistory;
 
 impl Accounting {
-    /// Read every project of the weave at `primary`: each branch with a
-    /// record, and the members its `rwv.toml` declares.
-    pub fn scan(primary: &Path) -> Self {
-        let mut accounting = Self::default();
+    /// Read every project of the weave at `primary`: what its live weave
+    /// branches declare, and which branches have a record. A project whose
+    /// branches or records cannot be read is an error.
+    pub fn scan(primary: &Path) -> anyhow::Result<Self> {
+        let mut recorded = BTreeSet::new();
         let vcs = project_vcs();
         for project in crate::workspace::discover_projects(primary) {
             let dir = crate::workspace::project_dir(primary, &project);
             if !vcs.is_repo(&dir) {
                 continue;
             }
-            let Ok(store) = Store::open(vcs.as_ref(), &dir) else {
-                continue;
-            };
-            let Ok(view) = store.view() else {
-                continue;
-            };
-            accounting
-                .recorded
-                .extend(view.names().map(ToOwned::to_owned));
-            let Ok(branches) = vcs.named_branches(&dir) else {
-                continue;
-            };
-            for branch in branches {
-                let Ok(name) = BranchName::parse(vcs.as_ref(), &branch.name) else {
-                    continue;
-                };
-                if matches!(view.lookup(&name), Lookup::Unrecorded) {
-                    continue;
-                }
-                accounting.read_declarations(
-                    vcs.as_ref(),
-                    &dir,
-                    &branch.tip,
-                    &project,
-                    branch.name.as_str(),
-                );
-            }
+            let view = Store::open(vcs.as_ref(), &dir)?.view()?;
+            recorded.extend(view.names().map(ToOwned::to_owned));
         }
-        accounting
-    }
-
-    fn read_declarations(
-        &mut self,
-        vcs: &dyn Vcs,
-        dir: &Path,
-        tip: &crate::vcs::CommitId,
-        project: &ProjectName,
-        branch: &str,
-    ) {
-        let declarer = format!("{branch} (projects/{project})");
-        let tip = ResolvedRevisionId::from(tip.clone());
-        let Ok(text) = vcs.read_file_at_revision(dir, &tip, Path::new(Manifest::FILE_NAME)) else {
-            return;
-        };
-        let Ok(manifest) = Manifest::from_toml_str(&text) else {
-            return;
-        };
-        for (path, entry) in manifest.iter_entries() {
-            self.declared
-                .entry(path.to_string())
-                .or_default()
-                .entry(entry.branch.local_counterpart().as_str().to_owned())
-                .or_default()
-                .insert(declarer.clone());
-            if let Some(history) = manifest.history_for(path) {
-                self.histories
-                    .entry(path.clone())
-                    .or_default()
-                    .push(RecordedHistory {
-                        project: project.clone(),
-                        branch: branch.to_owned(),
-                        history,
-                    });
-            }
-        }
+        Ok(Self {
+            declarations: crate::declarations::LiveDeclarations::scan(primary)?,
+            recorded,
+        })
     }
 
     /// Each member for which two projects' live weave branches record
@@ -355,7 +290,8 @@ impl Accounting {
     /// Branches of one project differing among themselves are no
     /// disagreement: each project's landings follow its own setting.
     pub fn history_disagreements(&self) -> Vec<(RepoPath, Vec<RecordedHistory>)> {
-        self.histories
+        self.declarations
+            .histories()
             .iter()
             .filter(|(_, recorded)| {
                 recorded.iter().any(|a| {
@@ -373,17 +309,17 @@ impl Accounting {
     }
 
     pub fn declares(&self, member: &RepoPath, branch: &str) -> bool {
-        !self.declarers(member, branch).is_empty()
+        self.declarations.declares(member, branch)
     }
 
-    /// The live weave branches that declare `branch` for `member`, each as
-    /// `<branch> (projects/<project>)`.
+    /// The live weave branches that declare `branch` for `member`, as an
+    /// operator reads them.
     pub fn declarers(&self, member: &RepoPath, branch: &str) -> Vec<String> {
-        self.declared
-            .get(member.as_str())
-            .and_then(|by_branch| by_branch.get(branch))
-            .map(|set| set.iter().cloned().collect())
-            .unwrap_or_default()
+        self.declarations
+            .declarers(member, branch)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
     }
 
     pub fn is_recorded(&self, branch: &str) -> bool {

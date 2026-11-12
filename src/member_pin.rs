@@ -93,7 +93,7 @@ pub fn run_pin(
     let aligner = Aligner::open(
         ctx.active_path(),
         &project_name,
-        Accounting::scan(ctx.primary_path()),
+        Accounting::scan(ctx.primary_path())?,
     )?;
     lock::refuse_detached(&aligner, &project_name)?;
 

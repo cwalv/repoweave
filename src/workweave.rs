@@ -2468,7 +2468,7 @@ fn align_new_workweave(
     let aligner = crate::alignment::Aligner::open(
         root,
         project,
-        crate::alignment::Accounting::scan(primary_root),
+        crate::alignment::Accounting::scan(primary_root)?,
     )?;
     for (path, entry) in manifest.iter_entries() {
         let dir = root.join(path.as_path());

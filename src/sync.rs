@@ -2717,7 +2717,7 @@ fn judge_rebase_protection(
     workspace: &Path,
     source_lock: &crate::manifest::ResolvedLockFile,
 ) -> anyhow::Result<()> {
-    let accounting = crate::alignment::Accounting::scan(ctx.primary_path());
+    let accounting = crate::alignment::Accounting::scan(ctx.primary_path())?;
     let mut report = Report::default();
     for (path, entry) in project.manifest.iter_entries() {
         let Some(pinned) = source_lock.get_entry(path) else {

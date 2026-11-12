@@ -233,7 +233,7 @@ pub fn require_recorded(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     };
     require_feature_names(
         ctx.active_path(),
-        &NameScan::of(ctx.primary_path(), &project),
+        &NameScan::of(ctx.primary_path(), &project)?,
         &branch,
         &record,
         &manifest,
@@ -425,7 +425,7 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
             let mut report = Report::default();
             for judged in judge_feature_names(
                 ctx.active_path(),
-                &NameScan::of(ctx.primary_path(), &project),
+                &NameScan::of(ctx.primary_path(), &project)?,
                 &branch,
                 &manifest,
                 Some("branch set-mode"),
@@ -825,7 +825,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         record.mode() == Mode::Feature,
         &old_raw,
     )?;
-    let scan = NameScan::of(ctx.primary_path(), &project);
+    let scan = NameScan::of(ctx.primary_path(), &project)?;
     if record.mode() == Mode::Feature {
         let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
         for judged in judge_feature_names(

@@ -330,7 +330,7 @@ pub fn run_status(
     let mut records: Vec<crate::branch::BranchRecordStatus> = Vec::new();
     let mut aligned: Vec<AlignedStatus> = Vec::new();
     let mut operator_branches: Vec<OperatorBranch> = Vec::new();
-    let accounting = Accounting::scan(ctx.primary_path());
+    let accounting = Accounting::scan(ctx.primary_path())?;
     let mut live_pins: Option<
         std::collections::BTreeMap<crate::manifest::RepoPath, Vec<crate::pins::LivePin>>,
     > = None;

@@ -483,6 +483,7 @@ pub enum State {
     PublishNoPin,
     UnparseableProjectHere,
     UnparseableProjectMalformed,
+    UnparseableProjectAt,
     LegacyWorkweaveIndexOldPath,
     PinWouldBeUnreachable,
     TargetNoTarget,
@@ -534,7 +535,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 61] = [
+    pub const ALL: [State; 62] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -574,6 +575,7 @@ impl State {
         Self::PublishNoPin,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
+        Self::UnparseableProjectAt,
         Self::LegacyWorkweaveIndexOldPath,
         Self::TargetNoTarget,
         Self::TargetUnrecorded,
@@ -960,6 +962,16 @@ impl State {
                              the project repo is replayed; `rwv doctor` reports it for every \
                              project",
                 offers: &[],
+                verb_offers: &[],
+            },
+            Self::UnparseableProjectAt => &StateRow {
+                axis: Axis::UnparseableProject,
+                name: "at",
+                means: "the `rwv.toml` at the tip of a live branch the verb acts on, not the \
+                        checked-out one, names member-entry keys an earlier release wrote or \
+                        does not parse, with the parser's error",
+                refused_by: "the verbs that act on that branch",
+                offers: &[Form::DoctorFixOnBranch],
                 verb_offers: &[],
             },
             Self::LegacyWorkweaveIndexOldPath => &StateRow {
@@ -1768,6 +1780,7 @@ pub enum Form {
     OpenSwitch,
     OpenWorkweave,
     DoctorFix,
+    DoctorFixOnBranch,
     ConvertIndex,
     LockDirty,
     UpdateRemoteDirty,
@@ -1783,7 +1796,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 71] = [
+    pub const ALL: [Form; 72] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1851,6 +1864,7 @@ impl Form {
         Self::OpenSwitch,
         Self::OpenWorkweave,
         Self::DoctorFix,
+        Self::DoctorFixOnBranch,
         Self::ConvertIndex,
         Self::LockDirty,
         Self::UpdateRemoteDirty,
@@ -2272,6 +2286,12 @@ impl Form {
                 choice: C::DoctorFix,
                 steps: &[Rwv("rwv doctor --fix")],
                 at: W::Here,
+                shipped: true,
+            },
+            Self::DoctorFixOnBranch => &FormRow {
+                choice: C::DoctorFix,
+                steps: &[Rwv("rwv doctor --fix")],
+                at: W::WhereBranchCheckedOut,
                 shipped: true,
             },
             Self::ConvertIndex => &FormRow {

@@ -98,6 +98,7 @@ pub mod branch_ref;
 pub mod check;
 pub mod cli;
 pub mod clone;
+pub mod declarations;
 pub mod deletion;
 pub mod diagnosis;
 pub mod durable_file;

@@ -89,7 +89,7 @@ fn refuse(
     let aligner = match rule {
         Rule::Edits => None,
         Rule::Activation | Rule::Movement => {
-            Some(Aligner::open(root, project, Accounting::scan(root))?)
+            Some(Aligner::open(root, project, Accounting::scan(root)?)?)
         }
     };
     let lock = lock_of(root, project)?;

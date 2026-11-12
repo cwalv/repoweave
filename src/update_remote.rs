@@ -363,7 +363,7 @@ fn update_for_project(
         &crate::alignment::Aligner::open(
             active_root,
             project_name,
-            crate::alignment::Accounting::scan(primary_root),
+            crate::alignment::Accounting::scan(primary_root)?,
         )?,
         workweave_dir.is_some(),
     )?;

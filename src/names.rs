@@ -18,12 +18,12 @@ pub(crate) struct NameScan<'a> {
 }
 
 impl<'a> NameScan<'a> {
-    pub(crate) fn of(primary: &'a Path, project: &'a ProjectName) -> Self {
-        Self {
+    pub(crate) fn of(primary: &'a Path, project: &'a ProjectName) -> anyhow::Result<Self> {
+        Ok(Self {
             primary,
             project,
-            accounting: Accounting::scan(primary),
-        }
+            accounting: Accounting::scan(primary)?,
+        })
     }
 }
 

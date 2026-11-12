@@ -414,21 +414,29 @@ fn resolve(
             .map_err(|e| refuse_json(request, ctx, Vec::new(), &Report::default(), e))?;
     }
     let (manifest, lock) = {
-        let manifest = Manifest::from_toml_str(
-            &pvcs
-                .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
-                .with_context(|| format!("failed to read rwv.toml at {branch}"))?,
-        )
-        .with_context(|| format!("failed to load rwv.toml at {branch}"))?;
-        let lock = pvcs
-            .read_file_at_revision(&dir, &tip, Path::new(LockFile::FILE_NAME))
-            .ok()
-            .and_then(|text| LockFile::from_json_str(&text).ok());
+        let (manifest, lock) = crate::switch::committed_files(pvcs, &dir, &tip)?;
+        let manifest = match manifest {
+            Ok(manifest) => manifest,
+            Err(e) if checked_out => {
+                return Err(e.context(format!("failed to load rwv.toml at {branch}")))
+            }
+            Err(e) => {
+                return Err(State::UnparseableProjectAt
+                    .of(project_label(&project))
+                    .project_repo()
+                    .subject(&branch)
+                    .listing([format!("{e:#}")])
+                    .bind("<b>", &branch)
+                    .by_verb("push")
+                    .judge(pvcs)
+                    .refused())
+            }
+        };
         (manifest, lock)
     };
     crate::names::require_feature_names(
         ctx.active_path(),
-        &crate::names::NameScan::of(ctx.primary_path(), &project),
+        &crate::names::NameScan::of(ctx.primary_path(), &project)?,
         &branch,
         &record,
         &manifest,
@@ -522,8 +530,10 @@ fn validate_overwrites(
                     );
                 };
                 let expected = pushed.expected(member.entry.role, &member.entry);
-                let accounting =
-                    accounting.get_or_insert_with(|| Accounting::scan(ctx.primary_path()));
+                if accounting.is_none() {
+                    accounting = Some(Accounting::scan(ctx.primary_path())?);
+                }
+                let accounting = accounting.as_ref().expect("scanned just above");
                 let declarers = accounting.declarers(&member.path, expected.as_str());
                 if !declarers.is_empty() {
                     return Err(State::ProtectedDeclared
@@ -858,7 +868,7 @@ fn judge_into(
         Some(Aligner::open(
             ctx.active_path(),
             &pushed.project,
-            Accounting::scan(primary),
+            Accounting::scan(primary)?,
         )?)
     } else {
         None

@@ -745,7 +745,7 @@ pub(crate) fn relock(
     let aligner = Aligner::open(
         ctx.active_path(),
         &project_name,
-        Accounting::scan(ctx.primary_path()),
+        Accounting::scan(ctx.primary_path())?,
     )?;
     refuse_detached(&aligner, &project_name)?;
 

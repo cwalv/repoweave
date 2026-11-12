@@ -194,6 +194,7 @@ pub struct Rule<'a> {
     branch_name: RawRefName,
     repos: Vec<Repo>,
     w_record_mode: Option<Mode>,
+    target_mode: Mode,
 }
 
 type NamedTip = (BranchRef, ResolvedRevisionId);
@@ -321,75 +322,20 @@ impl<'a> Rule<'a> {
             home.as_ref(),
         )?
         .expect("the branch was listed");
-        let t_raw = RawRefName::new(request.target.as_str());
-        let t_tip = branch_tip(repos[0].vcs.as_ref(), &project_path, &t_raw, home.as_ref())?;
-        let target_manifest = match &t_tip {
-            Some(tip) => manifest_at(repos[0].vcs.as_ref(), &project_path, tip),
-            None => None,
-        };
-        let history: Vec<Manifest> = match &t_tip {
-            Some(tip) => repos[0]
-                .vcs
-                .file_versions(&project_path, tip, Path::new(Manifest::FILE_NAME))?
-                .iter()
-                .filter_map(|text| Manifest::from_toml_str(text).ok())
-                .collect(),
-            None => Vec::new(),
-        };
-
-        if let Some(manifest) = manifest_at(repos[0].vcs.as_ref(), &project_path, &w_tip) {
-            let declared = declared_branches(request.primary);
-            let accounting = crate::alignment::Accounting::scan(request.primary);
-            let mut protected = Report::default();
+        let manifest = w_manifest(
+            repos[0].vcs.as_ref(),
+            &project_path,
+            &w_tip,
+            request.project,
+            &request.branch,
+            request.verb,
+        )?;
+        if let Some(manifest) = manifest {
             for (path, entry) in manifest.iter_entries() {
                 let dir = request.primary.join(path.as_path());
                 let vcs = vcs_for(entry.vcs_type);
                 if !vcs.is_repo(&dir) {
                     continue;
-                }
-                if declared
-                    .get(path.as_str())
-                    .is_some_and(|set| set.contains(request.branch.as_str()))
-                {
-                    let named = request
-                        .remote_deletes
-                        .unlanded
-                        .contains(&RepoOperand::Member(path.clone()));
-                    if request.remote_deletes.landed || named {
-                        let declarers = accounting.declarers(path, request.branch.as_str());
-                        protected.add(
-                            State::ProtectedDeclared
-                                .of(path)
-                                .member()
-                                .subject(&request.branch)
-                                .listing(declarers)
-                                .bind("<m>", path)
-                                .by_verb(request.verb)
-                                .judge(vcs.as_ref()),
-                        );
-                    }
-                    continue;
-                }
-                let mut names: Vec<RawRefName> = Vec::new();
-                let mut note = |name: RawRefName| {
-                    if !names.contains(&name) {
-                        names.push(name);
-                    }
-                };
-                match target_mode {
-                    Mode::Feature => note(t_raw.clone()),
-                    Mode::Declared => {
-                        if let Some(entry) =
-                            target_manifest.as_ref().and_then(|m| m.get_entry(path))
-                        {
-                            note(RawRefName::new(entry.branch.local_counterpart().as_str()));
-                        }
-                    }
-                }
-                for earlier in &history {
-                    if let Some(entry) = earlier.get_entry(path) {
-                        note(RawRefName::new(entry.branch.local_counterpart().as_str()));
-                    }
                 }
                 let url_remote = crate::url_remote::present(vcs.as_ref(), &dir, &entry.url)?;
                 repos.push(Repo {
@@ -398,10 +344,9 @@ impl<'a> Rule<'a> {
                     vcs,
                     url_remote,
                     member: Some(path.clone()),
-                    names_in_target: names,
+                    names_in_target: Vec::new(),
                 });
             }
-            protected.into_result()?;
         }
 
         let rule = Self {
@@ -409,6 +354,7 @@ impl<'a> Rule<'a> {
             branch_name,
             repos,
             w_record_mode,
+            target_mode,
         };
         rule.judge_flags()?;
         rule.judge_checkouts()?;
@@ -493,6 +439,85 @@ impl<'a> Rule<'a> {
         Ok(remotes)
     }
 
+    /// After the fetch: refuse a remote delete of a member branch a live weave
+    /// branch declares, leave every such member branch out of the rule, and
+    /// read the branches each other member lands on.
+    fn judge_declared(&mut self) -> anyhow::Result<()> {
+        let declarations = crate::declarations::LiveDeclarations::scan(self.request.primary)?;
+        let home = self.repos[0].url_remote.clone();
+        let project_path = self.repos[0].dir.clone();
+        let t_raw = RawRefName::new(self.request.target.as_str());
+        let project = self.repos[0].vcs.as_ref();
+        let t_tip = branch_tip(project, &project_path, &t_raw, home.as_ref())?;
+        let target_manifest = match &t_tip {
+            Some(tip) => manifest_at(project, &project_path, tip),
+            None => None,
+        };
+        let history: Vec<Manifest> = match &t_tip {
+            Some(tip) => project
+                .file_versions(&project_path, tip, Path::new(Manifest::FILE_NAME))?
+                .iter()
+                .filter_map(|text| Manifest::from_toml_str(text).ok())
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut protected = Report::default();
+        let mut declared: Vec<usize> = Vec::new();
+        for (index, repo) in self.repos.iter_mut().enumerate().skip(1) {
+            let path = repo
+                .member
+                .clone()
+                .expect("every repo after the first is a member");
+            let declarers = declarations.declarers(&path, self.request.branch.as_str());
+            if !declarers.is_empty() {
+                let named = self
+                    .request
+                    .remote_deletes
+                    .unlanded
+                    .contains(&RepoOperand::Member(path.clone()));
+                if self.request.remote_deletes.landed || named {
+                    protected.add(
+                        State::ProtectedDeclared
+                            .of(&path)
+                            .member()
+                            .subject(&self.request.branch)
+                            .listing(declarers.iter().map(ToString::to_string))
+                            .bind("<m>", &path)
+                            .by_verb(self.request.verb)
+                            .judge(repo.vcs.as_ref()),
+                    );
+                }
+                declared.push(index);
+                continue;
+            }
+            let mut names: Vec<RawRefName> = Vec::new();
+            let mut note = |name: RawRefName| {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            };
+            match self.target_mode {
+                Mode::Feature => note(t_raw.clone()),
+                Mode::Declared => {
+                    if let Some(entry) = target_manifest.as_ref().and_then(|m| m.get_entry(&path)) {
+                        note(RawRefName::new(entry.branch.local_counterpart().as_str()));
+                    }
+                }
+            }
+            for earlier in &history {
+                if let Some(entry) = earlier.get_entry(&path) {
+                    note(RawRefName::new(entry.branch.local_counterpart().as_str()));
+                }
+            }
+            repo.names_in_target = names;
+        }
+        protected.into_result()?;
+        for index in declared.into_iter().rev() {
+            self.repos.remove(index);
+        }
+        Ok(())
+    }
+
     /// Fetch the remotes the branches have an upstream or a push branch on,
     /// and return, per repo, the remotes that could not be fetched with the
     /// cause.
@@ -521,8 +546,9 @@ impl<'a> Rule<'a> {
 
     /// Run the rule: fetch, judge each branch that belongs, delete what it
     /// deletes, and drop the records it leaves without a branch.
-    pub fn apply(self) -> anyhow::Result<Outcome> {
+    pub fn apply(mut self) -> anyhow::Result<Outcome> {
         let unconfirmed = self.fetch()?;
+        self.judge_declared()?;
         let pins = crate::pins::live_pins(self.request.primary)?;
         let mut outcome = Outcome::default();
         let mut member_survives = false;
@@ -934,38 +960,38 @@ impl<'a> Rule<'a> {
     }
 }
 
+/// `W`'s `rwv.toml` at its tip: `None` where the tip has none; a pre-schema
+/// one refuses the rule, which acts on that branch.
+fn w_manifest(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    tip: &ResolvedRevisionId,
+    project: &crate::manifest::ProjectName,
+    branch: &crate::records::BranchName,
+    verb: &'static str,
+) -> anyhow::Result<Option<Manifest>> {
+    let text = match vcs.read_file_at_revision(dir, tip, Path::new(Manifest::FILE_NAME)) {
+        Ok(text) => text,
+        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    match Manifest::from_toml_str(&text) {
+        Ok(manifest) => Ok(Some(manifest)),
+        Err(e) => Err(State::UnparseableProjectAt
+            .of(project_rel_path(project))
+            .project_repo()
+            .subject(branch)
+            .listing([format!("{e:#}")])
+            .bind("<b>", branch)
+            .by_verb(verb)
+            .judge(vcs)
+            .refused()),
+    }
+}
+
 fn manifest_at(vcs: &dyn Vcs, dir: &Path, tip: &ResolvedRevisionId) -> Option<Manifest> {
     let text = vcs
         .read_file_at_revision(dir, tip, Path::new(Manifest::FILE_NAME))
         .ok()?;
     Manifest::from_toml_str(&text).ok()
-}
-
-/// The branch each member is declared on, across every live weave branch of
-/// every project of the weave.
-fn declared_branches(primary: &Path) -> BTreeMap<String, BTreeSet<String>> {
-    let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let vcs = project_vcs();
-    for project in crate::workspace::discover_projects(primary) {
-        let dir = project_dir(primary, &project);
-        if !vcs.is_repo(&dir) {
-            continue;
-        }
-        let Ok(tips) = vcs.branch_tips(&dir) else {
-            continue;
-        };
-        for branch in tips {
-            let tip = branch.tip;
-            let Some(manifest) = manifest_at(vcs.as_ref(), &dir, &tip) else {
-                continue;
-            };
-            for (path, entry) in manifest.iter_entries() {
-                declared
-                    .entry(path.to_string())
-                    .or_default()
-                    .insert(entry.branch.local_counterpart().as_str().to_owned());
-            }
-        }
-    }
-    declared
 }

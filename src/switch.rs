@@ -249,7 +249,7 @@ fn judge_members_at(
     let aligner = Aligner::prospective(
         ctx.active_path(),
         project,
-        Accounting::scan(ctx.primary_path()),
+        Accounting::scan(ctx.primary_path())?,
         branch,
     )?;
     judge_members(ctx, &aligner, &manifest, lock.as_ref(), report)
@@ -719,7 +719,7 @@ fn report_names(
         ));
     }
     if matches!(record, Some(Record::Feature { .. })) {
-        let scan = NameScan::of(ctx.primary_path(), project);
+        let scan = NameScan::of(ctx.primary_path(), project)?;
         for judged in judge_feature_names(ctx.active_path(), &scan, new, &manifest, Some(verb))? {
             report.add(judged);
         }
@@ -796,7 +796,7 @@ pub(crate) fn judge_opening(
 
     if let Some(Record::Feature { .. }) = &record {
         if let Ok(manifest) = committed_files(vcs, dir, &destination)?.0 {
-            let scan = NameScan::of(ctx.primary_path(), project);
+            let scan = NameScan::of(ctx.primary_path(), project)?;
             for judged in
                 judge_feature_names(ctx.active_path(), &scan, &branch, &manifest, Some(verb))?
             {

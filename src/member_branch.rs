@@ -107,7 +107,7 @@ impl Loaded {
         let aligner = Aligner::open(
             ctx.active_path(),
             &project,
-            Accounting::scan(ctx.primary_path()),
+            Accounting::scan(ctx.primary_path())?,
         )?;
         crate::lock::refuse_detached(&aligner, &project)?;
         Ok(Self {
@@ -678,7 +678,7 @@ pub(crate) fn judge_entries(
     let aligner = Aligner::prospective(
         ctx.active_path(),
         &project,
-        Accounting::scan(ctx.primary_path()),
+        Accounting::scan(ctx.primary_path())?,
         Some(branch),
     )?;
     let loaded = Loaded {

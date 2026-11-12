@@ -307,7 +307,7 @@ fn update_members_for(
     let aligner = Aligner::open(
         ctx.active_path(),
         &name,
-        crate::alignment::Accounting::scan(ctx.primary_path()),
+        crate::alignment::Accounting::scan(ctx.primary_path())?,
     )?;
     refuse_detached_project(&aligner, flavor.verb)?;
     let aligner = if flavor.carry_edits {
