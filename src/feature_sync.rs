@@ -240,7 +240,11 @@ fn take(
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
     crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
-    let Some(branch) = crate::branch::checked_out(vcs.as_ref(), &dir)? else {
+    let held = match run {
+        Run::Fresh(_) => None,
+        Run::Continue => branch_left_by_a_stop(ctx.active_path())?,
+    };
+    let Some(branch) = crate::branch::checked_out(vcs.as_ref(), &dir)?.or(held) else {
         return Err(State::AlignmentProjectDetached
             .of(project_rel_path(&project))
             .project_repo()
@@ -284,6 +288,28 @@ fn take(
             act(&sync, &op, &take_in, output, reported)
         }
     }
+}
+
+/// The branch a stopped sync's project checkout is put back on once the
+/// replay that stopped there ends: a carry's, or the sync's own rebase of
+/// it, each begun on that branch and left detached by the stop.
+fn branch_left_by_a_stop(workspace: &Path) -> anyhow::Result<Option<String>> {
+    let Some(take_in) = crate::op_state::read_owner(workspace)?.and_then(|owner| owner.take_in)
+    else {
+        return Ok(None);
+    };
+    Ok(take_in
+        .carries
+        .iter()
+        .find(|c| c.repo == RepoKey::Project && c.composed.is_none())
+        .map(|c| c.checkout_on.clone())
+        .or_else(|| {
+            take_in
+                .rebases
+                .iter()
+                .find(|r| r.repo == RepoKey::Project)
+                .map(|r| r.branch.clone())
+        }))
 }
 
 fn feature_target(
