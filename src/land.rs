@@ -65,28 +65,10 @@ pub struct Plan {
     /// The merge each repo's range holds, where that range is integrated by
     /// a merge commit under a rebasing setting.
     pub merged_ranges: Vec<(RepoKey, CommitId)>,
-}
-
-impl Plan {
-    /// The facts the landing reports before it composes, one line each.
-    pub fn fact_lines(&self, target: &BranchName) -> Vec<String> {
-        self.beyond_pin
-            .iter()
-            .filter(|(_, commits)| !commits.is_empty())
-            .map(|(path, commits)| {
-                format!(
-                    "{path}: the branch it lands on holds {} commit(s) beyond '{target}''s pin, \
-                     which the landing pins into '{target}': {}",
-                    commits.len(),
-                    commits
-                        .iter()
-                        .map(|c| format!("{} {}", c.id.short(), c.subject))
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                )
-            })
-            .collect()
-    }
+    /// The members of `T`'s workspace the landing moves by re-pinning them
+    /// alone: none of their branches move, but `T`'s pin does, and aligning
+    /// `T`'s workspace afterwards moves their checkouts to it.
+    pub realigned: BTreeSet<RepoPath>,
 }
 
 /// A receiving branch `U`, its tip as the landing read it (the newer of it
@@ -100,6 +82,11 @@ pub struct Receiving {
 }
 
 impl Plan {
+    /// Every member whose checkout in `T`'s workspace the landing moves.
+    pub fn moving(&self) -> impl Iterator<Item = &RepoPath> {
+        self.receiving.keys().chain(&self.realigned)
+    }
+
     /// The members the landing composes onto their receiving branch's tip.
     pub fn composed(&self) -> impl Iterator<Item = (&RepoPath, &Receiving)> {
         self.receiving
@@ -721,10 +708,51 @@ pub fn judge(
         };
         judge_member(&judging, &member, &mut plan, report)?;
     }
+    plan_realigned(&sides, source_root, &mut plan)?;
     match inapplicable {
         Some(refused) => Err(refused),
         None => Ok(plan),
     }
+}
+
+/// Each member the landing leaves on its branch whose pin `W` changed since
+/// the merge base to one `T` does not hold: the pin `T` takes, and for an
+/// `owned` or `fork` member the commits it holds beyond `T`'s pin.
+fn plan_realigned(sides: &Sides, source_root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
+    for (path, entry) in sides.ours.iter_entries() {
+        if plan.receiving.contains_key(path) || sides.theirs.get_entry(path).is_none() {
+            continue;
+        }
+        let Some(mine) = pin_of(sides.our_lock.as_ref(), path) else {
+            continue;
+        };
+        let theirs = pin_of(sides.their_lock.as_ref(), path);
+        let base = pin_of(sides.base_lock.as_ref(), path);
+        if base.as_ref() == Some(&mine) || theirs.as_ref() == Some(&mine) {
+            continue;
+        }
+        let dir = source_root.join(path.as_path());
+        let vcs = vcs_for(entry.vcs_type);
+        if let Some(theirs) = theirs.as_ref().filter(|t| Some(*t) != base.as_ref()) {
+            if vcs
+                .is_ancestor(&dir, &rev(&mine), &rev(theirs))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+        }
+        plan.realigned.insert(path.clone());
+        if let (Some(theirs), Role::Owned | Role::Fork) = (theirs, entry.role) {
+            let reachable = vcs.resolve_revision(&dir, theirs.as_str()).is_ok();
+            if reachable && vcs.is_ancestor(&dir, &rev(&theirs), &rev(&mine))? {
+                let commits = vcs.commits_beyond(&dir, &rev(&mine), &rev(&theirs))?;
+                if !commits.is_empty() {
+                    plan.beyond_pin.insert(path.clone(), commits);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 struct Member<'a> {

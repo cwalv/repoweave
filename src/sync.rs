@@ -762,6 +762,16 @@ pub enum LandingReportOutput {
         files: Vec<String>,
         index_entries: Vec<String>,
     },
+    /// The commits `path`'s new pin in `target` holds beyond the pin `target`
+    /// held, pinned into `target` with the feature's work.
+    BeyondPin {
+        path: String,
+        target: String,
+        commits: Vec<LeftCommitOutput>,
+    },
+    /// `branch` holds the landing and its push branch does not: the landing
+    /// is not published until `branch` is pushed.
+    PushBranchAhead { path: String, branch: String },
 }
 
 /// A member's pin as the upstream a landing took in changed it.
@@ -877,6 +887,27 @@ impl LandingReportOutput {
                 files: files.clone(),
                 index_entries: index_entries.clone(),
             },
+            op_state::LandingReport::BeyondPin {
+                repo,
+                target,
+                commits,
+            } => Self::BeyondPin {
+                path: repo.to_string(),
+                target: target.clone(),
+                commits: commits
+                    .iter()
+                    .map(|c| LeftCommitOutput {
+                        sha: c.id.clone(),
+                        subject: c.subject.clone(),
+                    })
+                    .collect(),
+            },
+            op_state::LandingReport::PushBranchAhead { repo, branch, .. } => {
+                Self::PushBranchAhead {
+                    path: repo.to_string(),
+                    branch: branch.clone(),
+                }
+            }
         }
     }
 }
@@ -998,6 +1029,45 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     checkout.display(),
                     refreshed.describe()
                 );
+            }
+            op_state::LandingReport::BeyondPin {
+                repo,
+                target,
+                commits,
+            } => {
+                eprintln!(
+                    "land: {repo}: the branch it lands on holds {} commit(s) beyond '{target}''s \
+                     pin, which the landing pins into '{target}': {}",
+                    commits.len(),
+                    commits
+                        .iter()
+                        .map(|c| format!("{} {}", c.id.short(), c.subject))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+            }
+            op_state::LandingReport::PushBranchAhead {
+                label,
+                branch,
+                workspace,
+                ..
+            } => {
+                let vcs = project_vcs();
+                let mut ahead = Report::default();
+                ahead.add(
+                    State::PushBranchAhead
+                        .of(label)
+                        .project_repo()
+                        .subject(format!(
+                            "'{branch}' holds the landing, and its push branch does not"
+                        ))
+                        .bind("<W>", branch)
+                        .elsewhere(workspace)
+                        .by_verb("land")
+                        .only_forms(&[crate::diagnosis::Form::C7PushBranch])
+                        .judge(vcs.as_ref()),
+                );
+                eprint!("{}", ahead.render("land"));
             }
         }
     }
@@ -3256,7 +3326,7 @@ fn run_preconditions_after_acquire(
     };
     judge_edits_target_preflight(
         &cwd_project,
-        plan.receiving.keys(),
+        plan.moving(),
         dest_workspace_dir,
         dest_project_dir,
         &mut report,
@@ -3402,11 +3472,6 @@ fn guard_and_mark<'a>(
         emit_landing_report(handler, report);
     }
     let _ = acquired;
-    if emit_text {
-        for line in plan.fact_lines(&landing.target) {
-            eprintln!("land: {line}");
-        }
-    }
 
     // Savepoints on both sides: the source's repos replay, the target's
     // fast-forward, and `rwv abort` restores either. The target's are filed
@@ -3555,13 +3620,27 @@ fn guard_and_mark<'a>(
             },
         );
     }
+    take_in.realigned = plan
+        .realigned
+        .iter()
+        .map(|path| RepoKey::Member(path.clone()))
+        .collect();
     take_in.left_behind = plan.left_behind.clone();
     take_in.reports = refreshed;
     report_left_behind(handler, &take_in.left_behind);
-    for change in &plan.landed_changes {
-        emit_landing_report(handler, change);
+    let beyond_pin = plan
+        .beyond_pin
+        .iter()
+        .filter(|(_, commits)| !commits.is_empty())
+        .map(|(path, commits)| op_state::LandingReport::BeyondPin {
+            repo: RepoKey::Member(path.clone()),
+            target: landing.target.to_string(),
+            commits: commits.clone(),
+        });
+    for report in beyond_pin.chain(plan.landed_changes.iter().cloned()) {
+        emit_landing_report(handler, &report);
+        take_in.reports.push(report);
     }
-    take_in.reports.extend(plan.landed_changes.iter().cloned());
     for (repo, merge) in &plan.merged_ranges {
         let report = op_state::LandingReport::Merged {
             repo: repo.clone(),
@@ -3756,10 +3835,16 @@ fn load_continuing_context<'a>(
         let mut drifted = Vec::new();
         judge_edits_target_preflight(
             &cwd_project_preflight,
-            take_in.upstream_tips.keys().filter_map(|key| match key {
-                RepoKey::Member(path) => Some(path),
-                RepoKey::Project => None,
-            }),
+            take_in
+                .receiving
+                .keys()
+                .chain(&take_in.realigned)
+                .chain(take_in.upstream_tips.keys())
+                .filter_map(|key| match key {
+                    RepoKey::Member(path) => Some(path),
+                    RepoKey::Project => None,
+                })
+                .collect::<std::collections::BTreeSet<_>>(),
             &dest_workspace_dir,
             &dest_project_dir,
             &mut edits,
@@ -4738,6 +4823,21 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 &task.target,
                 RepoKey::Member(task.repo_path.clone()),
             )?;
+        }
+    }
+
+    for (repo_path, entry) in replayed.manifest.iter_entries() {
+        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        let unmoved = matches!(
+            entry.role,
+            crate::manifest::Role::Owned | crate::manifest::Role::Fork
+        ) && !ctx
+            .take_in
+            .receiving
+            .contains_key(&RepoKey::Member(repo_path.clone()));
+        if unmoved && abs.exists() {
+            ctx.handler
+                .record(repo_path.as_str(), &abs, &RepoSyncOutcome::NoOp, None);
         }
     }
 
@@ -5740,9 +5840,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     if let Some(taken_in) = taken_in {
         report_landing(ctx, taken_in)?;
     }
-    if emit_text {
-        report_target_ahead(ctx);
-    }
+    report_target_ahead(ctx)?;
 
     let target_savepoint = ctx.target_savepoint_key();
     settle_members(
@@ -5973,10 +6071,10 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()
 
 /// `T`, once it holds the landing, judged against its push branch where it is
 /// ahead of it: the landing is not published until `T` is pushed.
-fn report_target_ahead(ctx: &OpContext<'_>) {
+fn report_target_ahead(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let vcs = ctx.project_vcs.as_ref();
     let Ok(target) = landed_into(ctx, &ctx.cwd_project_name) else {
-        return;
+        return Ok(());
     };
     let url_remote = vcs.project_url_remote(&ctx.dest_project_dir).ok().flatten();
     let Ok((standing, _)) = crate::push_branch::standing_of_branch(
@@ -5985,27 +6083,20 @@ fn report_target_ahead(ctx: &OpContext<'_>) {
         &crate::vcs::RawRefName::new(target.as_str()),
         url_remote.as_ref(),
     ) else {
-        return;
+        return Ok(());
     };
     if standing != crate::push_branch::Standing::Ahead {
-        return;
+        return Ok(());
     }
-    let label = project_rel_path(&ctx.cwd_project_name);
-    let mut report = Report::default();
-    report.add(
-        State::PushBranchAhead
-            .of(&label)
-            .project_repo()
-            .subject(format!(
-                "'{target}' holds the landing, and its push branch does not"
-            ))
-            .bind("<W>", &target)
-            .elsewhere(&ctx.dest_workspace_dir)
-            .by_verb("land")
-            .only_forms(&[crate::diagnosis::Form::C7PushBranch])
-            .judge(vcs),
-    );
-    eprint!("{}", report.render("land"));
+    report_landing(
+        ctx,
+        op_state::LandingReport::PushBranchAhead {
+            repo: RepoKey::Project,
+            label: project_rel_path(&ctx.cwd_project_name),
+            branch: target.to_string(),
+            workspace: ctx.dest_workspace_dir.clone(),
+        },
+    )
 }
 
 /// Prune each checkout in `T`'s workspace of a member `T` listed before the

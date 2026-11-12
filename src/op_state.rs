@@ -497,6 +497,10 @@ pub struct TakeInRecord {
     /// how the landing moves it.
     #[serde(default)]
     pub receiving: BTreeMap<RepoKey, Receiving>,
+    /// The members of `T`'s workspace a landing moves only by re-pinning
+    /// them, which aligning `T`'s workspace then moves.
+    #[serde(default)]
+    pub realigned: Vec<RepoKey>,
     /// Each repo of `T`'s workspace a landing moves, by its fast-forward or
     /// by aligning that workspace after it, written before the repo moves.
     #[serde(default)]
@@ -589,6 +593,22 @@ pub enum LandingReport {
         moved_to: CommitId,
         files: Vec<String>,
         index_entries: Vec<String>,
+    },
+    /// The commits `repo`'s new pin holds beyond the pin `target` held, which
+    /// the landing pins into `target` with the feature's work.
+    BeyondPin {
+        repo: RepoKey,
+        target: String,
+        commits: Vec<crate::vcs::CommitSummary>,
+    },
+    /// `branch` holds the landing and its push branch does not, so the
+    /// landing is not published until it is pushed from `workspace`, where
+    /// the project repo is `label`.
+    PushBranchAhead {
+        repo: RepoKey,
+        label: String,
+        branch: String,
+        workspace: PathBuf,
     },
 }
 

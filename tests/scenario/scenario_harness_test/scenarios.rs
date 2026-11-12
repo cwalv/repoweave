@@ -8336,6 +8336,74 @@ pub fn an_unplannable_member_is_refused_before_it_is_planned() -> Scenario {
     )
 }
 
+/// A member whose branch already holds the feature's tip is not moved, but
+/// the feature advanced its pin past the target's: aligning the target's
+/// workspace moves that checkout, so its edits refuse the landing, and the
+/// commits it pins beyond the target's pin are reported, under `--json`
+/// among the landing's reports beside the target left ahead of its push
+/// branch.
+pub fn land_reports_an_unmoved_member_it_pins_beyond_the_target() -> Scenario {
+    scenario(
+        "land reports an unmoved member it pins beyond the target",
+        vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "forge-lib",
+            }),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "lib edited"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib edited", "lib"),
+            Step::rwv(&ww("w"), &["land", "--retire", "--json"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputInOrder(&[
+                    "\"reports\": [",
+                    "\"kind\": \"beyond-pin\"",
+                    "\"path\": \"local/remotes/lib\"",
+                    "forge-lib",
+                ]))
+                .claim(Claim::OutputContains("\"kind\": \"push-branch-ahead\""))
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "forge-lib",
+                }),
+        ],
+    )
+}
+
+/// A landing resumed after it composed judges the target's edits in the
+/// repos it moves before it relocks, as a fresh landing does.
+pub fn land_continue_judges_target_edits_where_it_moves() -> Scenario {
+    scenario(
+        "land continue judges target edits where it moves",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(&ww("w"), &["land"], "advance-target", "landing"),
+            Step::kill("landing"),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "app edited"),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::App, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::hand_edit(&a(), Repo::App, "README", "app edited", "app"),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    )
+}
+
 /// A landing leaves the target ahead of its push branch and says so, naming
 /// the push that publishes it; running it publishes the landing.
 pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {

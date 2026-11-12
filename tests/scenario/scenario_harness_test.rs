@@ -737,6 +737,8 @@ every_scenario!(
     land_never_rewrites_a_declared_mode_branch,
     land_into_a_target_that_exists_nowhere,
     land_target_gone_lists_only_targets_the_rebind_takes,
+    land_reports_an_unmoved_member_it_pins_beyond_the_target,
+    land_continue_judges_target_edits_where_it_moves,
     land_judges_target_edits_only_where_it_moves,
     land_judges_the_pin_on_its_branch_only_for_moved_members,
     land_refuses_a_moved_member_whose_branch_lacks_the_pin,
@@ -2444,6 +2446,13 @@ holding_rwv! {
         runner::run(scenarios::continue_reports_a_created_receiving_branch())
             .assert_fully_decided_green();
     }
+
+    /// A landing interrupted after composing judges, on `--continue`, the
+    /// target's edits in the repos it moves.
+    fn a_continued_landing_judges_target_edits_where_it_moves() {
+        runner::run(scenarios::land_continue_judges_target_edits_where_it_moves())
+            .assert_fully_decided_green();
+    }
 }
 
 holding_rwv! {
@@ -3992,6 +4001,12 @@ fn dc11_safe_drift_is_refreshed_before_edits_are_judged_and_the_moved_tip_lands(
 #[test]
 fn land_into_a_target_that_exists_nowhere_scenario() {
     runner::run(scenarios::land_into_a_target_that_exists_nowhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn land_reports_an_unmoved_member_it_pins_beyond_the_target_scenario() {
+    runner::run(scenarios::land_reports_an_unmoved_member_it_pins_beyond_the_target())
+        .assert_fully_decided_green();
 }
 
 #[test]
