@@ -476,15 +476,14 @@ fn a_sync_to_a_target_whose_tip_names_the_old_keys_reads_its_manifest_as_empty_a
 
     let mut sync = common::rwv();
     sync.current_dir(&ww.root).args([
-        "sync-to",
-        &primary.root.to_string_lossy(),
+        "land",
         "--strategy",
         "rebase",
         "--json",
     ]);
     let assert = sync.assert().success();
     let report: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
-        .unwrap_or_else(|e| panic!("sync-to --json prints JSON: {e}"));
+        .unwrap_or_else(|e| panic!("land --json prints JSON: {e}"));
     let server = report["outcomes"]
         .as_array()
         .unwrap()

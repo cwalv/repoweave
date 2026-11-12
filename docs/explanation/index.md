@@ -21,13 +21,13 @@
 ### Workweaves & branches
 
 - [Workweave hierarchy](./joints/workweave-hierarchy.md) — parent-child relationships between workweaves and flat `<project>--<workweave>` branch naming
-- [Workweave lifecycle](./joints/workweave-lifecycle.md) — creating, syncing, landing (`sync-to --retire`), and deleting workweaves
+- [Workweave lifecycle](./joints/workweave-lifecycle.md) — creating, syncing, landing (`land --retire`), and deleting workweaves
 - [Shared-refs drift](./joints/shared-refs-drift.md) — what happens when a checked-out branch ref moves underneath a worktree and how `rwv` classifies drift
 
 ### Lock & sync
 
 - [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and read as the target only when `clone`, `update` or `sync` materializes it
-- [Sync semantics](./joints/sync-semantics.md) — the direction pair `rwv sync` / `rwv sync-to`, its phases, savepoints and abort, and the strategy choice
+- [Sync semantics](./joints/sync-semantics.md) — the direction pair `rwv sync` / `rwv land`, its phases, savepoints and abort, and the strategy choice
 
 ## Design notes
 

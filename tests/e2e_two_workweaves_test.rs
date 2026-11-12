@@ -1,12 +1,12 @@
-//! E2E coverage for two-workweave `rwv sync` / `rwv sync-to` scenarios: n-way
+//! E2E coverage for two-workweave `rwv sync` / `rwv land` scenarios: n-way
 //! convergence of manifest and project repos, conflict surfacing,
 //! materialize/prune, retire, and bare-sync refusals.
 //!
 //! Scenario shape (the n-way tests): a primary workspace ("main") with two
 //! sibling workweaves `ww1` and `ww2`. Both workweaves make commits in the
 //! same manifest repo and (in some tests) in the project repo. Goal: `rwv
-//! sync-to` from ww1, then `rwv sync --strategy rebase` from ww2, then `rwv
-//! sync-to` from ww2 lands both workweaves' contributions in main without
+//! land` from ww1, then `rwv sync --strategy rebase` from ww2, then `rwv
+//! land` from ww2 lands both workweaves' contributions in main without
 //! manual git surgery.
 //!
 //! "Main" here is the primary workspace for setup convenience; sync semantics
@@ -154,7 +154,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 
 /// Both workweaves edit independent files in the manifest repo. The only
 /// change to each workweave's project repo is the lock commit. Sync ww1 → main
-/// (ff), then ww2 syncs main with rebase, then sync-to ww2 → main (ff).
+/// (ff), then ww2 syncs main with rebase, then land ww2 → main (ff).
 #[test]
 fn sync_two_workweaves_lock_only_changes() {
     let tmp = common::tempdir().unwrap();
@@ -173,10 +173,10 @@ fn sync_two_workweaves_lock_only_changes() {
     let ww2_lib_sha = commit_file(&ww2.manifest_repo, "bar.txt", "ww2 bar\n", "ww2: add bar");
     rwv_lock_commit(&ww2.root);
 
-    // From ww1: sync-to main. Default ff strategy. Main now has ww1's lib commit
+    // From ww1: land main. Default ff strategy. Main now has ww1's lib commit
     // and an updated lock.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -209,9 +209,9 @@ fn sync_two_workweaves_lock_only_changes() {
         "ww2 lib should still have bar.txt after rebase"
     );
 
-    // From ww2: sync-to main. ff. Main now has both files.
+    // From ww2: land main. ff. Main now has both files.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -284,9 +284,9 @@ fn sync_two_workweaves_with_project_doc_changes() {
     );
     rwv_lock_commit(&ww2.root);
 
-    // From ww1: sync-to main.
+    // From ww1: land main.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -311,9 +311,9 @@ fn sync_two_workweaves_with_project_doc_changes() {
         "ww2 project should still contain its own feat-b notes"
     );
 
-    // From ww2: sync-to main.
+    // From ww2: land main.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -383,9 +383,9 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
     commit_file(&ww2.manifest_repo, "bar.txt", "ww2 bar\n", "ww2: add bar");
     rwv_lock_commit(&ww2.root);
 
-    // From ww1: sync-to main — clean ff.
+    // From ww1: land main — clean ff.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -562,11 +562,11 @@ fn sync_phase3_materialize_failure_is_fatal() {
 }
 
 // ---------------------------------------------------------------------------
-// `rwv sync` (the record's target) + bare `rwv sync-to` + `--retire` cleanup
+// `rwv sync` (the record's target) + bare `rwv land` + `--retire` cleanup
 // ---------------------------------------------------------------------------
 
 /// Happy path: a workweave forked from primary takes in primary's tip with
-/// bare `rwv sync`; `rwv sync-to` lands work upward.
+/// bare `rwv sync`; `rwv land` lands work upward.
 #[test]
 fn sync_takes_the_targets_tip_into_the_workweave() {
     let tmp = common::tempdir().unwrap();
@@ -607,7 +607,7 @@ fn sync_takes_the_targets_tip_into_the_workweave() {
     );
 }
 
-/// Bare `rwv sync-to` (no target) from a workweave reads the recorded
+/// Bare `rwv land` (no target) from a workweave reads the recorded
 /// parent from `.rwv-workweave` and lands work upward. This is the new
 /// "bare" behavior — upward landing without requiring an explicit target.
 #[test]
@@ -629,10 +629,10 @@ fn bare_sync_to_follows_recorded_parent_to_primary() {
     );
     rwv_lock_commit(&ww1.root);
 
-    // Bare `rwv sync-to` (no target) from ww1 reads the marker's parent (primary)
+    // Bare `rwv land` (no target) from ww1 reads the marker's parent (primary)
     // and fast-forwards primary to ww1's tip.
     rwv()
-        .args(["sync-to", "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -640,11 +640,11 @@ fn bare_sync_to_follows_recorded_parent_to_primary() {
     let primary_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_lib_head, ww1_sha,
-        "after bare sync-to, primary's lib HEAD must be at ww1's tip"
+        "after bare land, primary's lib HEAD must be at ww1's tip"
     );
 }
 
-/// Bare `rwv sync-to` from the primary weave (not inside a workweave)
+/// Bare `rwv land` from the primary weave (not inside a workweave)
 /// must error with a clear message — there is no recorded parent to target.
 #[test]
 fn bare_sync_to_from_primary_errors_with_no_parent_message() {
@@ -654,7 +654,7 @@ fn bare_sync_to_from_primary_errors_with_no_parent_message() {
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let assert = rwv()
-        .args(["sync-to"])
+        .args(["land"])
         .current_dir(&main.root)
         .assert()
         .failure();
@@ -688,10 +688,10 @@ fn bare_sync_on_a_declared_branch_refuses_for_want_of_a_target() {
 }
 
 // ---------------------------------------------------------------------------
-// sync-to --retire
+// land --retire
 // ---------------------------------------------------------------------------
 
-/// Happy path: `rwv sync-to --retire` from a workweave whose project repo is
+/// Happy path: `rwv land --retire` from a workweave whose project repo is
 /// already at parent's tip (no divergent commits) lands work upward and deletes.
 #[test]
 fn sync_to_retire_clean_path_deletes_workweave() {
@@ -723,23 +723,23 @@ fn sync_to_retire_clean_path_deletes_workweave() {
 
     // No divergence: nothing in ww1 has changed since fork. Manifest tips
     // identical to parent's, working tree clean (modulo gitignored
-    // activation outputs) → sync-to --retire should succeed.
+    // activation outputs) → land --retire should succeed.
     assert!(ww1.root.exists(), "workweave must exist pre-retire");
 
     rwv()
-        .args(["sync-to", "--retire", &main.root.to_string_lossy()])
+        .args(["land", "--retire", &main.root.to_string_lossy()])
         .current_dir(&ww1.root)
         .assert()
         .success();
 
     assert!(
         !ww1.root.exists(),
-        "--retire must delete the workweave on successful sync-to"
+        "--retire must delete the workweave on successful land"
     );
 }
 
 /// Dirty-tree path: if any manifest-repo worktree in the workweave has
-/// uncommitted TRACKED changes when `sync-to --retire` runs, the op must refuse
+/// uncommitted TRACKED changes when `land --retire` runs, the op must refuse
 /// and leave the workweave intact for the operator to fix.
 ///
 /// Since the source-side cleanliness preflight (§1), the refusal fires
@@ -762,7 +762,7 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
     std::fs::write(ww1.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
-        .args(["sync-to", "--retire", &main.root.to_string_lossy()])
+        .args(["land", "--retire", &main.root.to_string_lossy()])
         .current_dir(&ww1.root)
         .assert()
         .failure();
@@ -818,7 +818,7 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
 
     // main absorbs ww1's commit cleanly.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();

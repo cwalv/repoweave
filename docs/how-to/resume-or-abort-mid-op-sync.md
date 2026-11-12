@@ -1,10 +1,10 @@
 # Resume or abort a mid-op sync
 
-When `rwv sync` or `rwv sync-to` is interrupted by a conflict, crash, or `Ctrl-C`, inspect the in-flight operation with `rwv status`, then either finish it with `--continue` or roll back to the pre-op savepoints with `rwv abort`:
+When `rwv sync` or `rwv land` is interrupted by a conflict, crash, or `Ctrl-C`, inspect the in-flight operation with `rwv status`, then either finish it with `--continue` or roll back to the pre-op savepoints with `rwv abort`:
 
 ```bash
 rwv status                # inspect per-repo mid_op state
-rwv sync --continue       # or: rwv sync-to --continue
+rwv sync --continue       # or: rwv land --continue
 rwv abort                 # roll back all involved workspaces to pre-op savepoints
 ```
 
@@ -12,17 +12,17 @@ rwv abort                 # roll back all involved workspaces to pre-op savepoin
 
 `rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, or mid-cherry-pick (in `--json` output, `"mid_op": "<op>"`).
 
-For `rwv sync-to`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace. `rwv abort` can be run from either workspace and rolls back both with the same verdict per repository; its lines for the other workspace's repositories carry a `[target]` prefix (run from the initiating workweave) or a `[source]` prefix (run from the target).
+For `rwv land`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace. `rwv abort` can be run from either workspace and rolls back both with the same verdict per repository; its lines for the other workspace's repositories carry a `[target]` prefix (run from the initiating workweave) or a `[source]` prefix (run from the target).
 
 ## Resume with `--continue`
 
-If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv sync-to --continue` from the weave root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
+If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv land --continue` from the weave root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
 
-`--continue` loads all parameters (source or target, `--strategy`, `--retire`, `--allow-stale-lock`, `--discard-local-commits`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
+`--continue` loads all parameters (source or target, the landing's plan, `--strategy`, `--retire`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
 
 ## Roll back with `rwv abort`
 
-`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` for a repository in the target of a `sync-to`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
+`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` for a repository in the target of a `land`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
 
 | Current repository tip | `rwv abort` outcome |
 |---|---|
@@ -53,7 +53,7 @@ If no op-state record is present in the workspace, `rwv abort` exits with status
 ## Related
 
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts before running `--continue`
-- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave work with `rwv sync-to`
+- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave work with `rwv land`
 - [Sync semantics](../explanation/joints/sync-semantics.md) — phase ordering, savepoints, and op-state
 
-For the full contracts, run `rwv explain abort` (verified restore and foreign-tip recovery), `rwv explain sync`, and `rwv explain sync-to` (op-state and `--continue`).
+For the full contracts, run `rwv explain abort` (verified restore and foreign-tip recovery), `rwv explain sync`, and `rwv explain land` (op-state and `--continue`).

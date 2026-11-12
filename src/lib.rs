@@ -114,6 +114,7 @@ pub mod init;
 pub mod integration;
 pub mod integration_runner;
 pub mod integrations;
+pub mod land;
 pub(crate) mod lineage;
 pub mod lock;
 pub mod lock_commit;

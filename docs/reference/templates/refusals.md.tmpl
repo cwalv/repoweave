@@ -158,7 +158,7 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 ### `cwd-in-inactive-project`
 
 **Condition.** A verb that writes into its project (`add`, `remove`, `role`,
-`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`, or `doctor
+`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `land`, or `doctor
 --fix`) was run from inside `projects/<name>/` at a primary weave root, with no
 `--project`, while `.rwv-active` selects a different project.
 
@@ -288,7 +288,7 @@ repo as `projects/<name>`. The refusal moves nothing and writes nothing.
 ### `head-not-on-branch`
 
 **Condition.** HEAD is detached, unborn, or unreadable in a repo the verb must
-land on or move. `rwv sync-to` checks both ends: every repo of the target, and
+land on or move. `rwv land` checks both ends: every repo of the target, and
 the project repo and every member repo of the source workweave.
 
 **Why.** Landing work means advancing a branch. A detached HEAD names no
@@ -296,7 +296,7 @@ branch to advance, and an unborn one has no commit to advance from, so the
 verb has nowhere to put the result.
 
 **Exits.** Check out the branch you meant. For a detached repo in the source of
-`rwv sync-to`, the refusal prints the command, chosen by how HEAD stands
+`rwv land`, the refusal prints the command, chosen by how HEAD stands
 against the workweave's branch: `git switch <branch>` where the branch carries
 HEAD; `git switch <branch>` then `git merge --ff-only <HEAD>` where HEAD is
 ahead, since switching alone would leave HEAD's commits on no branch; and where
@@ -545,7 +545,7 @@ looks like a workweave but is not recorded in the project clone's workweave inde
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name. A target for `rwv sync-to`
+in the recorded container under the expected name. A target for `rwv land`
 that is a bare word names a workweave; to name a directory, write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
@@ -589,8 +589,9 @@ stopping rather than quietly doing something else.
 **Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
 reconcile the repos by hand first. Where the commits a rebase would replay hold
 a merge, `rwv sync` names `rwv sync --from <target>` instead, which takes the
-target in by a merge rather than flattening it. Past replay the exit is
-different — see `target-diverged-mid-op`.
+target in by a merge rather than flattening it. A landing whose target moved
+after it composed stops as [`target`](./doctor-findings.md#target) `moved
+mid-operation` instead.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -639,7 +640,7 @@ present and the exits are resume-or-abort rather than retry.
 
 ### `op-in-progress`
 
-**Condition.** A sync or sync-to operation already holds op-state covering
+**Condition.** A sync or land operation already holds op-state covering
 this workspace.
 
 **Why.** An operation in flight is rewriting the very repos another verb would
@@ -815,28 +816,6 @@ it there.
 
 **Where this sits.** [Symlinks as structure](../explanation/joints/symlinks-as-structure.md).
 
-### `stale-lock`
-
-**Condition.** `rwv sync-to` found a member whose checkout is not at the commit
-the lock it reads pins for it, or for which the lock has no entry.
-
-**Why.** sync-to replays against another workspace's committed lock and relocks
-from its own checkouts. A tip that differs from its pin means the lock the replay reads
-and the commits the replay carries disagree: a primary source whose lock is
-behind its HEAD would hand on commits no pin records, and a checkout behind or
-diverged from its pin would be moved or relocked over commits nobody chose to
-drop.
-
-**Exits.** `rwv status` and `rwv doctor` judge the same condition per member as
-a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
-`rwv lock --commit` records a checkout that is ahead of its pin;
-`rwv member pin <repo> HEAD --commit` pins one that is behind or has diverged, by
-name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
-for one. `rwv sync-to --allow-stale-lock` skips the check.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
-[Lock as derived](../explanation/joints/lock-as-derived.md).
-
 ### `state-claim-held`
 
 **Condition.** A peer process holds the state-file claim past the wait budget.
@@ -875,36 +854,6 @@ rwv could name and retire, this one is not addressable, so there is no verb
 that can clear it.
 
 **Exits.** Clear the directory yourself, or choose another with `--dir`.
-
-### `target-diverged-mid-op`
-
-**Condition.** At advance time the target carries commits the current tip does
-not.
-
-**Why.** Replay already happened against the target as it was. A target that
-moved since means the plan this operation computed no longer describes the
-landing, and re-choosing a strategy now would replay against a base the earlier
-phases did not use.
-
-**Exits.** `rwv abort` and start again against the target's current state. This
-is not `not-fast-forwardable`'s remedy — past replay, a different
-strategy is not the fix.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
-
-### `target-lock-behind`
-
-**Condition.** A sync-to target's committed lock is behind its own HEAD.
-
-**Why.** sync-to replays against the target's committed lock. A lock behind
-HEAD means those commits would be missing from the replayed tip, and the final
-fast-forward could not land.
-
-**Exits.** Run `rwv lock --commit` in the target workspace, then re-run. There
-is no `--allow-stale-lock` here: skipping the check does not make
-the missing commits appear, which is why this is not `stale-lock`.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unaccepted-generated-content`
 
@@ -1005,24 +954,6 @@ the same string, so the address would stop identifying one checkout.
 
 **Exits.** Choose another name. [Formats](./formats.md) lists the excluded
 characters and the rule each one protects.
-
-### `unresolvable-lock-entry`
-
-**Condition.** `rwv sync-to` found a lock entry that names a revision this
-clone cannot resolve.
-
-**Why.** A lock written against history that was never fetched here, or
-rewritten or garbage-collected upstream, pins nothing the clone can compare its
-checkout with. The replay cannot tell whether the checkout is ahead of, behind
-or diverged from it, so it refuses rather than guess.
-
-**Exits.** `rwv fetch --repo <repo>` brings in the history that may hold the
-revision. If it is gone, `rwv member pin <repo> HEAD --commit` pins the checkout's
-commit by name, or `rwv member pin <repo> <rev> --commit` pins another.
-`rwv status` and `rwv doctor` judge the same condition as [`pin`](./doctor-findings.md#pin)
-`unreachable`.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unresolvable-repo-source`
 

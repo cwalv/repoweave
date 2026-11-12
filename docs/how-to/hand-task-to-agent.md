@@ -11,7 +11,7 @@ rwv setup claude
 rwv workweave create agent-task-99
 cd ../.workweaves/web-app--agent-task-99
 # ... agent edits, tests, and commits across repos ...
-rwv sync-to --retire
+rwv land --retire
 ```
 
 ## Discover the workspace (`rwv prime`)
@@ -50,7 +50,7 @@ Every `--json`-capable verb prints one JSON object, `{ "$schema": "<url>", "<key
 | `rwv update --remote --json` | `repos` (+ `placements`) | `min(nproc, 8)` |
 | `rwv push --json` | `outcomes` | `1` |
 | `rwv sync --json` | `refused` (+ `placements`, `members`, `advisories`) | `1` |
-| `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` |
+| `rwv land --json` | `outcomes` (+ `placements`) | `1` |
 
 Per-repo records are sorted by repo path whatever order the workers finished in. To follow repos as they finish, run the command through `rwv each` with `--joblog` or `--results`.
 
@@ -64,7 +64,7 @@ When creating a workweave for an agent (`rwv workweave create agent-task-99`), t
 
 A workweave created by `claude --worktree`, through the `WorktreeCreate` hook `rwv setup claude` registers, is handed over even when an install hook fails: the failure is a warning on stderr naming `rwv materialize`, and the agent's tool state is incomplete until someone runs `rwv materialize` inside the workweave. A manual `rwv workweave create` exits 1 in the same case, and keeps the workweave.
 
-When the agent finishes committing across member repos, `rwv sync-to --retire` auto-relocks CWD, replays the work onto the parent workspace, fast-forwards the parent, and deletes the workweave. If a conflict occurs, the workweave is preserved so the agent or operator can resolve it and run `rwv sync-to --continue`.
+When the agent finishes committing across member repos, `rwv land --retire` relocks the workweave, composes the work onto its target's tip, fast-forwards the target where it is checked out, and deletes the workweave. If a conflict occurs, the workweave is preserved so the agent or operator can resolve it and run `rwv land --continue`.
 
 ## Filter repos with selectors
 
@@ -87,6 +87,6 @@ A narrowed `rwv update --remote` regenerates no integration files and runs no in
 
 - [Agent lens](../explanation/lenses/agent.md) — parallel agent workflow patterns
 - [Create a feature workweave](./create-feature-workweave.md) — workweave creation and landing
-- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync-to` and multi-workweave landing
-- [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts during `sync` or `sync-to`
+- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv land` and multi-workweave landing
+- [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts during `sync` or `land`
 - [CLI reference](../reference/cli.md) — complete flag and selector grammar reference

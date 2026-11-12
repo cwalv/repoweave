@@ -35,7 +35,7 @@ to which page holds it, so the split costs a reader nothing.
 
 ## Where these names appear
 
-- `rwv sync --json` / `rwv sync-to --json`, under a failed repo outcome, as
+- `rwv sync --json` / `rwv land --json`, under a failed repo outcome, as
   `failure.kind` — always present — and as `failure.cause.kind`. An
   `ff-impossible` or `rebase-failed` failure always carries `cause`. A
   `head-unreadable` failure may not; its `cause` is then omitted rather than
@@ -169,7 +169,7 @@ directory. Nothing was rolled back, because rolling back would discard the part
 of the replay that already applied.
 
 **Exits.** Resolve the conflicted files and stage them, then resume with the rwv
-verb that started the replay — `rwv sync --continue` or `rwv sync-to
+verb that started the replay — `rwv sync --continue` or `rwv land
 --continue`. Resume through rwv rather than through git directly: rwv has
 remaining phases after the replay, and a replay finished behind its back leaves
 them undone. To abandon instead, `rwv abort` rolls the op back to the state it

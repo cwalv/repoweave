@@ -78,7 +78,7 @@ The role for your own code is spelled `role = "owned"`; a manifest spelling it `
 
 #### Submodules
 
-When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv update`, `rwv member add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
+When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv update`, `rwv member add`, `rwv sync`, `rwv land` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
 
 The canonical clone gets that copy from the network verbs. When `rwv member add`, `rwv clone` or `rwv update` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
 
@@ -171,7 +171,7 @@ Written by `rwv lock`, `rwv member add`, `rwv member pin` and `rwv update --remo
 
 An older or hand-edited lock may still carry an entry pinned by a tag or branch name. Verbs that read the lock resolve it to wherever the name points now. `rwv clone`, `rwv update` and `rwv sync` warn, naming the entry; `rwv status` marks it and `rwv doctor` reports it as [`lock-pinned-by-name`](./doctor-findings.md#lock-pinned-by-name), in `--json` too. The next `rwv lock`, or a sync's relock, records the commit id.
 
-`rwv.lock` is derived state. Do not hand-edit; it is recorded by `rwv lock` and the verbs that name a commit, by `rwv sync`, and by `rwv sync-to` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
+`rwv.lock` is derived state. Do not hand-edit; it is recorded by `rwv lock` and the verbs that name a commit, by `rwv sync`, and by `rwv land` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
 
 `sha256sum rwv.lock` is the project fingerprint — two locks with the same checksum pin the same commit of every repo. They are pins, not a description of the checkouts: a working tree whose HEAD has moved past its lock reads the same checksum, and `rwv status` or `rwv doctor --locked` is what compares the two.
 
@@ -242,9 +242,9 @@ Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv clone` or `r
 
 ## `.rwv-workweave` — workweave marker
 
-Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent. The project clone's workweave index keeps the same `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv sync-to --retire` refuse instead, naming `rwv doctor --fix`.
+Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent. The project clone's workweave index keeps the same `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv land --retire` refuse instead, naming `rwv doctor --fix`.
 
-Written by `rwv workweave create <name>`, which, run inside a workweave, also duplicates that workweave's state; removed with the workweave by `rwv workweave delete <name>` or `rwv sync-to --retire`.
+Written by `rwv workweave create <name>`, which, run inside a workweave, also duplicates that workweave's state; removed with the workweave by `rwv workweave delete <name>` or `rwv land --retire`.
 
 ```json
 {
@@ -264,8 +264,8 @@ All three fields are required. A YAML-format marker (written before markers were
 
 Consumed by:
 
-- `rwv sync-to` (bare) — auto-targets the recorded parent.
-- `rwv sync-to --retire` — advances parent, then deletes the workweave on success.
+- `rwv land` — lands into the target the feature's record names.
+- `rwv land --retire` — lands, then deletes the workweave on success.
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
@@ -291,7 +291,7 @@ Used by `rwv doctor` (`managed-file-drift`, `derived-state-stale`) and by `rwv m
 
 ## `.rwv-op` — owner op-state record
 
-Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv sync-to` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv sync-to --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
+Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv land` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv land --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
 
 Its presence is what those two verbs mean by "an operation is in progress" — `rwv abort` with no `.rwv-op` present reports `no operation in progress`. See [resume or abort a mid-op sync](../how-to/resume-or-abort-mid-op-sync.md) for the operator path.
 
@@ -346,7 +346,7 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
         └── .rwv-workweave                    # primary: ~/work, parent: ~/work
 ```
 
-The `.workweaves/` subtree is created and destroyed by `rwv workweave create` and `rwv workweave delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create` run inside a workweave is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
+The `.workweaves/` subtree is created and destroyed by `rwv workweave create` and `rwv workweave delete` (or `rwv land --retire`, which lands the work and deletes in one step); `create` run inside a workweave is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
 
 The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`, plus `local`, which names no host at all. The set is not configurable. A URL on any other host still resolves: the segment becomes the URL's own host, or `local` for a `file://` URL — the same segment name the `local` registry uses, though reached by that host-derivation rule rather than by looking the registry up by name.
 

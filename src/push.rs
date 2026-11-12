@@ -10,7 +10,7 @@
 use crate::alignment::{Accounting, Aligner, Member as AlignedMember, Pin, Target};
 use crate::branch_ref::BranchRef;
 use crate::cli::consent::OverwriteConsent;
-use crate::diagnosis::{ChoiceId, Fact, FactKind, Report, State};
+use crate::diagnosis::{ChoiceId, Fact, FactKind, Form, Report, State};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoOperand, RepoPath, Role, VcsType,
 };
@@ -1464,6 +1464,40 @@ fn judge_project(
         Standing::Ahead | Standing::Unpublished => true,
     };
     let target = target.expect("a project branch with no push target was refused");
+    if let Record::Feature {
+        target: lands_into,
+        ..
+    } = &pushed.record
+    {
+        let published = pvcs
+            .remote_copies(&pushed.project_dir, &RawRefName::new(lands_into.as_str()))?
+            .iter()
+            .any(|copy| copy.remote == target);
+        if !published {
+            let minted =
+                crate::naming::workweave_name_in(&pushed.project, lands_into.as_str()).is_some();
+            refusals.add(
+                State::PublishTargetUnpublished
+                    .of(&label)
+                    .project_repo()
+                    .subject(format!(
+                        "'{}' lands into '{lands_into}', which has no push branch on {target}",
+                        pushed.branch
+                    ))
+                    .bind("<W>", &pushed.branch)
+                    .bind("<target>", lands_into)
+                    .checkout(&pushed.project_dir)
+                    .by_verb("push")
+                    .only_forms(if minted {
+                        &[Form::C10, Form::C12Feature]
+                    } else {
+                        &[Form::C7PushTarget, Form::C12Feature]
+                    })
+                    .judge(pvcs),
+            );
+            return Ok(());
+        }
+    }
 
     if push_branch {
         judge_range(

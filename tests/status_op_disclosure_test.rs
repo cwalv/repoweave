@@ -1,4 +1,4 @@
-//! `rwv status` discloses an in-flight sync/sync-to op (D4b).
+//! `rwv status` discloses an in-flight sync/land op (D4b).
 //!
 //! `.rwv-op` was previously invisible to `rwv status` — a git-clean
 //! worktree licensed an operator into re-running with a different flag while
@@ -7,7 +7,7 @@
 //! pins the read-only disclosure both ways: an op in progress shows, text and
 //! `--json`; a workspace with no op shows nothing.
 //!
-//! The op here is parked by a REAL interrupted `rwv sync-to` — two repos
+//! The op here is parked by a REAL interrupted `rwv land` — two repos
 //! edit one file differently after a fork, the rebase replay genuinely conflicts, and
 //! the acquired op-state is kept on disk per the phase-failure cleanup rule.
 //! No `.rwv-op` is hand-planted.
@@ -123,7 +123,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 }
 
 /// `rwv status` (text + `--json`) discloses an op parked by a real
-/// interrupted sync-to, and stays silent for a workspace that never ran one.
+/// interrupted land, and stays silent for a workspace that never ran one.
 #[test]
 fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     let tmp = common::tempdir().unwrap();
@@ -147,13 +147,13 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     commit_file(&ww.repo, "shared.txt", "from ww\n", "ww: add shared.txt");
 
     let sync_out = rwv()
-        .args(["sync-to", "--strategy", "rebase"])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         !sync_out.status.success(),
-        "sync-to should fail on a genuine conflict; stdout:\n{}\nstderr:\n{}",
+        "land should fail on a genuine conflict; stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&sync_out.stdout),
         String::from_utf8_lossy(&sync_out.stderr)
     );
@@ -193,7 +193,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     assert!(text_out.status.success());
     let text = String::from_utf8_lossy(&text_out.stdout);
     assert!(
-        text.contains("sync-to in progress") && text.contains("mid `replay`"),
+        text.contains("land in progress") && text.contains("mid `replay`"),
         "status text should name the verb and phase: {text}"
     );
     assert!(
@@ -211,7 +211,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     let op = v
         .get("op")
         .expect("status --json should disclose the parked op");
-    assert_eq!(op["verb"], "sync-to");
+    assert_eq!(op["verb"], "land");
     assert_eq!(op["phase"], "replay");
     assert_eq!(
         canon(Path::new(op["owner"].as_str().unwrap())),

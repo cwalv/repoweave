@@ -1,7 +1,7 @@
 //! Tier-0 topology behavior for `workweave delete`.
 //!
 //! These tests pin the bug-fix: under the clone-topology
-//! joint, `workweave delete` (and the delete step of `sync-to --retire`)
+//! joint, `workweave delete` (and the delete step of `land --retire`)
 //! MUST resolve each per-repo worktree's actual canonical store on disk
 //! rather than assuming `<ws_root>/<repo_path>` is the parent. When the
 //! resolved parent reveals a topology violation that delete cannot
@@ -437,7 +437,7 @@ fn delete_keeps_the_commits_of_a_store_it_cannot_judge() {
 /// this process's own.
 ///
 /// The inverse arm — cwd inside the workweave steps out to the parent —
-/// is exercised only by production topology (`sync-to --retire` stands
+/// is exercised only by production topology (`land --retire` stands
 /// inside the workweave it deletes); a test that moved this binary's
 /// shared cwd into a fixture to probe it would itself recreate the
 /// poisoning this test pins against.

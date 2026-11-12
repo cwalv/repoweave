@@ -1,4 +1,4 @@
-//! Per-phase idempotent re-entry tests for the sync-to phase machine.
+//! Per-phase idempotent re-entry tests for the land phase machine.
 //!
 //! Acceptance criteria: phase functions are individually
 //! exercised for idempotent re-entry. The full (phase × kill-point) crash
@@ -6,7 +6,7 @@
 //! each phase from a quiescent state is a no-op-shaped success.
 //!
 //! Mechanism: write an owner record at the target phase (sometimes with
-//! converged_tips pre-populated), then invoke `rwv sync-to --continue` and
+//! converged_tips pre-populated), then invoke `rwv land --continue` and
 //! assert success with no spurious mutation.
 
 use assert_cmd::Command as AssertCommand;
@@ -133,12 +133,13 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &str) {
     let body = format!(
-        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(source, target, "web-app"),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -172,7 +173,7 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
     let server_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -213,7 +214,7 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
     let server_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -232,7 +233,7 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
 // ---------------------------------------------------------------------------
 // AdvanceTarget re-entry
 //
-// Owner record at phase=advance-target with verb=sync-to: the ff-advance
+// Owner record at phase=advance-target with verb=land: the ff-advance
 // must be a no-op when the target is already at the converged tip. We
 // stage this with primary as target and the project repo at the converged
 // tip via a write directly to the owner record's converged_tips map.
@@ -240,12 +241,13 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
 
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
     let body = format!(
-        "{{\"id\": \"reentry-test-advance\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"reentry-test-advance\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(workspace, target, "web-app"),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -264,7 +266,7 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
-    // primary and ww share tips. Write a sync-to owner record at advance-target
+    // primary and ww share tips. Write a land owner record at advance-target
     // with ww as CWD and primary as target. Lease on the target side.
     let op_id = "reentry-test-advance";
     write_sync_to_owner_record_at_advance_target(&ww.root, &primary.root);
@@ -276,7 +278,7 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
     let server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -330,7 +332,7 @@ fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
     common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
     let err_output = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -371,7 +373,7 @@ fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
 // missing check is purely diagnostic — the recorded op still completes, just
 // under the CLI name the operator didn't type. The fixture below is the same
 // advance-target/equal-tips setup `advance_target_reentry_on_equal_tips_is_a_noop_success`
-// uses to resume a sync-to op to a clean success, so mismatching the verb
+// uses to resume a land op to a clean success, so mismatching the verb
 // here demonstrates the refusal is the only thing standing between a `sync`
 // invocation and a silently completed landing.
 // ---------------------------------------------------------------------------
@@ -411,11 +413,11 @@ fn continue_refuses_a_sync_invocation_against_a_sync_to_op() {
         .clone();
     let stderr = String::from_utf8_lossy(&err_output.stderr);
     assert!(
-        stderr.contains("in-progress op is `sync-to` but `rwv sync --continue` was invoked"),
+        stderr.contains("in-progress op is `land` but `rwv sync --continue` was invoked"),
         "the refusal must name both the recorded verb and the invoked one; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("Run `rwv sync-to --continue` instead"),
+        stderr.contains("Run `rwv land --continue` instead"),
         "the refusal must name the correct resume command; got:\n{stderr}"
     );
 
@@ -436,7 +438,7 @@ fn continue_refuses_a_sync_invocation_against_a_sync_to_op() {
 //
 // Plant an owner record at the SOURCE workweave (ww), a thin lease at the
 // TARGET (primary), and make the workspaces genuinely diverge. Invoke
-// `rwv sync-to --continue` FROM the LEASE workspace and assert that the end
+// `rwv land --continue` FROM the LEASE workspace and assert that the end
 // state is identical to what an owner-side `--continue` would produce:
 //   - target's project tip advanced to the owner's converged tip;
 //   - owner's savepoints dropped;
@@ -459,12 +461,13 @@ fn write_sync_to_owner_record_at_phase(
     id: &str,
 ) {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(source, target, "web-app"),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -544,8 +547,8 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
         "test setup: ww's project must diverge from primary's"
     );
 
-    // Plant op-state v2: full owner record at ww (the sync-to source),
-    // thin lease at primary (the sync-to target). Phase=replay so the
+    // Plant op-state v2: full owner record at ww (the land source),
+    // thin lease at primary (the land target). Phase=replay so the
     // full machine runs: replay → relock → advance-target → cleanup.
     let op_id = "lease-continue-test";
     write_sync_to_owner_record_at_phase(&ww.root, &ww.root, &primary.root, "replay", op_id);
@@ -556,7 +559,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 
     // Invoke FROM the lease workspace.
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -594,7 +597,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
     let primary_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
     assert!(
         primary_lock.contains(&ww_server_tip_pre),
-        "target lock must reference owner's server tip {ww_server_tip_pre} after sync-to; \
+        "target lock must reference owner's server tip {ww_server_tip_pre} after land; \
          got:\n{primary_lock}"
     );
 
@@ -603,7 +606,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
     let primary_project_tip_post = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_project_tip_post, ww_project_tip_post,
-        "target's project tip must equal the owner's project tip after sync-to"
+        "target's project tip must equal the owner's project tip after land"
     );
     assert_ne!(
         primary_project_tip_post, primary_project_tip_pre,
@@ -701,7 +704,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 //   3. Abort from phase=retire restores source (CWD workweave) and target.
 // ---------------------------------------------------------------------------
 
-/// Write a sync-to owner record at phase=retire with retire=true.
+/// Write a land owner record at phase=retire with retire=true.
 ///
 /// `converged_tips` mirrors what relock records on a real op: a phase=retire
 /// record has always been through relock, so abort's HEAD-verified restore
@@ -719,12 +722,13 @@ fn write_sync_to_retire_record(
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(source),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(source, target, "web-app"),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -734,7 +738,7 @@ fn write_sync_to_retire_record(
 /// Setup: ww and primary share tips (advance-target ran clean) and an
 /// untracked file sits in ww's server repo, which the retire's dirty check
 /// refuses. Verify:
-///   - rwv sync-to --continue fails.
+///   - rwv land --continue fails.
 ///   - owner record still present at ww, still at phase=retire.
 ///   - target lease still present at primary.
 ///   - the error names `--continue` and `rwv abort`.
@@ -757,13 +761,13 @@ fn retire_refusal_leaves_phase_retire_and_lease() {
     std::fs::write(ww.server_dir.join("stray.txt"), "not committed\n").unwrap();
 
     let out = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv command failed to run");
     assert!(
         !out.status.success(),
-        "sync-to --continue must fail when the retire refuses; stderr:\n{}",
+        "land --continue must fail when the retire refuses; stderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 
@@ -783,7 +787,7 @@ fn retire_refusal_leaves_phase_retire_and_lease() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--continue") || stderr.contains("sync-to --continue"),
+        stderr.contains("--continue") || stderr.contains("land --continue"),
         "error must mention --continue for resumability; stderr:\n{stderr}"
     );
     assert!(
@@ -824,7 +828,7 @@ fn retire_continue_completes_after_the_operator_cleans_up() {
     std::fs::write(&stray, "not committed\n").unwrap();
 
     let out = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv command failed to run");
@@ -837,7 +841,7 @@ fn retire_continue_completes_after_the_operator_cleans_up() {
     std::fs::remove_file(&stray).unwrap();
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -859,7 +863,7 @@ fn retire_continue_completes_after_the_operator_cleans_up() {
 /// merged-check-failure test above), so the first retire guard clears. An
 /// untracked file left in ww's manifest repo worktree is the uncommitted
 /// change the second guard must catch. Verify:
-///   - rwv sync-to --continue fails, naming the dirty path.
+///   - rwv land --continue fails, naming the dirty path.
 ///   - the workweave is NOT deleted.
 ///   - the untracked file is untouched (the refusal took no action).
 #[test]
@@ -884,13 +888,13 @@ fn retire_refuses_when_workweave_has_uncommitted_changes_after_convergence() {
     std::fs::write(ww.server_dir.join("stray.txt"), "not committed\n").unwrap();
 
     let out = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv command failed to run");
     assert!(
         !out.status.success(),
-        "sync-to --continue must fail when the workweave is dirty; stderr:\n{}",
+        "land --continue must fail when the workweave is dirty; stderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 
@@ -920,7 +924,7 @@ fn retire_refuses_when_workweave_has_uncommitted_changes_after_convergence() {
 
 /// Test: abort from phase=retire restores both source and target.
 ///
-/// Setup: ww is ahead of primary (divergence before any sync-to). We plant
+/// Setup: ww is ahead of primary (divergence before any land). We plant
 /// a phase=retire record with pre-op savepoints on both sides. Then call
 /// `rwv abort` and verify both workspaces are restored to their pre-op state.
 ///
@@ -1045,7 +1049,7 @@ fn re_entering_each_phase_independently_completes_to_a_clean_state() {
         create_savepoint(&ww.server_dir, &op_id);
 
         rwv()
-            .args(["sync-to", "--continue"])
+            .args(["land", "--continue"])
             .current_dir(&ww.root)
             .assert()
             .success();
@@ -1075,12 +1079,13 @@ fn write_sync_to_record_with_strategy(
     id: &str,
 ) -> String {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
+        "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(owner, target, "web-app"),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
     id.to_string()
@@ -1104,7 +1109,7 @@ fn resume_stranded_advance_target(tmp: &Path, strategy: &str, id: &str) -> (Stri
     create_savepoint(&ww.server_dir, &op_id);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1142,158 +1147,5 @@ fn advance_target_resume_relocks_under_ff_strategy_too() {
         target_lock.contains(&delivered),
         "the target's lock must pin the manifest tip the resume delivered ({delivered}); lock:\n\
          {target_lock}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Resume re-gates the re-pinned source, and says it re-read it.
-//
-// `--continue` re-pins the source snapshot at resume time so replay re-entry
-// has coherent inputs. The fresh path takes its pin and its GATE together:
-// the classification that pin produces is what refuses an unresolvable lock
-// entry or an anomalous lock relation. The resume path took the pin alone —
-// so a source that went anomalous between the strand and the resume was
-// replayed from at a state the op's own first invocation would have refused,
-// and the operator was told nothing about either the re-read or the state.
-// ---------------------------------------------------------------------------
-
-/// Commit `content` as `name` in `repo`, returning the new tip.
-fn commit_file(repo: &Path, name: &str, content: &str, message: &str) -> String {
-    std::fs::write(repo.join(name), content).unwrap();
-    common::git_in(repo, &["add", name]);
-    common::git_in(repo, &["commit", "-m", message]);
-    common::git_in(repo, &["rev-parse", "HEAD"])
-}
-
-/// Drive the source's committed lock ahead of its own manifest tip: commit,
-/// lock that commit, then rewind the checkout. HEAD is now a strict ancestor
-/// of what the lock pins — `LockRelation::Behind`, the anomalous shape the
-/// fresh path refuses on either side. Returns the tip the lock pins.
-fn make_source_lock_anomalous(source: &Workspace, base_sha: &str) -> String {
-    let ahead = commit_file(&source.server_dir, "ahead.txt", "ahead\n", "src: ahead");
-    write_lock(&source.project_dir, &ahead);
-    common::git_in(&source.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &source.project_dir,
-        &["commit", "-m", "lock: pin the ahead commit"],
-    );
-    common::git_in(&source.server_dir, &["reset", "--hard", base_sha]);
-    ahead
-}
-
-#[test]
-fn a_resume_refuses_a_source_that_went_anomalous_and_leaves_the_op_parked() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, base_sha) = make_shared_workspaces(tmp.path());
-
-    let op_id = "reentry-test-replay";
-    write_owner_record(&ww.root, &ww.root, &primary.root, "replay");
-    create_savepoint(&ww.project_dir, op_id);
-    create_savepoint(&ww.server_dir, op_id);
-
-    make_source_lock_anomalous(&primary, &base_sha);
-
-    let record_before = std::fs::read(ww.root.join(".rwv-op")).unwrap();
-    let savepoint_before = common::git_in(
-        &ww.server_dir,
-        &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
-    );
-    let cwd_tip_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
-
-    let out = rwv()
-        .args(["sync-to", "--continue"])
-        .current_dir(&ww.root)
-        .output()
-        .expect("rwv command failed to run");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    assert!(
-        !out.status.success(),
-        "a resume must not consume a source at a state the fresh path refuses; \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("lock-freshness"),
-        "the refusal must be the lock-freshness gate, not some later failure; \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("rwv sync-to --continue") && stderr.contains("rwv abort"),
-        "a refused resume must name both ways out of the op it left standing; \
-         stderr:\n{stderr}"
-    );
-
-    // The refusal changed nothing: the op is still exactly where it was, which
-    // is what makes "fix the source, then --continue" a true instruction.
-    assert_eq!(
-        std::fs::read(ww.root.join(".rwv-op")).unwrap(),
-        record_before,
-        "the owner record must be byte-identical across the refusal"
-    );
-    assert_eq!(
-        common::git_in(
-            &ww.server_dir,
-            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")]
-        ),
-        savepoint_before,
-        "the savepoint must survive the refusal unmoved"
-    );
-    assert_eq!(
-        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        cwd_tip_before,
-        "a refused resume must not have replayed anything"
-    );
-}
-
-#[test]
-fn a_resume_names_the_source_tip_it_re_read() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _base_sha) = make_shared_workspaces(tmp.path());
-
-    // The source moves between the strand and the resume, healthily: a new
-    // commit, and a lock that pins it. This is the state the banner used to
-    // pass over in silence — the resumed op plans against a read the operator
-    // was never shown.
-    let moved = commit_file(&primary.server_dir, "moved.txt", "moved\n", "src: moved");
-    write_lock(&primary.project_dir, &moved);
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "lock: after the strand"],
-    );
-    let source_project_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
-
-    write_owner_record(&ww.root, &ww.root, &primary.root, "replay");
-    create_savepoint(&ww.project_dir, "reentry-test-replay");
-    create_savepoint(&ww.server_dir, "reentry-test-replay");
-
-    let out = rwv()
-        .args(["sync-to", "--continue"])
-        .current_dir(&ww.root)
-        .output()
-        .expect("rwv command failed to run");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success(),
-        "a healthy moved source must resume, not refuse; stderr:\n{stderr}"
-    );
-
-    // The value, not the sentence: the tip named is the one this session
-    // pinned and replayed from, so the announcement and the plan cannot come
-    // apart.
-    assert!(
-        stderr.contains("source re-read at resume"),
-        "the resume must state that it re-read the source; stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(&source_project_tip[..12]),
-        "the re-read line must name the source project tip this resume pinned \
-         ({source_project_tip}); stderr:\n{stderr}"
-    );
-    // And it delivered from that read: CWD holds the moved tip.
-    assert_eq!(
-        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        moved,
-        "the resume must deliver the tips the re-read announced"
     );
 }

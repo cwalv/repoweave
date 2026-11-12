@@ -338,7 +338,7 @@ fn a_verbs_own_form_prints_only_for_that_verb() {
         own.iter().any(|line| line == delete_form),
         "the verb's own form must print for it: {own:?}"
     );
-    for verb in [None, Some("sync"), Some("sync-to")] {
+    for verb in [None, Some("sync"), Some("land")] {
         let others = printed_rwv_lines(State::EditsDirty, verb);
         assert!(
             !others.iter().any(|line| line.contains("workweave delete")),

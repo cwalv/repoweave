@@ -598,7 +598,7 @@ fn a_rewinding_move_requires_a_warrant_argument() {
 #[test]
 fn a_witness_cannot_point_a_move_at_a_different_repo() {
     // This is the whole type-level content of §4.6(1), and it is what makes
-    // sync-to's detached-target refusal unbypassable rather than merely
+    // land's detached-target refusal unbypassable rather than merely
     // present. The runtime check on its own leaves a dodge: take the witness
     // from the *cwd* repo — a workweave checkout, so always attached — and
     // keep advancing the target with a path. Every "did you establish there

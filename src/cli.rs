@@ -18,7 +18,7 @@ use clap_complete::Shell;
 
 use crate::manifest;
 use crate::op_state::SyncStrategy;
-use operand::{Operand, SourceArg};
+use operand::Operand;
 
 #[derive(Parser)]
 #[command(name = "rwv", bin_name = "rwv", version = crate::rwv_version_with_build(), about = "A cross-repo workspace manager")]
@@ -318,7 +318,7 @@ pub enum Commands {
     },
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
-    /// Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
+    /// Roll an in-flight sync or landing back to its savepoints in every workspace it touched, run from any of them
     Abort {
         /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `projects/<name>` for the project repo); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits are first kept as an `abandoned` backup, which `rwv backup list` shows and `rwv backup drop` drops.
         #[arg(long = "abandon-foreign-tip", value_name = "REPO")]
@@ -376,21 +376,29 @@ pub enum Commands {
         #[arg(long = "continue")]
         do_continue: bool,
     },
-    /// Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target,
-    /// auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land
-    /// on top of target's prior history; target absorbs CWD's state with CWD as the newest
-    /// contribution.
-    SyncTo {
-        /// Target workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the invocation directory). Omit to target
-        /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
-        /// Must not be passed alongside `--continue` (target is then read from op-state).
-        #[arg(conflicts_with = "do_continue")]
-        target: Option<SourceArg>,
-        /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
-        /// ff means CWD must already be strictly ahead of target (no-op step 1).
-        /// rebase replays CWD's unique commits onto target's tip.
-        /// Step 3 (FF-advance target) is always ff regardless of this flag.
+    /// Land this feature into the branch its record lands into
+    ///
+    /// The work is composed in this workspace first: each member that holds work the
+    /// branch it lands on lacks is rebased onto that branch's tip, the project branch onto
+    /// the target's tip, then the lock records the result. Then each receiving branch and
+    /// the target fast-forward where the target is checked out, that workspace aligns, and
+    /// this workspace's members follow the target's new pins. Every refusal is reported
+    /// before anything moves.
+    ///
+    /// Examples:
+    ///
+    ///   rwv land
+    ///
+    ///   rwv land --retire
+    ///
+    ///   rwv land --target stable
+    Land {
+        /// Land into this branch instead of the record's target, for one run
+        #[arg(long, value_name = "T", conflicts_with = "do_continue")]
+        target: Option<String>,
+        /// How a member holding work the branch it lands on lacks is composed: rebase (the
+        /// default) replays it onto that branch's tip; ff refuses unless every repo
+        /// fast-forwards
         #[arg(
             long,
             default_value = "rebase",
@@ -398,42 +406,23 @@ pub enum Commands {
             conflicts_with = "do_continue"
         )]
         strategy: SyncStrategy,
-        /// Consent: skip the lock-freshness precondition on both source and destination.
-        /// Use when the lock is intentionally ahead of HEAD (e.g. you know the workspace
-        /// was updated without a fresh `rwv lock` run). Usual fix without this flag:
-        /// run `rwv lock` in the relevant workspace first.
-        #[arg(long, conflicts_with = "do_continue")]
-        allow_stale_lock: bool,
-        /// Consent: discard CWD's project commits that are not reachable from target,
-        /// hard-resetting the project repo to target's tip. Pre-sync state is preserved
-        /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
-        /// project repo has uncommitted changes (unrecoverable loss).
-        #[allow(rustdoc::invalid_html_tags)]
-        #[arg(long, conflicts_with = "do_continue")]
-        discard_local_commits: bool,
-        /// Land work then delete the workweave on success (requires clean worktree and
-        /// member repos converged with target after sync-to completes).
+        /// Once the landing is done, remove the workweave and the feature's branches by
+        /// the deletion rule: a branch holding anything not landed is kept and listed
         #[arg(long, conflicts_with = "do_continue")]
         retire: bool,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`).
-        /// May be combined with `--continue`: the resumed op's envelope reports the
-        /// machine's own coordinates and carries a `resumed` field naming the phase the
-        /// interrupted op had reached. See `rwv explain sync-to`.
+        /// Emit per-repo outcomes as JSON. With `--continue`, the envelope carries a
+        /// `resumed` field naming the phase the stopped landing had reached. See `rwv
+        /// explain land`.
         #[arg(long)]
         json: bool,
-        /// Run up to N per-repo manifest syncs in parallel. Default: 1 (serial).
+        /// Run up to N per-repo steps in parallel. Default: 1 (serial).
         #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (target, strategy, retire, project, overrides, etc.) are read from
-        /// the in-progress op-state file. No other flags may be passed alongside `--continue`
-        /// (except `--json`, and `--project`, which asserts rather than rebinds: it must name
-        /// the project the op was started for, and a value contradicting the record is
-        /// refused — the phases already run are bound to it). To change parameters mid-op,
-        /// run `rwv abort` and re-invoke.
+        /// Resume a landing a conflict stopped, after resolving it; every parameter comes
+        /// from the op record. `--project` asserts the recorded project and refuses another
         #[arg(long = "continue")]
         do_continue: bool,
     },

@@ -1,13 +1,13 @@
-//! Integration tests anchoring documented behavior of `rwv sync-to --json`.
+//! Integration tests anchoring documented behavior of `rwv land --json`.
 //!
 //! Doc claims pinned here:
 //!
-//!   - `rwv sync-to --json` emits the envelope
+//!   - `rwv land --json` emits the envelope
 //!     `{"$schema": "<url>", "outcomes": [<RepoSyncOutcome>, ...]}`
 //!     whatever `-j` is. The field is `outcomes` (we pin to the actual
 //!     implementation rather than the informal "results" phrasing in prose).
 //!   - The `$schema` URL is embedded in the envelope, pinning consumers at
-//!     `docs/reference/schemas/sync-to.json` under repoweave's main branch.
+//!     `docs/reference/schemas/land.json` under repoweave's main branch.
 //!   - Per-failure records carry a stable kebab-case `kind` tag at
 //!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`).
 //!     The outcome's own `kind` is `failed` in that case.
@@ -132,12 +132,12 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 /// Schema fragment for the serial envelope (`-j 1`).
-const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-to.json";
+const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/land.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
 //
-// Doc claim: `rwv sync-to --json` (no `-j` or `-j 1`) emits an object with
+// Doc claim: `rwv land --json` (no `-j` or `-j 1`) emits an object with
 // `$schema` + `outcomes` (an array). The $schema URL is embedded.
 // ===========================================================================
 
@@ -156,7 +156,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--json"])
+        .args(["land", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -167,7 +167,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
         .unwrap_or_else(|e| panic!("envelope must parse as one JSON doc ({e}):\n{stdout}"));
     let obj = parsed.as_object().expect("envelope is an object");
 
-    // `$schema` URL points at the committed sync-to schema artifact.
+    // `$schema` URL points at the committed land schema artifact.
     let schema = obj["$schema"]
         .as_str()
         .expect("envelope must carry `$schema` string");
@@ -310,7 +310,7 @@ fn sync_to_json_parallel_emits_the_envelope() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args(["sync-to", &primary.to_string_lossy(), "--json", "-j", "2"])
+        .args(["land", "--json", "-j", "2"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -363,8 +363,7 @@ fn sync_to_json_failed_outcome_has_stable_kebab_kind() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--json",
             "--strategy=rebase",
         ])
@@ -401,7 +400,7 @@ fn sync_to_json_failed_outcome_has_stable_kebab_kind() {
     assert_eq!(kind, "rebase-failed", "\n{stdout}");
 }
 
-/// `sync-to --discard-local-commits` consents to discarding committed divergence
+/// `land --discard-local-commits` consents to discarding committed divergence
 /// (recoverable via the pre-op savepoint), not uncommitted work — a dirty
 /// CWD project repo must refuse before any side effects, and the content must
 /// survive. (Adapted from sync_force_refuses_when_cwd_project_dirty —
@@ -418,8 +417,7 @@ fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -427,8 +425,8 @@ fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("rwv sync-to: projects/web-app: edits dirty\n    README.md\n"),
-        "sync-to --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
+        stderr.contains("rwv land: projects/web-app: edits dirty\n    README.md\n"),
+        "land --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
     );
     assert!(
         !stderr.contains("--force"),
@@ -453,8 +451,7 @@ fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
     common::git_in(&ww.project_dir, &["commit", "-m", "ww: readme"]);
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -466,7 +463,7 @@ fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
 // 4. --allow-stale-lock: refusal names condition + flag; flag bypasses both
 //    source and destination preconditions.
 //
-// Doc claim (cli.md §sync-to, --allow-stale-lock row):
+// Doc claim (cli.md §land, --allow-stale-lock row):
 //   "Consent: skip the lock-freshness precondition on both source and
 //   destination."
 //
@@ -474,7 +471,7 @@ fn sync_to_discard_local_commits_refuses_when_cwd_project_dirty() {
 //      that names the condition ("lock-freshness precondition") AND the flag
 //      ("--allow-stale-lock"); a stale target lock names the condition and
 //      the `rwv lock --commit` fix.
-// (ii) With --allow-stale-lock, sync-to gets past the precondition on both
+// (ii) With --allow-stale-lock, land gets past the precondition on both
 //      sides.
 // ===========================================================================
 
@@ -523,7 +520,7 @@ fn sync_to_stale_source_lock_names_condition_and_flag() {
     let (primary, ww) = make_shared_with_stale_source(tmp.path());
 
     let assert = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -542,7 +539,7 @@ fn sync_to_stale_source_lock_names_condition_and_flag() {
 /// (ii) --allow-stale-lock bypasses the source stale-lock precondition.
 ///
 /// With the same stale-source fixture, passing --allow-stale-lock makes
-/// `rwv sync-to` succeed. The fixture commits the stale lock so the project repo
+/// `rwv land` succeed. The fixture commits the stale lock so the project repo
 /// is clean for the pre-flight dirt scan; a --strategy=rebase is used because
 /// the stale-lock commit makes ww's project branch 1 commit ahead of primary
 /// (the ff ancestry precondition would fire without it).
@@ -553,8 +550,7 @@ fn sync_to_allow_stale_lock_bypasses_source_precondition() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
             "--strategy=rebase",
         ])
@@ -586,7 +582,7 @@ fn sync_to_stale_target_lock_names_condition_and_fix() {
     let (primary, ww) = make_shared_with_stale_target(tmp.path());
 
     let assert = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -611,8 +607,7 @@ fn sync_to_allow_stale_lock_bypasses_target_precondition() {
 
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&ww.root)

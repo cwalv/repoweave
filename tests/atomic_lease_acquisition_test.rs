@@ -1,15 +1,15 @@
-//! Atomic-acquisition regression tests for `sync` / `sync-to`.
+//! Atomic-acquisition regression tests for `sync` / `land`.
 //!
 //! The guard→mark TOCTOU closed here:
 //!
 //! * previously, `check_no_op_in_progress` was a read; two concurrent invocations
 //!   both passed it and only collided later at the git layer (R7 root cause).
-//! * now, `sync` / `sync-to` write `.rwv-op` + every touched-workspace lease
+//! * now, `sync` / `land` write `.rwv-op` + every touched-workspace lease
 //!   with `O_CREAT|O_EXCL` at guard time; exactly one caller wins.
 //!
 //! Coverage in this file:
 //!
-//! * **In-flight refusal**: a second `rwv sync-to` against a workweave whose
+//! * **In-flight refusal**: a second `rwv land` against a workweave whose
 //!   `.rwv-op` is held by a real parked op gets the in-flight refusal and
 //!   leaves the holder's record untouched. Constructed deterministically (a
 //!   rebase conflict parks the first op mid-replay); the *concurrent* half of
@@ -20,7 +20,7 @@
 //! * **Precondition-refusal cleanup**: acquire → fail a precondition after
 //!   acquisition → the acquired records are cleared (cleanup table row
 //!   "precondition refusal → cleared everywhere"). Verified by observing that
-//!   a follow-up `rwv sync-to` doesn't get an in-flight refusal.
+//!   a follow-up `rwv land` doesn't get an in-flight refusal.
 //! * **Doctor dead-lease detection**: a `.rwv-op-lease` whose recorded owner
 //!   has no matching `.rwv-op` is reported by `rwv doctor` and removed by
 //!   `rwv doctor --fix`. Structural check — no wall-clock input.
@@ -157,19 +157,19 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 //
 // The property: `.rwv-op` is a mutex — while one sync op holds it, a second
-// `rwv sync-to` at the same workweave must be refused with the operator-facing
+// `rwv land` at the same workweave must be refused with the operator-facing
 // in-flight shape (verb / `--continue` / `rwv abort`), not a raw filesystem
 // AlreadyExists and not some downstream git-layer collision, and the holder's
 // record must survive the refused attempt byte-for-byte.
 //
-// The in-flight holder is REAL, not hand-planted JSON: the first `rwv sync-to`
+// The in-flight holder is REAL, not hand-planted JSON: the first `rwv land`
 // is parked mid-replay by a rebase conflict (same recipe as
 // e2e_op_state_test.rs test 2), and the cleanup table's "phase failure →
 // records kept everywhere" row leaves its `.rwv-op` on disk. The second sync
 // then runs against that parked op with no concurrency anywhere — the verdict
 // depends only on on-disk artifacts, never on scheduling.
 //
-// History: this test used to race two `rwv sync-to` processes released by a
+// History: this test used to race two `rwv land` processes released by a
 // thread barrier and assert exactly one in-flight refusal. The barrier
 // synchronized the parents, not the children's critical sections, so the
 // overlap was merely hoped for — under host load the trial collapsed
@@ -216,8 +216,7 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // path, exactly what a crashed/conflicted peer leaves behind.
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -245,7 +244,7 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // other refusal, so regardless of what state the parked op left the
     // repos in, the refusal MUST be the in-flight shape.
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -279,9 +278,9 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
 // cleared. Verified by re-running sync and observing NO in-flight refusal.
 // ---------------------------------------------------------------------------
 //
-// Scenario: dirty CWD project so that `sync-to`'s dirty-source preflight
+// Scenario: dirty CWD project so that `land`'s dirty-source preflight
 // refuses AFTER acquisition (the preflight runs post-acquisition in the new
-// ordering). If the release path is broken, the second sync-to attempt would
+// ordering). If the release path is broken, the second land attempt would
 // see stale op-state and refuse with "in progress" — proving the cleanup
 // table's "precondition refusal → cleared everywhere" row is enforced.
 
@@ -290,7 +289,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Dirty the ww project repo so sync-to's dirty-source preflight refuses.
+    // Dirty the ww project repo so land's dirty-source preflight refuses.
     std::fs::write(
         ww.project_dir.join("dirty-file.txt"),
         "uncommitted content\n",
@@ -299,10 +298,10 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     common::git_in(&ww.project_dir, &["add", "dirty-file.txt"]);
     // Staged but not committed — dirty-source preflight refuses on tracked dirt.
 
-    // First attempt: sync-to must refuse via the dirty-source preflight, NOT
+    // First attempt: land must refuse via the dirty-source preflight, NOT
     // via the in-flight refusal (nothing is in flight yet).
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -327,7 +326,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     // was idempotent and the first attempt didn't strand any records that
     // would now surface as an "in progress" error.
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -420,7 +419,7 @@ fn doctor_fix_removes_dead_op_lease() {
 fn doctor_leaves_live_lease_alone() {
     // Sanity: a lease PAIRED with a real owner record for the same op id is
     // NOT reported as dead-op-lease (that would be a false positive that
-    // could tear down a live in-flight sync-to).
+    // could tear down a live in-flight land).
     //
     // The lease sits at the scanned workspace (ww) and points at a separate
     // directory that carries the matching owner record — the doctor
@@ -432,12 +431,13 @@ fn doctor_leaves_live_lease_alone() {
     let owner_ws = tmp.path().join("live-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let owner_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
+        plan = common::land_plan_json(&owner_ws, &ww.root, "web-app"),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &owner_json).unwrap();
 
@@ -481,12 +481,13 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     let owner_ws = tmp.path().join("other-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let fresh_json = format!(
-        "{{\"id\": \"fresh-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"fresh-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
+        plan = common::land_plan_json(&owner_ws, &ww.root, "web-app"),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &fresh_json).unwrap();
 

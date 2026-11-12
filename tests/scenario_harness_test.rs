@@ -2047,13 +2047,13 @@ holding_rwv! {
 }
 
 holding_rwv! {
-    /// The target's `main` moves while `sync-to` is held before the
+    /// The target's `main` moves while `land` is held before the
     /// compare-and-swap that advances it, so the compare reads the moved
     /// tip and the landing refuses rather than dropping the move.
     fn a_landing_held_at_its_compare_and_swap_loses_to_a_target_that_moved() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["sync-to"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::commit(&a(), Repo::App, "raced"),
             Step::release("landing")
                 .expect(Exit::Defect(Defect::UnroutedLandingStop))
@@ -2087,7 +2087,7 @@ holding_rwv! {
     fn a_held_landing_released_unraced_lands() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["sync-to"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::release("landing").expect(Exit::Succeeds).claim(landed()),
         ]);
         bad_steps("a held landing, unraced", steps).assert_green();
@@ -2098,7 +2098,7 @@ holding_rwv! {
     fn the_pause_holds_only_at_the_point_it_names() {
         let mut steps = landing_from("held");
         steps.push(
-            Step::rwv_paused(&ww("held"), &["sync-to"], "no-such-point", "landing")
+            Step::rwv_paused(&ww("held"), &["land"], "no-such-point", "landing")
                 .expect(Exit::Undecided)
                 .claim(landed()),
         );
@@ -2117,7 +2117,7 @@ holding_rwv! {
     fn an_unarmed_landing_runs_through_its_pause_point() {
         let mut steps = landing_from("unarmed");
         steps.push(
-            Step::rwv(&ww("unarmed"), &["sync-to"])
+            Step::rwv(&ww("unarmed"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(landed()),
         );

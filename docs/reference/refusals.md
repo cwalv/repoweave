@@ -78,8 +78,8 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv pull`, for project-repo files its fast-forward would overwrite; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave; `rwv activate`, for a member the project shares with the project the weave root presents; `rwv update` and `rwv pull`, for such a member that is not aligned for a project the weave root does not present |
-| `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a shared member as `dirty` is |
+| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv land`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv pull`, for project-repo files its fast-forward would overwrite; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv land --retire`, for every checkout in the workweave; `rwv activate`, for a member the project shares with the project the weave root presents; `rwv update` and `rwv pull`, for such a member that is not aligned for a project the weave root does not present |
+| `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv land`, for a repo they would rebase or fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a shared member as `dirty` is |
 | `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push`; `rwv switch`, and `rwv branch create` for an `rwv.lock` where the branch starts at another commit than the checked-out one. In a detached project repo the choice is `rwv branch create`, which carries both files |
 | `lock unresolved` | the project repo's `rwv.lock` is unmerged: a merge, rebase or copy the lock merge driver could not settle left it conflicted with both pins marked, or a driver that could not run left one side in the working file with the conflict recorded only by the VCS. Resolve it to the pins you mean and stage it | every verb resolved for a project, until it is resolved; `rwv doctor` and `rwv abort` run |
 
@@ -239,6 +239,7 @@ The others follow.
 | `withheld` | the project repo was not pushed: a pin the project branch's lock holds is not reached by the remote-tracking branches that must reach it, or the remote rejected a member's push; the branches that do reach each pin, and what the remote answered, are listed | `rwv push` |
 | `records rejected` | a fact: the remote the project branch publishes to refused the branch that holds the weave branches' records, and the project branch was published without its record there. What the remote answered is listed. Another machine opening the branch finds it unrecorded and is asked once how to treat it (`target` `unrecorded`) | nothing: `rwv push` reports it and publishes the branch |
 | `no pin` | the project branch's lock has no entry for a member the push does not act on, so the project repo was not pushed with a lock that pins nothing there | `rwv push` |
+| `target unpublished` | the feature's record names a target with no push branch on the remote the feature publishes to, so another machine reading the record would resolve the target to a branch of that name it holds, or to none; the project branch and its record were not pushed | `rwv push`, for a feature |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -249,6 +250,9 @@ The others follow.
 | `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `target unpublished` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
+| `target unpublished` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
+| `target unpublished` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 
 ### `target`
 
@@ -261,14 +265,18 @@ The others follow.
 | State | Means | Refused by |
 |---|---|---|
 | `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target` |
-| `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch create` with no spelling, for the branch it starts at, and `--target`, for a target that has no record; `rwv switch` and `rwv workweave create --branch`, for a branch with no record; `rwv branch set-mode`, for a `--target` that has no record |
+| `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv land` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch create` with no spelling, for the branch it starts at, and `--target`, for a target that has no record; `rwv switch` and `rwv workweave create --branch`, for a branch with no record; `rwv branch set-mode`, for a `--target` that has no record |
 | `conflict` | two writers recorded the branch differently and a merge kept both values, listed; the conflict stays on the machine whose merge met it | every verb that reads the branch's record on this machine |
 | `differs` | the record a verb would give the branch differs from the one it holds, both listed: a record is replaced only by `rwv branch set-mode`; nothing on the records branch is conflicted | `rwv branch rename --adopt` onto a name recorded otherwise |
 | `unreadable` | the branch's entry on the records branch does not read as a record, with why and the rwv release that wrote it when its commit names one; other branches' entries read as usual | every verb that reads the branch's record |
 | `cycle` | the branch's target chain returns to it, listed from the branch | `rwv branch set-mode`, for a `--target` that would close one, and every verb that reads the record of a branch a merge of records put on one |
 | `gone` | the branch the record lands into exists nowhere: not as a local branch, nor on a remote as last fetched | `rwv branch list` reports it |
-| `dependents` | another branch's record names this branch as the one it lands into, one line for each such branch; deleting this one would leave that record with no target | `rwv branch delete`, `rwv workweave delete` and `rwv sync-to --retire` |
-| `record changed` | the checked-out branch's record differs from the one this workspace last saw it hold, and this workspace did not write the change: the old and the new value, listed, and whether the change arrived by fetch or was written in another workspace of this clone | `rwv sync`, before anything is fetched or moved, until the change is accepted or the old value restored; `rwv status`, `rwv update`, `rwv pull`, `rwv switch`, `rwv push` and `rwv sync-to` report it |
+| `dependents` | another branch's record names this branch as the one it lands into, one line for each such branch; deleting this one would leave that record with no target | `rwv branch delete`, `rwv workweave delete`, `rwv sync` where it would rewrite the branch, and `rwv land`, which carries no dependent along yet |
+| `record changed` | the checked-out branch's record differs from the one this workspace last saw it hold, and this workspace did not write the change: the old and the new value, listed, and whether the change arrived by fetch or was written in another workspace of this clone | `rwv sync`, before anything is fetched or moved, until the change is accepted or the old value restored; `rwv status`, `rwv update`, `rwv pull`, `rwv switch`, `rwv push` and `rwv land` report it |
+| `mode changed` | the branch the feature lands into is used another way than when the feature's record was written: its mode then and now, listed. A landing never redirects into it | `rwv land`, before anything moves, until the feature is rebound or the target's mode restored |
+| `member changes` | the landing would change the target's entry for a member, each changed field listed with the target's value and the feature's, or remove the member, or change the target's top-level `history`; a landing changes the target's entries only where they are named | `rwv land`, before anything moves |
+| `checked out nowhere` | no workspace of this clone has the branch the feature lands into checked out, so nothing holds the checkouts its receiving branches fast-forward in | `rwv land`, before anything moves |
+| `moved mid-operation` | the target, or a branch the landing fast-forwards, moved after the landing read it, so the work composed in the source no longer fast-forwards onto it: the repo, the tip it now holds and the tip composed for it, listed. The landing stopped with its op record kept and the refs it already moved left as moved | `rwv land`, at the fast-forward; `rwv land --continue`, since the plan no longer describes the landing |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -287,10 +295,18 @@ The others follow.
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `gone` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `dependents` | C35: land `<dep>` into its target first (a landed one: retire it) | `rwv land` | the dependent's workspace, on its machine | a landing only fast-forwards |
+| `dependents` | C35: land `<dep>` into its target first (a landed one: retire it) | `rwv land --retire` | the dependent's workspace, on its machine | a landing only fast-forwards |
 | `dependents` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `record changed` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `record changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `record changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
+| `mode changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `mode changed` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <T> <as>` | any workspace | records only |
+| `member changes` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
+| `checked out nowhere` | open it | `rwv workweave create <ww> --branch <W>` | here | moves only what alignment moves |
+| `moved mid-operation` | put back every ref the landing moved, then land again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the landing moved, from the tips it wrote |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
 
@@ -328,7 +344,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv branch rename`, for a feature's member branch of the renamed name; `rwv push --overwrite`, for a member; `rwv branch delete` and `rwv workweave delete` with `--delete-remote` or `--delete-remote-unlanded`, for a member branch of the deleted name; `rwv sync` and `rwv sync-to` with `--strategy rebase`, for a member on the branch that has commits to replay |
+| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv branch rename`, for a feature's member branch of the renamed name; `rwv push --overwrite`, for a member; `rwv branch delete` and `rwv workweave delete` with `--delete-remote` or `--delete-remote-unlanded`, for a member branch of the deleted name; `rwv sync` and `rwv land` with `--strategy rebase`, for a member on the branch that has commits to replay |
 | `declared mode` | a project branch whose record is `declared`; rwv never rewrites it, and never deletes its unlanded push branch. Renaming it, and deleting its push branch once landed, run | `rwv push --overwrite`; `rwv branch delete --delete-remote-unlanded`, for the project repo |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -435,7 +451,7 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 ### `cwd-in-inactive-project`
 
 **Condition.** A verb that writes into its project (`add`, `remove`, `role`,
-`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`, or `doctor
+`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `land`, or `doctor
 --fix`) was run from inside `projects/<name>/` at a primary weave root, with no
 `--project`, while `.rwv-active` selects a different project.
 
@@ -565,7 +581,7 @@ repo as `projects/<name>`. The refusal moves nothing and writes nothing.
 ### `head-not-on-branch`
 
 **Condition.** HEAD is detached, unborn, or unreadable in a repo the verb must
-land on or move. `rwv sync-to` checks both ends: every repo of the target, and
+land on or move. `rwv land` checks both ends: every repo of the target, and
 the project repo and every member repo of the source workweave.
 
 **Why.** Landing work means advancing a branch. A detached HEAD names no
@@ -573,7 +589,7 @@ branch to advance, and an unborn one has no commit to advance from, so the
 verb has nowhere to put the result.
 
 **Exits.** Check out the branch you meant. For a detached repo in the source of
-`rwv sync-to`, the refusal prints the command, chosen by how HEAD stands
+`rwv land`, the refusal prints the command, chosen by how HEAD stands
 against the workweave's branch: `git switch <branch>` where the branch carries
 HEAD; `git switch <branch>` then `git merge --ff-only <HEAD>` where HEAD is
 ahead, since switching alone would leave HEAD's commits on no branch; and where
@@ -822,7 +838,7 @@ looks like a workweave but is not recorded in the project clone's workweave inde
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name. A target for `rwv sync-to`
+in the recorded container under the expected name. A target for `rwv land`
 that is a bare word names a workweave; to name a directory, write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
@@ -866,8 +882,9 @@ stopping rather than quietly doing something else.
 **Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
 reconcile the repos by hand first. Where the commits a rebase would replay hold
 a merge, `rwv sync` names `rwv sync --from <target>` instead, which takes the
-target in by a merge rather than flattening it. Past replay the exit is
-different — see `target-diverged-mid-op`.
+target in by a merge rather than flattening it. A landing whose target moved
+after it composed stops as [`target`](./doctor-findings.md#target) `moved
+mid-operation` instead.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -916,7 +933,7 @@ present and the exits are resume-or-abort rather than retry.
 
 ### `op-in-progress`
 
-**Condition.** A sync or sync-to operation already holds op-state covering
+**Condition.** A sync or land operation already holds op-state covering
 this workspace.
 
 **Why.** An operation in flight is rewriting the very repos another verb would
@@ -1092,28 +1109,6 @@ it there.
 
 **Where this sits.** [Symlinks as structure](../explanation/joints/symlinks-as-structure.md).
 
-### `stale-lock`
-
-**Condition.** `rwv sync-to` found a member whose checkout is not at the commit
-the lock it reads pins for it, or for which the lock has no entry.
-
-**Why.** sync-to replays against another workspace's committed lock and relocks
-from its own checkouts. A tip that differs from its pin means the lock the replay reads
-and the commits the replay carries disagree: a primary source whose lock is
-behind its HEAD would hand on commits no pin records, and a checkout behind or
-diverged from its pin would be moved or relocked over commits nobody chose to
-drop.
-
-**Exits.** `rwv status` and `rwv doctor` judge the same condition per member as
-a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
-`rwv lock --commit` records a checkout that is ahead of its pin;
-`rwv member pin <repo> HEAD --commit` pins one that is behind or has diverged, by
-name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
-for one. `rwv sync-to --allow-stale-lock` skips the check.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
-[Lock as derived](../explanation/joints/lock-as-derived.md).
-
 ### `state-claim-held`
 
 **Condition.** A peer process holds the state-file claim past the wait budget.
@@ -1152,36 +1147,6 @@ rwv could name and retire, this one is not addressable, so there is no verb
 that can clear it.
 
 **Exits.** Clear the directory yourself, or choose another with `--dir`.
-
-### `target-diverged-mid-op`
-
-**Condition.** At advance time the target carries commits the current tip does
-not.
-
-**Why.** Replay already happened against the target as it was. A target that
-moved since means the plan this operation computed no longer describes the
-landing, and re-choosing a strategy now would replay against a base the earlier
-phases did not use.
-
-**Exits.** `rwv abort` and start again against the target's current state. This
-is not `not-fast-forwardable`'s remedy — past replay, a different
-strategy is not the fix.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
-
-### `target-lock-behind`
-
-**Condition.** A sync-to target's committed lock is behind its own HEAD.
-
-**Why.** sync-to replays against the target's committed lock. A lock behind
-HEAD means those commits would be missing from the replayed tip, and the final
-fast-forward could not land.
-
-**Exits.** Run `rwv lock --commit` in the target workspace, then re-run. There
-is no `--allow-stale-lock` here: skipping the check does not make
-the missing commits appear, which is why this is not `stale-lock`.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unaccepted-generated-content`
 
@@ -1282,24 +1247,6 @@ the same string, so the address would stop identifying one checkout.
 
 **Exits.** Choose another name. [Formats](./formats.md) lists the excluded
 characters and the rule each one protects.
-
-### `unresolvable-lock-entry`
-
-**Condition.** `rwv sync-to` found a lock entry that names a revision this
-clone cannot resolve.
-
-**Why.** A lock written against history that was never fetched here, or
-rewritten or garbage-collected upstream, pins nothing the clone can compare its
-checkout with. The replay cannot tell whether the checkout is ahead of, behind
-or diverged from it, so it refuses rather than guess.
-
-**Exits.** `rwv fetch --repo <repo>` brings in the history that may hold the
-revision. If it is gone, `rwv member pin <repo> HEAD --commit` pins the checkout's
-commit by name, or `rwv member pin <repo> <rev> --commit` pins another.
-`rwv status` and `rwv doctor` judge the same condition as [`pin`](./doctor-findings.md#pin)
-`unreachable`.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `unresolvable-repo-source`
 

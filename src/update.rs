@@ -264,6 +264,28 @@ pub(crate) fn align_after_switch(ctx: &WorkspaceContext, verb: &'static str) -> 
     .tail
 }
 
+/// The alignment a landing runs in the workspace that has the target
+/// checked out, and then in its source: `rwv update`'s, reported under
+/// `land`'s name.
+pub(crate) fn align_after_landing(
+    ctx: &WorkspaceContext,
+    jobs: usize,
+    output: OutputMode,
+) -> anyhow::Result<UpdateRun> {
+    update_members_for(
+        ctx,
+        &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
+        jobs,
+        output,
+        ActivateOptions::default(),
+        SharedMembers::Refuse,
+        Flavor {
+            verb: "land",
+            carry_edits: false,
+        },
+    )
+}
+
 /// The alignment `sync` runs once the project branch has taken in its
 /// source: `rwv update`'s, reported under `sync`'s name.
 pub(crate) fn align_after_sync(

@@ -1,7 +1,7 @@
 //! A savepoint is filed under a `SavepointKey`, never under text, and no op id
 //! can hold the target-side namespace.
 //!
-//! The target side of a `sync-to` files its savepoints under
+//! The target side of a `land` files its savepoints under
 //! `<op id>-target`, so that a worktree pair sharing one refdb does not
 //! collide. When that name was composed into an `OpId` it was an op id in type
 //! only, and every `Vcs` savepoint method took text, so any string reached the
@@ -29,7 +29,7 @@ fn the_harness_can_file_a_savepoint_under_a_key() {
         use repoweave::vcs::{ForeignTipPolicy, Vcs};
         use std::path::Path;
         pub fn file(vcs: &dyn Vcs, repo: &Path, op: &OpId) {
-            let key = SavepointKey::SyncToTarget(op.clone());
+            let key = SavepointKey::LandTarget(op.clone());
             let _ = vcs.create_savepoint(repo, &key);
             let _ = vcs.savepoint_label(&key);
             let _ = vcs.resolve_savepoint(repo, &key);
@@ -115,7 +115,7 @@ fn a_target_side_key_does_not_take_text() {
         r#"
         use repoweave::op_state::SavepointKey;
         pub fn target(text: String) -> SavepointKey {
-            SavepointKey::SyncToTarget(format!("{text}-target"))
+            SavepointKey::LandTarget(format!("{text}-target"))
         }
         "#,
     );

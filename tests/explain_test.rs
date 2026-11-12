@@ -8,7 +8,7 @@
 //! - Each verb advertised in the acceptance set has a discoverable entry.
 //! - Drift safety: re-running the generator over the committed tree
 //!   produces no changes (templates + Rust types are in sync).
-//! - {{MSG:auto_relock}} resolves in the assembled sync-to doc and matches the
+//! - {{MSG:auto_relock}} resolves in the assembled land doc and matches the
 //!   string `repoweave::sync::auto_relock_commit_message` emits.
 //! - The runtime version banner: `rwv explain <verb>` and `rwv explain
 //!   <token>` each open with the same version line `rwv --version` reports.
@@ -235,12 +235,12 @@ fn explain_close_typo_suggests_status() {
 
 #[test]
 fn explain_close_typo_suggests_sync_to() {
-    // "sync-tto" has an extra 't' — should suggest "sync-to".
+    // "sync-tto" has an extra 't' — should suggest "land".
     rwv()
         .args(["explain", "sync-tto"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("did you mean: sync-to"));
+        .stderr(predicate::str::contains("did you mean: land"));
 }
 
 /// A short token must not answer for an unrelated short input.
@@ -395,7 +395,7 @@ fn generator_produces_no_drift_against_committed_artifacts() {
 
 /// Verify that the `{{MSG:auto_relock}}` splice mechanism works end-to-end:
 ///
-/// 1. The assembled `sync-to.md` must contain the exact string that
+/// 1. The assembled `land.md` must contain the exact string that
 ///    `repoweave::sync::auto_relock_commit_message` emits (with the `<source>`
 ///    sentinel the generator uses).  This proves the doc and the code share one
 ///    origin and will never silently diverge again.
@@ -406,20 +406,20 @@ fn generator_produces_no_drift_against_committed_artifacts() {
 #[test]
 fn msg_auto_relock_splice_resolves_and_matches_code() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let sync_to_md = manifest_dir.join("docs/reference/explain/sync-to.md");
+    let sync_to_md = manifest_dir.join("docs/reference/explain/land.md");
 
     let content = std::fs::read_to_string(&sync_to_md).expect(
-        "docs/reference/explain/sync-to.md must exist (run cargo run --example generate-explain)",
+        "docs/reference/explain/land.md must exist (run cargo run --example generate-explain)",
     );
 
     // The sentinel form the generator uses: auto_relock_commit_message("<source>").
     let expected = repoweave::sync::auto_relock_commit_message("<source>");
     assert!(
         content.contains(&expected),
-        "sync-to.md does not contain the auto-relock commit message '{expected}'; \
+        "land.md does not contain the auto-relock commit message '{expected}'; \
          the {{{{MSG:auto_relock}}}} splice may not have resolved correctly.\n\
          Hint: run `cargo run --example generate-explain` and commit the output.\n\
-         sync-to.md content (first 500 chars):\n{}",
+         land.md content (first 500 chars):\n{}",
         &content[..content.len().min(500)]
     );
 

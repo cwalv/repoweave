@@ -117,7 +117,7 @@ fn weave_with_a_generator(root: &Path) -> PathBuf {
 /// A v2 owner record for an op the check must refuse.
 fn owner_record_json(ws: &Path) -> String {
     format!(
-        "{{\"id\": \"planted-op-1234\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"strategy\": \"rebase\", \
          \"project\": \"app\", \"source\": \"{ws}\", \"target\": \"{ws}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -198,7 +198,7 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
          above was the accepted window and not an unreadable record:\n{refused}"
     );
     assert!(
-        refused.contains("sync-to in progress"),
+        refused.contains("land in progress"),
         "and it refuses by naming that op:\n{refused}"
     );
 
@@ -249,7 +249,7 @@ fn init_inherits_the_refusal_and_it_names_the_act() {
         "and must not name a verb it cannot know:\n{refused}"
     );
     assert!(
-        refused.contains("sync-to in progress"),
+        refused.contains("land in progress"),
         "the op that caused it is still named:\n{refused}"
     );
     assert!(
@@ -309,7 +309,7 @@ fn fetch_inherits_the_refusal_and_it_names_the_act() {
         "naming the act, not `activate`:\n{refused}"
     );
     assert!(
-        refused.contains("sync-to in progress"),
+        refused.contains("land in progress"),
         "and naming the op:\n{refused}"
     );
 

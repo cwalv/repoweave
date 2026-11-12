@@ -418,10 +418,10 @@ the test is what keeps it from coming back.
   `{primary, project, parent}` (`workspace.rs:1079-1083`) `[V]` — deliberately:
   §6 item 5 explains why the receipts live in the index instead.
 
-- **`sync-to` used to "land" onto a detached target, and then delete destroyed
+- **`land` used to "land" onto a detached target, and then delete destroyed
   the only ref.** Verified end-to-end: with primary's member detached,
-  `rwv sync-to primary` printed `ff-advanced to 95fbf86f` /
-  `sync-to complete: target fast-forwarded to CWD's tip` while `main` stayed
+  `rwv land` printed `ff-advanced to 95fbf86f` /
+  `land complete: target fast-forwarded to CWD's tip` while `main` stayed
   at `288294d`; the follow-on `workweave delete` force-deleted the only
   ref, leaving `95fbf86` referenced by nothing. Every step reported success
   `[S]`. Commit `62af89f` first blocked this with a runtime check. **This
@@ -666,7 +666,7 @@ This was justified by evidence, not taste:
   the `{project}--{workweave}` prefix alone satisfies.
 - **No consumer read the segment.** Doctor validated the prefix only and said
   so deliberately in its own doc comment; delete globbed the prefix; doctor's
-  staleness check keyed on the first path segment. `sync`, `sync-to`, `push`,
+  staleness check keyed on the first path segment. `sync`, `land`, `push`,
   the merged-check, `log --against` and status's relation column all refused
   to read it `[V]`.
 
@@ -751,7 +751,7 @@ by sync's own preflight. Whether that gap matters is Q13.
 
 Which branches a verb destroys is one question, asked by `rwv branch delete
 <W>`, by `rwv workweave delete` (for the branch the workweave is aligned for,
-when its record is a feature) and by `rwv sync-to --retire`. All three run
+when its record is a feature) and by `rwv land --retire`. All three run
 `deletion::Rule` (`src/deletion.rs`); none decides a deletion itself.
 
 **What belongs to `W`.** The project branch `W`, and in each member `W`'s
@@ -1629,7 +1629,7 @@ ff_advance_repo_lands_on_the_branch_the_target_is_attached_to`, and the
 end-to-end behavior by `tests/sync_to_test.rs:775
 sync_to_advances_the_target_branch_not_just_head`.
 
-This is Q4's answer, obtained for free: **sync-to advances the ref the target
+This is Q4's answer, obtained for free: **land advances the ref the target
 is attached to, and refuses when the target is detached.**
 
 One honest residual: `ff_advance_repo` itself still takes
@@ -1873,7 +1873,7 @@ one names where.
 | `workweave create` | mints `{project}--{workweave}`, attaches worktree | birth | Name uniqueness is checked against the workweave index before the directory check. `birth_ephemeral_worktree` takes the branch §2.1 found (`FoundBranch`) and applies its `BranchPolicy`: a branch standing at the start point is the create's own partial result and is taken; one anywhere else refuses as `name` `exists`. Nothing is recorded about the birth beyond the branch itself. |
 | `sync` (ff / rebase) | advances the ref the CWD checkout is on (`apply_strategy`, `sync.rs:722-778`) `[V]` | MOVE | Legal, unchanged. |
 | `sync --discard-local-commits` | rewinds the current ref | MOVE | **Now typed.** `hard_reset` has zero call sites in `sync.rs`; `rewind_project_repo` (`sync.rs:4484-4521`) mints a `DiscardWarrant` from the savepoint (`:4485`, `:4495`) and calls `reset_attached_ref` (`:4502`) or `advance_detached_head` (`:4512`), bailing on `Unborn` `[V]`. The savepoint-plus-named-loss shape §3.2 requires of every rewinding MOVE is now a property of the kind, not of this verb. |
-| `sync-to` (landing) | advances the *target's* ref (`ff_advance_repo`, `sync.rs:5458-5554`) `[V]` | MOVE | **Shipped.** `62af89f` added the runtime refusal; this model replaced it with the witness (`:5477-5506`), closing the "landed onto nothing, then deleted the only ref" chain by construction — see §4.6(1) for the one residual (the function's own argument list). |
+| `land` (landing) | advances the *target's* ref (`ff_advance_repo`, `sync.rs:5458-5554`) `[V]` | MOVE | **Shipped.** `62af89f` added the runtime refusal; this model replaced it with the witness (`:5477-5506`), closing the "landed onto nothing, then deleted the only ref" chain by construction — see §4.6(1) for the one residual (the function's own argument list). |
 | `abort` | resets the current ref to the savepoint (`sync.rs:4975-5003` → `git.rs:2200-2210`) `[V]` | MOVE | Legal, unchanged. Already verified attributability (`git.rs:1324-1405`) `[V]`. |
 | `fetch` (present clone) | `realign_present_clone` (`fetch.rs:717-809`) `[V]` | ATTACH | **Shipped as specified.** On the tracking counterpart: no-op when equal (`:782-784`), `advance_attached_ref` when an advance (`:789-792`), refuse-or-`detach_head` on a non-fast-forward (`:794-808`). Attached to any *other* ref: refuses, naming `--detach-checkouts` (`:763-776`, §5.3). Already-detached repos stay detached via `advance_detached_head` (`:735`), subject to §3.6. `Unborn` is its own refusal (`:737-745`). |
 | `fetch` (absent clone) | `clone_attached_at` (`fetch.rs:946-952`) `[V]` | birth | **Shipped as specified**, and by a better route than the row predicted: rather than clone-then-align, the birth is a single call that attaches at the lock revision (R1's birth-target rule), so bootstrapping a weave from a lock behind origin performs no MOVE and needs no consent. `clone_repo_with_conventional_remote` survives only for the additive path where the lock has no entry (`fetch.rs:962`) `[V]`. |
@@ -1882,7 +1882,7 @@ one names where.
 | `lock` | none (reads HEAD) | — | **Shipped.** Matches all three `HeadAttachment` arms (`lock.rs:113-119`), warns from the `DetachedHead` witness (`:139-147`), and refuses by name on an unreadable ref database instead of falling silent `[V]`. |
 | `push` (project repo) | none (reads) | — | **Shipped.** The gate survives; the non-repo case reports `NotARepo` (§4.5), the canonical branch comes from `remote_default_branch` rather than a fabricated `"main"` (`push.rs:179`), and the mismatch test is `AttachedRef::is_named` (`:204`) `[V]`. |
 | `push` (member repo) | none (reads) | — | **Shipped.** The publish ref is an explicit `&PublishRef` argument to `Vcs::push_ref` (`vcs.rs:3027`, impl `git.rs:2104-2119`) instead of an implicit `current_ref` read inside the impl `[V]`. Test: `git.rs:3029 push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on`. **Q6 stays open** — the split relocated the decision, it did not make it, and `PublishRef::from_attached` is the shipped choice. |
-| `workweave delete` / `sync-to --retire` | `deletion::Rule::apply` over the branch the workweave is aligned for, when its record is a feature | DESTROY | The rule of §3.7: what belongs is deleted on a landed proof (or a backup made first under `--discard-unlanded`), the rest survives with a reason and the verb exits 3. The workweave's own directory and worktrees are removed whatever the rule keeps; a checkout holding uncommitted changes or a detached HEAD with unreached commits refuses first. |
+| `workweave delete` / `land --retire` | `deletion::Rule::apply` over the branch the workweave is aligned for, when its record is a feature | DESTROY | The rule of §3.7: what belongs is deleted on a landed proof (or a backup made first under `--discard-unlanded`), the rest survives with a reason and the verb exits 3. The workweave's own directory and worktrees are removed whatever the rule keeps; a checkout holding uncommitted changes or a detached HEAD with unreached commits refuses first. |
 | `branch delete` | `deletion::Rule::apply` over `W`, then `Store::write_dropping` | DESTROY | The same rule, asked directly: `W` checked out anywhere refuses (`checkout`), dependents refuse (`target` `dependents`), push branches are destroyed only with `--delete-remote` or `--delete-remote-unlanded <repo>`. |
 | `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store | DESTROY-STORE | **Gated at the store level.** The local-only refusal refuses a store holding commits no other clone reaches, and `judge_store_checkouts` (`sync.rs`) implements R4 directly: a live workweave's backing is never the only thing between a store and `remove_dir_all`. In a workweave the removal is `workweave::release_checkout`, which unregisters the worktree. |
 | `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) | DESTROY-STORE | `plan_checkout_removal` (`src/sync.rs`), the guards `prune_dropped_repo` holds too, judges the clone's uncommitted changes and every live checkout derived from the store together and refuses with both, and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Unpushed work refuses in the same pre-flight. |
@@ -2222,7 +2222,7 @@ detects a removed flag before clap sees it and exits 2 with the replacements
 named —
 
 ```
-error: `--force` has been removed from `rwv sync` and `rwv sync-to`.
+error: `--force` has been removed from `rwv sync` and `rwv land`.
 
 Replace it with the specific override(s) you need:
   --allow-stale-lock        skip the lock-freshness precondition
@@ -2430,7 +2430,7 @@ reconciling the three incompatible derivations in `workweave.rs`,
 `add_remove.rs`, and `sync.rs` `[V]` rather than deleting the question. The
 decisive evidence was that **no consumer read the segment** — doctor validated
 the prefix only and its doc comment said this was deliberate; delete globbed
-the prefix; sync-to, push, the merged-check, `log --against` and status all
+the prefix; land, push, the merged-check, `log --against` and status all
 explicitly refused to read it. A component that nothing reads and three
 writers disagree about is not carrying information; it is carrying risk.
 Keeping it would also have kept unbounded nesting

@@ -43,10 +43,10 @@ Commands:
   lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included; `rwv member pin` moves a pin backward by name. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
   log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
-  abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
+  abort        Roll an in-flight sync or land back to its savepoints in every workspace it touched, run from any of them
   backup       List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
   sync         Take the target's new work into this feature, or merge another weave branch in
-  sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
+  land      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
   pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. A diverged branch is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream
   update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`)

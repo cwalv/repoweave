@@ -51,15 +51,15 @@ cd ../../..
 cargo test --workspace   # or npm test --workspaces, go test ./...
 ```
 
-## Land back to the parent
+## Land into the target
 
-Once your changes are committed across the member repos, land them into the recorded parent workspace and retire the workweave in one command:
+Once your changes are committed across the member repos, land them into the branch the workweave's record lands into and retire the workweave in one command:
 
 ```bash
-rwv sync-to --retire
+rwv land --retire
 ```
 
-`rwv sync-to` automatically snapshots any `Ahead` member-repo tips into the workweave's `rwv.lock` at the start of the operation, replays the workweave's commits onto the parent workspace, fast-forwards the parent, and — with `--retire` — deletes the workweave once it converges cleanly.
+`rwv land` automatically snapshots any `Ahead` member-repo tips into the workweave's `rwv.lock` at the start of the operation, replays the workweave's commits onto the parent workspace, fast-forwards the parent, and — with `--retire` — deletes the workweave once it converges cleanly.
 
 If you want to checkpoint the workweave's `rwv.lock` without landing yet, run `rwv lock --commit` (which updates `rwv.lock` and commits it to `projects/web-app`).
 
@@ -75,7 +75,7 @@ Deletion refuses if any checkout in the workweave, a manifest member or not, has
 
 ## Related
 
-- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync-to` options, multi-workweave landing, and conflict recovery
+- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv land` options, multi-workweave landing, and conflict recovery
 - [Review a PR with a workweave](./review-pr-with-workweave.md) — using a disposable workweave to test a pull request
 - [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — parent/child lineage and branch naming
 - [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md) — creation, landing, and deletion contracts

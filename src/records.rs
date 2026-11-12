@@ -985,6 +985,29 @@ impl<'a> Store<'a> {
         Ok(None)
     }
 
+    /// The records remotes whose records branch, as last fetched, holds
+    /// `branch`'s entry exactly as `view` does.
+    pub fn remotes_holding(
+        &self,
+        view: &View,
+        branch: &BranchName,
+    ) -> Result<Vec<RemoteHandle>, VcsError> {
+        let Some(held) = view.raw(branch) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for (remote, tip) in &self.remote_tips()?.0 {
+            let theirs = self.snapshot_at(tip)?;
+            if theirs
+                .get(branch.as_str())
+                .is_some_and(|bytes| same_entry(bytes, held))
+            {
+                out.push(remote.clone());
+            }
+        }
+        Ok(out)
+    }
+
     /// The branches whose entry in `view` some records remote, as last fetched,
     /// holds exactly.
     pub fn published_names(&self, view: &View) -> Result<BTreeSet<String>, VcsError> {

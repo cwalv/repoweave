@@ -915,7 +915,7 @@ fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
     for step in [
         "land and retire each workweave holding a worktree of it",
         "`demo--feat`",
-        "commit or stash its edits and run `rwv sync-to --retire` from it",
+        "commit or stash its edits and run `rwv land --retire` from it",
         "then move the checkout to",
     ] {
         assert!(
@@ -925,7 +925,7 @@ fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
     }
 
     rwv()
-        .args(["sync-to", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&ww)
         .assert()
         .success();

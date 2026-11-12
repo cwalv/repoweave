@@ -490,7 +490,7 @@ fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
 /// target when the target is itself a feature, else the branch the merged
 /// entries declare; `None` where the two sides changed that entry
 /// differently.
-fn receiving_branch(
+pub(crate) fn receiving_branch(
     path: &RepoPath,
     target: &str,
     as_mode: Option<Mode>,

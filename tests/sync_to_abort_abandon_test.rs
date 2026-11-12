@@ -1,8 +1,8 @@
 //! E2E acceptance tests for `rwv abort --abandon-foreign-tip` on the
-//! sync-to TWO-WORKSPACE path.
+//! land TWO-WORKSPACE path.
 //!
 //! `abort_hardening_test.rs` pins the flag's semantics for a sync-shaped op
-//! in one workspace. A sync-to op adds a second workspace whose repos are
+//! in one workspace. A land op adds a second workspace whose repos are
 //! worktree pairs of the first, sharing one refdb, and a consent given for a
 //! repo covers BOTH copies of that repo (`AbandonForeignTipConsent::covers`).
 //! The shared refdb is exactly where a misrouted backup would let one side's
@@ -101,7 +101,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
 }
 
-/// primary (the sync-to TARGET) plus ww (the owner/source), with ww's repos
+/// primary (the land TARGET) plus ww (the owner/source), with ww's repos
 /// worktree-linked to primary's — one refdb per repo pair, which is the
 /// state the `<op-id>-target` namespace exists for.
 fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
@@ -143,17 +143,18 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
     (primary, ww)
 }
 
-/// Owner record for a sync-to op crashed mid-replay: both sides savepointed
+/// Owner record for a land op crashed mid-replay: both sides savepointed
 /// (the savepoint phase runs before replay and covers the target for
-/// sync-to), converged_tips still empty.
+/// land), converged_tips still empty.
 fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
     let body = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(owner, target, "web-app"),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -209,7 +210,7 @@ fn backup_of(repo: &Path, branch: &str, tip: &str) -> Option<String> {
         .map(|(name, _)| name)
 }
 
-/// Plant the full crashed-mid-replay sync-to state: owner record at ww,
+/// Plant the full crashed-mid-replay land state: owner record at ww,
 /// lease at primary, savepoints on both sides under their side-specific
 /// restore ids. The two sides' server branches are first advanced to
 /// DISTINCT commits so their savepoints are distinguishable SHAs — a
@@ -248,7 +249,7 @@ fn plant_crashed_sync_to(primary: &Workspace, ww: &Workspace, op_id: &str) -> (S
 fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_workspaces(tmp.path());
-    let op_id = "sync-to-abandon-refuse";
+    let op_id = "land-abandon-refuse";
 
     plant_crashed_sync_to(&primary, &ww, op_id);
     let foreign_tip = make_commit(&primary.server_dir, "f.txt", "f\n", "foreign: on target");
@@ -296,7 +297,7 @@ fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
 fn sync_to_abandon_covers_both_copies_with_a_backup_each() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_workspaces(tmp.path());
-    let op_id = "sync-to-abandon-both";
+    let op_id = "land-abandon-both";
 
     let (ww_server_sp, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, op_id);
     let src_foreign = make_commit(&ww.server_dir, "src.txt", "src\n", "foreign: on owner");
@@ -370,7 +371,7 @@ fn sync_to_abandon_covers_both_copies_with_a_backup_each() {
 fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_workspaces(tmp.path());
-    let op_id = "sync-to-abandon-scope";
+    let op_id = "land-abandon-scope";
 
     let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, op_id);
     make_commit(&primary.server_dir, "s.txt", "s\n", "foreign: server");
@@ -431,7 +432,7 @@ fn sync_to_abandon_keeps_the_target_side_tip_as_it_stands() {
     for (n, diverge) in [false, true].into_iter().enumerate() {
         let tmp = common::tempdir().unwrap();
         let (primary, ww) = make_shared_workspaces(tmp.path());
-        let op_id = format!("sync-to-abandon-rerun-{n}");
+        let op_id = format!("land-abandon-rerun-{n}");
 
         let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, &op_id);
         let first = make_commit(&primary.server_dir, "f1.txt", "f1\n", "foreign: first");

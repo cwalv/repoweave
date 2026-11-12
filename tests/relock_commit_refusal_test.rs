@@ -133,7 +133,7 @@ fn savepoints(repo: &Path) -> String {
     common::git_in(repo, &["for-each-ref", "refs/rwv/pre-op"])
 }
 
-/// The seat's member is ahead of its lock, so `sync-to` relocks at op start,
+/// The seat's member is ahead of its lock, so `land` relocks at op start,
 /// and that commit is refused.
 #[test]
 fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_was() {
@@ -146,7 +146,7 @@ fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_wa
     let target_head = head(&project_dir(&weave.root));
     weave.refuse_commits();
 
-    let out = run(&s1, &["sync-to"]);
+    let out = run(&s1, &["land"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "the op must refuse:\n{stderr}");
     assert!(
@@ -177,7 +177,7 @@ fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_wa
     assert_eq!(savepoints(&common::under(&s1, LIB)), "", "and no savepoint");
 
     weave.accept_commits();
-    succeed(&s1, &["sync-to"]);
+    succeed(&s1, &["land"]);
 }
 
 /// The seat and the primary both moved the member, so the replay rebases it
@@ -190,7 +190,7 @@ fn park_in_relock(weave: &Weave) -> PathBuf {
     succeed(&s1, &["lock", "--commit"]);
     weave.refuse_commits();
 
-    let out = run(&s1, &["sync-to", "--strategy", "rebase"]);
+    let out = run(&s1, &["land", "--strategy", "rebase"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),
@@ -215,7 +215,7 @@ fn a_refused_phase3_relock_parks_and_resumes() {
     let s1 = park_in_relock(&weave);
 
     weave.accept_commits();
-    succeed(&s1, &["sync-to", "--continue"]);
+    succeed(&s1, &["land", "--continue"]);
     let lib_tip = head(&common::under(&s1, LIB));
     let lock = std::fs::read_to_string(project_dir(&s1).join("rwv.lock")).unwrap();
     assert!(lock.contains(&lib_tip), "{lock}");

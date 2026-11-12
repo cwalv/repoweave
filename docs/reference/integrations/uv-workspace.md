@@ -60,7 +60,7 @@ A repo carrying both `Cargo.toml` and `pyproject.toml` — a maturin/pyo3 bindin
 
 This install hook reacts to a **resolution event** — a dependency added, removed, or re-pinned — not to Rust source edited inside an already-resolved package (see [install hooks](./index.md#hook-points): the hook's mandate is current membership plus already-recorded pins, nothing else). Editing the crate's `.rs` file and leaving the Python package's own version untouched is not a resolution event, so the compiled extension is not rebuilt: Python keeps running whatever was compiled at the last reinstall, and both `rwv materialize` and a plain `uv sync` report success anyway. Only `uv sync --reinstall-package <name>` forces the rebuild.
 
-The source can advance this way through `rwv sync-to`, a `git pull` inside the member, or hand-editing the file directly — the install hook's contract is identical regardless of how source arrived, so this is not specific to rwv.
+The source can advance this way through `rwv land`, a `git pull` inside the member, or hand-editing the file directly — the install hook's contract is identical regardless of how source arrived, so this is not specific to rwv.
 
 The layer that does see every source advance is **import time**, not install time: [`maturin-import-hook`](https://github.com/PyO3/maturin-import-hook) rebuilds an editable-installed maturin package on `import` when its Rust source (or a path dependency, at any depth) has changed since the last build. Enable it once per `uv`-managed environment:
 

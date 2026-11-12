@@ -259,7 +259,7 @@ fn a_landing_warns_on_a_tag_pinned_entry_and_its_relock_records_the_commit() {
         .join(".workweaves")
         .join(format!("{PROJECT}--s1"));
 
-    let (_, stderr) = succeed(&seat, &["sync-to"]);
+    let (_, stderr) = succeed(&seat, &["land"]);
     assert!(
         names_the_pin(&stderr, &format!("ws/{DEP}"), "v1.0.0"),
         "the landing must name the target's entry pinned by name:\n{stderr}"
@@ -397,9 +397,9 @@ fn a_json_landing_still_warns_on_a_tag_pinned_entry() {
         .join(".workweaves")
         .join(format!("{PROJECT}--s1"));
 
-    let (_, stderr) = succeed(&seat, &["sync-to", "--json"]);
+    let (_, stderr) = succeed(&seat, &["land", "--json"]);
     assert!(
         names_the_pin(&stderr, &format!("ws/{DEP}"), "v1.0.0"),
-        "sync-to --json must name the entry on stderr:\n{stderr}"
+        "land --json must name the entry on stderr:\n{stderr}"
     );
 }

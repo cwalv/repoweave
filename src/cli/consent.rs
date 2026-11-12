@@ -121,42 +121,6 @@ impl Lease {
     }
 }
 
-/// Proof that the operator consented to `rwv sync` / `rwv sync-to` rewinding
-/// the project repo past commits the source does not carry. Minted from
-/// `--discard-local-commits` on a fresh op, and on `--continue` from the
-/// override the fresh op recorded, so a resumed op holds the same proof
-/// without the flag on its command line.
-///
-/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
-#[derive(Debug, Clone, Copy)]
-pub struct DiscardLocalCommitsConsent(());
-
-impl DiscardLocalCommitsConsent {
-    /// Mint unconditionally. `#[cfg(test)]`: see
-    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
-    #[cfg(test)]
-    pub(crate) fn granted() -> Self {
-        Self(())
-    }
-
-    /// Mint from the parsed `--discard-local-commits` value: `Some` iff the
-    /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
-    pub(in crate::cli) fn from_flag(discard_local_commits: bool) -> Option<Self> {
-        discard_local_commits.then_some(Self(()))
-    }
-
-    /// Mint for `--continue` from the op being resumed: `Some` iff its record
-    /// carries the override, which the fresh op wrote only while holding this
-    /// consent.
-    pub(in crate::cli) fn from_record(op: &crate::op_state::ResolvedOwner) -> Option<Self> {
-        op.record
-            .overrides
-            .contains(crate::op_state::Override::DiscardLocalCommits)
-            .then_some(Self(()))
-    }
-}
-
 /// Proof that the operator consented to losing uncommitted changes in a
 /// workweave being deleted. Minted from `--discard-uncommitted`.
 ///
@@ -312,7 +276,7 @@ impl AbandonForeignTipConsent {
     }
 
     /// Whether the operator named this repo of the op of `project`.
-    /// `repo_key` is the same key abort's per-repo maps use, so a `sync-to`
+    /// `repo_key` is the same key abort's per-repo maps use, so a `land`
     /// op consults it once per side: consent is given for a repo, and both
     /// workspaces' copies of that repo are covered by it.
     pub fn covers(&self, repo_key: &RepoKey, project: &ProjectName) -> bool {

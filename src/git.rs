@@ -1714,7 +1714,7 @@ impl GitVcs {
 /// next step for the operator and is part of this hint.
 ///
 /// [`ConflictOp::Rebase`] is different: rwv has a native
-/// `rwv sync --continue` / `rwv sync-to --continue` that covers all
+/// `rwv sync --continue` / `rwv land --continue` that covers all
 /// remaining replay steps after staging, so the git-level
 /// `git rebase --continue` must NOT appear in operator-facing text — rwv
 /// core (in `sync.rs`) appends the appropriate `rwv <verb> --continue`
@@ -1727,7 +1727,7 @@ fn git_conflict_resolution_hint(op: ConflictOp) -> String {
     match op {
         ConflictOp::Rebase => {
             // Stop at staging. rwv core appends `rwv sync --continue` /
-            // `rwv sync-to --continue` — the VCS impl must not spell rwv
+            // `rwv land --continue` — the VCS impl must not spell rwv
             // vocabulary.
             "  # edit conflicted files\n  git add <files>".to_string()
         }
@@ -3152,7 +3152,7 @@ impl Vcs for GitVcs {
         // share an object store the fetch may fail (FETCH_HEAD unavailable)
         // and yet the objects are already reachable. A real problem
         // surfaces at the subsequent operation (e.g. the ff merge in
-        // sync-to step 3) which inspects the same objects. A source path git
+        // land step 3) which inspects the same objects. A source path git
         // could not name is the same shape of nothing-to-report.
         let Ok(src_path) = GitArg::from_path(src_repo, "source repo path") else {
             return;
@@ -5669,12 +5669,12 @@ mod branch_model_tests {
 
     use super::*;
     use crate::cli::consent::{
-        DiscardLocalCommitsConsent, DiscardUnlandedConsent, OverwriteConsent,
+        DiscardUnlandedConsent, OverwriteConsent,
     };
     use crate::manifest::{RepoOperand, RepoPath};
     use crate::op_state::OpId;
     use crate::vcs::{
-        DestroyProof, DiscardWarrant, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind,
+        DestroyProof, FoundBranch, RawRefName, Site, TrackingRef, VcsErrorKind,
     };
 
     /// A local branch name, obtained the only way one can be: through the
@@ -5708,9 +5708,6 @@ mod branch_model_tests {
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
 
-    fn op_key(op: &str) -> SavepointKey {
-        SavepointKey::Op(op.parse().unwrap())
-    }
 
     /// A repo on `main` with one commit.
     fn repo() -> tempfile::TempDir {
@@ -6637,7 +6634,7 @@ mod branch_model_tests {
         [
             (SavepointKey::Op(op.clone()), op.to_string()),
             (
-                SavepointKey::SyncToTarget(op.clone()),
+                SavepointKey::LandTarget(op.clone()),
                 format!("{op}-target"),
             ),
         ]
@@ -6700,60 +6697,6 @@ mod branch_model_tests {
             listing.unrecognized,
             vec!["refs/rwv/pre-op/not.a.key".to_owned()],
             "a ref no key names is not a savepoint rwv filed, and is listed apart"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Rewinding MOVE: the warrant must belong to the repo being rewound
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn reset_attached_ref_rewinds_behind_a_savepoint_taken_in_the_same_repo() {
-        let p = repo();
-        let base = GitVcs.head_revision(p.path()).unwrap();
-        let _ = commit(p.path(), "to-discard");
-
-        let savepoint = GitVcs
-            .create_savepoint_ref(p.path(), &op_key("op-1"))
-            .unwrap();
-        let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
-        let HeadAttachment::Attached(w) = GitVcs.head_attachment(p.path()).unwrap() else {
-            panic!("fixture should be attached");
-        };
-
-        GitVcs.reset_attached_ref(&w, &base, warrant).unwrap();
-
-        assert_eq!(GitVcs.head_revision(p.path()).unwrap(), base);
-        assert_eq!(
-            GitVcs.head_attachment(p.path()).unwrap().to_string(),
-            "on branch 'main'",
-            "a rewind is still a MOVE: the attachment is unchanged"
-        );
-    }
-
-    #[test]
-    fn reset_attached_ref_refuses_a_savepoint_taken_in_another_repo() {
-        let a = repo();
-        let b = repo();
-        let a_base = GitVcs.head_revision(a.path()).unwrap();
-        let a_tip = commit(a.path(), "to-discard");
-
-        // A savepoint for B cannot license rewinding A: it captured a tip
-        // that has nothing to do with A's history.
-        let elsewhere = GitVcs
-            .create_savepoint_ref(b.path(), &op_key("op-1"))
-            .unwrap();
-        let warrant = DiscardWarrant::new(elsewhere, DiscardLocalCommitsConsent::granted());
-        let HeadAttachment::Attached(w) = GitVcs.head_attachment(a.path()).unwrap() else {
-            panic!("fixture should be attached");
-        };
-
-        let err = GitVcs.reset_attached_ref(&w, &a_base, warrant).unwrap_err();
-        assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
-        assert_eq!(
-            GitVcs.head_revision(a.path()).unwrap(),
-            a_tip,
-            "the refusal is a refusal: nothing was discarded"
         );
     }
 

@@ -8,7 +8,7 @@
 //! started for, so re-deriving the binding from the pointer at resume time
 //! lands the remaining phases somewhere the completed ones never were.
 //!
-//! The fixtures park a real `sync-to` with the target's manifest repo landed
+//! The fixtures park a real `land` with the target's manifest repo landed
 //! and its project repo blocked, then move the pointer. What the resume must
 //! still do is advance the target's project repo — asserted directly, because
 //! the manifest repo landed before the strand and would look landed either way.
@@ -139,7 +139,7 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
     )
 }
 
-/// A `sync-to` parked inside advance-target: the target's manifest repo has
+/// A `land` parked inside advance-target: the target's manifest repo has
 /// landed CWD's tip, its project repo has not.
 struct Parked {
     primary: Workspace,
@@ -171,7 +171,7 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
     let target_project_parked = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -252,7 +252,7 @@ fn resume_follows_the_record_when_the_owners_pointer_moved() {
     activate_other_project_in_owner(&parked);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&parked.ww.root)
         .assert()
         .success();
@@ -270,7 +270,7 @@ fn resume_proceeds_when_project_flag_matches_the_record() {
     activate_other_project_in_owner(&parked);
 
     rwv()
-        .args(["sync-to", "--continue", "--project", SYNCED_PROJECT])
+        .args(["land", "--continue", "--project", SYNCED_PROJECT])
         .current_dir(&parked.ww.root)
         .assert()
         .success();
@@ -289,7 +289,7 @@ fn resume_refuses_a_project_flag_that_contradicts_the_record() {
     let record_before = std::fs::read_to_string(parked.ww.root.join(".rwv-op")).unwrap();
 
     let output = rwv()
-        .args(["sync-to", "--continue", "--project", OTHER_PROJECT])
+        .args(["land", "--continue", "--project", OTHER_PROJECT])
         .current_dir(&parked.ww.root)
         .assert()
         .failure()

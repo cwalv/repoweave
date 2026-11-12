@@ -144,7 +144,7 @@ fn a_seat_that_adds_a_reference_member_lands_and_retires_with_it() {
     let s1 = seat(&weave, &weave.root, "s1");
     add_and_commit(&s1, &weave.extra_url, "reference");
 
-    let out = run(&s1, &["sync-to", "--retire"]);
+    let out = run(&s1, &["land", "--retire"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_no_prune_line(&stdout);
     assert!(
@@ -155,7 +155,7 @@ fn a_seat_that_adds_a_reference_member_lands_and_retires_with_it() {
     );
     assert!(
         out.status.success(),
-        "sync-to --retire must land and retire:\nstdout:\n{stdout}\nstderr:\n{}",
+        "land --retire must land and retire:\nstdout:\n{stdout}\nstderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!s1.exists(), "--retire must delete the seat");
@@ -182,10 +182,10 @@ fn a_parent_seat_keeps_a_member_it_added_through_its_childs_landing_and_its_own(
     common::git_in(&lib, &["commit", "-m", "work"]);
     succeed(&child, &["lock", "--commit"]);
 
-    let child_landing = succeed(&child, &["sync-to"]);
+    let child_landing = succeed(&child, &["land"]);
     assert_not_pruned(&child_landing, &home);
 
-    let home_landing = succeed(&home, &["sync-to"]);
+    let home_landing = succeed(&home, &["land"]);
     assert_not_pruned(&home_landing, &home);
     assert!(
         names_extra(&home),
@@ -202,7 +202,7 @@ fn a_pull_from_a_seat_forked_before_the_add_keeps_the_added_member() {
     add_and_commit(&home, &weave.extra_url, "owned");
 
     let child_dir = child.to_string_lossy().into_owned();
-    let stdout = succeed(&home, &["sync-to", &child_dir, "--strategy", "rebase"]);
+    let stdout = succeed(&home, &["land", &child_dir, "--strategy", "rebase"]);
     assert_not_pruned(&stdout, &home);
     assert!(
         names_extra(&home),
@@ -223,7 +223,7 @@ fn a_member_the_source_dropped_is_pruned() {
     succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
 
-    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "a member the source dropped must be pruned:\n{stdout}"
@@ -242,7 +242,7 @@ fn discarding_local_commits_prunes_the_member_they_added() {
 
     let stdout = succeed(
         &s1,
-        &["sync-to", "--strategy", "rebase", "--discard-local-commits"],
+        &["land", "--strategy", "rebase", "--discard-local-commits"],
     );
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
@@ -266,7 +266,7 @@ fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
     common::git_in(&project, &["reset", "--soft", &root]);
     add_and_commit(&s1, &weave.extra_url, "owned");
 
-    let stdout = succeed(&s1, &["sync-to"]);
+    let stdout = succeed(&s1, &["land"]);
     assert_not_pruned(&stdout, &s1);
     assert!(
         stdout.contains(&format!(
@@ -316,7 +316,7 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     common::git_in(&canonical, &["commit", "-m", "primary moves on"]);
     let primary_tip = head(&canonical);
 
-    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
     assert_not_pruned(&stdout, &s1);
     assert_eq!(head(&common::under(&s1, EXTRA)), own);
     for workspace in [&s1, &target] {
@@ -345,7 +345,7 @@ fn parked_pull_of_a_drop(weave: &Weave, conflicted: fn(&Path) -> PathBuf) -> Pat
     succeed(&weave.root, &["lock", "--commit"]);
     drop_and_commit(&weave.root, "drop extra");
 
-    let out = run(&s1, &["sync-to", "--strategy", "rebase"]);
+    let out = run(&s1, &["land", "--strategy", "rebase"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         !out.status.success(),
@@ -400,7 +400,7 @@ fn a_prune_deferred_by_a_parked_replay_runs_on_continue() {
     let project = project_dir(&s1);
     std::fs::write(project.join("notes.txt"), "resolved\n").unwrap();
     common::git_in(&project, &["add", "notes.txt"]);
-    let stdout = succeed(&s1, &["sync-to", "--continue"]);
+    let stdout = succeed(&s1, &["land", "--continue"]);
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "the resumed replay must prune the member the source dropped:\n{stdout}"
@@ -419,13 +419,13 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
     drop_and_commit(&s2, "drop extra");
 
     let s2_dir = s2.to_string_lossy().into_owned();
-    let stdout = succeed(&s1, &["sync-to", &s2_dir, "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", &s2_dir, "--strategy", "rebase"]);
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "{stdout}"
     );
 
-    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
     assert!(
         !stdout.contains(&format!("{EXTRA}: materialized")),
         "a member the seat dropped must not be re-created:\n{stdout}"
@@ -464,7 +464,7 @@ fn json_records_a_member_kept_because_this_side_added_it() {
     let s1 = seat(&weave, &weave.root, "s1");
     add_and_commit(&s1, &weave.extra_url, "owned");
 
-    let members = members_of(&s1, &["sync-to", "--json"]);
+    let members = members_of(&s1, &["land", "--json"]);
     assert_one_member(&members, "kept", &s1);
 }
 
@@ -480,7 +480,7 @@ fn json_records_a_member_kept_across_histories_with_no_commit_in_common() {
     common::git_in(&project, &["reset", "--soft", &root]);
     add_and_commit(&s1, &weave.extra_url, "owned");
 
-    let members = members_of(&s1, &["sync-to", "--json"]);
+    let members = members_of(&s1, &["land", "--json"]);
     assert_one_member(&members, "kept", &s1);
 }
 
@@ -497,7 +497,7 @@ fn json_records_a_pruned_member() {
     let weave = weave();
     let s1 = seat_behind_a_drop(&weave);
 
-    let members = members_of(&s1, &["sync-to", "--strategy", "rebase", "--json"]);
+    let members = members_of(&s1, &["land", "--strategy", "rebase", "--json"]);
     assert_one_member(&members, "pruned", &s1);
     assert!(!common::under(&s1, EXTRA).exists());
 }
@@ -543,7 +543,7 @@ fn pruning_a_member_the_source_dropped_releases_the_primarys_clone() {
         "fixture: the seat holds a branch in the clone"
     );
 
-    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase"]);
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "{stdout}"
@@ -559,7 +559,7 @@ fn pruning_a_member_only_the_seat_added_releases_the_primarys_clone() {
 
     let stdout = succeed(
         &s1,
-        &["sync-to", "--strategy", "rebase", "--discard-local-commits"],
+        &["land", "--strategy", "rebase", "--discard-local-commits"],
     );
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
@@ -638,8 +638,8 @@ fn a_refused_prune_fails_sync_to_once_it_completes() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(&s1, &["sync-to"]);
-    assert_completed_with_the_checkout_left(&out, "sync-to", &s1);
+    let out = run(&s1, &["land"]);
+    assert_completed_with_the_checkout_left(&out, "land", &s1);
     assert!(!weave.root.join(".rwv-op-lease").exists());
     assert!(!names_extra(&s1) && !names_extra(&weave.root));
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -704,33 +704,33 @@ fn assert_parked_after_the_refused_prune(parked: &Output, s1: &Path) {
 fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
     let weave = weave();
     let (s1, hook, parked) =
-        park_in_relock_after_a_refused_prune(&weave, &["sync-to", "--strategy", "rebase"]);
+        park_in_relock_after_a_refused_prune(&weave, &["land", "--strategy", "rebase"]);
     assert!(!parked.status.success(), "the hook must have refused");
     assert_parked_after_the_refused_prune(&parked, &s1);
 
     std::fs::remove_file(&hook).unwrap();
-    let out = run(&s1, &["sync-to", "--continue"]);
+    let out = run(&s1, &["land", "--continue"]);
     assert!(
         !String::from_utf8_lossy(&out.stderr).contains("prune skipped"),
         "the resume must not have re-run replay"
     );
-    assert_completed_with_the_checkout_left(&out, "sync-to", &s1);
+    assert_completed_with_the_checkout_left(&out, "land", &s1);
 }
 
-/// A resumed `sync-to` that re-entered past replay has no outcomes to report,
+/// A resumed `land` that re-entered past replay has no outcomes to report,
 /// and still prints its envelope once complete.
 #[test]
 fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
     let weave = weave();
-    let (s1, hook, parked) = park_in_relock_after_a_refused_prune(&weave, &["sync-to"]);
+    let (s1, hook, parked) = park_in_relock_after_a_refused_prune(&weave, &["land"]);
     assert!(!parked.status.success(), "the hook must have refused");
     assert_parked_after_the_refused_prune(&parked, &s1);
 
     std::fs::remove_file(&hook).unwrap();
-    let out = run(&s1, &["sync-to", "--continue", "--json"]);
+    let out = run(&s1, &["land", "--continue", "--json"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains(&format!("sync-to {COMPLETED}")), "{stderr}");
+    assert!(stderr.contains(&format!("land {COMPLETED}")), "{stderr}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let envelope: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("a complete op prints its envelope ({e}):\n{stdout}"));
@@ -768,7 +768,7 @@ fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &
     for expected in [
         format!("{EXTRA}: edits dirty (not a manifest member)"),
         "--retire: the landing is done and the workweave was not deleted".to_owned(),
-        "rwv sync-to --continue".to_owned(),
+        "rwv land --continue".to_owned(),
         "`rwv abort`".to_owned(),
     ] {
         assert!(
@@ -787,7 +787,7 @@ fn a_retire_refuses_over_the_edits_in_a_checkout_replay_could_not_prune() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(&s1, &["sync-to", "--retire"]);
+    let out = run(&s1, &["land", "--retire"]);
     assert_retire_refused_with_the_work_intact(&out, &weave, &s1);
     assert!(
         !names_extra(&weave.root),
@@ -799,10 +799,10 @@ fn a_retire_refuses_over_the_edits_in_a_checkout_replay_could_not_prune() {
 fn a_continued_retire_refuses_until_the_edits_are_gone_then_retires() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
-    let parked = run(&s1, &["sync-to", "--retire"]);
+    let parked = run(&s1, &["land", "--retire"]);
     assert!(!parked.status.success());
 
-    let still = run(&s1, &["sync-to", "--continue"]);
+    let still = run(&s1, &["land", "--continue"]);
     assert_retire_refused_with_the_work_intact(&still, &weave, &s1);
 
     let checkout = common::under(&s1, EXTRA);
@@ -816,7 +816,7 @@ fn a_continued_retire_refuses_until_the_edits_are_gone_then_retires() {
         &["worktree", "remove", &checkout.to_string_lossy()],
     );
 
-    let out = run(&s1, &["sync-to", "--continue"]);
+    let out = run(&s1, &["land", "--continue"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     assert!(stderr.contains("retired workweave s1"), "{stderr}");
@@ -829,7 +829,7 @@ fn json_records_a_refused_prune_with_its_judged_state() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(&s1, &["sync-to", "--strategy", "rebase", "--json"]);
+    let out = run(&s1, &["land", "--strategy", "rebase", "--json"]);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -860,7 +860,7 @@ fn json_records_a_refused_prune_with_its_judged_state() {
         "{members:#?}"
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains(&format!("sync-to {COMPLETED}")),
+        String::from_utf8_lossy(&out.stderr).contains(&format!("land {COMPLETED}")),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -873,7 +873,7 @@ fn json_a_sync_to_whose_prune_was_refused_is_complete_and_exits_1() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(&s1, &["sync-to", "--json"]);
+    let out = run(&s1, &["land", "--json"]);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -898,7 +898,7 @@ fn json_a_parked_sync_is_not_complete() {
     commit_note(&lib_dir(&weave.root), "primary\n");
     succeed(&weave.root, &["lock", "--commit"]);
 
-    let out = run(&s1, &["sync-to", "--strategy", "rebase", "--json"]);
+    let out = run(&s1, &["land", "--strategy", "rebase", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(s1.join(".rwv-op").exists(), "the conflict must park the op");
     let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
@@ -917,7 +917,7 @@ fn json_a_sync_to_parked_at_retire_after_a_refused_prune_is_not_complete() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let out = run(&s1, &["sync-to", "--retire", "--json"]);
+    let out = run(&s1, &["land", "--retire", "--json"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(
@@ -938,7 +938,7 @@ fn json_a_clean_sync_is_complete() {
     let weave = weave();
     let s1 = seat_behind_a_drop(&weave);
 
-    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase", "--json"]);
+    let stdout = succeed(&s1, &["land", "--strategy", "rebase", "--json"]);
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(envelope["complete"], true, "{envelope:#}");
 }
@@ -950,7 +950,7 @@ fn json_under_two_workers_a_refused_prune_is_a_member_and_exits_1() {
 
     let out = run(
         &s1,
-        &["sync-to", "--strategy", "rebase", "--json", "-j", "2"],
+        &["land", "--strategy", "rebase", "--json", "-j", "2"],
     );
     assert_eq!(
         out.status.code(),
@@ -974,7 +974,7 @@ fn json_under_two_workers_carries_the_pruned_member() {
 
     let stdout = succeed(
         &s1,
-        &["sync-to", "--strategy", "rebase", "--json", "-j", "2"],
+        &["land", "--strategy", "rebase", "--json", "-j", "2"],
     );
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_one_member(envelope["members"].as_array().unwrap(), "pruned", &s1);

@@ -202,6 +202,32 @@ pub(crate) fn judge(
     (head, pin): (&ResolvedRevisionId, &ResolvedRevisionId),
     reset: Option<&crate::feature_sync::ResetOffer>,
 ) -> Option<Judged> {
+    judging(repo, dir, vcs, standing, head, pin).map(|judging| judging.judge(vcs))
+}
+
+/// [`judge`] for a checkout of the workspace at `workspace`, which a landing
+/// judges from its source: its choices run there.
+pub(crate) fn judge_elsewhere(
+    repo: &RepoPath,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    standing: &Standing,
+    head: &ResolvedRevisionId,
+    pin: &ResolvedRevisionId,
+    workspace: &Path,
+) -> Option<Judged> {
+    judging(repo, dir, vcs, standing, head, pin)
+        .map(|judging| judging.elsewhere(workspace).by_verb("land").judge(vcs))
+}
+
+fn judging(
+    repo: &RepoPath,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    standing: &Standing,
+    head: &ResolvedRevisionId,
+    pin: &ResolvedRevisionId,
+) -> Option<crate::diagnosis::Judging> {
     let judging = |state: State| {
         state
             .of(repo)
@@ -294,7 +320,7 @@ pub(crate) fn judge(
             }
         }
     };
-    Some(judged.judge(vcs))
+    Some(judged)
 }
 
 /// How the checked-out branch's lock holds a pin that sits off the remote.

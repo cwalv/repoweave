@@ -292,16 +292,6 @@ pub(crate) fn store_record(
     Ok(())
 }
 
-/// Print the `record changed` line for the project `ctx` is bound to, for
-/// `verb`, as a report: nothing is refused.
-pub(crate) fn report_record_change_in(
-    ctx: &crate::workspace::WorkspaceContext,
-    verb: &'static str,
-) -> anyhow::Result<()> {
-    let project = ctx.require_active_project_on_disk()?.clone();
-    Aligner::open(ctx.active_path(), &project, Accounting::default())?.report_record_change(verb)
-}
-
 /// The `record changed` line for `branch`, read as recorded by `record`,
 /// against the record `state` stored for it: `None` when they agree or
 /// nothing is stored. The choices accept the new record or restore the old.

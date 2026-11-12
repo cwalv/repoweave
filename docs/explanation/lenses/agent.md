@@ -84,24 +84,24 @@ cd ../.workweaves/web-app--agent-refactor
 # ... edits, tests, commits across member repos ...
 
 # Bring it home, with one verb (auto-relocks CWD at op-start, then lands and deletes):
-rwv sync-to --retire
+rwv land --retire
 ```
 
-`rwv sync-to --retire` is the landing verb (`rwv sync-to` auto-relocks the initiating workweave at op-start, so an explicit `rwv lock --commit` beforehand is only needed if you want to inspect or checkpoint the lock commit before landing). Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave`; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
+`rwv land --retire` is the landing verb (`rwv land` auto-relocks the initiating workweave at op-start, so an explicit `rwv lock --commit` beforehand is only needed if you want to inspect or checkpoint the lock commit before landing). `rwv land` lands into the target the feature's record names; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
 
 Three properties make this pattern work:
 
 1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa. Repos with `role = "reference"` get a worktree like every other repo, with read-only tracked files. Where the filesystem allows, a workweave's files share storage with another workspace's copy — by copy-on-write clone, or for a `reference` repo's read-only files by hard link — so a large study-material tree (e.g. a 270 MB upstream codebase) is not duplicated into every workweave, and neither side's edits reach the other.
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
-3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor log --against main --diff`) before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
+3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor log --against main --diff`) before running `rwv land --retire` from inside the workweave. `land` lands the workweave's feature into its target — composed in the workweave, then fast-forwarded into the primary. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the target fast-forwards to the workweave's tip.
 
 ### Dedicated long-lived agent workweaves
 
 The pattern generalizes to a *semi-persistent* agent workweave: a workspace that lives across many agent sessions, acting as the gravity well where agent work consolidates before the human decides to bring it all the way home to primary.
 
-The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv sync-to primary` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
+The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv land` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
 
-This recommended pattern composes from existing primitives — there is no special "agent weave" type. Parent tracking via `.rwv-workweave` makes bare `rwv sync-to` from feature workweaves target their parent (the agent workweave) by default, which is the flow direction you want.
+This recommended pattern composes from existing primitives — there is no special "agent weave" type. A workweave created from the agent workweave records it as its target, so `rwv land` from a feature workweave lands into the agent workweave's branch, which is the flow direction you want.
 
 ## What this lens is *not* about
 
@@ -115,7 +115,7 @@ Where the tool already has agent-shaped surface (`rwv prime`, `rwv explain`, the
 
 ## The shape, in one paragraph
 
-Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, `rwv setup claude` for context and worktree-lifecycle hooks, the `--json` envelope for structured output, and roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv sync-to --retire`.
+Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, `rwv setup claude` for context and worktree-lifecycle hooks, the `--json` envelope for structured output, and roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv land --retire`.
 
 ## Related
 

@@ -57,7 +57,7 @@ It says what it left out:
 
 Run `rwv materialize` later when you want the install hooks to run.
 
-`.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that write (`add`, `remove`, `role`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `doctor --fix`) refuse with `cwd-in-inactive-project`, naming `--project <name>`, `--project <active>`, and `rwv activate <name>`. `rwv status` warns and reports on the active project; `rwv doctor` reports on the active project without a warning.
+`.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that write (`add`, `remove`, `role`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `land`, `doctor --fix`) refuse with `cwd-in-inactive-project`, naming `--project <name>`, `--project <active>`, and `rwv activate <name>`. `rwv status` warns and reports on the active project; `rwv doctor` reports on the active project without a warning.
 
 ## One-shot project override
 

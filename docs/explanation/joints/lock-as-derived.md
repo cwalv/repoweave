@@ -68,7 +68,7 @@ post-merge manifest tips. Asking an operator to resolve a lock conflict
 by hand is asking them to compute a function whose inputs are already
 known.
 
-[`rwv sync-to`](./sync-semantics.md) encodes this directly. The lock is
+[`rwv land`](./sync-semantics.md) encodes this directly. The lock is
 excluded from the project-repo merge phase (Phase 1') and regenerated
 in Phase 3 from the now-aligned manifest tips. `rwv sync` records its lock
 once every member has taken in: each pin merged three ways against the

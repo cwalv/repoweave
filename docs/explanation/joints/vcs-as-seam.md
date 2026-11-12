@@ -145,7 +145,7 @@ gets the parameter in the same change that gives it a reader.
 messages explaining how to resume after the user resolves conflicts.
 The VCS impl owns git-vocabulary steps (stage the resolution, run the
 VCS-native continue for merge/cherry-pick ops). For rebase ops,
-rwv has a native `rwv sync --continue` / `rwv sync-to --continue` that
+rwv has a native `rwv sync --continue` / `rwv land --continue` that
 drives the remaining picks; the VCS impl stops at staging and rwv core
 appends the `rwv <verb> --continue` line.
 

@@ -13,7 +13,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 ## Cross-repo features
 
 - [Create a feature workweave](./create-feature-workweave.md) — isolated cross-repo workspace and ephemeral branches
-- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync-to --retire` and manual landing ceremony
+- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv land --retire` and manual landing ceremony
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts and resuming with `--continue`
 - [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspecting op-state, `--continue`, and `rwv abort` savepoint rollback
 - [Push a cross-repo feature](./push-cross-repo-feature.md) — `rwv push`, role policy, and lock-precondition recovery

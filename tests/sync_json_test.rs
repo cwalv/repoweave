@@ -1,7 +1,7 @@
-//! Tests for `rwv sync-to --json`.
+//! Tests for `rwv land --json`.
 //!
 //! Two layers:
-//! 1. End-to-end: drive `rwv sync-to --json` through the binary, parse stdout
+//! 1. End-to-end: drive `rwv land --json` through the binary, parse stdout
 //!    as JSON, assert envelope + per-repo shape and exit code.
 //! 2. Library-level snapshot tests of `VcsError` / `SyncFailure` /
 //!    `RepoSyncOutcome` -> wire-output serialization, so kebab-case tags
@@ -11,7 +11,7 @@ use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
     Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
     SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
-    SYNC_TO_JSON_SCHEMA_URL,
+    LAND_JSON_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, MidOperation, VcsError, VcsErrorKind, VcsErrorOutput};
 use serde_json::Value;
@@ -137,7 +137,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: drive `rwv sync-to --json` through the binary
+// End-to-end: drive `rwv land --json` through the binary
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -157,7 +157,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
+        .args(["land", "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -168,7 +168,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     let obj = parsed.as_object().expect("top level should be object");
     assert_eq!(
         obj.get("$schema").and_then(Value::as_str),
-        Some(SYNC_TO_JSON_SCHEMA_URL),
+        Some(LAND_JSON_SCHEMA_URL),
         "envelope must include $schema URL"
     );
     let outcomes = obj
@@ -217,8 +217,7 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--json",
@@ -258,7 +257,7 @@ fn sync_json_no_op_when_already_at_lock() {
     // The workweave is at C1 (the lock SHA) like the primary: landing it
     // should produce no-op for the server repo.
     let assert = rwv()
-        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
+        .args(["land", "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -755,14 +754,14 @@ fn manifest_order() -> Vec<&'static str> {
     paths
 }
 
-/// Run `sync-to` from the fixture's primary against its workweave, which is
+/// Run `land` from the fixture's primary against its workweave, which is
 /// ahead in every repo, so each repo moves forward in the primary in its own
 /// worker: the first step rebases it, which for a repo with nothing of its own
 /// is a fast-forward.
 fn sync_from_primary(primary: &Workspace, ww: &Workspace, jobs: &str) -> Vec<u8> {
     let target = ww.root.to_string_lossy();
     rwv()
-        .args(["sync-to", &target, "--json", "-j", jobs])
+        .args(["land", &target, "--json", "-j", jobs])
         .current_dir(&primary.root)
         .assert()
         .success()
@@ -824,7 +823,7 @@ fn sync_to_json_is_one_envelope_whatever_the_worker_count() {
     let shape_under = |jobs: &str| {
         let (primary, ww, _shas) = make_multi_repo_workspaces(&tmp.path().join(jobs));
         let stdout = sync_from_primary(&primary, &ww, jobs);
-        common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes")
+        common::envelope_shape(&stdout, LAND_JSON_SCHEMA_URL, "outcomes")
     };
     let serial = shape_under("1");
     assert_eq!(serial.1, manifest_order(), "outcomes follow the manifest");
@@ -841,7 +840,7 @@ fn sync_to_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it()
     let stdout = sync_from_primary(&primary, &ww, "4");
 
     assert_landed_first_repo_last(&log);
-    let (_, paths) = common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes");
+    let (_, paths) = common::envelope_shape(&stdout, LAND_JSON_SCHEMA_URL, "outcomes");
     assert_eq!(paths, manifest_order());
 }
 
@@ -1068,7 +1067,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["sync-to", &ww.root.to_string_lossy(), "--json"])
+        .args(["land", "--json"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -1117,8 +1116,7 @@ fn sync_json_discloses_the_verdict_a_failed_rebase_ran_against() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--json",

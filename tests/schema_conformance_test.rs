@@ -87,7 +87,7 @@ use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
 use repoweave::integrations::GoWork;
 use repoweave::integrations::NpmWorkspaces;
 use repoweave::log::{LogCommit, LogEndpoint, LogJsonOutput, LogRepo, LOG_SCHEMA_URL};
-use repoweave::op_state::{OpPhase, OpVerb, Override};
+use repoweave::op_state::{OpPhase, OpVerb};
 use repoweave::path_spelling::WirePath;
 use repoweave::placement::PlacementOutput;
 use repoweave::pull::{
@@ -103,8 +103,8 @@ use repoweave::status::{
 };
 use repoweave::sync::{
     ContainmentOutput, ContainmentVerdictOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput,
-    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
-    SYNC_TO_JSON_SCHEMA_URL,
+    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LandJsonOutput, SYNC_JSON_SCHEMA_URL,
+    LAND_JSON_SCHEMA_URL,
 };
 use repoweave::update::{
     MemberOutcomeOutput, MemberOutcomeStatus, UpdateJsonOutput, UPDATE_SCHEMA_URL,
@@ -201,8 +201,8 @@ fn cases() -> Vec<VerbCase> {
             corpus: sync_corpus,
         },
         VerbCase {
-            verb: "sync-to",
-            schema_url: SYNC_TO_JSON_SCHEMA_URL,
+            verb: "land",
+            schema_url: LAND_JSON_SCHEMA_URL,
             corpus: sync_to_corpus,
         },
         VerbCase {
@@ -285,7 +285,7 @@ fn advance() -> Step3AdvanceOutput {
     }
 }
 
-/// A checkout in this workspace and one in another, as sync-to places both.
+/// A checkout in this workspace and one in another, as land places both.
 fn placements() -> Vec<PlacementOutput> {
     vec![
         PlacementOutput {
@@ -495,7 +495,7 @@ fn branch_corpus() -> Vec<(&'static str, Value)> {
 
 /// Wire values `tests/common/doctor_corpus.rs` does not reach: it fixes every
 /// sample's `severity` at `warning`, samples the only violation carrying an
-/// `OpVerb` at `sync-to`, and holds one sample per finding, so a finding's
+/// `OpVerb` at `land`, and holds one sample per finding, so a finding's
 /// closed-vocabulary field takes a single value there. Nothing else produces
 /// these, so they are supplied here rather than left unvalidated.
 fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
@@ -1105,7 +1105,7 @@ fn op_status(verb: OpVerb, phase: OpPhase) -> OpStatus {
         owner: wire("/ws"),
         source: wire("/ws/.workweaves/proj--feat-a"),
         target: wire("/ws"),
-        overrides: vec![Override::AllowStaleLock, Override::DiscardLocalCommits],
+        overrides: Vec::new(),
     }
 }
 
@@ -1294,11 +1294,11 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
         ("op-sync-replay", OpVerb::Sync, OpPhase::Replay),
         ("op-sync-relock", OpVerb::Sync, OpPhase::Relock),
         (
-            "op-sync-to-advance-target",
-            OpVerb::SyncTo,
+            "op-land-advance-target",
+            OpVerb::Land,
             OpPhase::AdvanceTarget,
         ),
-        ("op-sync-to-retire", OpVerb::SyncTo, OpPhase::Retire),
+        ("op-land-retire", OpVerb::Land, OpPhase::Retire),
         ("op-pull-replay", OpVerb::Pull, OpPhase::Replay),
         (
             "op-update-remote-relock",
@@ -1326,7 +1326,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
 }
 
 // ---------------------------------------------------------------------------
-// sync and sync-to
+// sync and land
 // ---------------------------------------------------------------------------
 
 /// Every [`VcsErrorOutput`] variant, which is what a sync failure's `cause`
@@ -1424,7 +1424,7 @@ fn sync_failures() -> Vec<SyncFailureOutput> {
 
 /// Every [`SyncOutcomeOutput`] variant. `step3_advance` is sampled at both
 /// settings on every variant that carries it, because `sync` omits it and
-/// `sync-to` supplies it — one envelope's normal shape is the other's.
+/// `land` supplies it — one envelope's normal shape is the other's.
 /// Every containment verdict, each paired with a baseline, so both closed
 /// vocabularies are sampled across one corpus document. Absence is sampled
 /// separately by the outcomes that carry `None`.
@@ -1765,8 +1765,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
             "from-a-workweave-advancing-the-project-repo",
-            value(SyncToJsonOutput {
-                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            value(LandJsonOutput {
+                schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
@@ -1784,8 +1784,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
         ),
         (
             "from-the-primary-weave-no-op-advance",
-            value(SyncToJsonOutput {
-                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            value(LandJsonOutput {
+                schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: None,
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
@@ -1808,8 +1808,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
         // what tells a consumer the emptiness is a resume, not a zero-repo op.
         (
             "resumed-downstream-of-replay-at-relock",
-            value(SyncToJsonOutput {
-                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            value(LandJsonOutput {
+                schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
@@ -1826,8 +1826,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
         ),
         (
             "resumed-mid-advance-target",
-            value(SyncToJsonOutput {
-                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            value(LandJsonOutput {
+                schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
@@ -1844,8 +1844,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
         ),
         (
             "resumed-at-retire-after-clearing-the-refusal",
-            value(SyncToJsonOutput {
-                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            value(LandJsonOutput {
+                schema: LAND_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
@@ -2277,7 +2277,7 @@ fn a_dropped_field_inside_a_record_is_reported_for_every_verb() {
 /// count is an integer. The pin is `format: uint` plus `minimum: 0`.
 #[test]
 fn a_negative_commit_count_is_reported() {
-    for verb in ["sync", "sync-to"] {
+    for verb in ["sync", "land"] {
         let schema = json_schema::committed_schema(verb);
         let case = cases()
             .into_iter()

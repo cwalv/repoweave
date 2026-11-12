@@ -1,8 +1,8 @@
-//! Pins where each `rwv sync-to --json` `step3_advance` comes from.
+//! Pins where each `rwv land --json` `step3_advance` comes from.
 //!
 //! The envelope's identity fields — `source_workweave`, `target`, `retired`,
 //! `resumed` — are built from what the machine reported alone, by a type: the
-//! outcome the envelope is built from lives in `src/sync/sync_to_envelope.rs`,
+//! outcome the envelope is built from lives in `src/sync/land_envelope.rs`,
 //! where only the handler sets its fields. The resumed-op tests in
 //! `tests/sync_to_json_test.rs` separate the machine's answer from the
 //! invocation's behaviorally.

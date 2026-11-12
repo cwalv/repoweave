@@ -1,4 +1,4 @@
-//! `rwv abort` of a parked `sync-to` gives the same verdict on every repo
+//! `rwv abort` of a parked `land` gives the same verdict on every repo
 //! whichever of the op's two workspaces it is invoked from.
 //!
 //! Each repo is judged by the side it sits on in the owner record: the
@@ -88,7 +88,7 @@ fn transcript(out: &Output) -> String {
 
 /// A primary weave with one member, and a seat forked from it by `rwv
 /// workweave create`. Both then commit to the same file of the member, and
-/// the primary relocks, so the seat's `sync-to` replays the primary's project
+/// the primary relocks, so the seat's `land` replays the primary's project
 /// repo onto the seat and parks on the member's rebase conflict.
 ///
 /// `seat_project_commit` gives the seat a project commit of its own, so the
@@ -172,13 +172,13 @@ fn pre_op(parked: &Parked) -> PreOp {
 
 fn run_sync_to_into_park(parked: &Parked) {
     let out = common::rwv()
-        .arg("sync-to")
+        .arg("land")
         .current_dir(&parked.seat.root)
         .output()
         .unwrap();
     assert!(
         !out.status.success(),
-        "the member conflict must park sync-to:\n{}",
+        "the member conflict must park land:\n{}",
         transcript(&out)
     );
     assert!(parked.seat.root.join(".rwv-op").exists());

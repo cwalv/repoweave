@@ -56,7 +56,7 @@ pub struct StatusJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
-    /// The sync/sync-to op parked at this workspace, or leased to one
+    /// The sync/land op parked at this workspace, or leased to one
     /// elsewhere, if any. Absent when no op is in progress — the same
     /// disclosure the in-flight refusal makes, before an operator has to
     /// attempt a mutation to learn it.
@@ -998,7 +998,7 @@ mod tests {
                 owner: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
                 source: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/source")),
                 target: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
-                overrides: vec![op_state::Override::AllowStaleLock],
+                overrides: Vec::new(),
             }),
         };
 
@@ -1009,7 +1009,7 @@ mod tests {
         assert_eq!(v["op"]["phase"], "replay");
         assert_eq!(v["op"]["owner"], "/abs/ws/target");
         assert_eq!(v["op"]["source"], "/abs/ws/source");
-        assert_eq!(v["op"]["overrides"][0], "allow-stale-lock");
+        assert_eq!(v["op"]["overrides"], serde_json::json!([]));
         // The record minus the tip tables: neither key exists on the wire.
         assert!(v["op"].get("advanced_tips").is_none());
         assert!(v["op"].get("converged_tips").is_none());
@@ -1018,7 +1018,7 @@ mod tests {
         let op = decoded.op.expect("op present after round-trip");
         assert_eq!(op.verb, op_state::OpVerb::Sync);
         assert_eq!(op.phase, op_state::OpPhase::Replay);
-        assert_eq!(op.overrides, vec![op_state::Override::AllowStaleLock]);
+        assert!(op.overrides.is_empty());
     }
 
     /// The `parent` field carries both the recorded path and the per-repo

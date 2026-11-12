@@ -736,7 +736,7 @@ fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
         "tests/fixture_two_sided.rs",
         &[
             "fn run_the_verb() -> std::process::Output {",
-            "    Command::new(\"rwv\").arg(\"sync-to\").output().unwrap()",
+            "    Command::new(\"rwv\").arg(\"land\").output().unwrap()",
             "}",
             "#[test]",
             "fn t() {",

@@ -29,7 +29,7 @@ enumeration that decides what each can and cannot report.
 
 `rwv lock` (`lock` in `src/lock.rs`), `rwv update --remote`
 (`run_update_remote` in `src/update_remote.rs`) and the relock phase of
-`rwv sync` and `rwv sync-to` (`run_relock` in `src/sync.rs`) write `rwv.lock`.
+`rwv sync` and `rwv land` (`run_relock` in `src/sync.rs`) write `rwv.lock`.
 `rwv update --remote` writes it once its worker pool has joined and every repo
 advanced; it and `rwv lock` both go through `write_project_lock`, so the
 snapshot they take is the same function of the manifest and the checkouts.

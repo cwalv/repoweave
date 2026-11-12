@@ -1,7 +1,7 @@
 //! A member whose `url` in the source's `rwv.toml` is a plain path, pulled by
-//! `rwv sync-to` run in a weave without a checkout of it: the clone refuses, the
+//! `rwv land` run in a weave without a checkout of it: the clone refuses, the
 //! member's line and its `--json` record name `unresolvable-repo-source`, and
-//! respelling the `url` as a `file://` URL, as the message says, lets the sync-to
+//! respelling the `url` as a `file://` URL, as the message says, lets the land
 //! complete.
 
 use std::path::{Path, PathBuf};
@@ -116,7 +116,7 @@ fn sync_to_names_the_refusal_and_respelling_the_url_completes_it() {
     let w = weaves();
     let source = w.source.to_str().unwrap().to_owned();
 
-    let out = run(&w.target, &["sync-to", &source]);
+    let out = run(&w.target, &["land", &source]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let failed = stderr
         .lines()
@@ -132,7 +132,7 @@ fn sync_to_names_the_refusal_and_respelling_the_url_completes_it() {
     assert!(!out.status.success());
     succeed(&w.target, &["abort"]);
 
-    let out = run(&w.target, &["sync-to", &source, "--json"]);
+    let out = run(&w.target, &["land", &source, "--json"]);
     let envelope: serde_json::Value =
         serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&out)));
     let members = envelope["members"].as_array().unwrap();
@@ -160,6 +160,6 @@ fn sync_to_names_the_refusal_and_respelling_the_url_completes_it() {
         &["fetch", "-q", "origin"],
     );
 
-    succeed(&w.target, &["sync-to", &source]);
+    succeed(&w.target, &["land", &source]);
     assert!(common::under(&w.target, &w.member).join(".git").exists());
 }

@@ -386,7 +386,7 @@ fn resume_words(verb: &str) -> String {
 }
 
 /// An op is only resumable under the verb that started it — running
-/// `rwv sync --continue` against a stalled `sync-to` earns the verb-mismatch
+/// `rwv sync --continue` against a stalled `land` earns the verb-mismatch
 /// refusal. So the finding has to name the record's own verb, and must not
 /// name any other.
 #[test]
@@ -854,7 +854,7 @@ fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
     );
 }
 
-/// A parked `sync-to`: its owner record, and the savepoints it filed per repo
+/// A parked `land`: its owner record, and the savepoints it filed per repo
 /// on both sides (`<op-id>`, and `<op-id>-target` for the target's).
 fn parked_sync_to(root: &Path) -> (PathBuf, String, String) {
     let repo_rel = "github/acme/server";
@@ -867,7 +867,7 @@ fn parked_sync_to(root: &Path) -> (PathBuf, String, String) {
 
     let op_id = "555555555555555556".to_owned();
     let target_side = format!("{op_id}-target");
-    write_op_state_for_verb(root, &op_id, "sync-to");
+    write_op_state_for_verb(root, &op_id, "land");
     add_savepoint(&repo_abs, &op_id, &head_sha);
     add_savepoint(&repo_abs, &target_side, &head_sha);
     (repo_abs, op_id, target_side)
@@ -884,7 +884,7 @@ fn a_parked_sync_to_does_not_have_its_target_side_savepoint_reported_orphaned() 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         !stdout.contains("orphaned-savepoint"),
-        "a sync-to's target-side savepoint belongs to the op in flight; got:\n{stdout}"
+        "a land's target-side savepoint belongs to the op in flight; got:\n{stdout}"
     );
 }
 
@@ -909,7 +909,7 @@ fn doctor_fix_keeps_the_target_side_savepoint_of_a_parked_sync_to() {
     );
 }
 
-/// The control for the test above: only a `sync-to` files a target side, so
+/// The control for the test above: only a `land` files a target side, so
 /// the target-side name beside a plain `sync` is no op's savepoint.
 #[test]
 fn a_plain_sync_op_does_not_own_a_target_side_savepoint() {

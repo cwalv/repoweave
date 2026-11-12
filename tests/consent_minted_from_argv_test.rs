@@ -55,7 +55,7 @@ fn every_consent_mint_sits_in_the_argument_less_run() {
     let mints = mints(&lines);
     for probe in [
         std::any::type_name::<repoweave::cli::consent::DiscardUncommittedConsent>(),
-        std::any::type_name::<repoweave::cli::consent::DiscardLocalCommitsConsent>(),
+        std::any::type_name::<repoweave::cli::consent::DiscardUnlandedConsent>(),
     ] {
         assert!(
             mints

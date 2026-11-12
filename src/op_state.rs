@@ -1,4 +1,4 @@
-//! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv sync-to`.
+//! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv land`.
 //!
 //! # Schema v3 (no back-compat with v2)
 //!
@@ -30,7 +30,7 @@
 //!
 //! `id` is the op id, shared with savepoint refs. `project` is the project
 //! both `source` and `target` are resolved under. `verb` is `sync` or
-//! `sync-to`; `strategy` is `ff` or `rebase`; `phase` is `replay`, `relock`,
+//! `land`; `strategy` is `ff` or `rebase`; `phase` is `replay`, `relock`,
 //! `advance-target`, or `retire`. `advanced_tips` is replay-phase intent (repo
 //! → planned/actual tip): empty before replay entry, cleared at relock in the
 //! same write that populates `converged_tips`, which is written at relock
@@ -57,7 +57,7 @@
 //!
 //! ## Acquisition atomicity
 //!
-//! For `sync` / `sync-to`, the owner record and every touched-workspace lease
+//! For `sync` / `land`, the owner record and every touched-workspace lease
 //! are acquired **atomically at guard time** via [`acquire_op`]: each file is
 //! published with `crate::durable_file::create_new`, and on `AlreadyExists`
 //! anywhere the acquisition unwinds any partial state it created and returns
@@ -123,7 +123,7 @@ pub(crate) const OP_LEASE_FILE: &str = ".rwv-op-lease";
 pub struct OpId(String);
 
 /// What a [`SavepointKey`] appends to an op id to name the target side of a
-/// `sync-to`. No [`OpId`] ends with it.
+/// `land`. No [`OpId`] ends with it.
 const TARGET_SUFFIX: &str = "-target";
 
 /// Text that is not an op id.
@@ -204,7 +204,7 @@ impl fmt::Display for OpId {
 
 /// The name an op's savepoint is filed under.
 ///
-/// A `sync-to` savepoints two workspaces, and the target's repos may share a
+/// A `land` savepoints two workspaces, and the target's repos may share a
 /// ref store with the owner's when both are worktrees of one clone. Filed
 /// under the same name, the first restore of `rwv abort` would drop the ref
 /// the second needs, so the target side has a namespace of its own. Each
@@ -217,15 +217,15 @@ impl fmt::Display for OpId {
 pub enum SavepointKey {
     /// The workspace the op replayed in.
     Op(OpId),
-    /// The workspace a `sync-to` advances.
-    SyncToTarget(OpId),
+    /// The workspace a `land` advances.
+    LandTarget(OpId),
 }
 
 impl SavepointKey {
     /// The op this savepoint belongs to, on either side.
     pub fn op(&self) -> &OpId {
         match self {
-            Self::Op(op) | Self::SyncToTarget(op) => op,
+            Self::Op(op) | Self::LandTarget(op) => op,
         }
     }
 }
@@ -234,7 +234,7 @@ impl fmt::Display for SavepointKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Op(op) => write!(f, "{op}"),
-            Self::SyncToTarget(op) => write!(f, "{op}{TARGET_SUFFIX}"),
+            Self::LandTarget(op) => write!(f, "{op}{TARGET_SUFFIX}"),
         }
     }
 }
@@ -246,7 +246,7 @@ impl FromStr for SavepointKey {
         match s.strip_suffix(TARGET_SUFFIX) {
             Some(op) => op
                 .parse()
-                .map(Self::SyncToTarget)
+                .map(Self::LandTarget)
                 .map_err(|_| OpIdError { text: s.to_owned() }),
             None => s.parse().map(Self::Op),
         }
@@ -259,7 +259,7 @@ impl FromStr for SavepointKey {
 /// reads every parameter (source, strategy, target, retire, overrides) back
 /// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
 /// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
-/// it named the PULL verb for a `sync-to` (landing) op, and it re-supplied
+/// it named the PULL verb for a `land` (landing) op, and it re-supplied
 /// arguments the record already holds. The verb comes from the op's `verb`
 /// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
 /// made where the message is written.
@@ -305,8 +305,8 @@ impl fmt::Display for SyncStrategy {
 pub enum OpVerb {
     /// `rwv sync`: a feature takes in its target, or a branch merges `--from`.
     Sync,
-    /// Two-step sync-to.
-    SyncTo,
+    /// `rwv land`: compose in the source, then fast-forward the target.
+    Land,
     /// `rwv pull` with `--merge-upstream` or `--reset-to-upstream`.
     Pull,
     /// `rwv update --remote` with `--merge-upstream` or `--reset-to-upstream`.
@@ -329,7 +329,7 @@ impl std::fmt::Display for OpVerb {
 ///
 /// ```text
 /// guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
-///                                               (sync-to only)   (--retire only)
+///                                               (land only)   (--retire only)
 /// ```
 ///
 /// The persisted phase is always the phase in progress. Every phase is
@@ -342,7 +342,7 @@ pub enum OpPhase {
     /// Regenerate and commit `rwv.lock` (today's Phase 3). On completion,
     /// converged tips are written into the owner record.
     Relock,
-    /// FF-advance every target repo to its converged tip (sync-to only).
+    /// FF-advance every target repo to its converged tip (land only).
     AdvanceTarget,
     /// Merged-check then workweave removal (`--retire` only).
     Retire,
@@ -452,13 +452,7 @@ impl PhaseTips {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "kebab-case")]
-pub enum Override {
-    /// The lock-freshness precondition was waived on both sides.
-    AllowStaleLock,
-    /// Phase 1' may hard-reset the project repo past commits the source does
-    /// not carry.
-    DiscardLocalCommits,
-}
+pub enum Override {}
 
 /// The overrides an op runs under, each at most once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -511,6 +505,10 @@ pub struct TakeInRecord {
     /// The repos `sync --reset-to-target` names, spelled as an operand.
     #[serde(default)]
     pub reset_to_target: Vec<String>,
+    /// The source's project tip a landing composes from, once its op-start
+    /// relock committed.
+    #[serde(default)]
+    pub source_tip: Option<CommitId>,
 }
 
 /// What a `sync` takes in.
@@ -567,7 +565,7 @@ pub struct OwnerRecord {
     /// The source workspace.
     pub source: CanonicalPath,
     /// The target workspace (for `sync`: same as the owner workspace; for
-    /// `sync-to`: the named target workspace).
+    /// `land`: the named target workspace).
     pub target: CanonicalPath,
     /// Whether `--retire` was passed.
     pub retire: bool,
@@ -704,10 +702,10 @@ impl OwnerRecord {
         }
     }
 
-    /// Build a new [`OwnerRecord`] for a `rwv sync-to` invocation.
+    /// Build a new [`OwnerRecord`] for a `rwv land` invocation.
     ///
     /// Initial phase is `Replay` — the first phase the driver will enter.
-    pub fn new_sync_to(
+    pub fn new_land(
         op_id: &OpId,
         strategy: SyncStrategy,
         project: ProjectName,
@@ -717,7 +715,7 @@ impl OwnerRecord {
     ) -> Self {
         Self {
             id: op_id.clone(),
-            verb: OpVerb::SyncTo,
+            verb: OpVerb::Land,
             strategy,
             project,
             source: CanonicalPath::of(cwd_workspace),
@@ -791,7 +789,7 @@ pub struct OwnerHeader {
 }
 
 impl OwnerHeader {
-    /// The keys this op files savepoints under: its own, and for a `sync-to`
+    /// The keys this op files savepoints under: its own, and for a `land`
     /// the target side's. A savepoint under any of them belongs to the op for
     /// as long as its record exists.
     pub fn savepoint_keys(&self) -> Vec<SavepointKey> {
@@ -799,9 +797,9 @@ impl OwnerHeader {
             OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => {
                 vec![SavepointKey::Op(self.id.clone())]
             }
-            OpVerb::SyncTo => vec![
+            OpVerb::Land => vec![
                 SavepointKey::Op(self.id.clone()),
-                SavepointKey::SyncToTarget(self.id.clone()),
+                SavepointKey::LandTarget(self.id.clone()),
             ],
         }
     }
@@ -1174,7 +1172,7 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// the window between the read and what the caller does next stays open. A
 /// caller here declines to START while an op involves the workspace and holds
 /// nothing afterwards; a caller that needs the exclusion itself takes it
-/// through [`acquire_op`] instead, which is `sync` and `sync-to` alone. Which
+/// through [`acquire_op`] instead, which is `sync` and `land` alone. Which
 /// verbs sit on each side is enumerated where a new one reddens the
 /// enumeration, in `tests/concurrency_boundaries_test.rs`, rather than in this
 /// sentence, where the last enumeration went false without anything noticing.
@@ -1189,7 +1187,7 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// there is no auto-expiry; `rwv abort`'s verified restore is the way out.
 ///
 /// For non-mutating callers this is enough — they don't write op state, so
-/// there is no TOCTOU exposure. For `sync` / `sync-to`, which do write op
+/// there is no TOCTOU exposure. For `sync` / `land`, which do write op
 /// state, use [`acquire_op`] instead: it performs the same refusal shape but
 /// via an atomic create so two concurrent ops cannot both pass and only
 /// collide later at the git layer.
@@ -1305,7 +1303,7 @@ impl AcquiredOp {
 /// at it.
 ///
 /// `sync` mutates only the workspace it runs in, so it has no leases;
-/// `sync-to` also mutates the target and leases it. Acquisition and cleanup
+/// `land` also mutates the target and leases it. Acquisition and cleanup
 /// both take the set from here. Spelled at each site instead, the two drift
 /// apart the moment a verb starts touching another workspace, and the leases
 /// cleanup then stops clearing surface only as dead-lease doctor findings.
@@ -1319,7 +1317,7 @@ impl TouchedWorkspaces {
     pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: &Path) -> Self {
         let leases = match verb {
             OpVerb::Sync | OpVerb::Pull | OpVerb::UpdateRemote => Vec::new(),
-            OpVerb::SyncTo => vec![dest_workspace_dir.to_path_buf()],
+            OpVerb::Land => vec![dest_workspace_dir.to_path_buf()],
         };
         Self {
             owner: owner_workspace_dir.to_path_buf(),
@@ -1595,7 +1593,7 @@ pub fn resume(workspace_dir: &Path) -> anyhow::Result<ResolvedOwner> {
         None => {
             crate::refuse!(
                 RefusalKind::NoOpRecorded,
-                "no sync/sync-to op in progress to continue at {}. \
+                "no sync/land op in progress to continue at {}. \
                  If you meant to start a new op, omit `--continue`.",
                 workspace_dir.display()
             );
@@ -1754,12 +1752,12 @@ mod tests {
     }
 
     /// The resume verb is derived from the op's `verb` field, never hardcoded
-    /// `rwv sync`: naming the pull verb for a `sync-to` op sends the operator
+    /// `rwv sync`: naming the pull verb for a `land` op sends the operator
     /// into the verb-mismatch refusal.
     #[test]
     fn resume_command_derives_from_op_verb() {
         assert_eq!(resume_command(OpVerb::Sync), "rwv sync --continue");
-        assert_eq!(resume_command(OpVerb::SyncTo), "rwv sync-to --continue");
+        assert_eq!(resume_command(OpVerb::Land), "rwv land --continue");
     }
 
     // -----------------------------------------------------------------------
@@ -1781,7 +1779,7 @@ mod tests {
   "schema": 3,
   "release": "{release}",
   "id": "1779769917405921588",
-  "verb": "sync-to",
+  "verb": "land",
   "strategy": "rebase",
   "project": "web-app",
   "source": {source},
@@ -1845,7 +1843,7 @@ mod tests {
         let op: OpId = "1779769917405921588".parse().unwrap();
         for key in [
             SavepointKey::Op(op.clone()),
-            SavepointKey::SyncToTarget(op.clone()),
+            SavepointKey::LandTarget(op.clone()),
         ] {
             assert_eq!(key.to_string().parse::<SavepointKey>().unwrap(), key);
             assert_eq!(key.op(), &op);
@@ -1855,7 +1853,7 @@ mod tests {
             "1779769917405921588"
         );
         assert_eq!(
-            SavepointKey::SyncToTarget(op).to_string(),
+            SavepointKey::LandTarget(op).to_string(),
             "1779769917405921588-target"
         );
     }
@@ -1869,7 +1867,7 @@ mod tests {
         assert_eq!(sync.savepoint_keys(), vec![SavepointKey::Op(op.clone())]);
         assert_eq!(
             sync_to.savepoint_keys(),
-            vec![SavepointKey::Op(op.clone()), SavepointKey::SyncToTarget(op)]
+            vec![SavepointKey::Op(op.clone()), SavepointKey::LandTarget(op)]
         );
     }
 
@@ -2337,7 +2335,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
-        let record = OwnerRecord::new_sync_to(
+        let record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Ff,
             test_project(),
@@ -2347,7 +2345,7 @@ mod tests {
         );
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
-        assert_eq!(read_back.verb, OpVerb::SyncTo);
+        assert_eq!(read_back.verb, OpVerb::Land);
         assert_eq!(read_back.strategy, SyncStrategy::Ff);
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(read_back.retire);
@@ -2642,7 +2640,7 @@ mod tests {
         std::fs::create_dir_all(&lease_dir).unwrap();
 
         let op_id = OpId::new_now();
-        let record = OwnerRecord::new_sync_to(
+        let record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
@@ -2662,7 +2660,7 @@ mod tests {
         let resolved = resolve_to_owner(&lease_dir).unwrap().unwrap();
         assert_eq!(resolved.owner_workspace, CanonicalPath::of(&owner_dir));
         assert_eq!(resolved.record.id, record.id);
-        assert_eq!(resolved.record.verb, OpVerb::SyncTo);
+        assert_eq!(resolved.record.verb, OpVerb::Land);
     }
 
     #[test]
@@ -2745,7 +2743,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
-        let mut record = OwnerRecord::new_sync_to(
+        let mut record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
@@ -2759,8 +2757,8 @@ mod tests {
         assert_eq!(
             err,
             format!(
-                "sync-to in progress (started {elapsed} ago, mid `replay`) at {dir}.\n\
-                 Rerun with `rwv sync-to --continue` from that workspace after \
+                "land in progress (started {elapsed} ago, mid `replay`) at {dir}.\n\
+                 Rerun with `rwv land --continue` from that workspace after \
                  resolving, or `rwv abort` to discard.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = dir.display(),
@@ -2780,7 +2778,7 @@ mod tests {
         std::fs::create_dir_all(&lease_dir).unwrap();
 
         let op_id = OpId::new_now();
-        let mut record = OwnerRecord::new_sync_to(
+        let mut record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
@@ -2803,9 +2801,9 @@ mod tests {
         assert_eq!(
             err,
             format!(
-                "sync-to in progress (started {elapsed} ago, mid `replay`); this \
+                "land in progress (started {elapsed} ago, mid `replay`); this \
                  workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
-                 Rerun with `rwv sync-to --continue` from the owner workspace after \
+                 Rerun with `rwv land --continue` from the owner workspace after \
                  resolving, or `rwv abort` to discard.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = lease_dir.display(),
@@ -2884,7 +2882,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
-        let record = OwnerRecord::new_sync_to(
+        let record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
@@ -2981,7 +2979,7 @@ mod tests {
         std::fs::create_dir_all(&lease_dir).unwrap();
 
         let op_id = OpId::new_now();
-        let record = OwnerRecord::new_sync_to(
+        let record = OwnerRecord::new_land(
             &op_id,
             SyncStrategy::Ff,
             test_project(),
@@ -3011,7 +3009,7 @@ mod tests {
         let err = resume(tmp.path()).unwrap_err().to_string();
         assert!(
             err.contains("no sync"),
-            "expected 'no sync/sync-to op in progress' error; got: {err}"
+            "expected 'no sync/land op in progress' error; got: {err}"
         );
     }
 
@@ -3072,7 +3070,7 @@ mod tests {
     }
 
     fn sync_to_touched(owner: &Path, target: &Path) -> TouchedWorkspaces {
-        TouchedWorkspaces::of(OpVerb::SyncTo, owner, target)
+        TouchedWorkspaces::of(OpVerb::Land, owner, target)
     }
 
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
@@ -3080,7 +3078,7 @@ mod tests {
     }
 
     fn make_sync_to_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
-        OwnerRecord::new_sync_to(
+        OwnerRecord::new_land(
             op_id,
             SyncStrategy::Rebase,
             test_project(),
@@ -3110,7 +3108,7 @@ mod tests {
 
     #[test]
     fn acquire_op_writes_owner_plus_lease_for_sync_to() {
-        // `sync-to` writes an owner at CWD and a lease at the target.
+        // `land` writes an owner at CWD and a lease at the target.
         let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let target_dir = tmp.path().join("target");
@@ -3181,7 +3179,7 @@ mod tests {
             "refusal must name in-flight state; got: {err}"
         );
         assert!(
-            err.contains("sync-to in progress"),
+            err.contains("land in progress"),
             "refusal must name the prior op's verb: {err}"
         );
         assert!(
@@ -3195,7 +3193,7 @@ mod tests {
 
     #[test]
     fn acquire_op_rolls_back_owner_when_lease_workspace_taken() {
-        // sync-to acquires owner then lease. If the lease workspace already
+        // land acquires owner then lease. If the lease workspace already
         // holds an op-state file, the just-written owner MUST be rolled back
         // so a refusal leaves no trace (cleanup table).
         let tmp = crate::tempdir().unwrap();
@@ -3203,7 +3201,7 @@ mod tests {
         let target_dir = tmp.path().join("target");
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&target_dir).unwrap();
-        // Plant a lease at the target (as if a prior sync-to already claimed it).
+        // Plant a lease at the target (as if a prior land already claimed it).
         let prior_lease = LeaseRecord {
             id: "prior-op".parse().unwrap(),
             owner: CanonicalPath::of(Path::new("/some/prior/owner")),

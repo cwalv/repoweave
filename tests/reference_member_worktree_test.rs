@@ -9,7 +9,7 @@
 //!     into the parent workweave.
 //!   - delete: the canonical clone keeps everything but the workweave's own
 //!     branch, even while it is dirty.
-//!   - sync, sync-to, `--retire` and abort pass over a detached `reference`
+//!   - sync, land, `--retire` and abort pass over a detached `reference`
 //!     member that holds nothing of its own, and never write into the
 //!     canonical clone's own branch except by landing.
 
@@ -324,7 +324,7 @@ fn sync_to_lands_an_owned_commit_past_a_detached_reference_member() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -360,7 +360,7 @@ fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
         ));
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -386,7 +386,7 @@ fn sync_to_retire_with_a_reference_member_retires_the_workweave() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -421,7 +421,7 @@ fn abort_restores_a_reference_member_like_any_other() {
     );
     let advanced = commit_file(&ww.ref_checkout, "R", "r\n", "op: advance");
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{target}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{\"{REF_PATH}\": \"{advanced}\"}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",

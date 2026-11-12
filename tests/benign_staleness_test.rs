@@ -12,7 +12,7 @@
 //!
 //! These tests exercise BOTH the `LockRelation::Ahead` (benign) branch and the
 //! `LockRelation::Behind` / `Diverged` / `NoLock` / `Unknown` (refuse) branches
-//! on both `sync` and `sync-to`.
+//! on both `sync` and `land`.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -166,11 +166,11 @@ fn savepoint_refs(repo: &Path) -> Vec<String> {
 #[test]
 fn relation_ok_sync_to_succeeds() {
     let f = fixture();
-    // ww makes a project-only (non-lock) commit so sync-to has something to land
+    // ww makes a project-only (non-lock) commit so land has something to land
     // while the manifest repo stays at the ok lock relation.
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -178,7 +178,7 @@ fn relation_ok_sync_to_succeeds() {
     assert_eq!(
         head(&f.main.project_dir),
         head(&f.ww.project_dir),
-        "sync-to must land ww's project commit on main"
+        "land must land ww's project commit on main"
     );
 }
 
@@ -210,7 +210,7 @@ fn relation_ok_sync_succeeds() {
 // LockRelation::Ahead (spec term "lock behind HEAD") — benign
 // ===========================================================================
 
-/// sync-to: a workweave whose manifest repo advanced past its committed lock
+/// land: a workweave whose manifest repo advanced past its committed lock
 /// (relation `Ahead`) auto-relocks at op START, printing the LOUD per-repo line
 /// INCLUDING the commit count, and the op succeeds.
 #[test]
@@ -223,7 +223,7 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -299,7 +299,7 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     // that the hook fired at all — without it, every check below holds against
     // a run where the hook never ran and the relock succeeded.
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -368,13 +368,13 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     // that was blocked must now go through.
     common::git_in(&f.ww.project_dir, &["config", "--unset", "core.hooksPath"]);
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
 }
 
-/// sync-to: the TARGET's manifest repo advanced past the target's committed
+/// land: the TARGET's manifest repo advanced past the target's committed
 /// lock (relation `Ahead` on the target side). Replay takes its targets from the
 /// target's lock, so the target's unlocked commits would be missing from the tip
 /// CWD replays onto and step 3's fast-forward could not proceed. Refuse at op
@@ -401,7 +401,7 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     let cwd_project_before = head(&f.ww.project_dir);
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -428,28 +428,28 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     assert_eq!(
         head(&f.main.manifest_repo),
         target_lib_before,
-        "a refused sync-to must leave the target's manifest repo untouched"
+        "a refused land must leave the target's manifest repo untouched"
     );
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
-        "a refused sync-to must NOT advance the target's project repo"
+        "a refused land must NOT advance the target's project repo"
     );
     assert_eq!(
         std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap(),
         target_lock_before,
-        "a refused sync-to must leave the target's lock file untouched"
+        "a refused land must leave the target's lock file untouched"
     );
     assert_eq!(
         head(&f.ww.project_dir),
         cwd_project_before,
-        "a refused sync-to must leave CWD's project repo untouched"
+        "a refused land must leave CWD's project repo untouched"
     );
 
     // No op-state leaked: a re-run repeats the SAME refusal rather than
     // reporting an in-flight op.
     let again = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -479,7 +479,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
 
     let ww_project_before = head(&f.ww.project_dir);
     let assert = rwv()
-        .args(["sync-to", &f.ww.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&child.root)
         .assert()
         .failure();
@@ -494,7 +494,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
     assert_eq!(
         head(&f.ww.project_dir),
         ww_project_before,
-        "a refused sync-to must leave the workweave target's project repo untouched"
+        "a refused land must leave the workweave target's project repo untouched"
     );
 
     rwv()
@@ -503,7 +503,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
         .assert()
         .success();
     rwv()
-        .args(["sync-to", &f.ww.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&child.root)
         .assert()
         .success();
@@ -533,7 +533,7 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
 
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -546,7 +546,7 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
         .success();
 
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -568,7 +568,7 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
     assert_eq!(
         head(&f.main.project_dir),
         head(&f.ww.project_dir),
-        "after the remedy, sync-to must land CWD's project commit on the target"
+        "after the remedy, land must land CWD's project commit on the target"
     );
     // The lock the target ends up with pins the tip it holds — not the stale
     // revision the refusal was about.
@@ -593,8 +593,7 @@ fn allow_stale_lock_target_ahead_still_fails_at_step_3_without_blaming_concurren
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.main.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&f.ww.root)
@@ -635,8 +634,7 @@ fn allow_stale_lock_step_3_failure_leaves_the_target_lock_true_about_its_members
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.main.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&f.ww.root)
@@ -703,8 +701,7 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
 
     rwv()
         .args([
-            "sync-to",
-            &f.main.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&f.ww.root)
@@ -717,7 +714,7 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
     let cwd_lib_after_fix = head(&f.ww.manifest_repo);
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -781,7 +778,7 @@ fn sync_with_lock_behind_head_proceeds_and_keeps_member_work() {
 // LockRelation::Behind (spec term "ahead" — HEAD reset below lock) — refuse
 // ===========================================================================
 
-/// sync-to: CWD's committed lock records a manifest SHA that HEAD does not have
+/// land: CWD's committed lock records a manifest SHA that HEAD does not have
 /// (HEAD is a strict ancestor of the lock — relation `Behind`). This is the
 /// reset/`update`-without-FF case; it must REFUSE, naming the relation, and
 /// retain `--allow-stale-lock`.
@@ -801,7 +798,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
     let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -815,7 +812,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
-        "a refused sync-to must leave the target's project repo untouched"
+        "a refused land must leave the target's project repo untouched"
     );
 
     // Escape hatch still works: --allow-stale-lock bypasses the gate. Use
@@ -823,8 +820,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
     // no-op is fine) to confirm the flag opens the door.
     rwv()
         .args([
-            "sync-to",
-            &f.main.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
             "--strategy=ff",
         ])
@@ -837,7 +833,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
 // LockRelation::Diverged — refuse, additionally hint `rwv lock --commit`
 // ===========================================================================
 
-/// sync-to: CWD's lock and HEAD have diverged past a shared base (out-of-band
+/// land: CWD's lock and HEAD have diverged past a shared base (out-of-band
 /// rewrite). Refuse, name `diverged`, and hint `rwv lock --commit` to bless HEAD.
 #[test]
 fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
@@ -861,7 +857,7 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     let target_lib_before = head(&f.main.manifest_repo);
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -876,12 +872,12 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
-        "a refused sync-to must leave the target's project repo untouched"
+        "a refused land must leave the target's project repo untouched"
     );
     assert_eq!(
         head(&f.main.manifest_repo),
         target_lib_before,
-        "a refused sync-to must leave the target's manifest repo untouched"
+        "a refused land must leave the target's manifest repo untouched"
     );
 }
 
@@ -889,7 +885,7 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
 // LockRelation::NoLock / Unknown — refuse
 // ===========================================================================
 
-/// sync-to: a target lock that pins a tag/branch that does not resolve on
+/// land: a target lock that pins a tag/branch that does not resolve on
 /// disk is a corrupt-lock error — refuse, naming the unknown revision.
 #[test]
 fn unresolvable_target_lock_refuses_naming_unknown_revision() {
@@ -909,7 +905,7 @@ fn unresolvable_target_lock_refuses_naming_unknown_revision() {
 
     let dest_lib_before = head(&f.ww.manifest_repo);
     let assert = rwv()
-        .args(["sync-to", "primary"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -925,7 +921,7 @@ fn unresolvable_target_lock_refuses_naming_unknown_revision() {
     );
 }
 
-/// sync-to: a CWD project that carries NO committed lock at all classifies as
+/// land: a CWD project that carries NO committed lock at all classifies as
 /// `no-lock` and refuses (define behavior explicitly — not a silent proceed).
 #[test]
 fn no_lock_sync_to_refuses() {
@@ -936,7 +932,7 @@ fn no_lock_sync_to_refuses() {
     let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -948,7 +944,7 @@ fn no_lock_sync_to_refuses() {
     assert_eq!(
         head(&f.main.project_dir),
         target_project_before,
-        "a refused sync-to must leave the target's project repo untouched"
+        "a refused land must leave the target's project repo untouched"
     );
 }
 
@@ -956,7 +952,7 @@ fn no_lock_sync_to_refuses() {
 // Source-side cleanliness preflight (§1)
 // ===========================================================================
 
-/// sync-to refuses UP FRONT on a tracked-dirty manifest repo, naming the dirty
+/// land refuses UP FRONT on a tracked-dirty manifest repo, naming the dirty
 /// repo, before any op-state write or rebase.
 #[test]
 fn dirty_source_tracked_change_refuses_and_names_repo() {
@@ -965,31 +961,31 @@ fn dirty_source_tracked_change_refuses_and_names_repo() {
     std::fs::write(f.ww.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
         stderr.contains(&format!(
-            "rwv sync-to: {MANIFEST_REPO_PATH}: edits dirty\n    README.md\n"
+            "rwv land: {MANIFEST_REPO_PATH}: edits dirty\n    README.md\n"
         )),
         "tracked dirt must refuse up front naming the repo; got:\n{stderr}"
     );
 }
 
-/// sync-to IGNORES untracked files in the source (they survive the replay). An
+/// land IGNORES untracked files in the source (they survive the replay). An
 /// untracked scratch file must not block a landing.
 #[test]
 fn dirty_source_untracked_file_is_ignored() {
     let f = fixture();
-    // Give sync-to something to land (a project-only commit), plus an UNTRACKED
+    // Give land something to land (a project-only commit), plus an UNTRACKED
     // scratch file in the manifest repo that must not refuse.
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
     std::fs::write(f.ww.manifest_repo.join("scratch.tmp"), "scratch\n").unwrap();
 
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -1031,7 +1027,7 @@ fn unborn(repo: &Path) {
 
 fn sync_to_main_refusal(f: &Fixture) -> String {
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -1117,7 +1113,7 @@ fn follow_advised_git(stderr: &str) {
 fn lands_after_following_advice(f: &Fixture, stderr: &str, commits: &[&str]) {
     follow_advised_git(stderr);
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -1197,7 +1193,7 @@ fn detached_source_diverged_from_its_branch_lands_both_sides_and_ends_on_its_bra
     assert!(stderr.contains("switch -c <new-branch>`"), "{stderr}");
     follow_advised_git(&stderr);
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -1230,7 +1226,7 @@ fn detached_source_whose_branch_is_gone_lands_after_the_advised_switch_c() {
 }
 
 /// Carve-out: a project repo dirty ONLY in `rwv.lock` is NOT dirt (it is the
-/// auto-relock's own input). sync-to proceeds and commits the regenerated lock.
+/// auto-relock's own input). land proceeds and commits the regenerated lock.
 #[test]
 fn dirty_source_rwv_lock_only_is_carved_out() {
     let f = fixture();
@@ -1255,7 +1251,7 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
     );
 
     rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -1273,13 +1269,13 @@ fn dirty_source_non_lock_project_change_refuses() {
     std::fs::write(&yaml_path, y).unwrap();
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("rwv sync-to: projects/app: edits dirty\n    rwv.toml\n"),
+        stderr.contains("rwv land: projects/app: edits dirty\n    rwv.toml\n"),
         "a tracked non-lock project change must refuse and name the file; got:\n{stderr}"
     );
 }
@@ -1324,8 +1320,7 @@ fn the_already_ahead_line_states_how_far_the_source_moved_past_its_lock() {
     // source has moved past.
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.main.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&f.ww.root)
@@ -1357,7 +1352,7 @@ fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
     commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
 
     let assert = rwv()
-        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();

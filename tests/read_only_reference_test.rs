@@ -2,7 +2,7 @@
 //! primary and in every workweave, after every verb that writes or moves
 //! them; every other member's stay writable by their owner.
 //!
-//!   - create, fetch, add, sync, sync-to, update and abort settle what they
+//!   - create, fetch, add, sync, land, update and abort settle what they
 //!     wrote, and sync's own move of a read-only member succeeds;
 //!   - a role that changes under sync or abort is settled to the new role;
 //!   - doctor reports a member whose files disagree with its role, and
@@ -444,13 +444,13 @@ fn sync_to_leaves_the_reference_members_read_only() {
     commit_all(&seat.join(OWNED_PATH), "seat: new owned file");
     succeed(&["lock", "--commit"], &seat);
 
-    succeed(&["sync-to", &weave.primary.to_string_lossy()], &seat);
+    succeed(&["land"], &seat);
 
     assert!(weave.owned.join("NEW").exists(), "the commit landed");
-    assert_read_only(&weave.reference, "the primary's reference after sync-to");
+    assert_read_only(&weave.reference, "the primary's reference after land");
     assert_read_only(
         &seat.join(REF_PATH),
-        "the workweave's reference after sync-to",
+        "the workweave's reference after land",
     );
 }
 
@@ -547,7 +547,7 @@ fn abort_restoring_an_older_manifest_resettles_the_target() {
     std::fs::write(seat.join(OWNED_PATH).join("UNTRACKED"), "u\n").unwrap();
 
     let retired = run(
-        &["sync-to", &weave.primary.to_string_lossy(), "--retire"],
+        &["land", "--retire"],
         &seat,
     );
     assert!(

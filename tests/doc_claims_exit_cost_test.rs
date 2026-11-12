@@ -2,7 +2,7 @@
 //! give leaves plain standalone clones, with exactly two traces: a
 //! `reference` member's tracked files without write bits, and the recovery
 //! refs under `refs/rwv/`. The list is closed, so this drives a weave
-//! through a workweave, an aborted `sync-to`, a landed one and a workweave
+//! through a workweave, an aborted `land`, a landed one and a workweave
 //! given up with its unmerged commits, leaves by those steps, and compares
 //! each clone with a fresh `git clone` of the same upstream.
 
@@ -129,14 +129,14 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     succeed(&ws, &["lock"]);
     common::git_in(&project, &["add", "rwv.lock"]);
     common::git_in(&project, &["commit", "-m", "primary: relock"]);
-    let parked = rwv(&seat, &["sync-to"]);
-    assert!(!parked.status.success(), "the conflict must park sync-to");
+    let parked = rwv(&seat, &["land"]);
+    assert!(!parked.status.success(), "the conflict must park land");
     succeed(&seat, &["abort"]);
 
     let primary_tip = common::git_in(&primary_lib, &["rev-parse", "HEAD"]);
     common::git_in(&seat_lib, &["reset", "--hard", &primary_tip]);
     commit_file(&seat_lib, "d.txt", "seat\n", "seat: lib again");
-    succeed(&seat, &["sync-to"]);
+    succeed(&seat, &["land"]);
     succeed(&ws, &["workweave", "delete", "--project", PROJECT, "s1"]);
 
     succeed(&ws, &["workweave", "create", "--project", PROJECT, "s2"]);

@@ -6,14 +6,14 @@ Two verbs, two directions:
   feature takes in the branch its record lands into (its target), and any
   weave branch can merge another's history in with `--from <branch>`. Only
   this workspace changes.
-- **`rwv sync-to <target>`** — CWD's committed state lands in the target
+- **`rwv land`** — CWD's committed state lands in the target
   workspace. CWD absorbs target's state first (CWD's commits on top),
   then the target fast-forwards to CWD's new tip. Both CWD and target
   change; the named target ends up with CWD's commits linearly above
   its prior state.
 
 `rwv sync` names no workspace: what it takes in is a branch, read from the
-branch's record. `rwv sync-to <target>` names the workspace that receives
+branch's record. `rwv land` names the workspace that receives
 CWD's state (like `git push <target>`).
 
 ## Taking in: `rwv sync`
@@ -54,16 +54,16 @@ conflict stops it, `rwv sync --continue` resumes, and `rwv abort` restores
 every repo to its savepoint. Once every repo has taken in, members the new
 entries drop are pruned and the rest are aligned as `rwv update` aligns them.
 
-## The `sync-to` phase machine
+## The `land` phase machine
 
-`sync-to` runs one machine; retire runs only under `--retire`:
+`land` runs one machine; retire runs only under `--retire`:
 
 ```
 guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
                                                                (--retire only)
 ```
 
-| Phase | What it does | `sync-to` | `sync-to --retire` |
+| Phase | What it does | `land` | `land --retire` |
 |---|---|:---:|:---:|
 | guard | Checks every precondition before anything moves | yes | yes |
 | mark, savepoint | Records the operation and writes a savepoint ref in every repo it may move | yes | yes |
@@ -102,7 +102,7 @@ not deleted over them; what it committed stays on its branch, which the
 deletion rule keeps unless it landed.
 
 **Whose lock is the target.** Phase 2 advances to the target's lock.
-`sync-to` refuses a target whose lock is behind its HEAD, naming the repo, its
+`land` refuses a target whose lock is behind its HEAD, naming the repo, its
 commit count and the `rwv lock --commit` that fixes it. A repo already ahead
 of its target is reported `already-ahead` and left where it is.
 
@@ -120,11 +120,11 @@ operation out. See
 ## Abort: verified-restore contract
 
 `rwv abort` restores every workspace the operation involved — CWD, and the
-target of a `sync-to` — to its pre-op state from the savepoint refs. A
+target of a `land` — to its pre-op state from the savepoint refs. A
 `sync` involves only CWD.
 
 **Savepoints.** Before replay moves anything, each repo the op may move gets
-a savepoint ref, `refs/rwv/pre-op/<op-id>`, and a `sync-to` target's repos get
+a savepoint ref, `refs/rwv/pre-op/<op-id>`, and a `land` target's repos get
 `refs/rwv/pre-op/<op-id>-target`, because worktrees of one repo share a ref
 store.
 
@@ -144,7 +144,7 @@ kept. `rwv backup list` shows the backup and `rwv backup drop` drops it.
 
 ## Snapshot reads
 
-A `sync-to` reads its target once, at the start of the operation (T₀): its
+A `land` reads its target once, at the start of the operation (T₀): its
 project `HEAD`, with the manifest and lock read at that revision. A change to
 the target after T₀ cannot reach anything the op has read. On `--continue` a
 new T₀ is pinned, so a resumed op converges on the target as it is then. A
@@ -153,7 +153,7 @@ those same tips.
 
 ## Strategy choice
 
-`rwv sync` defaults to `ff` and `rwv sync-to` to `rebase`. In `sync-to` both
+`rwv sync` defaults to `ff` and `rwv land` to `rebase`. In `land` both
 repo classes — the project repo (Phase 1') and member repos (Phase 2) — run
 under the same `--strategy`:
 
@@ -185,7 +185,7 @@ repoweave it does not:
   check stops a plain `git push`, but while nobody bypasses rwv that way,
   rebasing that branch rewrites nothing anyone else can have seen. Naming the
   branch (`rwv branch rename <new>`) is what makes it publishable.
-- **Landing rebases only the unpublished side.** `sync-to` rebases CWD (the
+- **Landing rebases only the unpublished side.** `land` rebases CWD (the
   workweave) against the target, then fast-forwards the target.
 - **Divergence that arrives through a remote** is `update --remote`'s and git's to
   handle, not a sync strategy's.
@@ -202,25 +202,13 @@ own override, named for what it gives up:
 - `rwv sync --reset-to-target <repo>` — move the named repo's branch to what
   it lands on instead of integrating it, keeping the tip it leaves as a backup
   and listing the work it drops.
-- `rwv sync-to --allow-stale-lock` — skip the lock-freshness precondition on
-  both CWD and the target, for a lock that is intentionally ahead of HEAD. On
-  a target whose lock is *behind* its HEAD it only defers the refusal to
-  advance-target's fast-forward, so refresh that lock instead.
-- `rwv sync-to --discard-local-commits` — hard-reset CWD's project repo to
-  the target's tip, discarding CWD's committed divergence. Refused if
-  the project repo has uncommitted changes, which the reset would destroy
-  unrecoverably. The discarded commits outlive the op: the project repo's
-  savepoint is kept as a tombstone, and once `rwv abort` no longer applies,
-  `rwv doctor --fix` turns it into a backup, which `rwv backup list` shows and
-  `rwv backup drop` drops.
-
-`--continue` resumes with the overrides the op started with. The naming rule
+`--continue` resumes with the plan the op recorded. The naming rule
 behind these flags, and why `push --overwrite` is named for the repo it replaces, is stated once
 in [destructive-operations](../destructive-operations.md#2-named-overrides-are-narrow-and-informed).
 
 ## The Phase 1' ancestor precondition
 
-Before Phase 1', `sync-to` checks the ancestor relationship between CWD's
+Before Phase 1', `land` checks the ancestor relationship between CWD's
 project tip and the target's project tip:
 
 | Relation | `ff` | `rebase` |
@@ -230,13 +218,12 @@ project tip and the target's project tip:
 | The target is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
 | Diverged (neither ancestor) | Refused | Handled by strategy |
 
-The `ff` refusal names `--strategy rebase`, which *lands* CWD's project
-commits, and `--discard-local-commits`, which *discards* them into the
-savepoint tombstone.
+The `ff` refusal names `--strategy rebase`, which composes CWD's project
+commits onto the target's tip.
 
 ## Parallel landing (`-j N`)
 
-With `-j N` (`N > 1`), `sync-to`'s Phase 2 fans out across a bounded worker pool. The
+With `-j N` (`N > 1`), `land`'s Phase 2 fans out across a bounded worker pool. The
 default is `-j 1`. `--json` prints the same envelope whatever `-j` is, once
 the op is done: `{"$schema": "<url>", "outcomes": [...]}`, with `outcomes`
 sorted by repo path however the workers finished, beside `placements`, replay
@@ -248,8 +235,8 @@ op-state, false when a phase parked it.
 
 ## Auto-target
 
-Bare `rwv sync-to` inside a workweave targets the recorded parent from
-`.rwv-workweave`; in a primary weave it is an error. `rwv sync` reads what it
+`rwv land` lands into the checked-out feature's record's target, wherever that
+target is checked out; `--target <T>` lands into another branch for one run. `rwv sync` reads what it
 takes in from the checked-out branch's record, and `--target <T>` takes in
 another branch for one run.
 
@@ -260,7 +247,7 @@ another branch for one run.
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree the
   parent-tracking auto-target walks.
 - [workweave-lifecycle](./workweave-lifecycle.md) — the operator-facing
-  lifecycle (create → work → sync-to --retire → delete) that the phase
+  lifecycle (create → work → land --retire → delete) that the phase
   machine underpins.
 - [shared-refs-drift](./shared-refs-drift.md) — the post-Phase-2
   reconciliation interacts with shared-refs drift in workweaves.

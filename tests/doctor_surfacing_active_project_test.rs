@@ -34,7 +34,7 @@
 //! project, under an active project with no cargo or go integration) stays
 //! invisible, and re-fixing as the active project is not a complete undo.
 //!
-//! Scope. `rwv sync-to`, `rwv sync-to --retire` and `rwv workweave create`
+//! Scope. `rwv land`, `rwv land --retire` and `rwv workweave create`
 //! scoped to a non-active project were measured against the live weave before
 //! and after: the shared-name links were byte-identical every time. The
 //! surfacing repair is the reproducer, so that is what this pins.

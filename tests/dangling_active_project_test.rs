@@ -170,18 +170,18 @@ fn sync_fails_on_dangling_active() {
 }
 
 // ---------------------------------------------------------------------------
-// 8. `rwv sync-to` fails fast on a dangling .rwv-active
+// 8. `rwv land` fails fast on a dangling .rwv-active
 // ---------------------------------------------------------------------------
 
 #[test]
 fn sync_to_fails_on_dangling_active() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    // Create a sibling workweave so sync-to has a valid source to parse
+    // Create a sibling workweave so land has a valid source to parse
     // (the active-project check fires before any git operations).
     set_dangling_active(&ws, "evaporated");
 
-    let stderr = fail(&ws, &["sync-to", "primary"]);
+    let stderr = fail(&ws, &["land"]);
     assert_dangling_error(&stderr, "evaporated");
 }
 

@@ -81,16 +81,16 @@ Where this pays off day-to-day:
 
 Workweaves can be nested — `rwv workweave create` run from inside a workweave forks from it: the workspace the verb runs in is the parent, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., one that tracks the latest released lock, or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
 
-## `rwv sync` and `rwv sync-to`: bringing the work home
+## `rwv sync` and `rwv land`: bringing the work home
 
 In a monorepo, "merging your feature back to trunk" is one operation. In a polyrepo, it's N operations across N repositories — each with its own conflict potential.
 
 repoweave's sync surface is a direction-explicit verb pair:
 
 - **`rwv sync`** (default strategy `ff`) — a feature takes in the new work of the branch it lands into: each member from the branch it will land on, then the project branch, then the relock. Under `--strategy rebase`, the feature's own commits land on top. Only CWD changes. Use this to pull work in (e.g., take primary's new commits into a feature workweave before landing); work built on a line the target has left is refused before anything moves.
-- **`rwv sync-to [<target>]`** (default strategy `rebase`) — CWD's committed state lands in the target workspace. CWD first rebases onto the target's state and auto-relocks, then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
+- **`rwv land`** (default strategy `rebase`) — CWD's committed state lands in the target workspace. CWD first rebases onto the target's state and auto-relocks, then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
 
-`rwv sync-to` runs a phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the member repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips; a final step fast-forwards the target workspace to CWD's converged tips.
+`rwv land` runs a phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the member repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips; a final step fast-forwards the target workspace to CWD's converged tips.
 
 `rwv.lock` is never merged as text. rwv's own merges and replays recompute it fresh every time, and a `git merge` you run by hand merges it through the lock merge driver `rwv init` and `rwv clone` set up, pin by pin, leaving a conflict rather than picking a side when pins diverge. A project repo not set up that way is refused by every verb that writes it, naming `rwv doctor --fix`. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
@@ -98,10 +98,10 @@ For the common case — work in a feature workweave, bring it home — the one-l
 
 ```bash
 cd ../.workweaves/web-app--payments
-rwv sync-to --retire
+rwv land --retire
 ```
 
-`rwv sync-to --retire` lands CWD's commits into the recorded parent (one hop) and deletes the workweave on success. See [bring workweave work home](../../how-to/bring-workweave-work-home.md).
+`rwv land --retire` lands the workweave's feature into its record's target and deletes the workweave on success. See [bring workweave work home](../../how-to/bring-workweave-work-home.md).
 
 ## Collective coordination, not VCS replacement
 
@@ -162,7 +162,7 @@ These are *guidelines*, not enforced constraints. The tool warns where it can (s
 
 ## The shape, in one paragraph
 
-Workspace wiring eliminates the development-time version dance: edit a library, test its consumer, no bump or publish needed. `rwv.lock` captures the cross-repo state as a single fingerprint. Workweaves give you isolated parallel work without losing project context — your feature, the PR you're reviewing, the agent's sandbox, all coexist with the primary weave undisturbed. `rwv sync` and `rwv sync-to` move work between workspaces with the lock as the authoritative target — absorbing incoming state in one direction, landing outgoing commits in the other. Underneath, repoweave is a coordination layer: it manages multi-repo state but stays out of your VCS workflow, so `git` keeps its first-class role.
+Workspace wiring eliminates the development-time version dance: edit a library, test its consumer, no bump or publish needed. `rwv.lock` captures the cross-repo state as a single fingerprint. Workweaves give you isolated parallel work without losing project context — your feature, the PR you're reviewing, the agent's sandbox, all coexist with the primary weave undisturbed. `rwv sync` and `rwv land` move work between workspaces with the lock as the authoritative target — absorbing incoming state in one direction, landing outgoing commits in the other. Underneath, repoweave is a coordination layer: it manages multi-repo state but stays out of your VCS workflow, so `git` keeps its first-class role.
 
 ## Related
 

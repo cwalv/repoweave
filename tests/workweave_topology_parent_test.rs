@@ -4,7 +4,7 @@
 //!   1. retire/delete ADOPT living children (0/1/N children; grandparent vs
 //!      primary fallback) and print the loud per-child line.
 //!   2. dangling-parent `rwv doctor --fix` re-points to primary.
-//!   3. a bare `rwv sync-to` on a dangling parent emits friendly
+//!   3. a bare `rwv land` on a dangling parent emits friendly
 //!      doctor-remediation text (no raw `failed to canonicalize … (os error 2)`).
 //!   4. `rwv status --json` `.parent` carries the recorded path + parent tip,
 //!      correct for a STACKED parent.
@@ -213,12 +213,13 @@ fn delete_refuses_while_workweave_is_mid_op() {
 
     // Plant a v2 owner record in the workweave root (simulate an in-flight op).
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-delete-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
+        plan = common::land_plan_json(&ww.root, &main.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
@@ -233,7 +234,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("sync-to in progress") && stderr.contains("in progress (started"),
+        stderr.contains("land in progress") && stderr.contains("in progress (started"),
         "refusal must name the in-flight op with its age; got:\n{stderr}"
     );
     assert!(
@@ -256,12 +257,13 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let ww = create_workweave(&main, "busyforce", None);
 
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(&main.root),
         tgt = common::json_escaped(&ww.root),
+        plan = common::land_plan_json(&main.root, &ww.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
@@ -284,7 +286,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("sync-to in progress"),
+        stderr.contains("land in progress"),
         "refusal must name the in-flight op even under the waivers; got:\n{stderr}"
     );
     assert!(
@@ -472,7 +474,7 @@ fn delete_with_n_children_adopts_all() {
     }
 }
 
-/// Retire (`sync-to --retire`) adopts children the same way delete does: the
+/// Retire (`land --retire`) adopts children the same way delete does: the
 /// shared child-enumeration + adopt step.
 #[test]
 fn retire_adopts_children() {
@@ -480,20 +482,20 @@ fn retire_adopts_children() {
     let main = make_main_workspace(tmp.path());
 
     // wwa from primary; wwb from wwa. wwa makes no unique commits, so a bare
-    // sync-to --retire lands nothing and cleanly retires.
+    // land --retire lands nothing and cleanly retires.
     let wwa = create_workweave(&main, "wwa", None);
     let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
 
-    // Retire wwa to primary (bare sync-to reads parent = primary).
+    // Retire wwa to primary (bare land reads parent = primary).
     rebind(&main, &format!("{PROJECT}--wwb"), "main");
     let out = rwv()
-        .args(["sync-to", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&wwa.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "sync-to --retire failed:\n{}\n{}",
+        "land --retire failed:\n{}\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -524,7 +526,7 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
     commit_file(&a.manifest_repo, "a.txt", "from a\n", "a: add a.txt");
     rwv_lock_commit(&a.root);
     rwv()
-        .args(["sync-to", &p2.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&a.root)
         .assert()
         .success();
@@ -533,7 +535,7 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
 
 fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
     rwv()
-        .args(["sync-to", &target.root.to_string_lossy(), "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&a.root)
         .output()
         .unwrap()
@@ -589,18 +591,19 @@ fn continuing_a_parked_retire_refuses_records_that_disagree() {
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "parked", None);
     let op_json = format!(
-        "{{\"id\": \"planted-retire-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-retire-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(&ww.root),
         tgt = common::json_escaped(&main.root),
+        plan = common::land_plan_json(&ww.root, &main.root, "web-app"),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
     unlist(&main, &ww);
 
     let out = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -625,7 +628,7 @@ fn a_retire_whose_records_come_to_disagree_mid_op_deletes_nothing() {
 
     let mut retire = common::rwv_std();
     retire
-        .args(["sync-to", "--retire", "--strategy=ff"])
+        .args(["land", "--retire", "--strategy=ff"])
         .current_dir(&ww.root);
     let held = common::pause::Paused::spawn(retire, "advance-target", &tmp.path().join("pause"))
         .unwrap_or_else(|e| panic!("{e}"));
@@ -724,10 +727,10 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
 }
 
 // ===========================================================================
-// 3. Friendly error replaces raw canonicalize on bare sync-to
+// 3. Friendly error replaces raw canonicalize on bare land
 // ===========================================================================
 
-/// A bare `rwv sync-to` from a workweave whose parent vanished must emit
+/// A bare `rwv land` from a workweave whose parent vanished must emit
 /// friendly doctor-remediation text — NOT the raw `failed to canonicalize …
 /// (os error 2)`.
 #[test]
@@ -742,11 +745,11 @@ fn bare_sync_to_dangling_parent_is_friendly() {
     std::fs::remove_dir_all(&wwa.root).unwrap();
 
     let out = rwv()
-        .args(["sync-to"])
+        .args(["land"])
         .current_dir(&wwb.root)
         .output()
         .unwrap();
-    assert!(!out.status.success(), "bare sync-to should refuse");
+    assert!(!out.status.success(), "bare land should refuse");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
@@ -1154,10 +1157,10 @@ fn log_against_diff_json_includes_project_repo() {
 }
 
 // ===========================================================================
-// 6. sync / sync-to use the recorded parent, not primary — stacked case
+// 6. sync / land use the recorded parent, not primary — stacked case
 // ===========================================================================
 
-/// Bare `rwv sync-to` (no target) from a workweave forked from ANOTHER
+/// Bare `rwv land` (no target) from a workweave forked from ANOTHER
 /// workweave lands upward onto that STACKED parent, not primary. This is
 /// the case that distinguishes the marker's `parent` field from `primary` —
 /// a resolver that fell back to primary would pass the primary-forked
@@ -1179,7 +1182,7 @@ fn bare_sync_to_follows_recorded_stacked_parent() {
     rwv_lock_commit(&wwb.root);
 
     rwv()
-        .args(["sync-to", "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&wwb.root)
         .assert()
         .success();
@@ -1187,11 +1190,11 @@ fn bare_sync_to_follows_recorded_stacked_parent() {
     let wwa_lib_head = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         wwa_lib_head, wwb_sha,
-        "bare sync-to must land on the recorded parent wwa, not primary"
+        "bare land must land on the recorded parent wwa, not primary"
     );
     let primary_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_ne!(
         primary_lib_head, wwb_sha,
-        "primary must not advance — bare sync-to targets only the immediate recorded parent"
+        "primary must not advance — bare land targets only the immediate recorded parent"
     );
 }

@@ -31,7 +31,7 @@ Git submodules pin a commit SHA from one repo inside another. They solve the rep
 
 **git submodules win when:** your use case is purely pinning — a firmware repo that vendors a hardware-abstraction library at a known commit, a docs repo that embeds a spec. No writable workspace needed, no parallel work, no agent integration.
 
-**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update --remote` advances every member repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
+**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `land --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update --remote` advances every member repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
 
 ## git subtree
 
@@ -79,7 +79,7 @@ Android's [repo](https://gerrit.googlesource.com/git-repo) and Zephyr's [west](h
 
 **git worktree wins when:** your work lives in a single repo. It is a first-class git primitive with no extra tooling required.
 
-**repoweave wins when:** your workspace spans N repos. A `rwv workweave` is `git worktree` extended across every repo in the manifest — plus per-workweave `node_modules`/`.venv`/`target`, ecosystem workspace files, and a `sync-to --retire` landing path that coordinates the cross-repo fast-forward in one command. repoweave uses `git worktree` internally; the two are complementary at different scopes.
+**repoweave wins when:** your workspace spans N repos. A `rwv workweave` is `git worktree` extended across every repo in the manifest — plus per-workweave `node_modules`/`.venv`/`target`, ecosystem workspace files, and a `land --retire` landing path that coordinates the cross-repo fast-forward in one command. repoweave uses `git worktree` internally; the two are complementary at different scopes.
 
 ## The meta-repo failure mode
 
@@ -100,7 +100,7 @@ Earlier tools split into two dataflows:
 
 repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv clone` / `rwv update` / `rwv sync`)**:
 
-- **Reconciliation is built into the verbs:** the authoring verbs (`add`, `remove`, `update --remote`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
+- **Reconciliation is built into the verbs:** the authoring verbs (`add`, `remove`, `update --remote`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `land` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
 - **Drift is detectable and repairable:** `rwv doctor`, including each integration's own checks, reports divergence, and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>` savepoints.
 - **Ordinary git stays first-class:** there is no `rwv commit` or wrapped git porcelain ([verb-vs-composition](explanation/joints/verb-vs-composition.md)).
 
@@ -110,5 +110,5 @@ Adopting `rwv` carries real trade-offs:
 
 1. **An extra binary on developer and CI machines.** Contributors and CI jobs that build across the weave install `rwv` (though individual member repos remain buildable standalone with plain `git`).
 2. **An $(N+1)$th repository to maintain.** The project repo (`projects/<name>/`) holds `rwv.toml`, `rwv.lock`, and generated workspace files; cross-repo features include a lock update commit in the project repo (`rwv lock --commit` + `rwv push`).
-3. **Branch discipline in canonical clones.** Canonical clones in the primary weave stay on the branch declared in `rwv.toml` (`branch = "main"`, recorded by `rwv member add`). Isolated feature work routes through workweaves (`rwv workweave create <name>`, landed with `rwv sync-to --retire`) rather than ad-hoc `git checkout -b` inside canonical clones (see [Workweave lifecycle](explanation/joints/workweave-lifecycle.md)).
+3. **Branch discipline in canonical clones.** Canonical clones in the primary weave stay on the branch declared in `rwv.toml` (`branch = "main"`, recorded by `rwv member add`). Isolated feature work routes through workweaves (`rwv workweave create <name>`, landed with `rwv land --retire`) rather than ad-hoc `git checkout -b` inside canonical clones (see [Workweave lifecycle](explanation/joints/workweave-lifecycle.md)).
 4. **Overkill for a single repo or rarely coupled repos.** If all your code lives in one repository, use `git worktree` directly. If two repositories only interact through a stable published API once a quarter, publish to a package registry and skip workspace coordination altogether.

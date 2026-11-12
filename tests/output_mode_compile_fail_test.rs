@@ -25,17 +25,17 @@ fn the_harness_can_compile_a_verb_handed_its_mode() {
         use repoweave::selector::RepoFilter;
         use repoweave::status::run_status;
         use repoweave::feature_sync::{run_sync, Run};
-        use repoweave::sync::{run_sync_to, sync_to_json_run, SyncRequest};
+        use repoweave::sync::{run_land, land_json_run, SyncRequest};
         use repoweave::workspace::WorkspaceContext;
 
         pub fn modes(ctx: &WorkspaceContext, filter: &RepoFilter, request: SyncRequest) {
             let _ = run_status(ctx, OutputMode::from_flag(true), filter);
-            let _ = sync_to_json_run(ctx, request);
+            let _ = land_json_run(ctx, request);
             let _ = run(ctx, &LogQuery::Range(None), OutputMode::Text);
         }
         pub fn sync(ctx: &WorkspaceContext, request: SyncRequest) {
             let _ = run_sync(ctx, Run::Continue, OutputMode::Text);
-            let _ = run_sync_to(ctx, request, OutputMode::Text);
+            let _ = run_land(ctx, request, OutputMode::Text);
         }
         "#,
     );
@@ -124,14 +124,14 @@ fn sync_decides_text_or_json_from_the_mode_it_is_handed() {
 fn the_json_only_runner_is_handed_no_mode() {
     assert_fails_with(
         "E0061",
-        "the sync-to json runner has one shape, so nothing chooses it",
+        "the land json runner has one shape, so nothing chooses it",
         r#"
         use repoweave::parallel::OutputMode;
-        use repoweave::sync::{sync_to_json_run, SyncRequest};
+        use repoweave::sync::{land_json_run, SyncRequest};
         use repoweave::workspace::WorkspaceContext;
 
         pub fn text(ctx: &WorkspaceContext, request: SyncRequest) {
-            let _ = sync_to_json_run(ctx, request, OutputMode::Text);
+            let _ = land_json_run(ctx, request, OutputMode::Text);
         }
         "#,
     );

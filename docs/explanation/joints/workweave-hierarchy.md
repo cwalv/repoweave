@@ -48,17 +48,18 @@ flowchart TD
     P -->|create| B
     A -->|create| AC
 
-    A -.->|rwv sync-to| P
-    B -.->|rwv sync-to| P
-    AC -.->|rwv sync-to| A
+    A -.->|rwv land| P
+    B -.->|rwv land| P
+    AC -.->|rwv land| A
 ```
 
 - **Creation direction** (primary → workweave). `rwv workweave create`
   starts from the current workspace's commits. The child starts pinned to the
   parent's committed lock, and the parent does not switch.
-- **Landing direction** (workweave → parent). `rwv sync-to` pushes the
-  child's committed work *up* toward the root. Each `rwv sync-to`
-  advances exactly one edge (one hop, see below). `rwv sync` goes the
+- **Landing direction** (workweave → target). `rwv land` lands the
+  child's feature into the branch its record names, which a workweave
+  created from another workspace records as that workspace's branch: one
+  edge per landing (see below). `rwv sync` goes the
   other direction: a feature takes in the new work of the branch its
   record lands into.
 
@@ -91,39 +92,31 @@ migrates it to the current JSON shape.
 Tool-tracked parentage is what makes two operations safe to run without
 an explicit target:
 
-1. **Bare `rwv sync-to` has a target.** Running `rwv sync-to` with no
-   argument pushes to the recorded parent. From a child workweave that
-   means the parent workweave, not the primary. `rwv sync` names no
+1. **`rwv land` has a target.** A workweave's record names the branch
+   it lands into: from a child workweave, its parent workweave's branch,
+   not the primary's. `rwv sync` names no
    workspace: what it takes in is the branch the checked-out branch's
    record names.
-2. **`rwv sync-to --retire` knows what to retire to.** The retire flag
-   pushes to the recorded parent, verifies convergence, and deletes the
+2. **`rwv land --retire` knows what to retire to.** The retire flag
+   lands into the record's target, applies the deletion rule, and removes the
    workweave on success.
 
 ## One hop, not transitive
 
-Bare `rwv sync-to` follows the parent edge — one hop. It does not chase
-the tree up to the primary on its own. From a child of a workweave,
-reaching primary takes two sync-to invocations:
+`rwv land` lands into the branch the feature's record names. A workweave
+created from another workweave records that workweave's branch as its target,
+so its landing goes one hop. From a child of a workweave, reaching the
+primary's branch takes two landings:
 
 ```bash
 cd ../.workweaves/web-app--feat-child        # from the primary weave root
-rwv sync-to               # → parent workweave (web-app--feat)
+rwv land               # → web-app--feat's branch
 cd ../web-app--feat
-rwv sync-to               # → primary
+rwv land               # → main
 ```
 
-Or one explicit sync-to that names the target:
-
-```bash
-cd ../.workweaves/web-app--feat-child
-rwv sync-to primary
-```
-
-The one-hop default is intentional. Transitive sync-to would silently
-land the child's work in a workspace it was never forked from, bypassing
-the intermediate review step. Explicit-target sync-to is always available
-when the operator means it.
+`rwv land --target <T>` lands into another branch for one run, when the
+operator means it; the record is unchanged.
 
 ## What rwv tracks vs. what is discipline
 
@@ -133,9 +126,9 @@ operator-managed. Worth being explicit:
 | Behavior | Tool support | Discipline |
 |---|---|---|
 | Recording the parent edge | Yes (`.rwv-workweave`) | — |
-| Bare `rwv sync-to` auto-targets the parent | Yes | — |
-| `rwv sync-to --retire` lands one hop and deletes on success | Yes | — |
-| Sibling-to-sibling coordination | No | Sync-to via shared parent |
+| `rwv land` lands into the record's target | Yes | — |
+| `rwv land --retire` lands and deletes on success | Yes | — |
+| Sibling-to-sibling coordination | No | Land into the shared target |
 | Cross-picking commits across branches | No | Use `git cherry-pick` directly |
 | Promotion between branches in the project repo | No | Ordinary git workflow |
 | Detecting unusual flow (skip-rebase, sibling sync) | Limited | Operator awareness |
@@ -189,23 +182,23 @@ disk.
 
 By default each workweave runs on a flat per-workweave minted branch name — e.g.
 `web-app--hotfix` (or `chatly+web-app--hotfix` for a scoped project)
-rather than `main`. This is what lets `rwv sync-to` work cleanly as a
+rather than `main`. This is what lets `rwv land` work cleanly as a
 local-to-local primitive.
 
 Git imposes a constraint: only one worktree can have a given branch
 checked out at a time. If two workweaves both tracked `main`, checking
 out the second would require the first to detach its HEAD, and the
-sequence `sync-to primary` would be trying to push into a branch another
+sequence `land` into `main` would be trying to push into a branch another
 worktree owns. The analogous single-repo operation — `git push
 <local-path> feature:main` — is similarly awkward when `main` is already
 checked out at the destination.
 
 rwv sidesteps this entirely. Because primary's `main` and a workweave's
 `web-app--hotfix` are different branch names, no two
-workweaves compete for the same named branch. `rwv sync-to` can push
+workweaves compete for the same named branch. `rwv land` can push
 directly into primary's `main` without any detach-or-stash dance. The
 ephemeral naming scheme is not just bookkeeping — it is what makes
-`sync-to` a clean primitive where the single-repo git analog is not.
+`land` a clean primitive where the single-repo git analog is not.
 
 ## A workweave's branch is recorded
 

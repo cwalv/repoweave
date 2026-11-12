@@ -9,7 +9,7 @@
 //! `--discard-unlanded`, exactly as a member's are. Delete refuses
 //! when one hosts another tree's worktree, unregisters it from the clone it
 //! links into, and retires the seat's branch there, as it does for a member;
-//! `sync-to --retire` weighs it the same way before deleting the seat.
+//! `land --retire` weighs it the same way before deleting the seat.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -139,7 +139,7 @@ fn seat_with_a_stranded_dirty_checkout(weave: &Weave) -> PathBuf {
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
-    let pulled = run(&s1, &["sync-to", "--strategy", "rebase"]);
+    let pulled = run(&s1, &["land", "--strategy", "rebase"]);
     assert_eq!(
         pulled.status.code(),
         Some(1),
@@ -462,7 +462,7 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
     assert!(!clone.exists());
 }
 
-/// `sync-to --retire` weighs a checkout its manifest does not name before it
+/// `land --retire` weighs a checkout its manifest does not name before it
 /// deletes the seat, as it weighs a member.
 #[test]
 fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
@@ -475,7 +475,7 @@ fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
     );
     std::fs::write(stray.join("scratch.txt"), "untracked\n").unwrap();
 
-    let out = run(&s1, &["sync-to", "--retire"]);
+    let out = run(&s1, &["land", "--retire"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         std::fs::read_to_string(stray.join("scratch.txt")).ok(),
@@ -486,7 +486,7 @@ fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
     assert!(
         stderr.ends_with("\n\nrwv explain edits\n")
             && stderr.contains(&format!(
-                "rwv sync-to: local/owner/stray: edits dirty {OUTSIDE}\n    scratch.txt\n"
+                "rwv land: local/owner/stray: edits dirty {OUTSIDE}\n    scratch.txt\n"
             )),
         "{stderr}"
     );

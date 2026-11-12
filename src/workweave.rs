@@ -2355,7 +2355,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // Write .rwv-workweave marker file. The marker records the primary so
     // workweaves always know how to find their parent weave regardless of
     // where they were forked from. `parent` records the workspace this
-    // workweave was forked from (= source_root) so a bare `rwv sync-to` knows
+    // workweave was forked from (= source_root) so a bare `rwv land` knows
     // where to land. For workweaves forked directly from primary, parent
     // == primary; for workweaves forked from another workweave, parent is
     // that workweave's directory.
@@ -3000,12 +3000,12 @@ fn member_depth_checkouts(workweave_dir: &Path, manifest: &Manifest) -> Vec<Memb
 
 /// Merge baselines for a workweave: workspace roots whose lineage counts as
 /// "this work has landed". The recorded parent (the workspace the workweave
-/// was forked from, and the default sync-to target) comes first when the
+/// was forked from, and the default land target) comes first when the
 /// marker is readable and the path still exists; then `landed_into`, the
 /// workspace the op deleting this workweave has just synced it into; the
 /// primary weave root is always included, last. With stacked workweaves a
 /// child workweave's work lands in its parent workweave and may reach primary
-/// only after further sync-to hops — checking primary alone would refuse
+/// only after further land hops — checking primary alone would refuse
 /// every child retire. Each workspace is listed once, however it is spelled.
 fn merge_baselines(
     workweave_dir: &Path,
@@ -3242,7 +3242,7 @@ fn adoptive_parent_for_children(retiree_dir: &Path, primary_root: &Path) -> Path
 /// this is exactly why consumers must read parent from the marker, never from
 /// the branch name.
 ///
-/// Shared by both the retire (`sync-to --retire`) and `workweave delete` paths
+/// Shared by both the retire (`land --retire`) and `workweave delete` paths
 /// so the adoption semantics live in exactly one place. Runs BEFORE the retiree
 /// directory is removed (the enumeration reads on-disk markers, but the
 /// grandparent resolution in [`adoptive_parent_for_children`] must see the
@@ -3814,7 +3814,7 @@ pub fn report_deletion(
     Ok(())
 }
 
-/// Delete a workweave as the terminal step of the op that owns it (`sync-to
+/// Delete a workweave as the terminal step of the op that owns it (`land
 /// --retire`).
 ///
 /// `workweave_dir` is the on-disk path resolved by the sync engine at op
@@ -3848,7 +3848,7 @@ pub(crate) fn delete_workweave_for_retire(
 enum Deleter {
     /// `rwv workweave delete`, which an op record in the workweave refuses.
     Operator,
-    /// The `sync-to --retire` op that has just synced the workweave into its
+    /// The `land --retire` op that has just synced the workweave into its
     /// target. It holds its record there until its own cleanup phase, after
     /// the delete.
     RetiringOp,
@@ -3977,7 +3977,7 @@ fn delete_workweave_inner_at(
 
     // Adopt any living children BEFORE destroying the retiree. This re-points
     // each child's recorded parent to the retiree's own recorded parent (the
-    // grandparent; fall back to primary) so a bare `rwv sync-to` from a child
+    // grandparent; fall back to primary) so a bare `rwv land` from a child
     // does not later die on a dangling parent. Runs while the retiree's marker
     // still exists (it names the grandparent). Shared by delete and retire.
     if workweave_dir.exists() {
@@ -4043,7 +4043,7 @@ fn delete_workweave_inner_at(
     }
 
     // Remove the workweave directory itself. A process's working directory
-    // is an open handle on Windows, and `sync-to --retire` drives this
+    // is an open handle on Windows, and `land --retire` drives this
     // delete standing inside the workweave — the removal then fails with a
     // sharing violation whose holder is the deleting process itself. Step
     // out to the parent first, but only when the current directory sits

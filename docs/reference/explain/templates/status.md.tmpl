@@ -33,7 +33,7 @@ Run `rwv status --help` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
-When this workspace owns an in-flight `sync`/`sync-to` op, or leases one to
+When this workspace owns an in-flight `sync`/`land` op, or leases one to
 another workspace, a header line prints ahead of the table: verb, op id,
 phase, age, and the owning workspace, followed by the two remedies
 (`--continue` from the owning workspace, or `rwv abort`). This is the same
@@ -124,7 +124,7 @@ in `repos`. The table prints a warning for each instead, and the exit code is
 still 0. Empty, not absent, when every project loaded.
 
 `op` is present only when this workspace owns or leases an in-flight op: an
-`OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
+`OpStatus` record carrying `id`, `verb` (`sync`/`land`), `phase`
 (`replay`/`relock`/`advance-target`/`retire`), `started_at`, the `owner`
 workspace (where `--continue`/`abort` must run), `source`, `target`, and
 `overrides`. Absent (not `null`) when no op is in progress.

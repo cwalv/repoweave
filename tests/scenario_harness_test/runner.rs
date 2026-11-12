@@ -37,7 +37,7 @@ impl MissingVerb {
 /// exit is not, and every green run that passes through it says so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Defect {
-    /// `sync-to` stopped by a target that moved exits 1 naming no refusal.
+    /// `land` stopped by a target that moved exits 1 naming no refusal.
     UnroutedLandingStop,
 }
 
@@ -45,7 +45,7 @@ impl Defect {
     pub fn describe(self) -> &'static str {
         match self {
             Defect::UnroutedLandingStop => {
-                "a sync-to stopped by a moved target exits 1 with no route line"
+                "a land stopped by a moved target exits 1 with no route line"
             }
         }
     }

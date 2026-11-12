@@ -221,8 +221,7 @@ fn sync_to_places_both_workspaces_each_under_its_own_path() {
     let doc = envelope(
         &seat,
         &[
-            "sync-to",
-            &weave.primary.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--json",
@@ -257,7 +256,7 @@ fn sync_to_places_the_end_of_op_reshare_under_two_workers() {
 
     let doc = envelope(
         &seat,
-        &["sync-to", "--strategy", "rebase", "--json", "-j", "2"],
+        &["land", "--strategy", "rebase", "--json", "-j", "2"],
     );
     let context = format!("{doc:#}");
     let placements = doc["placements"].as_array().unwrap();
@@ -323,7 +322,7 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
 
         let target_arg = target.to_string_lossy();
         let (records, placements) =
-            outcomes_and_placements(&seat, &["sync-to", &target_arg, "--json"], "outcomes", jobs);
+            outcomes_and_placements(&seat, &["land", &target_arg, "--json"], "outcomes", jobs);
         let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(target.join(EXTRA).is_dir(), "{context}");
         let placement = placement_of(&placements, &target.join(EXTRA), &context);
@@ -497,7 +496,7 @@ fn file_counts_sit_only_in_placement_records_in_every_committed_schema() {
             "clone",
             "pull",
             "sync",
-            "sync-to",
+            "land",
             "update",
             "update-remote"
         ],

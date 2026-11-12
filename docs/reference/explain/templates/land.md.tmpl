@@ -1,0 +1,244 @@
+# rwv land
+
+## Purpose
+
+Land the checked-out feature into the branch its record lands into (its
+target): the work is composed in this workspace, then the target and each
+member's receiving branch fast-forward where the target is checked out. The
+target is the record's, or `--target <T>`'s for one run; the record is
+unchanged. A declared branch lands nowhere: it refuses as `target`
+`no target`, naming `rwv branch set-mode <W> feature --target <T>`.
+
+Every refusal is judged before anything moves, and all of them are reported
+together. Then, under an op record:
+
+1. **Compose (replay).** Each `owned` or `fork` member the target lists is
+   composed onto the tip of its **receiving branch**: its branch named after
+   the target when the target is itself a feature, else the branch the merged
+   entries declare, read as the newer of that branch and its upstream. A member
+   whose work that branch lacks is rebased onto it (`--strategy rebase`, the
+   default); a member with nothing to land follows it. The project branch is
+   rebased onto the target's tip, again the newer of the target and its
+   upstream. Every rebase happens in this workspace; nothing outside it moves.
+2. **Relock.** The lock is recorded and committed: each member's pin merged
+   three ways against the merge base's lock, every composed member at its
+   composed tip. A `dependency` or `reference` member takes the pin the merge
+   gives it.
+3. **Fast-forward (advance-target).** Where the target is checked out, each
+   receiving branch fast-forwards in its checkout, then the target's project
+   branch, to what was composed. Nothing there is ever rebased or merged.
+4. **Align.** The workspace with the target checked out aligns its members as
+   `rwv update` does, storing the entries without reporting them; then this
+   workspace's members follow the target's new pins. A member alignment leaves
+   where it was is reported, with `rwv update` there to finish it.
+5. **Retire** (`--retire`). The workweave is removed, and the deletion rule
+   decides each of the feature's branches: one that landed is deleted, one
+   that did not survives and is listed with its reason.
+
+Before anything is judged, `rwv land` reads the checked-out branch's record,
+with the records remotes' as last fetched merged in. A record that differs from
+the one this workspace last saw, and that this workspace did not write, refuses
+as `target` `record changed`, with the old and the new value, until `rwv update`
+accepts it or `rwv branch set-mode` restores the old value.
+
+**The `as` check.** A feature's record stores the target's mode when it was
+written. A target used another way now refuses as `target` `mode changed`:
+rebind the feature (`rwv branch set-mode <W> feature --target <T>`) or restore
+the target's mode (`rwv branch set-mode <T> <as>`). A landing is never
+redirected. `--target <T>` takes the target's mode now.
+
+**A record published by another machine** names a target this machine reads
+only through that remote: the target published there, and a local branch of
+that name taking in from it. Anything else refuses as `target` `gone`, never
+landing into an unrelated branch that shares the name.
+
+**The lineage rule.** A member holding work its receiving branch lacks moves
+only when that branch contains its base: the newest commit of its first-parent
+chain that a lock in the target's history pins. Otherwise the landing refuses as
+`pin` `off lineage`, listing the base and the branch, with the fact
+`patch-equivalent` where commits on that branch carry the same changes. A pin
+this clone lacks, where the rule must read it, is `pin` `unreachable`.
+
+**The source's lock.** A member whose checkout is beyond its pin is relocked
+forward at op start, after the savepoints, so `rwv abort` rolls the relock back
+with the rest; one line per member names the pin it took. A member whose relock
+would move its pin backward refuses as `pin` `backwards`; one with no pin as
+`pin` `none`.
+
+**The target's checkouts.** A receiving branch holding commits beyond the
+target's pin that no live lock and no remote reaches refuses as `pin`
+`unpinned`, naming `rwv lock --commit` in the target's workspace: the landing
+would pin work the target never recorded. Commits another live lock pins, or a
+remote holds, are pinned by the landing. A receiving branch that does not reach
+the target's pin refuses as `pin` `not on declared branch`.
+
+A target checked out in no workspace refuses as `target` `checked out
+nowhere`, naming `rwv workweave create <ww> --branch <T>`. A receiving branch
+checked out outside the target's workspace refuses as `checkout` `in another
+workspace`. From the primary, a target a workweave has checked out refuses as
+`checkout` `in another workspace`.
+
+A landing changes none of the target's member entries and not its top-level
+`history`: any change it would make refuses as `target` `member changes`,
+listing each changed field with the target's value and the feature's. Adding a
+member is no change. Another weave branch that lands into this one refuses as
+`target` `dependents`, one line per dependent, before anything moves.
+
+**A target that moved.** The fast-forward compares each branch against what
+was composed for it. A target or receiving branch that another verb moved
+after the landing read it stops the landing as `target` `moved mid-operation`,
+with its op record kept and the refs it already moved left as moved. `rwv
+abort` restores every ref the landing moved; then `rwv land` again judges the
+new tips. `rwv land --continue` refuses it, since the plan no longer describes
+the landing.
+
+## Refusals
+
+| Axis | State | When |
+|---|---|---|
+| `target` | `no target` | the checked-out branch is declared |
+| `target` | `record changed` | the branch's record changed since this workspace last saw it |
+| `target` | `mode changed` | the target is used another way than the record says |
+| `target` | `gone` | the target exists nowhere, or only as a branch another machine's record does not name |
+| `target` | `checked out nowhere` | no workspace has the target checked out |
+| `target` | `member changes` | the landing would change the target's entries or top-level `history` |
+| `target` | `dependents` | another weave branch lands into this one |
+| `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
+| `pin` | `off lineage` | a member's base is not on its receiving branch |
+| `pin` | `unreachable` | the target pins a commit this clone lacks |
+| `pin` | `not on declared branch` | a receiving branch does not reach the target's pin |
+| `pin` | `unpinned` | a receiving branch holds commits nothing records |
+| `pin` | `backwards` | the source's relock would move a pin backward |
+| `pin` | `none` | the source's lock has no pin for a member |
+| `push-branch` | `diverged` | the target or a receiving branch has diverged from its upstream |
+| `protected` | `declared` | a rebase would rewrite a member branch some weave branch declares |
+| `edits` | `dirty` | a repo the landing moves holds uncommitted changes; under `--retire`, any checkout of the workweave |
+| `edits` | `mid-operation` | a repo the landing moves is in the middle of a rebase, merge or other operation |
+| `checkout` | `in another workspace` | a receiving branch, or from the primary the target, is checked out elsewhere |
+| `alignment` | any | a member here, or in the target's workspace, is not where its branch expects it |
+
+`not-fast-forwardable` refuses `--strategy ff` where the feature does not
+already contain the target's tip. `missing-lock-merge-driver` refuses where
+the project repo's lock merge driver is absent or was set up by an earlier
+release, in this workspace or, under `--strategy rebase`, in the target's;
+run `rwv doctor --fix` where the refusal names. A conflict while composing stops the landing
+with its op record kept (`op-parked`): resolve it in the checkout named, then
+`rwv land --continue`, or `rwv abort` to put every repo back at its savepoint.
+
+## Op record
+
+Op-state is written to this workspace and the target's before anything moves.
+The owner record (`.rwv-op`) here holds the landing's plan — the target, its tip
+and each receiving branch's tip it composes onto, and this workspace's project
+tip after the op-start relock — and the current phase (replay → relock →
+advance-target → retire); the target's workspace holds a lease (`.rwv-op-lease`)
+pointing back here. A verb that hits a workspace an op holds refuses, naming
+the op and its two exits: `rwv land --continue` from the owning workspace, or
+`rwv abort`.
+
+A resume recorded at `advance-target` re-enters `relock` first, and says so:
+relock is what makes the lock it lands agree with the tips it lands.
+
+## Invocation
+
+```
+rwv land [--target <T>] [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
+rwv land --continue [--json] [--project <name>]
+```
+
+- `--target <T>` — land into `T` instead of the record's target, for one run.
+- `--strategy` — how a member holding work its receiving branch lacks is
+  composed: `rebase` (the default) replays it onto that branch's tip; `ff`
+  refuses unless the feature already contains the target's tip. The
+  fast-forward of the target is a fast-forward whatever this flag says.
+- `--retire` — once the landing is done, remove the workweave and apply the
+  deletion rule to the feature's branches. Its dirt, untracked files included,
+  is judged with every other refusal before anything moves. From the primary
+  there is no workweave to remove, and it is a no-op with a warning.
+- `--json` — emit the envelope described under Output.
+- `-j <N>` — run up to `N` per-repo steps in parallel. Default `1`.
+- `--project <name>` — operate on this project instead of the active one.
+- `--continue` — resume a landing a conflict stopped. Every parameter comes
+  from the op record; `--project` asserts the recorded project and refuses
+  another.
+
+Run `rwv land --help` for the full clap surface.
+
+## Output
+
+Default text output reports each phase with one line per repo.
+
+Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
+
+```
+{
+  "$schema": "<url>",
+  "source_workweave": "...",
+  "target": "...",
+  "retired": false,
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "complete": true,
+  "refused": [],
+  "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
+}
+```
+
+`outcomes` holds one record per composed repo, sorted by repo path. Each
+fast-forward that moved a branch is reported as its repo's `step3_advance`, or
+as `project_repo_advance` for the project repo. `target` is the workspace that
+has the target checked out. `complete` is true once every phase ran and
+op-state is cleared. `--continue --json` emits the same envelope with a
+`resumed` field naming the phase the stopped landing had reached; a value past
+`replay` leaves `outcomes` empty.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — the landing completed; the target is at this workspace's tip.
+- `3` — the landing completed and the workweave was retired, and the deletion
+  rule kept at least one of its branches. `survivors` lists each with its
+  `repo`, `branch`, `reason` and `detail`.
+- non-zero — a refusal, or a phase stopped with its op record kept.
+
+## Examples
+
+Land this workweave's feature into its target:
+
+```
+rwv land
+```
+
+Land, and remove the workweave in one step:
+
+```
+rwv land --retire
+```
+
+Land into another branch for one run:
+
+```
+rwv land --target stable
+```
+
+Resume after resolving a conflict:
+
+```
+rwv land --continue
+```
+
+Put everything back after a stopped landing:
+
+```
+rwv abort
+```
+
+The auto-relock commit the op-start relock writes reads:
+
+```
+{{MSG:auto_relock}}
+```

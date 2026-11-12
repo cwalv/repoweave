@@ -22,11 +22,11 @@ pointer, and the two are mutually exclusive.
 
 Workweaves are the isolation primitive for concurrent work — the human works
 in the primary weave while an agent works in `.workweaves/{project}--{name}/`.
-They are also the landing model: `rwv sync-to --retire` brings the workweave's
+They are also the landing model: `rwv land --retire` brings the workweave's
 commits into the parent and deletes the workweave in one step.
 
-The parent workspace recorded in `.rwv-workweave` becomes the default sync-to
-target for bare `rwv sync-to` from inside the workweave.
+The parent workspace recorded in `.rwv-workweave` becomes the default land
+target for bare `rwv land` from inside the workweave.
 
 With no branch flag, `create` makes a feature under the minted name
 `{project}--{name}` onto the branch the parent's project repo has checked out,
@@ -124,7 +124,7 @@ listing what differs, and changes nothing.
    `link:` entries are absolute symlinks pointing at the source root.
 4. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
    is the workspace the verb ran in, which becomes the default
-   sync-to target for bare `rwv sync-to` from inside the workweave. No
+   land target for bare `rwv land` from inside the workweave. No
    `.rwv-active` is written beside it: selection is primary-only, and a
    workweave's project is fixed here at creation.
 5. Integration activation: surfaces symlinks, runs the install hooks in the
@@ -236,7 +236,7 @@ exists). One loud line is printed per child:
 `adopted child workweave <name>: parent now <path>`. Branch names are NOT
 rewritten, which is exactly why consumers must read the parent from the marker
 or `rwv status --json .parent`, never from the branch name. The same adoption
-step runs on `rwv sync-to --retire`, which applies the same rule to the
+step runs on `rwv land --retire`, which applies the same rule to the
 retiring workweave's branches.
 
 ### `rwv workweave list [--project <name>]`
@@ -542,7 +542,7 @@ rwv workweave create look --detach feat-x
 Land work and clean up in one step (from inside the workweave):
 
 ```
-rwv sync-to --retire
+rwv land --retire
 ```
 
 Delete a workweave whose work has already landed:

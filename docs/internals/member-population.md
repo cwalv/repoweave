@@ -37,7 +37,7 @@ filesystems that support them.
 A member worktree on a branch is born in one place,
 `birth_ephemeral_worktree` in `src/workweave.rs`, reached from
 `workweave create`'s member loop and from `materialize_member` (which
-`update`, `add`, `sync`, `sync-to` and `doctor --fix` use to give a workweave a
+`update`, `add`, `sync`, `land` and `doctor --fix` use to give a workweave a
 member it lacks). Its `WorktreeFiles` argument says where the tracked files
 come from: `Shared` for members, placed as §4 describes; `Written` for the
 project repo, which the VCS checks out itself. A detached member goes through
@@ -197,7 +197,7 @@ content, so a local change is never lost; the replacement is placed under a
 staged name beside the file and renamed over it, then verified and repaired
 like a placement. The revision a member moved from is the caller's:
 `update --remote` records the old tip, `clone` and `update` read HEAD before
-aligning, `sync` and `sync-to` read each member's savepoint, and `abort` reads
+aligning, `sync` and `land` read each member's savepoint, and `abort` reads
 each member's tip before it restores it.
 The backend's index is not refreshed afterwards: git's next status re-hashes a
 replaced file once and writes the result, and the content is the same.
@@ -207,14 +207,14 @@ replaced file once and writes the result, and the content is the same.
 `FilePlacement { reflinked, hardlinked, written }` says how a checkout's files
 were placed; `written` counts every tracked entry the backend wrote, repairs
 included. Text reports name the member on `workweave create`, `add`, `clone`,
-`update`, `sync`, `sync-to`, `abort` and `doctor --fix`.
+`update`, `sync`, `land`, `abort` and `doctor --fix`.
 
 Under `--json`, counts live only in placement records — `PlacementOutput`
 (`src/placement.rs`), `{path, absolute_path, files}` — each naming the checkout
-it describes, in `clone`, `update`, `sync` and `sync-to`. The envelope carries
+it describes, in `clone`, `update`, `sync` and `land`. The envelope carries
 a `placements` array, empty rather than absent when nothing was placed.
 Outcome records never carry counts, because a placement need
-not be of the checkout an outcome names: `sync-to` re-shares a repo in the workweave
+not be of the checkout an outcome names: `land` re-shares a repo in the workweave
 and in the target, and `update` in a workweave creates its worktree while
 its outcome names the canonical clone. Only the placement's own
 `absolute_path` says which checkout it was.
@@ -242,10 +242,10 @@ the hardlink mode on Windows. A Windows declaration needs a link count first.
 
 Every verb that writes or moves a member's files ends by settling it, in the
 primary and in workweaves alike: `clone` and `update` (through `settle_moved`),
-`add`, `workweave create` and every `materialize_member`, `sync` and `sync-to`
+`add`, `workweave create` and every `materialize_member`, `sync` and `land`
 (materialized members, then `settle_members` over every member after replay
 and after advancing the target), `abort` after its restore, `rwv member set-role`, and
-`doctor --fix`. In `sync`, `sync-to` and `abort`, a member that cannot be
+`doctor --fix`. In `sync`, `land` and `abort`, a member that cannot be
 settled is named as a warning rather than failing the op, whose own work
 stands. Doctor backstops it with the `member-permissions` finding — a
 `reference` member with writable tracked files, or a member of another role
@@ -331,7 +331,7 @@ files as they were. It refuses a change to `reference` while the member has
 uncommitted changes to tracked files, and an unchanged role prints a message
 and writes nothing.
 
-A hand edit of `rwv.toml` stays valid: the next `sync` or `sync-to` settles
+A hand edit of `rwv.toml` stays valid: the next `sync` or `land` settles
 every member for the role its manifest gives it, `abort` settles after
 restoring an older manifest, and `doctor --fix` settles whatever
 `member-permissions` reports. A role change made in a workweave is local until it
@@ -342,7 +342,7 @@ lands; other workspaces follow when they sync.
 Older releases materialized a workweave's `reference` members as a symlink to
 the canonical clone. rwv no longer operates on that shape:
 
-- **Refusal.** Every verb that walks a workweave's members — `sync`, `sync-to`,
+- **Refusal.** Every verb that walks a workweave's members — `sync`, `land`,
   `abort`, `workweave create` (from a workweave) and `delete`,
   `update --remote`, `status`, `lock`, `materialize` and `role` — refuses while any
   member slot is a symlink, with the `workweave-drift` refusal naming

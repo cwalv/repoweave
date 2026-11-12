@@ -1,6 +1,6 @@
 //! The deletion rule, driven through the shipped binary against weaves with
 //! bare remotes: `rwv branch delete`, `rwv workweave delete` and
-//! `rwv sync-to --retire`.
+//! `rwv land --retire`.
 //!
 //! What must hold, each pinned below by the test that names it:
 //!
@@ -732,7 +732,7 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     let branch = minted("feat");
     commit_in(&ww.join(LIB), "work.txt");
 
-    let out = run(&["sync-to", "--retire"], &ww);
+    let out = run(&["land", "--retire"], &ww);
     assert!(out.status.success(), "{}", describe(&out));
     assert!(!ww.exists());
     assert!(
@@ -761,7 +761,7 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     );
     commit_in(&ww.join(LIB), "more.txt");
 
-    let out = run(&["sync-to", "--retire", "--json"], &ww);
+    let out = run(&["land", "--retire", "--json"], &ww);
 
     assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
     let doc = json(&out);

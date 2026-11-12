@@ -240,7 +240,7 @@ fn resolve_workweave_flag(
                      Provide both the project and the workweave name separated by `--`:\n\
                      \n  rwv -w <project>--<name> <verb>\n\
                      \n\
-                     Example:  rwv -w myproj--hotfix sync-to"
+                     Example:  rwv -w myproj--hotfix land"
                 ),
             )
         })?;
@@ -251,7 +251,7 @@ fn resolve_workweave_flag(
             "'-w {raw}' is not in the required <project>--<name> form: \
              both the project and name must be non-empty.\n\
              \n\
-             Example:  rwv -w myproj--hotfix sync-to"
+             Example:  rwv -w myproj--hotfix land"
         );
     }
 
@@ -412,7 +412,7 @@ fn writes_project(command: Option<&Commands>) -> bool {
         Some(Commands::Member { .. })
         | Some(Commands::Lock { .. })
         | Some(Commands::Sync { .. })
-        | Some(Commands::SyncTo { .. })
+        | Some(Commands::Land { .. })
         | Some(Commands::Pull { .. }) => true,
         Some(Commands::Update { remote, .. }) => *remote,
         Some(Commands::Branch { action }) => !matches!(action, BranchAction::List { .. }),
@@ -515,7 +515,7 @@ fn reconcile_policy(
 fn resumes_a_retire(command: Option<&Commands>, root: &Path) -> anyhow::Result<bool> {
     if !matches!(
         command,
-        Some(Commands::SyncTo {
+        Some(Commands::Land {
             do_continue: true,
             ..
         })
@@ -529,7 +529,7 @@ fn resumes_a_retire(command: Option<&Commands>, root: &Path) -> anyhow::Result<b
 fn destroys_workweave(command: Option<&Commands>) -> bool {
     matches!(
         command,
-        Some(Commands::SyncTo { retire: true, .. })
+        Some(Commands::Land { retire: true, .. })
             | Some(Commands::Workweave {
                 action: Some(WorkweaveAction::Delete { .. }),
                 ..
@@ -629,32 +629,6 @@ fn rejects_force(err: &clap::Error) -> bool {
 /// Parse `argv` and run the requested verb. The whole of `rwv`'s behavior
 /// hangs off this call; `main.rs` does nothing but forward to it.
 pub fn run() -> anyhow::Result<()> {
-    // Early-dispatch did-you-mean hints for removed/relocated flags.
-    // These run before clap's full parse so we can produce a friendly error
-    // instead of clap's generic "unexpected argument" message.
-    //
-    // MIGRATORY shims: each intercepts a flag spelling a release renamed or
-    // removed. Expiry follows the alpha rule rather than a health floor —
-    // verify no local automation still spells the old flags, then delete
-    // the shim (`crate::health_floor` documents the floor-gated arms).
-    {
-        let raw_args: Vec<String> = std::env::args().collect();
-        // Detect: rwv sync-to --force (--force has been
-        // split into named overrides; emit a friendly migration message).
-        let is_sync = raw_args.get(1).map(|s| s.as_str()) == Some("sync-to");
-        if is_sync && raw_args.iter().any(|a| a == "--force") {
-            eprintln!(
-                "error: `--force` has been removed from `rwv sync-to`.\n\
-                 \n\
-                 Replace it with the specific override(s) you need:\n\
-                   --allow-stale-lock        skip the lock-freshness precondition\n\
-                   --discard-local-commits   discard CWD project commits not in source \
-                 (recoverable via `rwv abort`)"
-            );
-            std::process::exit(2);
-        }
-    }
-
     // Build the clap command and dynamically append an "External commands"
     // section when `rwv-*` executables are found on PATH. The section lists
     // names only (no descriptions) and appears after clap's core usage
@@ -1453,11 +1427,9 @@ pub fn run() -> anyhow::Result<()> {
             };
             crate::feature_sync::run_sync(&ctx, run, OutputMode::from_flag(json))?;
         }
-        Some(Commands::SyncTo {
+        Some(Commands::Land {
             target,
             strategy,
-            allow_stale_lock,
-            discard_local_commits,
             retire,
             json,
             jobs,
@@ -1466,64 +1438,22 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(origin_dir, project_override.clone(), binding)?;
-            let jobs = match jobs {
-                Some(n) => crate::parallel::resolve_jobs(Some(n)),
-                None => 1,
-            };
             let request = if do_continue {
-                let op = Box::new(crate::op_state::resume(ctx.active_path())?);
                 sync::SyncRequest::Continue {
-                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_record(&op),
-                    op,
+                    op: Box::new(crate::op_state::resume(ctx.active_path())?),
                     project_override,
                 }
             } else {
-                // A bare `rwv sync-to` targets the `.rwv-workweave` marker's parent.
-                let target = match target {
-                    Some(t) => t.locate(&invocation),
-                    None => {
-                        // Bare `rwv sync-to` — must be inside a workweave. Reuse
-                        // the invocation context we already resolved above.
-                        match &ctx.checkout {
-                            crate::workspace::Checkout::Workweave { parent, .. } => {
-                                // Replace the raw `failed to canonicalize …
-                                // (os error 2)` a dangling parent would
-                                // otherwise produce with friendly
-                                // doctor-remediation text.
-                                sync::check_parent_not_dangling(
-                                    parent.as_path(),
-                                    ctx.primary_path(),
-                                )?;
-                                sync::SyncSource::Path(parent.as_path().to_path_buf())
-                            }
-                            crate::workspace::Checkout::Primary { .. } => {
-                                crate::refuse!(
-                                    RefusalKind::WrongCheckoutKind,
-                                    "bare `rwv sync-to` targets the workweave's recorded \
-                                     parent, but CWD ({}) is in the primary weave, not a \
-                                     workweave. Provide a target explicitly.",
-                                    ctx.active_path().display()
-                                );
-                            }
-                        }
-                    }
-                };
+                crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+                crate::branch::require_recorded(&ctx)?;
                 sync::SyncRequest::Fresh {
-                    source: target,
+                    landing: Box::new(crate::land::resolve(&ctx, target.as_deref())?),
                     strategy,
-                    allow_stale_lock,
-                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_flag(
-                        discard_local_commits,
-                    ),
                     retire,
-                    jobs,
+                    jobs: jobs.map_or(1, |n| crate::parallel::resolve_jobs(Some(n))),
                 }
             };
-            if matches!(request, sync::SyncRequest::Fresh { .. }) {
-                crate::branch::require_recorded(&ctx)?;
-                crate::alignment::report_record_change_in(&ctx, "sync-to")?;
-            }
-            sync::run_sync_to(&ctx, request, OutputMode::from_flag(json))?;
+            sync::run_land(&ctx, request, OutputMode::from_flag(json))?;
         }
         Some(Commands::Push {
             project,

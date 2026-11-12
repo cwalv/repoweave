@@ -1703,7 +1703,7 @@ impl WorkspaceContext {
     /// - Active project named **but** directory is missing on disk (dangling
     ///   pointer): returns a clear, actionable error.
     ///
-    /// All action verbs (`lock`, `member add`, `member remove`, `sync`, `sync-to`, `push`,
+    /// All action verbs (`lock`, `member add`, `member remove`, `sync`, `land`, `push`,
     /// `fetch`, `update`, `status`) must call this instead of
     /// [`Self::require_active_project`] so that a stale `.rwv-active` file does not
     /// silently proceed into confusing downstream errors.

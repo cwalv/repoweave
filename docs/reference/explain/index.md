@@ -14,7 +14,7 @@ rwv explain <verb>
 - **log** — the VCS's log per repo, or the commits beyond a weave branch's pins (`--json` available)
 - **doctor** — convention-violation checks (orphans, drift, stale locks) (`--json` available)
 - **sync** — bring another workspace's committed state into this one (`--json` available)
-- **sync-to** — advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance) (`--json` available)
+- **land** — land this feature into its record's target: compose here, then fast-forward the target (`--json` available)
 - **push** — publish member repos then the project repo to shared remotes (`--json` available)
 - **clone** — clone a project and each member at the commit rwv.lock pins; exit status 3 when a member is left unpinned (`--json` available)
 - **fetch** — the pruning fetch of every remote of every repo; moves no branch, checkout or lock (`--json` available)
@@ -23,7 +23,7 @@ rwv explain <verb>
 - **prime** — agent-oriented orientation context for the workspace
 - **explain** — per-verb JIT reflection (this verb)
 - **workweave** — create, delete, or list workweaves for a project (`--json` available)
-- **abort** — roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched
+- **abort** — roll an in-flight sync or landing back to its savepoints, from either workspace it touched
 - **backup** — list, drop or prune the backups kept before a step that would leave a commit or an edit unpreserved (`--json` available)
 - **branch** — create a weave branch, record how a weave branch is used, list the weave branches with their records, rename one, or delete one (`--json` available)
 - **switch** — put the project repo on a weave branch and align the members to it, or detach the workspace at a revision

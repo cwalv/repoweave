@@ -11,7 +11,7 @@
 //! and every hand-written copy differ in the middle. The needle is the shape —
 //! `--continue` as a flag, whose immediately preceding token is preceded by
 //! `rwv `. That admits the mint's `rwv {verb} --continue` and a caller's
-//! `rwv sync-to --continue` alike, and it discriminates against the two shapes
+//! `rwv land --continue` alike, and it discriminates against the two shapes
 //! that must survive: git's own `git rebase --continue`, which rwv's conflict
 //! text names to tell the operator NOT to run it, and a bare `` `--continue` ``
 //! in prose about the flag.
@@ -115,7 +115,7 @@ fn a_hand_written_resume_command_is_what_this_reports() {
         planted("op_state.rs", "    format!(\"rwv {verb} --continue\")"),
         planted(
             "sync.rs",
-            "             Rerun `rwv sync-to --continue` after resolving.\",",
+            "             Rerun `rwv land --continue` after resolving.\",",
         ),
         planted(
             "check.rs",

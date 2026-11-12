@@ -1,32 +1,32 @@
-//! Integration tests anchoring documented behavior of `rwv sync-to --json`.
+//! Integration tests anchoring documented behavior of `rwv land --json`.
 //!
 //! Doc claims pinned here:
 //!
-//!   - `rwv sync-to --json` (serial, `-j 1` or no `-j`) emits the envelope
+//!   - `rwv land --json` (serial, `-j 1` or no `-j`) emits the envelope
 //!     `{"$schema": "<url>", "outcomes": [<SyncOutcomeOutput>, ...]}`.
-//!   - The `$schema` URL points at `docs/reference/schemas/sync-to.json`, and
+//!   - The `$schema` URL points at `docs/reference/schemas/land.json`, and
 //!     is not `rwv sync`'s.
-//!   - `rwv explain sync-to` prints sync-to's own bundle.
+//!   - `rwv explain land` prints land's own bundle.
 //!   - `--allow-stale-lock` is refused-then-named on both the CWD and the
 //!     target side, and bypasses each.
 //!   - The target-side dirty preflight refuses on uncommitted TRACKED changes
 //!     only; a non-colliding untracked file in the target does not block the
 //!     sync. A target-side untracked file that collides with a path the
 //!     fast-forward writes still refuses, but at step 3 rather than up front,
-//!     naming the path and leaving the op resumable via `sync-to --continue`.
-//!   - A successful sync-to leaves no pre-op savepoint on either side.
+//!     naming the path and leaving the op resumable via `land --continue`.
+//!   - A successful land leaves no pre-op savepoint on either side.
 //!
 //! Pinned elsewhere, and deliberately not duplicated here: the envelope under
 //! `-j N` with `N > 1` is driven in `tests/schema_conformance_wire_test.rs`,
 //! which validates it against the published schema rather than merely
 //! parsing it.
 //!
-//! `SyncToJsonOutput` is not `SyncJsonOutput` with a different URL — it adds
+//! `LandJsonOutput` is not `SyncJsonOutput` with a different URL — it adds
 //! `source_workweave`, `target`, `retired`, `resumed`,
 //! `project_repo_advance`, and a per-outcome `step3_advance` — so a test
 //! written from "the shapes are identical" would be pinning something untrue.
 //!
-//! This test mirrors `tests/doc_claims_sync_test.rs` for the sync-to verb.
+//! This test mirrors `tests/doc_claims_sync_test.rs` for the land verb.
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -139,13 +139,13 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     )
 }
 
-const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-to.json";
+const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/land.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
 //
-// Doc claim: `rwv sync-to --json` (no `-j` or `-j 1`) emits an object with
-// `$schema` + `outcomes` (an array). The $schema URL points at sync-to.json.
+// Doc claim: `rwv land --json` (no `-j` or `-j 1`) emits an object with
+// `$schema` + `outcomes` (an array). The $schema URL points at land.json.
 // ===========================================================================
 
 #[test]
@@ -153,7 +153,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
-    // Workweave advances so sync-to has actual work to do.
+    // Workweave advances so land has actual work to do.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
@@ -161,8 +161,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy=ff",
             "--json",
         ])
@@ -176,7 +175,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
         .unwrap_or_else(|e| panic!("envelope must parse as one JSON doc ({e}):\n{stdout}"));
     let obj = parsed.as_object().expect("envelope is an object");
 
-    // `$schema` URL points at the sync-to schema artifact (not sync.json).
+    // `$schema` URL points at the land schema artifact (not sync.json).
     let schema = obj["$schema"]
         .as_str()
         .expect("envelope must carry `$schema` string");
@@ -193,10 +192,10 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
 }
 
 // ===========================================================================
-// 2. $schema URL is sync-to.json, not sync.json
+// 2. $schema URL is land.json, not sync.json
 //
-// Doc claim: sync-to's JSON output embeds a distinct $schema URL that points
-// at sync-to.json rather than sync.json. Consumers can distinguish the two.
+// Doc claim: land's JSON output embeds a distinct $schema URL that points
+// at land.json rather than sync.json. Consumers can distinguish the two.
 // ===========================================================================
 
 #[test]
@@ -212,8 +211,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy=ff",
             "--json",
         ])
@@ -226,8 +224,8 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
     let schema = parsed["$schema"].as_str().unwrap();
 
     assert!(
-        schema.contains("sync-to.json"),
-        "$schema must contain 'sync-to.json'; got: {schema}"
+        schema.contains("land.json"),
+        "$schema must contain 'land.json'; got: {schema}"
     );
     assert!(
         !schema.ends_with("/sync.json"),
@@ -236,24 +234,24 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 }
 
 // ===========================================================================
-// 3. Explain verb works for sync-to
+// 3. Explain verb works for land
 //
-// Doc claim: `rwv explain sync-to` returns the sync-to bundle — the four
+// Doc claim: `rwv explain land` returns the land bundle — the four
 // sections every `--json`-capable verb's bundle carries, and the schema
-// generated from sync-to's own output type.
+// generated from land's own output type.
 // ===========================================================================
 
-/// `rwv explain sync-to` prints sync-to's bundle, not `rwv sync`'s.
+/// `rwv explain land` prints land's bundle, not `rwv sync`'s.
 ///
 /// The two are neighboring entries in one dispatch table, so a swapped
-/// mapping is the defect here — and containment on `"sync-to"` is blind to
-/// it: the sync bundle names `rwv sync-to` in its own prose eight times, and
-/// describes steps of its own. Two things are the sync-to bundle's alone: the
+/// mapping is the defect here — and containment on `"land"` is blind to
+/// it: the sync bundle names `rwv land` in its own prose eight times, and
+/// describes steps of its own. Two things are the land bundle's alone: the
 /// heading it opens with, and the title of the schema block, which the
-/// generator writes from the Rust type backing `sync-to --json`.
+/// generator writes from the Rust type backing `land --json`.
 #[test]
 fn explain_sync_to_returns_the_sync_to_bundle() {
-    let assert = rwv().args(["explain", "sync-to"]).assert().success();
+    let assert = rwv().args(["explain", "land"]).assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
     let mut lines = stdout.lines();
@@ -269,7 +267,7 @@ fn explain_sync_to_returns_the_sync_to_bundle() {
     );
     assert_eq!(
         lines.next(),
-        Some("# rwv sync-to"),
+        Some("# rwv land"),
         "the bundle opens with its own heading; got:\n{stdout}"
     );
     for section in ["## Purpose", "## Invocation", "## Output", "## Exit codes"] {
@@ -279,40 +277,40 @@ fn explain_sync_to_returns_the_sync_to_bundle() {
         );
     }
     assert!(
-        stdout.contains(r#""title": "SyncToJsonOutput""#),
-        "the schema block must be generated from sync-to's own output type; got:\n{stdout}"
+        stdout.contains(r#""title": "LandJsonOutput""#),
+        "the schema block must be generated from land's own output type; got:\n{stdout}"
     );
 }
 
 // ===========================================================================
-// 4. --allow-stale-lock for sync-to: refusal names condition + flag; flag
+// 4. --allow-stale-lock for land: refusal names condition + flag; flag
 //    bypasses both source (target workspace) and destination (CWD) preconditions.
 //
-// Doc claim (cli.md §sync-to, --allow-stale-lock row):
+// Doc claim (cli.md §land, --allow-stale-lock row):
 //   "Consent: skip the lock-freshness precondition on both source and
 //   destination."
 //
-// For sync-to, the "source" lock check runs against the TARGET workspace's
+// For land, the "source" lock check runs against the TARGET workspace's
 // committed lock, and the "destination" check runs against CWD's lock on disk.
 //
 // (i)  Without --allow-stale-lock, a stale lock produces a refusal that names
 //      "lock-freshness precondition" AND "--allow-stale-lock".
-// (ii) With --allow-stale-lock, sync-to succeeds despite the stale lock.
+// (ii) With --allow-stale-lock, land succeeds despite the stale lock.
 // ===========================================================================
 
-/// Helper: build a fixture where the CWD (ww) has a stale lock for sync-to.
+/// Helper: build a fixture where the CWD (ww) has a stale lock for land.
 ///
 /// ww's lock file is patched to a fabricated SHA that does not match the
 /// actual server HEAD. Primary's lock is fresh (matches its server HEAD).
 ///
-/// When running sync-to from ww → primary: the "destination" lock check fires
+/// When running land from ww → primary: the "destination" lock check fires
 /// on CWD (ww's lock != ww's server HEAD).
-/// With --allow-stale-lock, sync-to proceeds. The target (primary) already
+/// With --allow-stale-lock, land proceeds. The target (primary) already
 /// matches ww's server state → no-op convergence → success.
 fn make_shared_with_stale_cwd_for_sync_to(parent: &Path) -> (Workspace, Workspace) {
     let (primary, ww, initial_sha) = make_shared(parent);
 
-    // Patch ww's lock to a fabricated SHA — stale destination for sync-to.
+    // Patch ww's lock to a fabricated SHA — stale destination for land.
     let fake_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     assert_ne!(fake_sha, initial_sha.as_str());
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
@@ -380,10 +378,10 @@ fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Works
 }
 
 // ---------------------------------------------------------------------------
-// Stale CWD (destination) lock for sync-to
+// Stale CWD (destination) lock for land
 // ---------------------------------------------------------------------------
 
-/// (i) Stale CWD lock on sync-to names "lock-freshness precondition" AND
+/// (i) Stale CWD lock on land names "lock-freshness precondition" AND
 /// "--allow-stale-lock". The fabricated SHA in this fixture resolves nowhere,
 /// so the condition that fires is `unresolvable-lock-entry`, not a
 /// lock↔HEAD relation mismatch (`stale-lock`) — pinning the route line tells
@@ -395,7 +393,7 @@ fn sync_to_stale_cwd_lock_names_condition_and_flag() {
     let (primary, ww) = make_shared_with_stale_cwd_for_sync_to(tmp.path());
 
     let assert = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -403,21 +401,21 @@ fn sync_to_stale_cwd_lock_names_condition_and_flag() {
 
     assert!(
         stderr.contains("lock-freshness precondition"),
-        "sync-to stale-CWD refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+        "land stale-CWD refusal must name 'lock-freshness precondition'; got:\n{stderr}"
     );
     assert!(
         stderr.contains("--allow-stale-lock"),
-        "sync-to stale-CWD refusal must name '--allow-stale-lock'; got:\n{stderr}"
+        "land stale-CWD refusal must name '--allow-stale-lock'; got:\n{stderr}"
     );
     assert!(
         stderr.contains("rwv explain unresolvable-lock-entry"),
-        "sync-to stale-CWD refusal must route to 'unresolvable-lock-entry', the condition its \
+        "land stale-CWD refusal must route to 'unresolvable-lock-entry', the condition its \
          unresolvable fabricated SHA actually drives, not 'stale-lock' or 'target-lock-behind'; \
          got:\n{stderr}"
     );
 }
 
-/// (ii) --allow-stale-lock bypasses the CWD stale-lock precondition for sync-to.
+/// (ii) --allow-stale-lock bypasses the CWD stale-lock precondition for land.
 #[test]
 fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
     let tmp = common::tempdir().unwrap();
@@ -427,8 +425,7 @@ fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
     // so the convergence step is a no-op and ff succeeds.
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
             "--strategy=ff",
         ])
@@ -438,10 +435,10 @@ fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
 }
 
 // ---------------------------------------------------------------------------
-// Stale target (source) lock for sync-to
+// Stale target (source) lock for land
 // ---------------------------------------------------------------------------
 
-/// (i) Stale target lock on sync-to names "lock-freshness precondition" AND
+/// (i) Stale target lock on land names "lock-freshness precondition" AND
 /// "--allow-stale-lock". The target's committed lock is a real, resolvable
 /// commit that its reset-back server HEAD lacks, so this drives the
 /// lock↔HEAD relation mismatch `stale-lock` — not `unresolvable-lock-entry`
@@ -454,7 +451,7 @@ fn sync_to_stale_target_lock_names_condition_and_flag() {
     let (primary, ww) = make_shared_with_stale_target_for_sync_to(tmp.path());
 
     let assert = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -462,21 +459,21 @@ fn sync_to_stale_target_lock_names_condition_and_flag() {
 
     assert!(
         stderr.contains("lock-freshness precondition"),
-        "sync-to stale-target refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+        "land stale-target refusal must name 'lock-freshness precondition'; got:\n{stderr}"
     );
     assert!(
         stderr.contains("--allow-stale-lock"),
-        "sync-to stale-target refusal must name '--allow-stale-lock'; got:\n{stderr}"
+        "land stale-target refusal must name '--allow-stale-lock'; got:\n{stderr}"
     );
     assert!(
         stderr.contains("rwv explain stale-lock"),
-        "sync-to stale-target refusal must route to 'stale-lock', the lock↔HEAD relation \
+        "land stale-target refusal must route to 'stale-lock', the lock↔HEAD relation \
          mismatch this fixture actually drives, not 'unresolvable-lock-entry' or \
          'target-lock-behind'; got:\n{stderr}"
     );
 }
 
-/// (ii) --allow-stale-lock bypasses the target stale-lock precondition for sync-to.
+/// (ii) --allow-stale-lock bypasses the target stale-lock precondition for land.
 ///
 /// Fixture: primary's committed lock says C2 but primary's server was reset
 /// to C1. Ww's server is at C2. With --allow-stale-lock, the stale check is
@@ -493,8 +490,7 @@ fn sync_to_allow_stale_lock_bypasses_target_precondition() {
     // FF-advances primary's server from C1 to C2.
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&ww.root)
@@ -505,12 +501,12 @@ fn sync_to_allow_stale_lock_bypasses_target_precondition() {
 // ===========================================================================
 // 5. Target-side dirty preflight is tracked-only
 //
-// Doc claim (`rwv explain sync-to`, "Target-side preflights"): sync-to
+// Doc claim (`rwv explain land`, "Target-side preflights"): land
 // refuses on uncommitted TRACKED changes in a target repo. An untracked file
 // that doesn't collide with a path the fast-forward writes is not scanned by
 // the preflight and must not block the sync. A colliding untracked file is
 // still refused, but at fast-forward time rather than up front, naming the
-// path and leaving the op resumable via `rwv sync-to --continue`.
+// path and leaving the op resumable via `rwv land --continue`.
 // ===========================================================================
 
 /// List savepoints under `refs/rwv/pre-op/` in `repo`, without needing the
@@ -534,7 +530,7 @@ fn savepoint_count(repo: &Path) -> usize {
 }
 
 /// A target-side untracked file that the incoming fast-forward never writes
-/// is not dirt: sync-to must succeed and the file must survive untouched.
+/// is not dirt: land must succeed and the file must survive untouched.
 #[test]
 fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
     let tmp = common::tempdir().unwrap();
@@ -550,7 +546,7 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
     std::fs::write(primary.server_dir.join("scratch.txt"), "scratch\n").unwrap();
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -570,7 +566,7 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
 /// A target-side untracked file that DOES collide with a path the incoming
 /// fast-forward writes still refuses — git itself cannot resolve that
 /// collision — but the refusal happens at step 3, names the path, and
-/// leaves op-state and savepoints intact so `rwv sync-to --continue`
+/// leaves op-state and savepoints intact so `rwv land --continue`
 /// completes once the file is moved or removed.
 #[test]
 fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
@@ -596,7 +592,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     let primary_server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let err_output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -609,7 +605,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         "refusal must name the colliding path; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("rwv sync-to --continue"),
+        stderr.contains("rwv land --continue"),
         "refusal must name the resume command; got:\n{stderr}"
     );
     // Pins the named per-repo refusal specifically (not just the raw git
@@ -671,7 +667,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     .unwrap();
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -692,7 +688,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     );
 }
 
-/// A completed sync-to leaves zero `refs/rwv/pre-op/*` on either side: the
+/// A completed land leaves zero `refs/rwv/pre-op/*` on either side: the
 /// cleanup phase drops the owner-side savepoints AND the `<op-id>-target`
 /// refs it minted for the target's repos. The worktree pairs share one refdb
 /// per repo, so each count below covers both sides of that repo at once.
@@ -707,7 +703,7 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -715,12 +711,12 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
     assert_eq!(
         savepoint_refs(&primary.server_dir),
         Vec::<String>::new(),
-        "a completed sync-to must drop every pre-op ref in the manifest repo"
+        "a completed land must drop every pre-op ref in the manifest repo"
     );
     assert_eq!(
         savepoint_refs(&primary.project_dir),
         Vec::<String>::new(),
-        "a completed sync-to must drop every pre-op ref in the project repo"
+        "a completed land must drop every pre-op ref in the project repo"
     );
 }
 
@@ -731,7 +727,7 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
 /// `<op-id>-target` refs where creation minted them, not where the target's
 /// pointer happens to aim. Resolving by pointer deletes refs in the wrong
 /// project's repos, and since dropping a savepoint swallows misses, every
-/// successful sync-to then leaks one `-target` ref per touched repo.
+/// successful land then leaks one `-target` ref per touched repo.
 #[test]
 fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
     let tmp = common::tempdir().unwrap();
@@ -750,7 +746,7 @@ fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();

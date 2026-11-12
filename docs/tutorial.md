@@ -98,7 +98,7 @@ git add -A
 git commit -m "server: add welcome message"
 ```
 
-> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
+> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave create welcome-message`) and land it back with `rwv land --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
 
 Ecosystem workspace wiring means a change in `github/chatly/protocol` is immediately visible to `github/chatly/server` without a publish step:
 

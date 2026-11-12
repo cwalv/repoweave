@@ -1,6 +1,6 @@
-//! A parked `sync-to` whose owner record stops parsing is left in a usable
+//! A parked `land` whose owner record stops parsing is left in a usable
 //! state by following, verbatim, the advice its errors print: no lease
-//! survives, no checkout stays mid-rebase, `rwv sync-to` lands again, and
+//! survives, no checkout stays mid-rebase, `rwv land` lands again, and
 //! `rwv doctor` reports nothing of the op.
 
 use std::path::{Path, PathBuf};
@@ -78,7 +78,7 @@ fn stderr_of(out: &Output) -> String {
 
 /// A primary weave with one member and a seat forked from it. Both commit to
 /// the same file of the member and the primary relocks, so the seat's
-/// `sync-to` replays the primary's project repo onto the seat and parks on
+/// `land` replays the primary's project repo onto the seat and parks on
 /// the member's rebase conflict.
 fn park() -> Parked {
     let tmp = common::tempdir().unwrap();
@@ -134,10 +134,10 @@ fn park() -> Parked {
         primary,
         seat,
     };
-    let out = rwv(&parked.seat.root, &["sync-to"]);
+    let out = rwv(&parked.seat.root, &["land"]);
     assert!(
         !out.status.success(),
-        "the member conflict must park sync-to:\n{}",
+        "the member conflict must park land:\n{}",
         transcript(&out)
     );
     assert!(parked.seat.root.join(".rwv-op").exists());
@@ -167,21 +167,21 @@ fn mid_op(repo: &Path) -> bool {
         .any(|state| git_dir.join(state).exists())
 }
 
-/// Resolves the member conflict a fresh `sync-to` parks on and resumes it, so
+/// Resolves the member conflict a fresh `land` parks on and resumes it, so
 /// the landing runs to completion.
 fn land(parked: &Parked) {
-    let out = rwv(&parked.seat.root, &["sync-to"]);
+    let out = rwv(&parked.seat.root, &["land"]);
     let stderr = stderr_of(&out);
     assert!(
         !stderr.contains("rwv explain op-in-progress")
             && !stderr.contains("rwv explain dead-op-lease"),
-        "no state of the discarded op may refuse a new sync-to:\n{}",
+        "no state of the discarded op may refuse a new land:\n{}",
         transcript(&out)
     );
     if !out.status.success() {
         assert!(
             mid_op(&parked.seat.lib),
-            "a new sync-to may stop only on the member's genuine conflict:\n{}",
+            "a new land may stop only on the member's genuine conflict:\n{}",
             transcript(&out)
         );
         std::fs::write(parked.seat.lib.join("c.txt"), "both\n").unwrap();
@@ -190,7 +190,7 @@ fn land(parked: &Parked) {
             &parked.seat.lib,
             &["-c", "core.editor=true", "rebase", "--continue"],
         );
-        succeed(&parked.seat.root, &["sync-to", "--continue"]);
+        succeed(&parked.seat.root, &["land", "--continue"]);
     }
     assert_eq!(
         head(&parked.primary.lib),
@@ -245,7 +245,7 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
         record["advanced_tips"]["(project)"] = "v1.0".into();
     });
 
-    let out = rwv(&parked.seat.root, &["sync-to", "--continue"]);
+    let out = rwv(&parked.seat.root, &["land", "--continue"]);
     let stderr = stderr_of(&out);
     assert!(!out.status.success(), "{}", transcript(&out));
     assert!(
@@ -315,10 +315,10 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
 
     let seat = parked.seat.root.to_string_lossy().into_owned();
     for (dir, args) in [
-        (&parked.seat.root, &["sync-to"][..]),
+        (&parked.seat.root, &["land"][..]),
         (&target, &["abort"][..]),
         (&target, &["status"][..]),
-        (&target, &["sync-to", seat.as_str()][..]),
+        (&target, &["land", seat.as_str()][..]),
     ] {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);
@@ -351,7 +351,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
     succeed(&target, &["doctor", "--fix"]);
 
     assert_no_op_residue(&parked);
-    let out = rwv(&parked.seat.root, &["sync-to"]);
+    let out = rwv(&parked.seat.root, &["land"]);
     let stderr = stderr_of(&out);
     assert!(
         stderr.contains("rwv explain stale-lock")
@@ -359,7 +359,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
                 "record the current HEAD by name with `rwv member pin local/owner/lib HEAD --commit`"
             ),
         "the replay the removal left in place pins the member at the target's tip, \
-         which the next sync-to reports with its own remedy:\n{}",
+         which the next land reports with its own remedy:\n{}",
         transcript(&out)
     );
     succeed(

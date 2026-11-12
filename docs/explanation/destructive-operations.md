@@ -33,7 +33,7 @@ Examples in the current tree:
   keep what they consent to losing as a backup first (rule 3). A branch of the
   workweave that has not landed is not deleted at all: the deletion rule keeps
   it, and `--discard-unlanded` is the override that backs it up and deletes it.
-- `rwv sync-to --retire` applies the same checks and the same rule, with no
+- `rwv land --retire` applies the same checks and the same rule, with no
   override: its dirty check covers every checkout under the workweave, and a
   branch that has not landed survives.
 - `rwv branch delete` deletes a branch only when everything on it has landed on
@@ -44,9 +44,6 @@ Examples in the current tree:
   changes or commits no other clone reaches, a backup holding such commits
   included, and refuses to delete the canonical store while another
   project's manifest still references the repo.
-- `rwv sync-to --discard-local-commits` Phase 1' discards commits only after the
-  clean-project precondition has passed; the discarded commits remain
-  recoverable via the `refs/rwv/pre-op/<op-id>` savepoint.
 - `rwv sync --reset-to-target <repo>` moves only the repo it names, refuses
   one with uncommitted changes, a declared branch, or a branch another weave
   branch lands into, and keeps the tip it leaves as a backup, listing the
@@ -72,7 +69,7 @@ what would be lost. "Informed" means:
 **The house rule:** an override flag is named for the precondition it
 waives, so the operator consents to a specific consequence rather than
 a category. For a destructive override the consequence is a loss, so
-the flag states what it destroys — `--discard-local-commits` names the
+the flag states what it destroys — `--discard-unlanded` names the
 exact loss; the operator reading it knows what they are signing. That
 is the destructive instance of the rule, not a separate rule: the same
 naming discipline covers non-destructive gates too (`clone
@@ -102,7 +99,7 @@ refusal names the flag for the one loss it would cause.
 
 ### 3. Discards stay recoverable
 
-Discard-by-design operations — `rwv abort`, `rwv sync-to --discard-local-commits`, `rwv sync --reset-to-target`,
+Discard-by-design operations — `rwv abort`, `rwv sync --reset-to-target`,
 `rwv workweave delete --discard-uncommitted` and `--discard-unlanded`,
 ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must
@@ -111,7 +108,7 @@ say where. Two mechanisms do it, one per kind of discard.
 **Named savepoints** cover what an operation itself moves. Ref surgery
 operations write a `refs/rwv/pre-op/<op-id>` ref pointing at the
 pre-operation state before any destructive write —
-`refs/rwv/pre-op/<op-id>-target` in a `sync-to` target's repos, which
+`refs/rwv/pre-op/<op-id>-target` in a `land` target's repos, which
 share a ref store with the source's. The ref is tied to a specific
 operation id, and `rwv abort` knows how to roll back to it. A savepoint
 lasts one operation: abort restores a repo only over tips the operation

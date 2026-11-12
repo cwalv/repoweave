@@ -481,7 +481,7 @@ fn the_templates_the_generator_reads_stay_authored() {
 /// Land `ww` onto its recorded parent, returning `(stdout, stderr)`.
 fn land(ww: &Workspace, json: bool) -> (String, String) {
     let mut cmd = rwv();
-    cmd.args(["sync-to", "--strategy", "rebase"]);
+    cmd.args(["land", "--strategy", "rebase"]);
     if json {
         cmd.arg("--json");
     }
@@ -556,7 +556,7 @@ fn the_same_land_names_the_path_in_json() {
     let (stdout, stderr) = land_after_both_sides_regenerate(tmp.path(), true);
 
     let envelope: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("`sync-to --json` must emit one envelope: {e}\n{stdout}"));
+        .unwrap_or_else(|e| panic!("`land --json` must emit one envelope: {e}\n{stdout}"));
     let dropped: Vec<&str> = envelope["outcomes"]
         .as_array()
         .expect("the envelope carries per-repo outcomes")

@@ -292,13 +292,13 @@ fn extract_candidates() -> Vec<Candidate> {
 fn all_op_verbs() -> Vec<OpVerb> {
     let all = vec![
         OpVerb::Sync,
-        OpVerb::SyncTo,
+        OpVerb::Land,
         OpVerb::Pull,
         OpVerb::UpdateRemote,
     ];
     for verb in &all {
         match verb {
-            OpVerb::Sync | OpVerb::SyncTo | OpVerb::Pull | OpVerb::UpdateRemote => {}
+            OpVerb::Sync | OpVerb::Land | OpVerb::Pull | OpVerb::UpdateRemote => {}
         }
     }
     all
@@ -405,18 +405,18 @@ fn advice_invocations_all_parse() {
     // Both verbs are the bare form because no advice string hardcodes a
     // `--continue` invocation any more: every resume hint interpolates
     // `op_state::resume_command`, whose own literal names a placeholder verb
-    // and is dropped by skip rule B. `rwv sync-to --retire` carries the
+    // and is dropped by skip rule B. `rwv land --retire` carries the
     // hyphenated-verb-plus-long-flag shape the `--continue` canary used to;
     // the resume text itself is checked separately, below, via
     // `resolved_placeholder_candidates`.
     let canaries: &[&str] = &[
         "rwv doctor --fix",
-        "rwv sync-to --retire",
+        "rwv land --retire",
         "rwv lock",
         "rwv abort",
         "rwv update",
         "rwv sync",
-        "rwv sync-to",
+        "rwv land",
     ];
     for &canary in canaries {
         assert!(

@@ -85,7 +85,7 @@ A plugin must not write:
 - `rwv.toml`, `rwv.lock`
 - `.rwv-active`, `.rwv-workweave`, and the workweave index a project clone keeps in the directory its worktrees share (`rwv-workweave-index`)
 - Ecosystem workspace files managed by an integration (`Cargo.toml`, `go.work`, `package.json`, …)
-- The `refs/rwv/*` git-ref namespace `rwv` uses for its own bookkeeping — for example `refs/rwv/pre-op/<op-id>`, the sync-abort savepoint created by `rwv sync` / `rwv sync-to` before replay. This is a ref namespace, not a working-tree file: "must not write" means no ref-update against it, not just filesystem I/O.
+- The `refs/rwv/*` git-ref namespace `rwv` uses for its own bookkeeping — for example `refs/rwv/pre-op/<op-id>`, the sync-abort savepoint created by `rwv sync` / `rwv land` before replay. This is a ref namespace, not a working-tree file: "must not write" means no ref-update against it, not just filesystem I/O.
 - The `rwv-records` branch of a project repo, and its remote-tracking refs (`refs/remotes/<remote>/rwv-records`). It holds each weave branch's record, written without a working tree and moved by a compare-and-swap, and an entry on it that no push has published exists nowhere else: a write by hand can lose it. `rwv branch list` reads the records; `rwv branch set-mode` writes them.
 
 This is a documented rule, not a dispatch-time guard — nothing stops a plugin from writing these, and `rwv` does not sandbox its children. `rwv doctor` is the audit surface: it can notice an rwv-owned file changed outside a core-verb write and report it, after the fact, not before.

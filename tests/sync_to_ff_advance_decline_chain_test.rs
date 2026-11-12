@@ -1,8 +1,8 @@
-//! `sync-to`'s ff-advance decline fallback must report git's own account of
+//! `land`'s ff-advance decline fallback must report git's own account of
 //! the refusal, not just rwv's context sentence wrapped around it.
 //!
 //! Drives a real primary + workweave sharing one repo store via
-//! `git worktree add`, so a fast-forward attempted from `sync-to` against the
+//! `git worktree add`, so a fast-forward attempted from `land` against the
 //! target is a real git operation rather than a hand-built error.
 
 use std::path::{Path, PathBuf};
@@ -39,7 +39,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 
 /// Build a primary workspace + a workweave that shares its repos via
 /// `git worktree add`. Returns `(primary, workweave)`, both at the same
-/// initial server-repo SHA. `sync-to` treats CWD (the workweave in these
+/// initial server-repo SHA. `land` treats CWD (the workweave in these
 /// tests) as the side already advanced, and the named argument (primary) as
 /// the target it fast-forwards.
 fn make_shared(parent: &Path) -> (Workspace, Workspace) {
@@ -107,7 +107,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace) {
     )
 }
 
-/// `sync-to`'s advance-target phase (`run_advance_target`, `ff_advance_repo`)
+/// `land`'s advance-target phase (`run_advance_target`, `ff_advance_repo`)
 /// is a ff-advance path with its own decline fallback: when
 /// `classify_untracked_collision` declines, `ff_advance_repo` wraps the raw
 /// `VcsError` with `.context("fast-forward advance failed in target")`, and
@@ -128,7 +128,7 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr() {
     let (primary, ww) = make_shared(tmp.path());
 
     // CWD (ww) advances with a commit that adds a new directory+file; this is
-    // the commit sync-to will try to fast-forward primary onto.
+    // the commit land will try to fast-forward primary onto.
     std::fs::create_dir_all(ww.server_dir.join("foo")).unwrap();
     std::fs::write(ww.server_dir.join("foo/bar.txt"), "hi\n").unwrap();
     common::git_in(&ww.server_dir, &["add", "foo/bar.txt"]);
@@ -141,12 +141,12 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr() {
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: add foo/bar.txt"]);
 
-    // primary (the sync-to TARGET) has an untracked plain file named `foo`
+    // primary (the land TARGET) has an untracked plain file named `foo`
     // occupying the path the incoming directory needs.
     std::fs::write(primary.server_dir.join("foo"), "blocking\n").unwrap();
 
     let assert = common::rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -194,7 +194,7 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr_for_the_project_repo() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // The project repo's own next commit adds a new directory+file — this is
-    // what sync-to will try to fast-forward primary's project repo onto.
+    // what land will try to fast-forward primary's project repo onto.
     std::fs::create_dir_all(ww.project_dir.join("newdir")).unwrap();
     std::fs::write(ww.project_dir.join("newdir/newfile.txt"), "hi\n").unwrap();
     common::git_in(&ww.project_dir, &["add", "newdir/newfile.txt"]);
@@ -205,7 +205,7 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr_for_the_project_repo() {
     std::fs::write(primary.project_dir.join("newdir"), "blocking\n").unwrap();
 
     let assert = common::rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .output()
         .unwrap();

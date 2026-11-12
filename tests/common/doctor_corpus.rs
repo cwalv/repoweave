@@ -11,7 +11,7 @@
 //! Held constant across every [`Issue`] sample: `severity` is always
 //! `Warning`, `safe_to_fix` is always `true`, `integration` is always
 //! `"go-work"`. The one [`CheckViolation::StaleOpState`] sample carries
-//! `OpVerb::SyncTo` — no other verb is sampled here.
+//! `OpVerb::Land` — no other verb is sampled here.
 //! `tests/schema_conformance_test.rs`'s `doctor_corpus_supplement` produces
 //! the values this corpus never does — `Severity::Error`, `safe_to_fix:
 //! false`, `OpVerb::Sync` — for that file's schema conformance only; nothing
@@ -749,7 +749,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::StaleOpState {
             workspace_dir: path("/ws"),
-            verb: OpVerb::SyncTo,
+            verb: OpVerb::Land,
             started_at: "2026-01-01T00:00:00Z".into(),
         },
         CheckViolation::DeadOpLease {

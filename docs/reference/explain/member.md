@@ -496,7 +496,7 @@ Settling is what makes the role true on disk:
   its storage with another workspace's copy is first replaced by a private
   copy, because write bits belong to the file rather than to the name.
 
-The change is local to this workspace until it lands. `rwv sync-to` carries
+The change is local to this workspace until it lands. `rwv land` carries
 it to the target, which settles the repo on landing, and every other
 workspace settles it on its next `rwv sync`. A hand edit of `role` in
 `rwv.toml` converges the same way, and `rwv doctor --fix` settles it in

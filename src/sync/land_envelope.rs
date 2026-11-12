@@ -1,7 +1,7 @@
-//! What the `rwv sync-to` machine reported, and the `--json` envelope built
+//! What the `rwv land` machine reported, and the `--json` envelope built
 //! from that alone.
 //!
-//! A module of its own so that only [`SyncToRecorder`] writes an outcome's
+//! A module of its own so that only [`LandRecorder`] writes an outcome's
 //! fields: `sync.rs` is one module, and inside it privacy separates nothing.
 //! On a resumed op the invocation and the machine name different workspaces,
 //! and the envelope reports the machine's.
@@ -11,8 +11,8 @@ use std::sync::Mutex;
 
 use super::{
     in_manifest_order, ContainmentOutput, MemberOutput, OpCoordinates, OutputHandler,
-    RepoSyncOutcome, RetiredWorkweave, Step3AdvanceOutput, SyncOutcomeOutput, SyncToJsonOutput,
-    SYNC_TO_JSON_SCHEMA_URL,
+    RepoSyncOutcome, RetiredWorkweave, Step3AdvanceOutput, SyncOutcomeOutput, LandJsonOutput,
+    LAND_JSON_SCHEMA_URL,
 };
 use crate::manifest::{RepoKey, WorkweaveName};
 use crate::op_state::OpPhase;
@@ -22,7 +22,7 @@ use crate::workspace::Resolution;
 
 /// Everything the machine reported through its handler during one run.
 #[derive(Default)]
-pub(super) struct SyncToOutcome {
+pub(super) struct LandOutcome {
     records: Vec<SyncOutcomeOutput>,
     step3_advances: HashMap<String, Step3AdvanceOutput>,
     project_repo_advance: Option<Step3AdvanceOutput>,
@@ -35,7 +35,7 @@ pub(super) struct SyncToOutcome {
     complete: bool,
 }
 
-impl SyncToOutcome {
+impl LandOutcome {
     pub(super) fn any_failure(&self) -> bool {
         self.records.iter().any(SyncOutcomeOutput::is_failure)
     }
@@ -48,7 +48,7 @@ impl SyncToOutcome {
         refused: Vec<crate::diagnosis::JudgedOutput>,
         failed: bool,
         resolution: Option<Resolution>,
-    ) -> Option<SyncToJsonOutput> {
+    ) -> Option<LandJsonOutput> {
         if self.records.is_empty() && failed && !self.complete {
             return None;
         }
@@ -65,8 +65,8 @@ impl SyncToOutcome {
                 outcome
             })
             .collect();
-        Some(SyncToJsonOutput {
-            schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+        Some(LandJsonOutput {
+            schema: LAND_JSON_SCHEMA_URL.to_owned(),
             source_workweave: coordinates.source_workweave,
             target: WirePath::of(&coordinates.target),
             retired: self.retired.is_some(),
@@ -83,22 +83,22 @@ impl SyncToOutcome {
     }
 }
 
-/// The envelope-mode handler for `rwv sync-to --json`: it collects what the
-/// machine reports into a [`SyncToOutcome`] and prints nothing.
+/// The envelope-mode handler for `rwv land --json`: it collects what the
+/// machine reports into a [`LandOutcome`] and prints nothing.
 #[derive(Default)]
-pub(super) struct SyncToRecorder(Mutex<SyncToOutcome>);
+pub(super) struct LandRecorder(Mutex<LandOutcome>);
 
-impl SyncToRecorder {
-    pub(super) fn into_outcome(self) -> SyncToOutcome {
+impl LandRecorder {
+    pub(super) fn into_outcome(self) -> LandOutcome {
         self.0.into_inner().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn with(&self, report: impl FnOnce(&mut SyncToOutcome)) {
+    fn with(&self, report: impl FnOnce(&mut LandOutcome)) {
         report(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()));
     }
 }
 
-impl OutputHandler for SyncToRecorder {
+impl OutputHandler for LandRecorder {
     fn emit_text(&self) -> bool {
         false
     }

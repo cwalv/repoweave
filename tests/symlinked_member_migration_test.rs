@@ -442,8 +442,8 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["lock"]),
         (&weave.seat, vec!["update", "--remote"]),
         (&weave.seat, vec!["sync"]),
-        (&weave.seat, vec!["sync-to", primary_arg.as_str()]),
-        (&weave.seat, vec!["sync-to"]),
+        (&weave.seat, vec!["land", primary_arg.as_str()]),
+        (&weave.seat, vec!["land"]),
         (
             &weave.primary,
             vec!["workweave", "delete", "--project", PROJECT, SEAT],
@@ -498,7 +498,7 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
         &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &pin],
     );
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -583,13 +583,13 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     let primary_owned_before = common::git_in(&owned, &["rev-parse", "main"]);
 
     let parked = rwv()
-        .args(["sync-to", &primary.to_string_lossy(), "--strategy=rebase"])
+        .args(["land", "--strategy=rebase"])
         .current_dir(&seat)
         .output()
         .unwrap();
     assert!(
         !parked.status.success() && seat.join(".rwv-op").exists(),
-        "fixture: the conflicting owned edit must park the sync-to; stderr:\n{}",
+        "fixture: the conflicting owned edit must park the land; stderr:\n{}",
         String::from_utf8_lossy(&parked.stderr)
     );
 

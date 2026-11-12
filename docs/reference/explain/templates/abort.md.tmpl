@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Roll an in-flight `rwv sync` or `rwv sync-to` back to the savepoint refs it
+Roll an in-flight `rwv sync` or `rwv land` back to the savepoint refs it
 wrote at the start of the operation, in every workspace it touched. Call `abort` when a
-sync or sync-to has left the workspace in an unresolvable state and you want to
+sync or land has left the workspace in an unresolvable state and you want to
 get back to the last known-good position rather than continue forward.
 
 `abort` reads op-state to find the in-flight operation. The **owner record**
 (`.rwv-op`) lives at the initiating workspace (CWD for `rwv sync`; CWD for
-`rwv sync-to`). Every other workspace the op mutates holds a **thin lease**
+`rwv land`). Every other workspace the op mutates holds a **thin lease**
 (`.rwv-op-lease`) pointing back at the owner. `abort` can be invoked from
 any involved workspace — from a leased workspace it follows the pointer to
-the owner record automatically. For `sync-to` ops, both the initiating
+the owner record automatically. For `land` ops, both the initiating
 workspace and the recorded target are rolled back, whichever of the two
 `abort` is invoked from, and each repo gets the same verdict from either.
 
@@ -71,7 +71,7 @@ when all repos restored without a foreign-tip violation.
 owner record or `.rwv-op-lease` thin lease is found in CWD's workspace.
 
 This can happen if:
-- No sync or sync-to was ever started.
+- No sync or land was ever started.
 - The operation already completed successfully and the op-state was cleaned up.
 - The op-state was removed manually.
 - A prior `rwv abort` completed cleanly and cleared op-state.
@@ -99,7 +99,7 @@ commits only it holds, and `rwv backup drop <repo> <name>` drops it when they
 are not wanted; getting them back is putting a branch on the backup's commit.
 
 Spell `<repo>` as abort's own per-repo output does — the workspace-relative
-path (`github/foo/bar`), or `projects/<name>` for the project repo. A `sync-to`
+path (`github/foo/bar`), or `projects/<name>` for the project repo. A `land`
 op consults the consent once per side, so naming a repo covers that repo in both
 the source and the target workspace; each side's backup is named for that
 side's own branch. Naming a repo that is not refused does nothing. Naming
@@ -150,7 +150,7 @@ The abandoned-tip line is followed by the tip that was left behind and the
 backup it was kept as, so the abandonment is recoverable from the transcript
 alone.
 
-For a `sync-to`, lines for the workspace `abort` was invoked from carry no
+For a `land`, lines for the workspace `abort` was invoked from carry no
 prefix, and lines for the op's other workspace carry its side: `[target]`
 when `abort` runs in the initiating workspace, `[source]` when it runs in
 the target.
@@ -196,10 +196,10 @@ rwv sync primary --strategy rebase
 rwv abort
 ```
 
-Roll back a sync-to (rolls back both CWD and the target workspace):
+Roll back a land (rolls back both CWD and the target workspace):
 
 ```
-rwv sync-to primary
+rwv land
 # ... conflict mid-op ...
 rwv abort
 ```

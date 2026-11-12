@@ -1535,7 +1535,7 @@ impl WeaveRootIdentityConflictKind<PathBuf> {
 pub enum WorkweaveTreeIntegrityKind<P> {
     /// The marker's `parent:` path no longer exists on disk. The workweave's
     /// parent was retired or deleted out-of-band (a crash mid-adopt, or a
-    /// hand-deletion) while this child remained. Bare `rwv sync-to` would
+    /// hand-deletion) while this child remained. Bare `rwv land` would
     /// otherwise mis-fire; instead it now surfaces friendly doctor-remediation
     /// text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary
     /// (which always exists). Normal retire/delete adopts children before the
@@ -1913,24 +1913,6 @@ pub enum DetachedAncestry {
     /// Each carries commits the other lacks, or their ancestry could not be
     /// read: switching strands HEAD's, and moving the branch strands its own.
     Diverged,
-}
-
-impl DetachedAncestry {
-    pub(crate) fn observe(
-        vcs: &dyn crate::vcs::Vcs,
-        store: &Path,
-        head: &ResolvedRevisionId,
-        branch_tip: &ResolvedRevisionId,
-    ) -> Self {
-        let switching_strands_head = leaves_commits_behind(vcs, store, head, branch_tip);
-        let moving_branch_strands_tip = leaves_commits_behind(vcs, store, branch_tip, head);
-        match (switching_strands_head, moving_branch_strands_tip) {
-            (false, false) => Self::Equal,
-            (false, true) => Self::HeadBehind,
-            (true, false) => Self::HeadAhead,
-            (true, true) => Self::Diverged,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4594,21 +4576,6 @@ pub fn scan_clone_topology(
     violations
 }
 
-/// Whether giving up `left` for `kept` strands commits: anything `left`
-/// reaches that `kept` does not.
-///
-/// Structural: the question is ancestry, never how long ago anything
-/// happened. Unreadable ancestry counts as stranding. The direction that is
-/// wrong to guess is the quiet one.
-fn leaves_commits_behind(
-    vcs: &dyn crate::vcs::Vcs,
-    store: &Path,
-    left: &ResolvedRevisionId,
-    kept: &ResolvedRevisionId,
-) -> bool {
-    !vcs.is_ancestor(store, left, kept).unwrap_or(false)
-}
-
 /// Scan every workspace's member checkouts against where the workspace's
 /// checked-out branch says they should be.
 ///
@@ -6762,7 +6729,7 @@ impl CheckViolation {
                         format!(
                             "first land and retire each workweave holding a worktree of it, \
                              which the move would strand ({}): commit or stash its edits and \
-                             run `rwv sync-to --retire` from it; then ",
+                             run `rwv land --retire` from it; then ",
                             retire_first
                                 .iter()
                                 .map(|w| format!("`{w}`"))

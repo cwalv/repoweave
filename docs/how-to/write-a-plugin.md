@@ -83,7 +83,7 @@ See [Additive-schema guarantee](../reference/plugin-protocol.md#additive-schema-
 
 ## 4. Propagate the exit code and verify discovery
 
-`rwv` forwards the plugin's exit code verbatim, so `rwv check-mid-op && rwv sync-to` composes in shell scripts. Confirm the executable is on `$PATH` and discoverable:
+`rwv` forwards the plugin's exit code verbatim, so `rwv check-mid-op && rwv land` composes in shell scripts. Confirm the executable is on `$PATH` and discoverable:
 
 ```sh
 rwv --help            # lists check-mid-op under "External commands"

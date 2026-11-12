@@ -15,7 +15,7 @@
 //! The gate is intentionally one-directional for cli.md: cli.md may *omit*
 //! flags (e.g. internal/hidden flags), but must not *invent* flags that do not
 //! exist in clap. This catches the root cause it was built for: a removed flag
-//! (`--force` on sync/sync-to) remained in cli.md through a green CI.
+//! (`--force` on sync/land) remained in cli.md through a green CI.
 //!
 //! # Omission is allowed; a wrong value is not
 //!
@@ -273,15 +273,15 @@ fn cli_md_sync_flags_exist_in_help() {
 }
 
 // ===========================================================================
-// rwv sync-to — the primary rot target (--force was silently kept here)
+// rwv land — the primary rot target (--force was silently kept here)
 // ===========================================================================
 
 #[test]
 fn cli_md_sync_to_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv sync-to");
-    let help = help_flags(&["sync-to"]);
-    assert_all_cli_md_flags_in_help("sync-to", &cli_flags, &help);
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv land");
+    let help = help_flags(&["land"]);
+    assert_all_cli_md_flags_in_help("land", &cli_flags, &help);
 }
 
 // ===========================================================================
@@ -496,7 +496,7 @@ const VALUE_CHECKED_VERBS: &[&[&str]] = &[
     &["update", "--remote"],
     &["lock"],
     &["sync"],
-    &["sync-to"],
+    &["land"],
     &["push"],
     &["doctor"],
     &["member", "add"],

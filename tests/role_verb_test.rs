@@ -8,7 +8,7 @@
 //!     edit left behind, and an unknown role is rejected;
 //!   - a change the regeneration refuses leaves the manifest and the member's
 //!     files as they were;
-//!   - the change lands through sync-to, the target settles on landing, and
+//!   - the change lands through land, the target settles on landing, and
 //!     another workweave settles on its next sync.
 #![cfg(unix)]
 
@@ -470,7 +470,7 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
     succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
-    succeed(&["sync-to", &weave.ws.to_string_lossy()], &seat);
+    succeed(&["land"], &seat);
 
     assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Reference);
     assert_read_only(&weave.ws.join(&weave.beta), "the target, on landing");
@@ -496,7 +496,7 @@ fn a_sync_sets_aside_an_uncommitted_version_of_a_file_rwv_generates_and_regenera
     succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
-    succeed(&["sync-to", &weave.ws.to_string_lossy()], &seat);
+    succeed(&["land"], &seat);
 
     let generated = weave.project_dir(&other).join("Cargo.toml");
     let mut text = std::fs::read_to_string(&generated).unwrap();

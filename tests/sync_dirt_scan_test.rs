@@ -1,4 +1,4 @@
-//! Integration tests for the `rwv sync-to` pre-flight dirt scan.
+//! Integration tests for the `rwv land` pre-flight dirt scan.
 //!
 //! Covers four adversarial scenarios:
 //!
@@ -38,11 +38,11 @@ fn rwv() -> AssertCommand {
 // Fixture
 // ---------------------------------------------------------------------------
 //
-// PRIMARY workspace: the source of `rwv sync-to <primary>`. Holds the canonical
+// PRIMARY workspace: the source of `rwv land <primary>`. Holds the canonical
 // git object stores for both the project repo and the manifest repo.
 //
 // WORKWEAVE destination: a worktree pair sharing history with the primary.
-// The destination gets `rwv sync-to <primary>` run against it.
+// The destination gets `rwv land <primary>` run against it.
 //
 // The worktree topology (shared history) is what lets the sync proceed past
 // the `check_phase1_ancestor` ff-precondition; without shared history the two
@@ -131,7 +131,7 @@ fn fixture() -> Fixture {
     // Workweave (destination): worktrees of the primary repos.
     //
     // Using git worktrees gives the workweave's repos shared history with
-    // the primary, so `rwv sync-to <primary>` can ff-advance the workweave's
+    // the primary, so `rwv land <primary>` can ff-advance the workweave's
     // branch when the primary has newer commits. Without shared history,
     // sync refuses on the ancestry gate before the dirt scan runs.
     // -----------------------------------------------------------------------
@@ -238,8 +238,7 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -250,7 +249,7 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
 
     // Must name the dirty repo and the kind of dirt.
     assert!(
-        stderr.contains("rwv sync-to: ") && stderr.contains(": edits dirty\n"),
+        stderr.contains("rwv land: ") && stderr.contains(": edits dirty\n"),
         "refusal must name the sync precondition and kind of dirt; got:\n{stderr}"
     );
     assert!(
@@ -339,8 +338,7 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -350,7 +348,7 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("rwv sync-to: ") && stderr.contains(": edits dirty\n"),
+        stderr.contains("rwv land: ") && stderr.contains(": edits dirty\n"),
         "refusal must name the sync precondition and kind of dirt; got:\n{stderr}"
     );
     assert!(
@@ -389,8 +387,7 @@ fn sync_multiple_dirty_repos_all_named_in_one_refusal() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -442,8 +439,7 @@ fn sync_untracked_only_destination_proceeds() {
 
     rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -470,7 +466,7 @@ fn sync_untracked_only_destination_proceeds() {
 // 5. Dirty rwv.lock in destination project → refused (no carve-out for sync)
 // ===========================================================================
 
-/// `rwv sync-to` carves a dirty `rwv.lock` out of its source-side scan: the
+/// `rwv land` carves a dirty `rwv.lock` out of its source-side scan: the
 /// project repo there is never fast-forwarded during replay, and Phase 3
 /// regenerates and commits the lock, so a dirty lock is the auto-relock's
 /// input. `rwv sync` makes no such carve-out: it fast-forwards or rebases the
@@ -548,8 +544,7 @@ fn sync_clean_workweave_proceeds() {
 
     rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -591,8 +586,7 @@ fn sync_staged_tracked_change_in_destination_refuses() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -631,8 +625,7 @@ fn sync_retry_after_dirt_refusal_succeeds() {
     std::fs::write(f.ww.repo_dir.join("README.md"), "dirty\n").unwrap();
     rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -654,8 +647,7 @@ fn sync_retry_after_dirt_refusal_succeeds() {
     // Second attempt: clean destination → must succeed without an in-flight refusal.
     let assert = rwv()
         .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])

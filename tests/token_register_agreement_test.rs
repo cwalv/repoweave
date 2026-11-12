@@ -726,7 +726,7 @@ fn definition_tokens(def: &Value) -> BTreeSet<String> {
 /// Reads every committed schema artifact rather than one: the same
 /// `definitions` entry is duplicated verbatim across every verb whose schema
 /// references it (`PlacementOutput` sits in `fetch.json`, `update.json`,
-/// `sync.json` and `sync-to.json`), so this folds those into one entry rather than
+/// `sync.json` and `land.json`), so this folds those into one entry rather than
 /// reading only the first file that happens to declare a name and missing
 /// whatever a schema unique to some other verb adds under a name of its own.
 fn kebab_vocabularies() -> BTreeMap<String, BTreeSet<String>> {

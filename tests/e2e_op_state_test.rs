@@ -8,11 +8,11 @@
 //! 5. Abort cross-workspace: `rwv abort` from either workspace clears both op-state files.
 //!
 //! Notes:
-//! - Tests 3 and 5 are `sync-to` scenarios (multi-workspace); they drive a real `sync-to`
+//! - Tests 3 and 5 are `land` scenarios (multi-workspace); they drive a real `land`
 //!   into a parked state via a target-side collision and recover it via `--continue` /
 //!   `rwv abort`.
-//! - Test 1 uses `rwv sync-to` from two directions to trigger the in-progress check.
-//! - Test 2 uses `rwv sync-to --strategy rebase` to induce a conflict, then `--continue`.
+//! - Test 1 uses `rwv land` from two directions to trigger the in-progress check.
+//! - Test 2 uses `rwv land --strategy rebase` to induce a conflict, then `--continue`.
 //! - Test 4 uses `rwv sync` with mismatched `--strategy`.
 
 use assert_cmd::Command as AssertCommand;
@@ -154,14 +154,14 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 // Test 1: Concurrent-op detection
 //
-// An in-progress op-state file blocks a new `rwv sync-to` from either the CWD
+// An in-progress op-state file blocks a new `rwv land` from either the CWD
 // or the target workspace. The first test parks a real op via a genuine
 // rebase conflict; the second constructs an owner record directly at the
 // `relock` phase, which that recipe cannot reach organically.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn concurrent_op_detection_blocks_new_sync_to_in_cwd_workspace() {
+fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -192,8 +192,7 @@ fn concurrent_op_detection_blocks_new_sync_to_in_cwd_workspace() {
     // First sync parks mid-replay on the real conflict.
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -209,7 +208,7 @@ fn concurrent_op_detection_blocks_new_sync_to_in_cwd_workspace() {
     // Attempt a new sync from ww while the op-state file is present.
     // It should fail with an in-progress error.
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -254,7 +253,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
     let before = unix_now();
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -286,8 +285,8 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 // ---------------------------------------------------------------------------
 // Test 2: Mid-step-1 resume (conflict → resolve → --continue → completion)
 //
-// Induce a rebase conflict in Phase 1' of sync-to. Resolve it manually.
-// Then `rwv sync-to --continue` should resume and complete.
+// Induce a rebase conflict in Phase 1' of land. Resolve it manually.
+// Then `rwv land --continue` should resume and complete.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -322,8 +321,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     // (project repos diverged). Adapted from --force.
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -362,9 +360,9 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         String::from_utf8_lossy(&continue_rebase.stderr)
     );
 
-    // `rwv sync-to --continue` should now resume and complete.
+    // `rwv land --continue` should now resume and complete.
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -383,8 +381,8 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 // ---------------------------------------------------------------------------
 // Test 3: Mid-step-3 resume (op-state at advance-target → --continue → completion)
 //
-// AdvanceTarget is a sync-to-only phase (`OpPhase` doc), so the real fixture
-// is a `sync-to` parked there: the target holds an untracked file that
+// AdvanceTarget is a land-only phase (`OpPhase` doc), so the real fixture
+// is a `land` parked there: the target holds an untracked file that
 // collides with a path the incoming project commit writes, so every manifest
 // repo lands but the project repo's ff-advance blocks (same recipe
 // resume_project_binding_test.rs uses to reach this phase for real).
@@ -407,7 +405,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -424,10 +422,10 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     // Clear the collision so the resume has a path forward.
     std::fs::remove_file(primary.project_dir.join("notes.txt")).unwrap();
 
-    // `rwv sync-to --continue` (alone — all params from op-state) should not
+    // `rwv land --continue` (alone — all params from op-state) should not
     // produce the "in progress, resolve and rerun" refusal error.
     let result = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert();
 
@@ -480,7 +478,7 @@ fn continue_with_strategy_flag_is_rejected() {
     );
 }
 
-/// --force is removed from sync/sync-to; passing it must produce an actionable
+/// --force is removed from sync/land; passing it must produce an actionable
 /// error (from the early-dispatch did-you-mean hint in `cli::dispatch`).
 #[test]
 fn sync_to_force_flag_is_removed_and_produces_friendly_error() {
@@ -489,7 +487,7 @@ fn sync_to_force_flag_is_removed_and_produces_friendly_error() {
 
     // --force must be rejected with a migration hint.
     let assertion = rwv()
-        .args(["sync-to", "--force"])
+        .args(["land", "--force"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -501,7 +499,7 @@ fn sync_to_force_flag_is_removed_and_produces_friendly_error() {
     );
 }
 
-/// Plain `sync`'s `--json` still conflicts with `--continue`. The sync-to
+/// Plain `sync`'s `--json` still conflicts with `--continue`. The land
 /// side relaxed this (its envelope reports the machine's own coordinates and
 /// a `resumed` disclosure); the sync envelope carries no such disclosure, so
 /// its conflict stands until it grows one. This pin is what a relaxer must
@@ -531,7 +529,7 @@ fn continue_with_allow_stale_lock_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
-        .args(["sync-to", "--allow-stale-lock", "--continue"])
+        .args(["land", "--allow-stale-lock", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -550,7 +548,7 @@ fn continue_with_discard_local_commits_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
-        .args(["sync-to", "--discard-local-commits", "--continue"])
+        .args(["land", "--discard-local-commits", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -567,9 +565,9 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
     let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // rwv sync-to --retire --continue must be rejected.
+    // rwv land --retire --continue must be rejected.
     let assertion = rwv()
-        .args(["sync-to", "--retire", "--continue"])
+        .args(["land", "--retire", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -577,7 +575,7 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
 
     assert!(
         stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for sync-to --retire --continue; got: {stderr}"
+        "expected clap exclusivity error for land --retire --continue; got: {stderr}"
     );
 }
 
@@ -586,9 +584,9 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
     let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // rwv sync-to --strategy=rebase --continue must be rejected.
+    // rwv land --strategy=rebase --continue must be rejected.
     let assertion = rwv()
-        .args(["sync-to", "--strategy", "rebase", "--continue"])
+        .args(["land", "--strategy", "rebase", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -596,7 +594,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
 
     assert!(
         stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for sync-to --strategy=rebase --continue; got: {stderr}"
+        "expected clap exclusivity error for land --strategy=rebase --continue; got: {stderr}"
     );
 }
 
@@ -606,7 +604,7 @@ fn continue_with_no_op_in_progress_errors_clearly() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // No op-state file present. `rwv sync --continue` (alone, no other flags)
-    // should error with "no sync/sync-to op in progress to continue".
+    // should error with "no sync/land op in progress to continue".
     let assertion = rwv()
         .args(["sync", "--continue"])
         .current_dir(&ww.root)
@@ -618,7 +616,7 @@ fn continue_with_no_op_in_progress_errors_clearly() {
         stderr.contains("no sync")
             || stderr.contains("nothing to continue")
             || stderr.contains("in progress"),
-        "expected 'no sync/sync-to op in progress' error when --continue has no op; got: {stderr}"
+        "expected 'no sync/land op in progress' error when --continue has no op; got: {stderr}"
     );
 }
 
@@ -627,10 +625,10 @@ fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
     let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // No op-state file present. `rwv sync-to --continue` (alone, no other flags)
-    // should error with "no sync/sync-to op in progress to continue".
+    // No op-state file present. `rwv land --continue` (alone, no other flags)
+    // should error with "no sync/land op in progress to continue".
     let assertion = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -639,14 +637,14 @@ fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
     assert!(
         stderr.contains("no sync") || stderr.contains("nothing to continue")
             || stderr.contains("in progress"),
-        "expected 'no sync/sync-to op in progress' error when sync-to --continue has no op; got: {stderr}"
+        "expected 'no sync/land op in progress' error when land --continue has no op; got: {stderr}"
     );
 }
 
 // ---------------------------------------------------------------------------
 // Test 5: Abort cross-workspace
 //
-// Drive a real `sync-to` into a parked state (owner record at ww, thin lease
+// Drive a real `land` into a parked state (owner record at ww, thin lease
 // at primary — same target-side collision recipe test 3 above uses), then
 // run `rwv abort` from ww. Verify both op-state files are removed.
 // ---------------------------------------------------------------------------
@@ -664,12 +662,12 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
 
     // The target holds an untracked file where the incoming project commit
     // writes one, so the manifest repo lands but the project repo blocks —
-    // ww ends up the owner (CWD/source of sync-to), primary the target with
+    // ww ends up the owner (CWD/source of land), primary the target with
     // the thin lease.
     std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -799,7 +797,7 @@ fn assert_in_flight_op_refusal(stderr: &str, expect_verb: &str) {
 fn mid_op_update_refuses_with_in_flight_message() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+    plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
         .args(["update", "--remote"])
@@ -807,7 +805,7 @@ fn mid_op_update_refuses_with_in_flight_message() {
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert_in_flight_op_refusal(&stderr, "land");
 }
 
 /// `rwv lock --commit` refuses while an op involves the active workspace.
@@ -849,21 +847,21 @@ fn mid_op_plain_lock_is_not_gated() {
     );
 }
 
-/// `rwv sync-to` (the retire entry point) refuses while an op involves the
+/// `rwv land` (the retire entry point) refuses while an op involves the
 /// workspace — the op guard reports the in-flight op, covering the retire verb.
 #[test]
 fn mid_op_sync_to_refuses_with_in_flight_message() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+    plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
-        .args(["sync-to", "--retire", &primary.root.to_string_lossy()])
+        .args(["land", "--retire", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert_in_flight_op_refusal(&stderr, "land");
 }
 
 /// `rwv materialize` refuses while an op involves the workspace it would
@@ -878,7 +876,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
 fn mid_op_materialize_refuses_and_clears_with_the_record() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+    plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
         .args(["materialize"])
@@ -886,7 +884,7 @@ fn mid_op_materialize_refuses_and_clears_with_the_record() {
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert_in_flight_op_refusal(&stderr, "land");
     assert!(
         stderr.contains("materialize does not start while an operation is in flight"),
         "the refusal must say which verb declined and why, not only what the \
@@ -945,7 +943,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
     // Owner record at ww (the op's initiating workspace), thin lease at primary.
     plant_owner_record(
         &ww.root,
-        "sync-to",
+        "land",
         "advance-target",
         &ww.root,
         &primary.root,
@@ -965,7 +963,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert_in_flight_op_refusal(&stderr, "land");
     common::assert_names_operator_path(&stderr, &ww.root);
 }
 
@@ -988,16 +986,16 @@ fn op_guard_precedes_lock_relation_classification() {
     make_commit(&ww.server_dir, "b.txt", "b\n", "ww: B (diverged)");
 
     // Plant an in-flight op on ww at the same time.
-    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+    plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
-    // A `rwv sync-to` must report the in-flight op, NOT a lock/relation error.
+    // A `rwv land` must report the in-flight op, NOT a lock/relation error.
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert_in_flight_op_refusal(&stderr, "land");
     assert!(
         !stderr.contains("diverged")
             && !stderr.contains("lock behind")
@@ -1059,8 +1057,7 @@ fn op_state_file_written_during_sync_to_and_removed_on_success() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -1099,7 +1096,7 @@ fn op_state_file_written_during_sync_to_and_removed_on_success() {
     );
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();

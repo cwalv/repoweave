@@ -2,10 +2,10 @@
 //!
 //! ## What this battery proves
 //!
-//! For every (phase × kill-point) cell of the sync-to phase machine, this test
+//! For every (phase × kill-point) cell of the land phase machine, this test
 //! file pins two contracts:
 //!
-//! 1. **Continue-fidelity**: `rwv sync-to --continue` from the synthesized crash state drives the op to an end
+//! 1. **Continue-fidelity**: `rwv land --continue` from the synthesized crash state drives the op to an end
 //!    state equal to an uninterrupted run's. We compare *real* end states
 //!    (repo tips, lock content, marker absence) — not implementation echoes.
 //! 2. **Abort-restore**: `rwv abort` from the same crash state restores every
@@ -18,7 +18,7 @@
 //!     (`continue_after_source_mutation`);
 //!   - named-override consent persistence
 //!     (`override_resume_fidelity_discard_local_commits`);
-//!   - lease-side vs owner-side invariance for sync-to (the
+//!   - lease-side vs owner-side invariance for land (the
 //!     "owner-rooted engine, invocation-CWD-rooted op-state" rule from
 //!     the lease-side --continue case).
 //!
@@ -66,13 +66,13 @@
 //!
 //! ### Coverage axes (per design § 9, this is the matrix)
 //!
-//! The verb is `sync-to`:
+//! The verb is `land`:
 //!   - quiescent cells (workweave and primary at shared tips) exercise the
 //!     replay and relock phases with nothing to move.
 //!   - the remaining cells run the full machine; we cover every phase.
 //!
 //! Both invocation sides (owner and lease):
-//!   - for sync-to cells, every phase has at least one cell that exercises
+//!   - for land cells, every phase has at least one cell that exercises
 //!     lease-side --continue AND lease-side abort. Two invocation-side
 //!     inversion bugs were already caught this way; the matrix locks them
 //!     down per phase.
@@ -258,7 +258,7 @@ enum PlantedVerb {
 impl PlantedVerb {
     fn wire(self) -> &'static str {
         match self {
-            PlantedVerb::SyncTo => "sync-to",
+            PlantedVerb::SyncTo => "land",
         }
     }
 }
@@ -334,7 +334,7 @@ fn plant_savepoint_at(repo: &Path, op_id: &str, sha: &str) {
     );
 }
 
-/// `sync-to` plants two savepoint refs per worktree pair: `<id>` on the
+/// `land` plants two savepoint refs per worktree pair: `<id>` on the
 /// owner/source side, `<id>-target` on the target side — matching
 /// `restore_id_for` in `src/sync.rs`.
 fn target_op_id(op_id: &str) -> String {
@@ -407,7 +407,7 @@ enum Verb {
 impl Verb {
     fn arg(self) -> &'static str {
         match self {
-            Verb::SyncTo => "sync-to",
+            Verb::SyncTo => "land",
         }
     }
 }
@@ -463,11 +463,11 @@ fn run_abort_refuses_foreign(cwd: &Path, cell_name: &str) -> String {
 // Per-cell end-state assertions
 // ---------------------------------------------------------------------------
 
-/// After a successful `--continue` of a quiescent `sync-to` from ww (sharing tips
+/// After a successful `--continue` of a quiescent `land` from ww (sharing tips
 /// with primary — no divergence is introduced ahead of the planted cell),
 /// the markers must be cleared and ww's server/project repos and lock must
 /// sit at the real tips passed in, the same end-state-equality standard
-/// `assert_sync_to_continued_clean` holds sync-to to.
+/// `assert_sync_to_continued_clean` holds land to.
 fn assert_quiescent_sync_to_continued_clean(
     ww: &Workspace,
     expected_server_tip: &str,
@@ -476,11 +476,11 @@ fn assert_quiescent_sync_to_continued_clean(
 ) {
     assert!(
         !ww.root.join(".rwv-op").exists(),
-        "[cell {cell_name}] owner record must be cleared after sync-to --continue"
+        "[cell {cell_name}] owner record must be cleared after land --continue"
     );
     assert!(
         !ww.root.join(".rwv-op-lease").exists(),
-        "[cell {cell_name}] no lease should exist after quiescent sync-to"
+        "[cell {cell_name}] no lease should exist after quiescent land"
     );
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
@@ -493,7 +493,7 @@ fn assert_quiescent_sync_to_continued_clean(
         "[cell {cell_name}] ww's project tip must equal the real pre-op tip"
     );
     let lock = repoweave::manifest::LockFile::from_path(&ww.project_dir.join("rwv.lock"))
-        .expect("rwv.lock must parse after sync-to --continue");
+        .expect("rwv.lock must parse after land --continue");
     let server_path = repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap();
     let pinned = lock
         .get_entry(&server_path)
@@ -506,7 +506,7 @@ fn assert_quiescent_sync_to_continued_clean(
     );
 }
 
-/// After a successful `sync-to --continue` from a ww-ahead-of-primary fixture,
+/// After a successful `land --continue` from a ww-ahead-of-primary fixture,
 /// primary must have ff'd to ww's server tip and the markers are cleared.
 fn assert_sync_to_continued_clean(
     primary: &Workspace,
@@ -516,11 +516,11 @@ fn assert_sync_to_continued_clean(
 ) {
     assert!(
         !ww.root.join(".rwv-op").exists(),
-        "[cell {cell_name}] owner record must be cleared after sync-to --continue"
+        "[cell {cell_name}] owner record must be cleared after land --continue"
     );
     assert!(
         !primary.root.join(".rwv-op-lease").exists(),
-        "[cell {cell_name}] lease must be cleared after sync-to --continue"
+        "[cell {cell_name}] lease must be cleared after land --continue"
     );
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
@@ -577,7 +577,7 @@ fn assert_quiescent_sync_to_aborted_clean(ww: &Workspace, ww_server_pre: &str, c
 // clean end state. Then re-do the setup, abort, assert pre-op restoration.
 // ===========================================================================
 
-// --- E(replay), quiescent sync-to ---------------------------------------------------
+// --- E(replay), quiescent land ---------------------------------------------------
 
 /// Cell `E(replay) / sync / owner-side`: record=replay, no work yet. This is
 /// the moment immediately after `guard_and_mark` returned. `--continue`
@@ -606,12 +606,12 @@ fn cell_e_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(replay)/sync-to-quiescent/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(replay)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
         &project_tip,
-        "E(replay)/sync-to-quiescent/owner",
+        "E(replay)/land-quiescent/owner",
     );
 }
 
@@ -635,11 +635,11 @@ fn cell_e_replay_quiescent_sync_to_abort_restores_to_pre_op() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
-    run_abort_ok(&ww.root, "E(replay)/sync-to-quiescent/owner/abort");
-    assert_quiescent_sync_to_aborted_clean(&ww, &sha, "E(replay)/sync-to-quiescent/owner/abort");
+    run_abort_ok(&ww.root, "E(replay)/land-quiescent/owner/abort");
+    assert_quiescent_sync_to_aborted_clean(&ww, &sha, "E(replay)/land-quiescent/owner/abort");
 }
 
-// --- M(replay), quiescent sync-to ---------------------------------------------------
+// --- M(replay), quiescent land ---------------------------------------------------
 
 /// Cell `M(replay) / sync / owner-side`: record=replay; mid-mutation is
 /// modeled by a VCS-native rebase wreckage in one of the manifest repos.
@@ -693,7 +693,7 @@ fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
         },
     );
 
-    run_abort_ok(&ww.root, "M(replay)/sync-to-quiescent/owner/abort");
+    run_abort_ok(&ww.root, "M(replay)/land-quiescent/owner/abort");
     // Server must be back at the savepoint (mid-op classification + reset).
     assert!(
         !mid_rebase(&ww.server_dir),
@@ -706,7 +706,7 @@ fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
     );
 }
 
-// --- J(replay), quiescent sync-to — observational equivalent of E(relock) ----------
+// --- J(replay), quiescent land — observational equivalent of E(relock) ----------
 
 /// Cell `J(replay) / sync / owner-side`: record=replay, all replay work
 /// applied (project repo at source tip, manifest repos at lock tips). On
@@ -741,16 +741,16 @@ fn cell_j_replay_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(replay)/sync-to-quiescent/owner");
+    run_continue(Verb::SyncTo, &ww.root, "J(replay)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
         &project_tip,
-        "J(replay)/sync-to-quiescent/owner",
+        "J(replay)/land-quiescent/owner",
     );
 }
 
-// --- E(relock), quiescent sync-to ---------------------------------------------------
+// --- E(relock), quiescent land ---------------------------------------------------
 
 /// Cell `E(relock) / sync / owner-side`: record=relock, no relock work done.
 /// `--continue` regenerates the lock (no-op if current) and finishes.
@@ -778,16 +778,16 @@ fn cell_e_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(relock)/sync-to-quiescent/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
         &project_tip,
-        "E(relock)/sync-to-quiescent/owner",
+        "E(relock)/land-quiescent/owner",
     );
 }
 
-// --- M(relock), quiescent sync-to ---------------------------------------------------
+// --- M(relock), quiescent land ---------------------------------------------------
 
 /// Cell `M(relock) / sync / owner-side`: record=relock, the lock has been
 /// regenerated and committed but `record_converged_tips` has not yet run
@@ -824,20 +824,20 @@ fn cell_m_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(relock)/sync-to-quiescent/owner");
+    run_continue(Verb::SyncTo, &ww.root, "M(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
         &project_tip,
-        "M(relock)/sync-to-quiescent/owner",
+        "M(relock)/land-quiescent/owner",
     );
 }
 
-// --- J(relock), quiescent sync-to ---------------------------------------------------
+// --- J(relock), quiescent land ---------------------------------------------------
 
 /// Cell `J(relock) / sync / owner-side`: record=relock, lock committed AND
 /// converged_tips populated. `--continue` re-runs relock (no-op), terminates
-/// the quiescent sync-to.
+/// the quiescent land.
 #[test]
 fn cell_j_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     let tmp = common::tempdir().unwrap();
@@ -866,12 +866,12 @@ fn cell_j_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.server_dir, op_id);
     plant_target_side(&primary, &ww, op_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(relock)/sync-to-quiescent/owner");
+    run_continue(Verb::SyncTo, &ww.root, "J(relock)/land-quiescent/owner");
     assert_quiescent_sync_to_continued_clean(
         &ww,
         &server_tip,
         &project_tip,
-        "J(relock)/sync-to-quiescent/owner",
+        "J(relock)/land-quiescent/owner",
     );
 }
 
@@ -880,9 +880,9 @@ fn cell_j_relock_quiescent_sync_to_continue_drives_to_clean_end_state() {
 // each phase × kill-point cell. We cover BOTH invocation sides per phase.
 // ===========================================================================
 
-// --- E(replay), sync-to, owner-side -----------------------------------------
+// --- E(replay), land, owner-side -----------------------------------------
 
-/// Cell `E(replay) / sync-to / owner-side`: ww ahead, record=replay, no work
+/// Cell `E(replay) / land / owner-side`: ww ahead, record=replay, no work
 /// done. `--continue` runs the full machine.
 #[test]
 fn cell_e_replay_sync_to_owner_continue() {
@@ -908,13 +908,13 @@ fn cell_e_replay_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(replay)/sync-to/owner");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(replay)/land/owner");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/land/owner");
 }
 
-// --- E(replay), sync-to, lease-side -----------------------------------------
+// --- E(replay), land, lease-side -----------------------------------------
 
-/// Cell `E(replay) / sync-to / lease-side`: identical setup to the
+/// Cell `E(replay) / land / lease-side`: identical setup to the
 /// owner-side cell above, but `--continue` is invoked from the lease
 /// workspace (primary). End state must be identical — `load_continuing_context`
 /// re-roots the engine at the owner (the invocation-side rule).
@@ -943,11 +943,11 @@ fn cell_e_replay_sync_to_lease_continue() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Invoke FROM THE LEASE.
-    run_continue(Verb::SyncTo, &primary.root, "E(replay)/sync-to/lease");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/sync-to/lease");
+    run_continue(Verb::SyncTo, &primary.root, "E(replay)/land/lease");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(replay)/land/lease");
 }
 
-// --- E(replay), sync-to, abort owner-side -----------------------------------
+// --- E(replay), land, abort owner-side -----------------------------------
 
 #[test]
 fn cell_e_replay_sync_to_owner_abort() {
@@ -976,17 +976,17 @@ fn cell_e_replay_sync_to_owner_abort() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_abort_ok(&ww.root, "E(replay)/sync-to/owner/abort");
+    run_abort_ok(&ww.root, "E(replay)/land/owner/abort");
     assert_sync_to_aborted_clean(
         &primary,
         &ww,
         &ww_server_pre,
         &primary_server_pre,
-        "E(replay)/sync-to/owner/abort",
+        "E(replay)/land/owner/abort",
     );
 }
 
-// --- E(replay), sync-to, abort lease-side -----------------------------------
+// --- E(replay), land, abort lease-side -----------------------------------
 
 #[test]
 fn cell_e_replay_sync_to_lease_abort() {
@@ -1016,13 +1016,13 @@ fn cell_e_replay_sync_to_lease_abort() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Invoke abort FROM THE LEASE.
-    run_abort_ok(&primary.root, "E(replay)/sync-to/lease/abort");
+    run_abort_ok(&primary.root, "E(replay)/land/lease/abort");
     assert_sync_to_aborted_clean(
         &primary,
         &ww,
         &ww_server_pre,
         &primary_server_pre,
-        "E(replay)/sync-to/lease/abort",
+        "E(replay)/land/lease/abort",
     );
 }
 
@@ -1069,24 +1069,24 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Invoke abort FROM THE LEASE via its canonical path.
-    run_abort_ok(&primary.root, "E(replay)/sync-to/lease/abort/symlink");
+    run_abort_ok(&primary.root, "E(replay)/land/lease/abort/symlink");
     assert_sync_to_aborted_clean(
         &primary,
         &ww,
         &ww_server_pre,
         &primary_server_pre,
-        "E(replay)/sync-to/lease/abort/symlink",
+        "E(replay)/land/lease/abort/symlink",
     );
 }
 
-// --- M(replay), sync-to (owner-side) — one repo converged, one not ----------
+// --- M(replay), land (owner-side) — one repo converged, one not ----------
 
-/// Cell `M(replay) / sync-to / owner-side`: record=replay, the server repo
+/// Cell `M(replay) / land / owner-side`: record=replay, the server repo
 /// has been "converged" (ww was already at its source tip, no change) but
 /// the project repo has NOT yet had Phase 1' applied. On `--continue`,
 /// replay completes Phase 1' and the machine drives forward.
 ///
-/// Concretely we use the ww-ahead-sync-to fixture where source = ww. ww's
+/// Concretely we use the ww-ahead-land fixture where source = ww. ww's
 /// own server is at ww_server_tip, so the per-repo "head == lock target"
 /// check makes Phase 2 a no-op. Phase 1' rebases ww/project onto itself
 /// (trivial no-op). End state: primary ff'd to ww's tips.
@@ -1114,11 +1114,11 @@ fn cell_m_replay_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(replay)/sync-to/owner");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(replay)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "M(replay)/land/owner");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(replay)/land/owner");
 }
 
-// --- J(replay) / E(relock), sync-to (owner) — same end state, different
+// --- J(replay) / E(relock), land (owner) — same end state, different
 // record values. We test E(relock) to exercise the record-says-relock path. --
 
 #[test]
@@ -1145,11 +1145,11 @@ fn cell_e_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(relock)/sync-to/owner");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(relock)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(relock)/land/owner");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "E(relock)/land/owner");
 }
 
-// --- M(relock), sync-to (owner): lock committed, tips not yet recorded ------
+// --- M(relock), land (owner): lock committed, tips not yet recorded ------
 
 #[test]
 fn cell_m_relock_sync_to_owner_continue() {
@@ -1176,11 +1176,11 @@ fn cell_m_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(relock)/sync-to/owner");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(relock)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "M(relock)/land/owner");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "M(relock)/land/owner");
 }
 
-// --- J(relock) ≡ E(advance-target), sync-to: converged_tips populated -------
+// --- J(relock) ≡ E(advance-target), land: converged_tips populated -------
 
 #[test]
 fn cell_j_relock_sync_to_owner_continue() {
@@ -1210,11 +1210,11 @@ fn cell_j_relock_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "J(relock)/sync-to/owner");
-    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "J(relock)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "J(relock)/land/owner");
+    assert_sync_to_continued_clean(&primary, &ww, &ww_server_tip, "J(relock)/land/owner");
 }
 
-// --- E(advance-target), sync-to, owner-side ---------------------------------
+// --- E(advance-target), land, owner-side ---------------------------------
 
 /// `E(advance-target)` is observationally identical to `J(relock)` from the
 /// engine's perspective (record value differs but state is the same once
@@ -1249,16 +1249,16 @@ fn cell_e_advance_target_sync_to_owner_continue() {
     plant_savepoint(&primary.project_dir, &target_id);
     plant_savepoint(&primary.server_dir, &target_id);
 
-    run_continue(Verb::SyncTo, &ww.root, "E(advance-target)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
         &ww_server_tip,
-        "E(advance-target)/sync-to/owner",
+        "E(advance-target)/land/owner",
     );
 }
 
-// --- E(advance-target), sync-to, lease-side ---------------------------------
+// --- E(advance-target), land, lease-side ---------------------------------
 
 #[test]
 fn cell_e_advance_target_sync_to_lease_continue() {
@@ -1291,19 +1291,19 @@ fn cell_e_advance_target_sync_to_lease_continue() {
     run_continue(
         Verb::SyncTo,
         &primary.root,
-        "E(advance-target)/sync-to/lease",
+        "E(advance-target)/land/lease",
     );
     assert_sync_to_continued_clean(
         &primary,
         &ww,
         &ww_server_tip,
-        "E(advance-target)/sync-to/lease",
+        "E(advance-target)/land/lease",
     );
 }
 
-// --- M(advance-target), sync-to (owner) — some target repos ff'd ------------
+// --- M(advance-target), land (owner) — some target repos ff'd ------------
 
-/// Cell `M(advance-target) / sync-to / owner-side`: record=advance-target,
+/// Cell `M(advance-target) / land / owner-side`: record=advance-target,
 /// the server target repo has been ff'd to the converged tip, but the
 /// project target repo has not. On `--continue`, ff is a no-op on the
 /// already-advanced server (head == target) and advances the project.
@@ -1359,18 +1359,18 @@ fn cell_m_advance_target_sync_to_owner_continue() {
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD@{1}"]);
     plant_savepoint_at(&primary.server_dir, &target_id, &pre_advance_primary_server);
 
-    run_continue(Verb::SyncTo, &ww.root, "M(advance-target)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "M(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
         &ww_server_tip,
-        "M(advance-target)/sync-to/owner",
+        "M(advance-target)/land/owner",
     );
 }
 
-// --- J(advance-target), sync-to (owner) — every target repo advanced --------
+// --- J(advance-target), land (owner) — every target repo advanced --------
 
-/// Cell `J(advance-target) / sync-to / owner-side`: record=advance-target,
+/// Cell `J(advance-target) / land / owner-side`: record=advance-target,
 /// every target repo (and the project repo) has reached the converged tip.
 /// On `--continue` advance-target runs again — every ff is a no-op — and
 /// machine terminates.
@@ -1426,16 +1426,16 @@ fn cell_j_advance_target_sync_to_owner_continue() {
         &pre_advance_primary_project,
     );
 
-    run_continue(Verb::SyncTo, &ww.root, "J(advance-target)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "J(advance-target)/land/owner");
     assert_sync_to_continued_clean(
         &primary,
         &ww,
         &ww_server_tip,
-        "J(advance-target)/sync-to/owner",
+        "J(advance-target)/land/owner",
     );
 }
 
-// --- Abort: M(advance-target), sync-to (owner) ------------------------------
+// --- Abort: M(advance-target), land (owner) ------------------------------
 
 /// Abort from a partially-advanced state. The partially-advanced target
 /// server is at the recorded converged tip → classified as
@@ -1486,13 +1486,13 @@ fn cell_m_advance_target_sync_to_owner_abort() {
     plant_savepoint_at(&primary.project_dir, &target_id, &primary_project_pre);
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
-    run_abort_ok(&ww.root, "M(advance-target)/sync-to/owner/abort");
+    run_abort_ok(&ww.root, "M(advance-target)/land/owner/abort");
     assert_sync_to_aborted_clean(
         &primary,
         &ww,
         &ww_server_pre,
         &primary_server_pre,
-        "M(advance-target)/sync-to/owner/abort",
+        "M(advance-target)/land/owner/abort",
     );
     assert_eq!(
         common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
@@ -1547,19 +1547,19 @@ fn cell_m_advance_target_sync_to_lease_abort() {
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
     // Invoke abort FROM THE LEASE.
-    run_abort_ok(&primary.root, "M(advance-target)/sync-to/lease/abort");
+    run_abort_ok(&primary.root, "M(advance-target)/land/lease/abort");
     assert_sync_to_aborted_clean(
         &primary,
         &ww,
         &ww_server_pre,
         &primary_server_pre,
-        "M(advance-target)/sync-to/lease/abort",
+        "M(advance-target)/land/lease/abort",
     );
 }
 
 // --- Foreign-tip refusal: post-crash commit on the target server -----------
 
-/// Cell `J(advance-target) / sync-to / owner-side`: target's server has been
+/// Cell `J(advance-target) / land / owner-side`: target's server has been
 /// ff'd to the converged tip AND a post-crash foreign commit was added on
 /// top of that tip (modeling: "another agent built on the advanced target
 /// after our crash"). Abort must REFUSE for that repo with `foreign-tip`,
@@ -1621,7 +1621,7 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
     );
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
-    let stderr = run_abort_refuses_foreign(&ww.root, "J(advance-target)/foreign-tip/sync-to/owner");
+    let stderr = run_abort_refuses_foreign(&ww.root, "J(advance-target)/foreign-tip/land/owner");
     assert!(
         stderr.contains(SERVER_PATH),
         "refusal must name the foreign repo path; stderr:\n{stderr}"
@@ -1711,7 +1711,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     }
 }
 
-/// Cell `E(retire) / sync-to / owner-side`: record=retire (and =M(retire),
+/// Cell `E(retire) / land / owner-side`: record=retire (and =M(retire),
 /// since retire's mutation is the single workweave-delete step). Continue
 /// must succeed when the workweave's manifest repos match the target's
 /// (the reconciled / happy path).
@@ -1741,7 +1741,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // ww and primary already share tips (no divergence injected): merged-check passes.
-    run_continue(Verb::SyncTo, &ww.root, "E(retire)/sync-to/owner");
+    run_continue(Verb::SyncTo, &ww.root, "E(retire)/land/owner");
 
     assert!(
         !ww.root.exists(),
@@ -1753,7 +1753,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     );
 }
 
-/// Regression: `sync-to --retire` leaks live-orphaned pre-op
+/// Regression: `land --retire` leaks live-orphaned pre-op
 /// savepoints. Phase order is `… → retire → cleanup`, so retire deletes the
 /// workweave BEFORE cleanup drops savepoints. The buggy cleanup dropped
 /// savepoints through the now-deleted workweave paths (`ctx.cwd_project_dir`,
@@ -1814,7 +1814,7 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
 
     // ww and primary share tips: merged-check passes, retire deletes the ww,
     // then cleanup runs against the (now-deleted) workweave paths.
-    run_continue(Verb::SyncTo, &ww.root, "retire/sync-to/savepoint-leak");
+    run_continue(Verb::SyncTo, &ww.root, "retire/land/savepoint-leak");
 
     assert!(
         !ww.root.exists(),
@@ -1842,7 +1842,7 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
     );
 }
 
-/// Cell `E(retire) / sync-to / lease-side`: same set-up as above, invoked
+/// Cell `E(retire) / land / lease-side`: same set-up as above, invoked
 /// from the lease workspace. The recorded decision is that this MUST be
 /// observationally identical.
 #[test]
@@ -1871,7 +1871,7 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
     plant_savepoint(&primary.server_dir, &target_id);
 
     // Lease-side invocation:
-    run_continue(Verb::SyncTo, &primary.root, "E(retire)/sync-to/lease");
+    run_continue(Verb::SyncTo, &primary.root, "E(retire)/land/lease");
 
     assert!(
         !ww.root.exists(),
@@ -1883,7 +1883,7 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
     );
 }
 
-/// Cell `J(retire) / sync-to / owner-side`: dirty-check + merged-check
+/// Cell `J(retire) / land / owner-side`: dirty-check + merged-check
 /// passed but the workweave-delete has not yet committed. In practice this
 /// is the same record state as `E(retire)` (record=retire, ww still exists)
 /// — the kill-window is genuinely narrow here. The acceptance is the same:
@@ -1932,7 +1932,7 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
     plant_savepoint_at(&primary.project_dir, &target_id, &primary_project_pre);
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
-    run_abort_ok(&ww.root, "J(retire)/sync-to/owner/abort");
+    run_abort_ok(&ww.root, "J(retire)/land/owner/abort");
 
     // Both sides restored to pre-op.
     assert_eq!(
@@ -2187,11 +2187,11 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
 //   therefore a genuine ff-mover during replay, so write 1 records it in
 //   advanced_tips before the advance fan-out.
 //
-//   Cells 3, 4 use ww-ahead-of-primary (sync-to) where ww's project has a
+//   Cells 3, 4 use ww-ahead-of-primary (land) where ww's project has a
 //   local commit. Phase 1' rebases that commit onto the source project tip,
 //   landing at a fresh T1. Write 2 captures T1 into advanced_tips[(project)].
 //
-//   Cell 5 reuses the standard sync-to fixture but models the post-relock
+//   Cell 5 reuses the standard land fixture but models the post-relock
 //   state: advanced_tips cleared, converged_tips populated, project at T2.
 //
 //   Cell 6 extends the cell-2 scenario with a second manifest repo carrying
@@ -2385,7 +2385,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 #[test]
 fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
     let tmp = common::tempdir().unwrap();
-    // Use ww-ahead-of-primary sync-to context. ww's project has a local commit
+    // Use ww-ahead-of-primary land context. ww's project has a local commit
     // (from make_ww_ahead_sync_to), so Phase 1' would rebase it.
     // We model the state AFTER Phase 1' succeeded: ww's project is at T1.
     let (primary, ww, _ww_server_tip, ww_project_tip_before_rebase) =

@@ -123,7 +123,7 @@ the rest read it.
 | `update` (`src/update.rs`) | `rwv update`, and `bring_members`, the clone-missing-and-align engine `rwv clone` shares: it clones each member not on disk, aligns each present one to its lock entry, and reports what became of every pin as a `PinOutcome`. The lock is read and never written. |
 | `update_remote` (`src/update_remote.rs`) | `rwv update --remote`: the pruning fetch, the advance of each repo to its branch HEAD, and the re-snapshot of `rwv.lock` through `write_project_lock` (`src/lock.rs`, which `rwv lock` also runs). An authoring verb, so it also regenerates integration files. |
 | `branch` (`src/branch.rs`) | `rwv branch set-mode`, `rwv branch list`, `rwv branch rename` and `rwv branch delete`, and `require_recorded`, the gate the verbs that align, land or publish call before they change anything (`require_record`, without the Names rule, for `rwv lock`); `record_trunk` for `init` and `clone`; `workweave_parent` and `record_workweave` for `workweave create`; and the record judgments `switch` shares (`judge_lookup`, `judge_differs`, `feature_record`, `judge_name_taken`). |
-| `deletion` (`src/deletion.rs`) | The deletion rule: `Rule::open` reads what belongs to a branch and `Rule::apply` judges each, producing an `Outcome` of `Deleted` and `Survivor` values with their `Reason`. `branch delete`, `workweave delete` and `sync-to --retire` all run it; none decides a deletion itself. |
+| `deletion` (`src/deletion.rs`) | The deletion rule: `Rule::open` reads what belongs to a branch and `Rule::apply` judges each, producing an `Outcome` of `Deleted` and `Survivor` values with their `Reason`. `branch delete`, `workweave delete` and `land --retire` all run it; none decides a deletion itself. |
 | `records` (`src/records.rs`) | The branch records: the entry format (`Entry`, `Record`), the entry-by-entry merge of the records remotes (`merge_snapshots`), `View` (what a branch's record reads as, the cycle walk, dependents) and `Store`, whose `write` merges, then writes, then moves the local records branch by compare-and-swap, re-reading and retrying when it loses; `write_dropping` also drops the entries the drop rule names. `entry_path` and `entry_name` are the one codec between a branch name and its entry's file, which escapes `%` and `/` so no entry's path is below another's. The git spelling stays in `src/git/records.rs`. |
 | `switch` (`src/switch.rs`) | `rwv switch` and `rwv branch create`: each judges every repo it would move, the project repo's own move included, before it writes a record or moves a checkout, then puts the project repo on the branch and aligns the members through `update`. |
 | `alignment` (`src/alignment.rs`) | The alignment engine: `Aligner` reads a workspace's checked-out branch, its record and its `WorkspaceState` (the aligned branch, and per branch the mode and member entries it was aligned by), plans each member's expected state (`plan`), says what holds it back (`blocked`) and moves it (`apply`). `Accounting` is what the weave's live weave branches declare and record. |
@@ -200,7 +200,7 @@ There are no threads outside `parallel::run_in_parallel`
 (`src/parallel.rs`), which runs a closure over items in a bounded
 `std::thread::scope` pool and gathers results in input order. `clone`, `fetch`,
 `pull`, `update` and `update --remote` default to
-`min(available_parallelism, 8)`; `sync`, `sync-to` and
+`min(available_parallelism, 8)`; `sync`, `land` and
 `push` default to serial. A push authenticates and runs the repo's pre-push
 hook, which concurrent pushes would run side by side against one terminal's
 credential prompts. `-j` never changes `--json` output: every verb prints one
@@ -240,7 +240,7 @@ matches). A stale or foreign entry degrades to `None` plus a `rwv doctor`
 finding. Where two of the three agree, the third is rewritten from them by every
 verb that does not destroy the workweave (`reconcile_invocation`, run once in
 `cli::dispatch` before the verb resolves its root); `workweave delete` and
-`sync-to --retire`, a resumed one included, refuse on any disagreement instead
+`land --retire`, a resumed one included, refuse on any disagreement instead
 (`src/workspace/reconcile.rs`). The relation says nothing of `parent`, so for
 that field the index is the authority a marker is restored from, and a change
 of parent (`workspace::reparent`) writes the index first: a stop between the
@@ -339,7 +339,7 @@ above are pinned by `tests/concurrency_boundaries_test.rs`.
 
 ## 5. The sync phase machine
 
-`sync` and `sync-to` are one machine. `src/sync.rs` exposes two verb entry
+`sync` and `land` are one machine. `src/sync.rs` exposes two verb entry
 points, `run_sync` and `run_sync_to`, each handed the `OutputMode` the
 dispatcher resolved. Text runs the machine under a text handler, and JSON under
 the envelope one, which sorts the outcomes the workers recorded into manifest
@@ -378,8 +378,8 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
 (`src/sync.rs`.) `run_phase` is a four-arm match; each arm calls
 one phase function and returns the next phase, with `None` terminal.
-`next_after_relock` is where plain `sync` and `sync-to` diverge —
-`sync` terminates after relock, `sync-to` continues to advance-target.
+`next_after_relock` is where plain `sync` and `land` diverge —
+`sync` terminates after relock, `land` continues to advance-target.
 
 Per phase: `run_replay`, `run_relock`,
 `run_advance_target`, `run_retire`.
@@ -474,7 +474,7 @@ publishes commits the fold first (`Store::write`).
 
 Every `Vcs` savepoint method takes a `SavepointKey`
 (`src/op_state.rs`): `Op(OpId)` for the workspace the op replayed in,
-`SyncToTarget(OpId)` for a `sync-to` target's repos, whose ref leaf carries a
+`SyncToTarget(OpId)` for a `land` target's repos, whose ref leaf carries a
 `-target` suffix because a worktree pair shares one ref store and the first
 restore would otherwise drop the ref the second needs. `OpId` is nanoseconds
 since epoch, minted by `OpId::new_now()` and read back only through its

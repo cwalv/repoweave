@@ -10,12 +10,8 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
-use crate::manifest::WorkweaveName;
-use crate::naming::WorkweaveNameError;
 use crate::path_spelling::{plain_path, resolve};
-use crate::sync::SyncSource;
 
 /// The directory a relative path argument is read from: the process cwd, the
 /// `-C` directory, or the `-w` workweave's recorded directory, always resolved.
@@ -61,44 +57,6 @@ impl Operand {
     }
 }
 
-/// A workspace named on the command line, as argv spelled it: `primary`, a
-/// bare workweave name, or a path. Path-like means a separator, a leading `.`,
-/// or an absolute spelling; any other bare word names a workweave.
-#[derive(Clone, Debug)]
-pub enum SourceArg {
-    Primary,
-    Workweave(WorkweaveName),
-    Path(Operand),
-}
-
-impl FromStr for SourceArg {
-    type Err = WorkweaveNameError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "primary" {
-            return Ok(Self::Primary);
-        }
-        if s.contains('/')
-            || s.contains(std::path::MAIN_SEPARATOR)
-            || s.starts_with('.')
-            || Path::new(s).is_absolute()
-        {
-            return Ok(Self::Path(Operand(OsString::from(s))));
-        }
-        Ok(Self::Workweave(WorkweaveName::new(s)?))
-    }
-}
-
-impl SourceArg {
-    pub(in crate::cli) fn locate(self, base: &InvocationDir) -> SyncSource {
-        match self {
-            Self::Primary => SyncSource::Primary,
-            Self::Workweave(name) => SyncSource::Workweave(name),
-            Self::Path(operand) => SyncSource::Path(operand.locate(base)),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,43 +91,6 @@ mod tests {
         };
         let located = Operand(OsString::from(absolute)).locate(&base());
         assert_eq!(located, PathBuf::from(absolute));
-    }
-
-    #[test]
-    fn a_source_parses_primary_a_workweave_name_or_a_path() {
-        assert!(matches!(
-            "primary".parse::<SourceArg>(),
-            Ok(SourceArg::Primary)
-        ));
-        assert!(matches!(
-            "hotfix".parse::<SourceArg>(),
-            Ok(SourceArg::Workweave(name)) if name.as_str() == "hotfix"
-        ));
-        for path_like in [".workweaves/foo--bar", "./foo", "."] {
-            assert!(
-                matches!(path_like.parse::<SourceArg>(), Ok(SourceArg::Path(_))),
-                "{path_like} is path-like"
-            );
-        }
-        let absolute = std::env::temp_dir().join("some/path");
-        assert!(matches!(
-            absolute.to_str().unwrap().parse::<SourceArg>(),
-            Ok(SourceArg::Path(_))
-        ));
-    }
-
-    #[test]
-    fn a_bare_word_that_is_no_workweave_name_refuses() {
-        assert!(matches!(
-            "proj--feat--v2".parse::<SourceArg>(),
-            Err(WorkweaveNameError::AmbiguousDelimiter(_))
-        ));
-    }
-
-    #[test]
-    fn a_path_source_is_located_from_the_invocation_dir() {
-        let located = "./foo".parse::<SourceArg>().unwrap().locate(&base());
-        assert_eq!(located, SyncSource::Path(base().0.join("./foo")));
     }
 
     #[cfg(windows)]

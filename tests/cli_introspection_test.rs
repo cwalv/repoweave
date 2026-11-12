@@ -19,7 +19,7 @@ fn cli_command_tree_contains_known_subcommands() {
         "status",
         "log",
         "sync",
-        "sync-to",
+        "land",
         "workweave",
         "doctor",
         "clone",

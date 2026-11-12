@@ -7,7 +7,7 @@
 //!     revision, and `rwv fetch` when the canonical clone is not on disk;
 //!   - afterwards `rwv fetch` and `rwv doctor` agree;
 //!   - sync brings a member the source added, at the source's pin, and a
-//!     sync-to replay does not park on a member the target lacks.
+//!     land replay does not park on a member the target lacks.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -379,10 +379,10 @@ fn a_sync_to_does_not_park_on_a_member_its_target_lacks() {
         "fixture: the target lacks it"
     );
 
-    let landed = run(&["sync-to"], &child);
+    let landed = run(&["land"], &child);
     assert!(
         landed.status.success(),
-        "sync-to must land rather than park on a member the target lacks; {}",
+        "land must land rather than park on a member the target lacks; {}",
         describe(&landed)
     );
     assert!(
@@ -427,7 +427,7 @@ fn a_sync_to_retire_lands_into_a_target_that_lacked_a_member() {
         &pin,
     );
 
-    let landed = run(&["sync-to", "--retire"], &child);
+    let landed = run(&["land", "--retire"], &child);
     assert!(
         landed.status.success(),
         "retire's merged-check must find the target holding the member; {}",

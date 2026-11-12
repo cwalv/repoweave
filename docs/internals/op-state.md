@@ -7,7 +7,7 @@
 > workweaves go through rwv verbs. If you need an operation no verb provides,
 > that is a UX gap: file it rather than working around it at the file level.
 
-The on-disk records `rwv sync`, `rwv sync-to`, and `rwv pull` and `rwv update
+The on-disk records `rwv sync`, `rwv land`, and `rwv pull` and `rwv update
 --remote` with `--merge-upstream` or `--reset-to-upstream` use to make a
 multi-workspace operation resumable across a crash. Written and cleared by the verbs; read on
 `--continue` and by `rwv abort`.
@@ -21,7 +21,7 @@ someone changing `rwv`'s own resume logic, not for a consumer.
 ## `.rwv-op` — owner op-state record
 
 Written at the **initiating workspace** (the owner) when a `rwv sync` or
-`rwv sync-to` operation starts. Holds all op parameters plus the current phase.
+`rwv land` operation starts. Holds all op parameters plus the current phase.
 It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
@@ -57,18 +57,18 @@ missing a key fails to parse rather than defaulting.
 | `schema` | The record schema, `3`. A record carrying another, or none, is refused |
 | `release` | The rwv release that wrote the record |
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
-| `verb` | Which top-level verb started this op: `sync`, `sync-to`, `pull` or `update-remote` |
+| `verb` | Which top-level verb started this op: `sync`, `land`, `pull` or `update-remote` |
 | `strategy` | Strategy supplied to the op: `ff` or `rebase` |
 | `project` | The project the op operates on. Both `source` and `target` are resolved under it; neither workspace's `.rwv-active` is consulted, since an operator may retarget a pointer while the op is parked. `rwv abort` reads it to know which manifest to enumerate on each side |
 | `source` | Absolute path of the source workspace |
-| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
+| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `land`: the named target workspace |
 | `retire` | Whether `--retire` was passed |
-| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only) |
+| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (land only) → `retire` (`--retire` only) |
 | `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root, or `(project)` for the project repo (the flag spelling `projects/<name>` is the operator's, and is not stored). Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |
 | `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check. Keyed as `advanced_tips` is |
-| `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
+| `overrides` | Named consents supplied at invocation; `land` and `sync` take none yet. Recorded so `--continue` re-applies the same consents |
 | `started_at` | RFC3339 UTC timestamp when the op started |
-| `take_in` | `null` for `sync-to`. For `sync`: the branch it takes in (`sync_from`: `{"kind": "target" or "from", "branch": ...}`), the repos `--reset-to-target` named (`reset_to_target`), and in `upstream_tips` the tip each member takes in (its merge source) and, under `project`, the tip of the branch taken in; the strategy is the record's `strategy`. For `pull` and `update-remote`: what `--continue` re-applies (`merge_upstream`, `reset_to_upstream`, the `--role` and `--repo` selection, `dirty`, `commit` and `message`, `no_materialize`), the upstream tip each repo was merged or reset against (`upstream_tips`, so a resumed op acts on the tips the first run planned), and each branch moved as a ref with no checkout (`ref_moves`: repo, branch, from, to) |
+| `take_in` | `null` for `land`. For `sync`: the branch it takes in (`sync_from`: `{"kind": "target" or "from", "branch": ...}`), the repos `--reset-to-target` named (`reset_to_target`), and in `upstream_tips` the tip each member takes in (its merge source) and, under `project`, the tip of the branch taken in; the strategy is the record's `strategy`. For `pull` and `update-remote`: what `--continue` re-applies (`merge_upstream`, `reset_to_upstream`, the `--role` and `--repo` selection, `dirty`, `commit` and `message`, `no_materialize`), the upstream tip each repo was merged or reset against (`upstream_tips`, so a resumed op acts on the tips the first run planned), and each branch moved as a ref with no checkout (`ref_moves`: repo, branch, from, to) |
 
 Lives at the workspace root (same directory as `.rwv-active`). Source:
 `src/op_state.rs`.
@@ -88,7 +88,7 @@ recomputes the rest.
 
 ### What the record's refs hold
 
-An op's savepoints (`refs/rwv/pre-op/<id>`, `<id>-target` on a `sync-to`
+An op's savepoints (`refs/rwv/pre-op/<id>`, `<id>-target` on a `land`
 target's side) live exactly as long as the record: cleanup drops them with it,
 and `rwv abort` consumes them. They are the only refs an op owns. Abort writes
 none of its own: every tip it resets is a commit the op made, and a tip the op

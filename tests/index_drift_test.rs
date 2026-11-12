@@ -7,7 +7,7 @@
 //!   3. Live staged changes not fixed
 //!   4. Sync post-condition refresh
 //!   5. Reachable-tree guard (non-reachable tree not touched)
-//!   6. Tag-form lock pin (sync-to precondition tag-deref regression guard)
+//!   6. Tag-form lock pin (land precondition tag-deref regression guard)
 //!
 //! # How stale-index drift is simulated
 //!
@@ -474,11 +474,11 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: Tag-form lock pin (sync-to precondition tag-deref regression guard)
+// Test 6: Tag-form lock pin (land precondition tag-deref regression guard)
 // ---------------------------------------------------------------------------
 
 /// Source lock is pinned by a tag name (e.g., `v1.0.0`) whose commit matches
-/// HEAD. `rwv sync-to` into it must NOT falsely report "lock is stale".
+/// HEAD. `rwv land` into it must NOT falsely report "lock is stale".
 /// This is the regression guard for the tag-drift companion fix.
 #[test]
 fn sync_to_precondition_accepts_tag_form_lock_entry() {
@@ -537,9 +537,9 @@ fn sync_to_precondition_accepts_tag_form_lock_entry() {
     common::git_in(&project_cwd, &["add", "rwv.lock"]);
     common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
-    // rwv sync-to the source (tag-pinned lock) must not emit "lock is stale".
+    // rwv land the source (tag-pinned lock) must not emit "lock is stale".
     let out = rwv()
-        .args(["sync-to", &source_root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&cwd_root)
         .assert();
 
@@ -547,7 +547,7 @@ fn sync_to_precondition_accepts_tag_form_lock_entry() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("lock is stale"),
-        "rwv sync-to must not falsely report 'lock is stale' for a tag-pinned target lock; \
+        "rwv land must not falsely report 'lock is stale' for a tag-pinned target lock; \
          stderr: {stderr}"
     );
 }

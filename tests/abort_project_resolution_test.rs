@@ -12,7 +12,7 @@
 //! Two quadrants, one per side of the op, distinguished by where abort is
 //! invoked from:
 //!
-//!   - from the owner (the workweave that ran `sync-to`), the target is the
+//!   - from the owner (the workweave that ran `land`), the target is the
 //!     extra workspace, resolved from the recorded target path;
 //!   - from the target (which holds the lease), the target is the invoking
 //!     workspace and the owner is the extra.
@@ -136,7 +136,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace) {
     )
 }
 
-/// A parked sync-to: the target's manifest repo has landed CWD's tip and the
+/// A parked land: the target's manifest repo has landed CWD's tip and the
 /// target's project repo has not, so abort has real target-side work to do.
 struct Parked {
     primary: Workspace,
@@ -145,7 +145,7 @@ struct Parked {
     target_project_pre_op: String,
 }
 
-/// Drive a real `sync-to` into the parked state, in the divergent-pointer
+/// Drive a real `land` into the parked state, in the divergent-pointer
 /// topology: the target's `.rwv-active` names a real project that is not the
 /// one being synced.
 fn park_with_target_manifest_advanced(parent: &Path) -> Parked {
@@ -181,7 +181,7 @@ fn park_with_target_manifest_advanced(parent: &Path) -> Parked {
     let target_project_pre_op = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();

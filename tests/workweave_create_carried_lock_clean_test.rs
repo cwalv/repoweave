@@ -1,7 +1,7 @@
 //! `rwv workweave create` runs the install hooks in the new seat, and over a
 //! `Cargo.lock` that matches its manifests the cargo hook leaves the seat's
 //! project repo clean: no tracked dirt that would make the seat's `rwv
-//! sync-to` refuse, whether the project commits its lock and generation
+//! land` refuse, whether the project commits its lock and generation
 //! record or ignores them and the create carries them.
 //!
 //! Only a lock that does not match its manifests is rewritten — `cargo

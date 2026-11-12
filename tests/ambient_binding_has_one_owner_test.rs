@@ -29,7 +29,7 @@
 //!     it, and none of those lines are flagged.
 //!
 //! A hit outside an owner is op code reaching for ambient state — the shape
-//! that rolled a sync-to's savepoints back in the wrong project's repos, that
+//! that rolled a land's savepoints back in the wrong project's repos, that
 //! made abort report a clean rollback it never performed, and that made a pull
 //! read a sibling project's lock.
 //!

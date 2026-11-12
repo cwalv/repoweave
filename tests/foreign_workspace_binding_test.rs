@@ -129,7 +129,7 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
     )
 }
 
-/// `rwv sync-to <target>` run from the source binds the source to the project
+/// `rwv land <target>` run from the source binds the source to the project
 /// this invocation resolved, not to whatever the source workspace happens to
 /// have activated. Both workspaces here are primary-shaped, which is the shape
 /// that has no marker to fall back on.
@@ -163,8 +163,7 @@ fn a_landing_reads_the_source_under_the_invocations_project() {
 
     rwv()
         .args([
-            "sync-to",
-            &dest.root.to_string_lossy(),
+            "land",
             "--project",
             SYNCED_PROJECT,
             "--strategy=ff",
@@ -199,7 +198,7 @@ fn landing_into_a_workweave_of_another_project_is_refused_naming_both() {
     std::fs::write(stray.join(".rwv-workweave"), marker).unwrap();
 
     let output = rwv()
-        .args(["sync-to", &stray.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&source.root)
         .assert()
         .failure()

@@ -41,7 +41,7 @@ pub fn solo_workweave() -> Scenario {
         vec![
             create("solo"),
             Step::commit(&ww("solo"), Repo::App, "solo-app"),
-            Step::rwv(&ww("solo"), &["sync-to", "--retire"])
+            Step::rwv(&ww("solo"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("solo")))
                 .claim(Claim::Contains {
@@ -592,7 +592,7 @@ pub fn permanent_seat() -> Scenario {
         vec![
             create("seat"),
             Step::commit(&ww("seat"), Repo::App, "seat-1"),
-            Step::rwv(&ww("seat"), &["sync-to"])
+            Step::rwv(&ww("seat"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),
@@ -602,12 +602,12 @@ pub fn permanent_seat() -> Scenario {
                 }),
             create("other"),
             Step::commit(&ww("other"), Repo::App, "elsewhere-1"),
-            Step::rwv(&ww("other"), &["sync-to", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("other"), &["land", "--retire"]).expect(Exit::Succeeds),
             Step::commit(&ww("seat"), Repo::App, "seat-2"),
             Step::rwv(&ww("seat"), &["lock"]).expect(Exit::Succeeds),
             Step::git(&ww("seat"), Repo::Proj, &["add", "rwv.lock"]),
             Step::commit(&ww("seat"), Repo::Proj, "seat-notes"),
-            Step::rwv(&ww("seat"), &["sync-to"])
+            Step::rwv(&ww("seat"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),
@@ -756,7 +756,7 @@ pub fn nested_workweaves() -> Scenario {
             )
             .expect(Exit::Succeeds),
             Step::commit(&ww("w2"), Repo::App, "w2-app"),
-            Step::rwv(&ww("w2"), &["sync-to"])
+            Step::rwv(&ww("w2"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: ww("w1"),
@@ -765,7 +765,7 @@ pub fn nested_workweaves() -> Scenario {
                     mark: "w2-app",
                 }),
             Step::rwv(&ww("w2"), &["sync"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w2"), &["sync-to", "--retire"])
+            Step::rwv(&ww("w2"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w2"))),
         ],
@@ -783,7 +783,7 @@ pub fn nested_workweaves_without_naming() -> Scenario {
             )
             .expect(Exit::Succeeds),
             Step::commit(&ww("w2"), Repo::App, "w2-app"),
-            Step::rwv(&ww("w2"), &["sync-to"])
+            Step::rwv(&ww("w2"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: ww("w1"),
@@ -801,10 +801,10 @@ pub fn nested_workweaves_without_naming() -> Scenario {
                     rev: "HEAD",
                     mark: "w1-lib",
                 }),
-            Step::rwv(&ww("w2"), &["sync-to", "--retire"])
+            Step::rwv(&ww("w2"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w2"))),
-            Step::rwv(&ww("w1"), &["sync-to", "--retire"])
+            Step::rwv(&ww("w1"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w1")))
                 .claim(Claim::Contains {
@@ -2384,7 +2384,7 @@ pub fn dc21_marker_disagreement() -> Scenario {
             refused_naming_the_repair(Step::rwv(&a(), &["workweave", "delete", "w"]))
                 .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::Corrupt)),
-            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["land", "--retire"]))
                 .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::Corrupt)),
             Step::rwv(&ww("w"), &["status"])
@@ -2395,7 +2395,7 @@ pub fn dc21_marker_disagreement() -> Scenario {
                     parent: a(),
                 }),
             Step::tamper("delete w's marker", Tamper::DeleteMarker(ww("w"))),
-            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["land", "--retire"]))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
             Step::rwv(&ww("w"), &["doctor", "--fix"])
                 .expect(Exit::Succeeds)
@@ -2410,7 +2410,7 @@ pub fn dc21_marker_disagreement() -> Scenario {
             refused_naming_the_repair(Step::rwv(&a(), &["workweave", "delete", "w"]))
                 .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::ParentElsewhere)),
-            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["land", "--retire"]))
                 .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::ParentElsewhere)),
             Step::rwv(&ww("w"), &["status"])
@@ -2426,7 +2426,7 @@ pub fn dc21_marker_disagreement() -> Scenario {
                 &["-w", "proj--w", "workweave", "delete", "w"],
             ))
             .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
-            refused_naming_the_repair(Step::rwv(&a(), &["-w", "proj--w", "sync-to", "--retire"]))
+            refused_naming_the_repair(Step::rwv(&a(), &["-w", "proj--w", "land", "--retire"]))
                 .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
             Step::rwv(&a(), &["-w", "proj--w", "status"])
                 .expect(Exit::Succeeds)

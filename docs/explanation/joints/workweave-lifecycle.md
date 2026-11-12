@@ -5,7 +5,7 @@ deletion. The daily bring-work-home flow touches all four. This joint
 covers what each stage means, what the tool enforces, and what the
 operator must ensure.
 
-The joint does not re-document the phase machine that `rwv sync-to`
+The joint does not re-document the phase machine that `rwv land`
 runs internally — that lives in [sync-semantics](./sync-semantics.md).
 It does not re-document the tree model or one-hop semantics — those live
 in [workweave-hierarchy](./workweave-hierarchy.md). The focus here is
@@ -16,7 +16,7 @@ stay on the branch `rwv.toml` declares for each member (`branch`, which
 `rwv member add` records from the remote's default branch); a workweave puts its
 `owned` and `fork` members on a branch of its own, leaves each `dependency` and
 `reference` member detached at its pin, and lands back with
-`rwv sync-to --retire`.
+`rwv land --retire`.
 
 ## Creation
 
@@ -60,7 +60,7 @@ rwv workweave create <name> --detach <rev>       # a detached workspace
    `link = [...]` entries are absolute symlinks into the parent's root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
    `parent` is the workspace the command ran in — it becomes the auto-target for
-   bare `rwv sync-to` from inside the workweave. This is the workweave
+   bare `rwv land` from inside the workweave. This is the workweave
    root's **only** identity file: no `.rwv-active` is written beside it.
    The pointer records project *selection*, which is primary-only — a
    workweave's project is fixed here at creation and cannot be switched —
@@ -111,11 +111,11 @@ git commit -am "server: add /payments endpoint"
 If you want to checkpoint the cross-repo state while working, `rwv lock`
 updates the workweave's `rwv.lock` (not primary's); each workspace owns its
 own lock (see [lock-as-derived](./lock-as-derived.md)). Before landing with
-`rwv sync-to`, a manual `rwv lock` is optional because `rwv sync-to`
+`rwv land`, a manual `rwv lock` is optional because `rwv land`
 auto-relocks CWD at op-start.
 
 The workweave's project repo and its `owned` and `fork` members run on a flat
-ephemeral branch (`{project}--{name}`). This branch name is what allows `rwv sync-to`
+ephemeral branch (`{project}--{name}`). This branch name is what allows `rwv land`
 to push cleanly into primary's `main` without a detach-or-stash dance —
 two worktrees never compete for the same branch name. See
 [workweave-hierarchy](./workweave-hierarchy.md#ephemeral-branch-names-and-the-git-worktree-constraint).
@@ -136,22 +136,22 @@ of it; then the project branch takes in the target's tip and `rwv.lock` is
 recorded again. See [sync-semantics](./sync-semantics.md) for the full
 direction-pair contract.
 
-## Landing: `rwv sync-to --retire`
+## Landing: `rwv land --retire`
 
 The one-liner to land work and close out the workweave:
 
 ```bash
 cd ../.workweaves/web-app--payments
-rwv sync-to --retire
+rwv land --retire
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`. Bare `rwv sync-to --retire` follows the single recorded `parent` edge in `.rwv-workweave` (see [workweave-hierarchy — One hop, not transitive](./workweave-hierarchy.md#one-hop-not-transitive)).
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`. `rwv land --retire` lands into the target the feature's record names, which a workweave created from another workspace records as that workspace's checked-out branch.
 
-`rwv sync-to --retire` runs the `sync-to` phase machine ([sync-semantics](./sync-semantics.md)) — auto-relocking CWD if its member repos moved ahead of `rwv.lock`, rebasing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), regenerating `rwv.lock`, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
+`rwv land --retire` runs the `land` phase machine ([sync-semantics](./sync-semantics.md)) — auto-relocking CWD if its member repos moved ahead of `rwv.lock`, rebasing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), regenerating `rwv.lock`, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
 
 ### The retire contract
 
-Retire is a phase in the sync-to machine, not a separate command. It runs
+Retire is a phase in the land machine, not a separate command. It runs
 only after `advance-target` has completed successfully. It does two things:
 
 **Dirty-check** — no checkout in the workweave may have uncommitted
@@ -165,7 +165,7 @@ does without its `--discard-*` overrides, then applies the deletion rule to the
 workweave's branches: a branch that landed on the branch the workweave's record
 lands into is deleted, with its record, and one that did not survives with its
 reason. A workweave retired with a branch the rule kept is gone and reports it;
-`sync-to` then exits with status `3`. Landing the work into a target other than
+`land` then exits with status `3`. Landing the work into a target other than
 the recorded one leaves the branches unlanded as far as the rule can see.
 
 ### What retire deletes
@@ -185,19 +185,17 @@ What the rule keeps stays reachable: a branch that has not landed holds its
 commits, and the pre-op savepoints (`refs/rwv/pre-op/<op-id>`) remain during
 the op and are dropped in cleanup after a successful retire.
 
-### Why `--retire` is on `sync-to` and not on `sync`
+### Why `--retire` is on `land` and not on `sync`
 
-The dominant "land my work" direction is workweave → parent, which is
-`sync-to`. The retiring workweave is the CWD; the parent is the target.
+The dominant "land my work" direction is workweave → target, which is
+`land`. The retiring workweave is the CWD.
 Putting `--retire` on `sync` would require the operator to name the
 workweave to delete from the parent's CWD — a less natural invocation
 shape, and one that would silently delete something outside CWD.
 
-### Why not `--land`
+### Why `--retire`
 
-"Land" overloads PR-merge vocabulary and misleads when the parent is not
-primary. A nested workweave lands into its parent workweave, not into the
-project's main branch. "Retire" states directly what the flag does —
+"Retire" states directly what the flag does —
 close out this workweave — regardless of where in the workweave tree it
 sits.
 
@@ -209,7 +207,7 @@ repair loop:
 
 ```bash
 # fix what the refusal names (commit or discard the edits), then:
-rwv sync-to --continue    # re-runs the retire check
+rwv land --continue    # re-runs the retire check
 
 # or roll back the entire op:
 rwv abort
@@ -241,7 +239,7 @@ member the workweave added that has not landed, or a clone put there by
 hand. The refusal lists the dirty or diverged paths, marking those outside
 the manifest `(not a manifest member)`. Options:
 
-- Commit the work and land it: `rwv sync-to --retire`
+- Commit the work and land it: `rwv land --retire`
 - Stash or discard the uncommitted changes, then delete
 - Consent to losing everything: `rwv workweave delete <name>
   --discard-uncommitted --discard-unlanded`
@@ -264,11 +262,11 @@ member its branch for that target. `--delete-remote` and
 ## Lifecycle in one view
 
 ```
-create ──→ work ──→ sync-to --retire ──→ (gone)
+create ──→ work ──→ land --retire ──→ (gone)
              │            │
              │      (fail: preserve, fix, --continue or abort)
              │
-             └──→ sync-to (without --retire) ──→ work ──→ delete
+             └──→ land (without --retire) ──→ work ──→ delete
                                                             │
                                         (--discard-* if dirty)
 ```
@@ -281,7 +279,7 @@ workweave is a git worktree, and commits are ordinary git commits.
 
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree model, parent
   tracking, one-hop semantics, and ephemeral branch naming.
-- [sync-semantics](./sync-semantics.md) — the phases `sync-to` runs, the
+- [sync-semantics](./sync-semantics.md) — the phases `land` runs, the
   abort contract, and the strategy choice.
 - [lock-as-derived](./lock-as-derived.md) — why `rwv.lock` is per-workspace
   and why it is regenerated (not merged) at each sync boundary.

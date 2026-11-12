@@ -35,7 +35,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RefusalKind {
-    /// A sync/sync-to op already holds op-state covering this workspace.
+    /// A sync/land op already holds op-state covering this workspace.
     OpInProgress,
     /// A phase stopped and op-state is held there, awaiting resume or abort.
     OpParked,
@@ -58,32 +58,15 @@ pub enum RefusalKind {
     NotFastForwardable,
     /// A checkout dropped from the lock carries commits nothing else reaches.
     DroppedRepoHasUniqueCommits,
-    /// A sync-to target's committed lock is behind its HEAD.
-    ///
-    /// Separate from [`Self::StaleLock`] because `--allow-stale-lock` is
-    /// deliberately not offered here, and one page cannot name a remedy that
-    /// works at one of the two sites.
-    TargetLockBehind,
     /// `--continue` arguments disagree with the recorded op.
     ResumeContradictsRecord,
     /// Abort found a tip the op does not account for.
     ForeignTip,
-    /// At advance time the target carries commits CWD's tip does not.
-    ///
-    /// Separate from [`Self::NotFastForwardable`]: past replay the exit is
-    /// abort rather than a different strategy.
-    TargetDivergedMidOp,
 
-    /// A workweave's recorded parent is gone.
-    DanglingParent,
     /// The canonical clone a checkout is derived from is missing.
     MissingCanonicalClone,
     /// A clone sits in a topology rwv does not maintain.
     CloneTopology,
-    /// A lock entry names a revision that does not resolve.
-    UnresolvableLockEntry,
-    /// The lock↔HEAD relation is not `ok`.
-    StaleLock,
     /// An untracked file stands where the operation must write.
     UntrackedCollision,
     /// An op-state lease outlived the process that took it.

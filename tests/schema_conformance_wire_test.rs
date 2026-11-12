@@ -393,8 +393,8 @@ fn sync_to_json_wire_output_conforms() {
     common::git_in(ww.join(MEMBER), &["add", "-A"]);
     common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
 
-    let doc = emit(&ww, &["sync-to", "--json"]);
-    assert_conforms("sync-to", &doc, "outcomes");
+    let doc = emit(&ww, &["land", "--json"]);
+    assert_conforms("land", &doc, "outcomes");
 }
 
 // ---------------------------------------------------------------------------
@@ -701,8 +701,8 @@ fn sync_to_json_wire_output_conforms_under_two_workers_with_both_advances() {
     common::git_in(ww.join(MEMBER), &["add", "-A"]);
     common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
 
-    let doc = emit(&ww, &["sync-to", "--json", "-j", "2"]);
-    assert_conforms("sync-to", &doc, "outcomes");
+    let doc = emit(&ww, &["land", "--json", "-j", "2"]);
+    assert_conforms("land", &doc, "outcomes");
 
     let member = doc["outcomes"]
         .as_array()

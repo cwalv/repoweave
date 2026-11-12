@@ -7,7 +7,7 @@ in the branch the feature's record lands into (its target). On any weave branch,
 `--from <branch>` merges that branch's history in instead. A declared branch has
 no target: without `--from` it refuses as `target` `no target`.
 
-To land this workspace's work in another workspace instead, use `rwv sync-to`.
+To land this workspace's work in another workspace instead, use `rwv land`.
 
 Every refusal is judged before anything moves, and all of them are reported
 together. Then, under an op record:
@@ -153,7 +153,7 @@ Under `--json`, output is one pretty-printed envelope:
 }
 ```
 
-`outcomes` is empty: `rwv sync-to` fills it. Each checkout whose files the sync
+`outcomes` is empty: `rwv land` fills it. Each checkout whose files the sync
 moved gets a placement record under `placements`: `path`, `absolute_path` (the
 checkout the files are in), and `files` (`reflinked`, `hardlinked`, `written`).
 

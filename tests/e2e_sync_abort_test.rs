@@ -1,6 +1,6 @@
-//! E2E integration tests for `rwv sync-to`, `rwv abort`, `rwv doctor --locked`, and `rwv status`.
+//! E2E integration tests for `rwv land`, `rwv abort`, `rwv doctor --locked`, and `rwv status`.
 //!
-//! These exercise the acceptance criteria for `rwv sync-to` and `rwv abort`.
+//! These exercise the acceptance criteria for `rwv land` and `rwv abort`.
 //!
 //! Scenarios mirror the sync/abort how-tos in
 //! docs/how-to/resume-or-abort-mid-op-sync.md and
@@ -105,7 +105,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    // Mirror what `rwv init` writes: `.gitattributes` so `rwv sync-to`'s
+    // Mirror what `rwv init` writes: `.gitattributes` so `rwv land`'s
     // native rebase keeps source's rwv.lock through the replay (the
     // `merge=rwv-ours` driver).
     common::set_up_lock_driver(&project_dir);
@@ -353,10 +353,10 @@ fn status_json_flag_produces_machine_readable_output() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync-to — fast-forward path (shared object store via worktrees)
+// rwv land — fast-forward path (shared object store via worktrees)
 // ---------------------------------------------------------------------------
 
-/// Tutorial scenario: workweave finishes work → `rwv lock` → `rwv sync-to` from the workweave.
+/// Tutorial scenario: workweave finishes work → `rwv lock` → `rwv land` from the workweave.
 #[test]
 fn sync_to_ff_primary_advances_to_workweave_lock() {
     let tmp = common::tempdir().unwrap();
@@ -375,7 +375,7 @@ fn sync_to_ff_primary_advances_to_workweave_lock() {
 
     // From primary: sync from the workweave.
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -388,7 +388,7 @@ fn sync_to_ff_primary_advances_to_workweave_lock() {
     );
 }
 
-/// Tutorial scenario: primary has advanced → the workweave's `rwv sync-to primary` catches up.
+/// Tutorial scenario: primary has advanced → the workweave's `rwv land primary` catches up.
 #[test]
 fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
     let tmp = common::tempdir().unwrap();
@@ -409,7 +409,7 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
     );
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -423,7 +423,7 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync-to — precondition enforcement
+// rwv land — precondition enforcement
 // ---------------------------------------------------------------------------
 
 /// Advance `ws`'s server past C1, lock it, then reset the server back, so the
@@ -438,7 +438,7 @@ fn drive_lock_behind_head_reversed(ws: &Workspace, c1: &str) {
     common::git_in(&ws.server_dir, &["reset", "--hard", c1]);
 }
 
-/// sync-to refuses when the source (CWD) lock records a commit HEAD lacks.
+/// land refuses when the source (CWD) lock records a commit HEAD lacks.
 #[test]
 fn sync_to_refuses_when_source_lock_is_stale() {
     let tmp = common::tempdir().unwrap();
@@ -449,8 +449,7 @@ fn sync_to_refuses_when_source_lock_is_stale() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -460,7 +459,7 @@ fn sync_to_refuses_when_source_lock_is_stale() {
         .stderr(predicate::str::contains("lock").and(predicate::str::contains("stale")));
 }
 
-/// sync-to refuses when the target's committed lock is behind its HEAD.
+/// land refuses when the target's committed lock is behind its HEAD.
 #[test]
 fn sync_to_refuses_when_target_lock_is_behind_head() {
     let tmp = common::tempdir().unwrap();
@@ -475,7 +474,7 @@ fn sync_to_refuses_when_target_lock_is_behind_head() {
     );
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&source.root)
         .assert()
         .failure()
@@ -505,8 +504,7 @@ fn sync_to_allow_stale_lock_bypasses_lock_freshness_precondition() {
 
     let out = rwv()
         .args([
-            "sync-to",
-            &source.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&primary.root)
@@ -527,7 +525,7 @@ fn sync_to_allow_stale_lock_bypasses_lock_freshness_precondition() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync-to — project ancestry precondition
+// rwv land — project ancestry precondition
 // ---------------------------------------------------------------------------
 //
 // Under `--strategy ff` CWD's project tip must be strictly ahead of (or equal
@@ -552,7 +550,7 @@ fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
     );
 }
 
-/// Under `--strategy ff`, sync-to refuses when the target's project tip is not
+/// Under `--strategy ff`, land refuses when the target's project tip is not
 /// an ancestor of CWD's: the target is ahead of CWD.
 #[test]
 fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
@@ -563,8 +561,7 @@ fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
 
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -584,7 +581,7 @@ fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
     );
 }
 
-/// Under `--strategy ff`, sync-to refuses when CWD's project tip and the
+/// Under `--strategy ff`, land refuses when CWD's project tip and the
 /// target's have diverged (neither is an ancestor of the other).
 #[test]
 fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
@@ -606,8 +603,7 @@ fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -634,8 +630,7 @@ fn sync_to_ff_allows_when_target_project_repo_is_strict_ancestor_of_cwd() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -663,8 +658,7 @@ fn sync_to_ff_allows_when_target_project_repo_equals_cwd() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -690,8 +684,7 @@ fn sync_to_discard_local_commits_drops_cwd_project_commits_and_preserves_savepoi
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -731,8 +724,7 @@ fn sync_to_ff_refusal_message_suggests_rebase_strategy() {
 
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -759,8 +751,7 @@ fn sync_to_rebase_lands_lock_only_divergence() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -791,8 +782,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -802,8 +792,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
         ])
@@ -813,8 +802,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -824,7 +812,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync-to — error message structure
+// rwv land — error message structure
 // ---------------------------------------------------------------------------
 
 /// The source lock-freshness refusal names the source workspace, the recovery
@@ -840,8 +828,7 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
 
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -894,8 +881,7 @@ fn lock_freshness_target_error_names_workspace_and_recovery_path() {
 
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -923,7 +909,7 @@ fn lock_freshness_target_error_names_workspace_and_recovery_path() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync-to — non-ff strategies
+// rwv land — non-ff strategies
 // ---------------------------------------------------------------------------
 
 /// When CWD has local commits on top of an older base, --strategy rebase replays them.
@@ -967,8 +953,7 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     // --discard-local-commits (adapted from --force).
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -1060,8 +1045,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // (adapted from --force).
     let _ = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -1200,7 +1184,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
 // ---------------------------------------------------------------------------
 // Round-trip convergence
 // ---------------------------------------------------------------------------
-// rwv sync-to — tag-form lock freshness (mirrors check_test.rs §8)
+// rwv land — tag-form lock freshness (mirrors check_test.rs §8)
 // ---------------------------------------------------------------------------
 
 /// Add a lightweight tag at HEAD in `repo`.
@@ -1235,7 +1219,7 @@ fn sync_to_proceeds_when_source_lock_tag_matches_head() {
     );
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1254,13 +1238,13 @@ fn sync_to_proceeds_when_source_lock_sha_matches_head() {
     assert!(!source_lock_sha.is_empty());
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
 }
 
-/// sync-to refuses when the lock is pinned by a tag whose commit HEAD lacks.
+/// land refuses when the lock is pinned by a tag whose commit HEAD lacks.
 /// The "stale" error must fire even when the lock version is a tag name, not a raw SHA.
 #[test]
 fn sync_to_refuses_when_source_lock_tag_is_genuinely_stale() {
@@ -1285,7 +1269,7 @@ fn sync_to_refuses_when_source_lock_tag_is_genuinely_stale() {
     common::git_in(&primary.server_dir, &["reset", "--hard", &c1]);
 
     rwv()
-        .args(["sync-to", &cwd_ws.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&primary.root)
         .assert()
         .failure()
@@ -1312,7 +1296,7 @@ fn sync_to_refuses_with_unknown_revision_when_source_lock_tag_missing() {
     );
 
     rwv()
-        .args(["sync-to", &cwd_ws.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&primary.root)
         .assert()
         .failure()
@@ -1348,14 +1332,14 @@ fn sync_to_roundtrip_converges_without_project_repo_growth() {
 
     // Sync primary → workweave (workweave catches up to C2).
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
     // Sync workweave → primary (now a no-op: ww is at C2, primary is already at C2).
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1491,7 +1475,7 @@ fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
 }
 
 /// Anomaly A regression: when locks diverge between primary and a marker-based
-/// workweave, `rwv sync-to`'s "CWD lock" freshness check must read the workweave's
+/// workweave, `rwv land`'s "CWD lock" freshness check must read the workweave's
 /// own committed lock — not primary's — to determine staleness from the
 /// operator's perspective.
 #[test]
@@ -1519,7 +1503,7 @@ fn sync_to_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
     // is fresh" — workweave-tip C1 == workweave-lock C1 — even though primary
     // has diverged.
     rwv()
-        .args(["sync-to", &ws.primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1532,7 +1516,7 @@ fn sync_to_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
     );
 }
 
-/// Symmetric regression: `rwv sync-to` into primary from a marker-based workweave
+/// Symmetric regression: `rwv land` into primary from a marker-based workweave
 /// as source must read the workweave's lock for `source` freshness — not
 /// primary's lock interpreted as the source's.
 #[test]
@@ -1554,7 +1538,7 @@ fn sync_to_from_primary_with_marker_workweave_source_uses_source_own_lock() {
     // Primary syncs from the workweave. Source freshness must be checked
     // against the workweave's own lock (C2 vs ww-tip C2), not primary's lock.
     rwv()
-        .args(["sync-to", &ws.primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1597,7 +1581,7 @@ fn sync_to_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     common::git_in(&ws.ww_server_dir, &["reset", "--hard", &ww_c1]);
 
     rwv()
-        .args(["sync-to", &ws.primary.root.to_string_lossy()])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .failure()
@@ -1617,7 +1601,7 @@ fn sync_to_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
 
 /// Regression: CWD is ahead of the lock target → sync reports `already-ahead`, not bare `ok`.
 ///
-/// Repro from SME triage: after `rwv sync-to`, the per-repo line said "ok" even
+/// Repro from SME triage: after `rwv land`, the per-repo line said "ok" even
 /// though HEAD didn't move to the lock SHA, leaving `rwv status` showing [ahead].
 #[test]
 fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
@@ -1654,8 +1638,7 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
     // Phase 1 guard. (Adapted from --force.)
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -1734,8 +1717,7 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
 
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -1800,8 +1782,7 @@ fn sync_to_ff_reports_failed_for_diverged_repo() {
     // failure is the manifest repo's: C2 and C_ww diverge from C1.
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -1845,8 +1826,7 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
 
     let out = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "ff",
         ])
@@ -1875,14 +1855,14 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
 // Named override flags — new tests
 // ---------------------------------------------------------------------------
 
-/// `--force` is rejected on `rwv sync-to` with a migration hint.
+/// `--force` is rejected on `rwv land` with a migration hint.
 #[test]
 fn sync_to_force_flag_rejected_with_migration_hint() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--force"])
+        .args(["land", "--force"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -1904,8 +1884,7 @@ fn sync_to_new_override_flags_parse_correctly() {
     // succeed — just that clap accepts the flags.
     let out_stale = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&ww.root)
@@ -1921,8 +1900,7 @@ fn sync_to_new_override_flags_parse_correctly() {
 
     let out_discard = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -1955,8 +1933,7 @@ fn sync_to_discard_local_commits_refuses_on_uncommitted_changes() {
 
     let assertion = rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--discard-local-commits",
         ])
         .current_dir(&ww.root)
@@ -2018,8 +1995,7 @@ fn sync_to_discard_local_commits_records_override_and_preserves_tombstone() {
     // First attempt parks mid-replay on the real conflict.
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy",
             "rebase",
             "--discard-local-commits",
@@ -2061,7 +2037,7 @@ fn sync_to_discard_local_commits_records_override_and_preserves_tombstone() {
     );
 
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -2108,8 +2084,7 @@ fn sync_to_allow_stale_lock_flag_accepted_and_op_completes() {
     // With --allow-stale-lock, sync should not fail on lock-freshness.
     let out = rwv()
         .args([
-            "sync-to",
-            &source.root.to_string_lossy(),
+            "land",
             "--allow-stale-lock",
         ])
         .current_dir(&primary.root)
@@ -2216,7 +2191,7 @@ fn gita_is_opt_in() {
 // as the recovery path.
 // ---------------------------------------------------------------------------
 
-/// Runs `rwv sync-to <primary> <args>` from a workweave whose project repo
+/// Runs `rwv land <primary> <args>` from a workweave whose project repo
 /// rebases onto the primary's, with a `post-rewrite` hook that leaves
 /// `rwv.toml` unparseable once the project rebase lands, so the manifest cannot be
 /// reloaded after Phase 1'.
@@ -2263,7 +2238,7 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
     }
 
     rwv()
-        .arg("sync-to")
+        .arg("land")
         .arg(&primary.root)
         .args(args)
         .current_dir(&ww.root)
@@ -2306,7 +2281,7 @@ fn sync_to_bails_hard_when_post_phase1_manifest_reload_fails() {
         "must not emit the old warn-and-proceed fingerprint; stderr: {stderr}"
     );
     assert!(
-        stderr.contains("rwv sync-to: projects/web-app: unparseable-project malformed\n"),
+        stderr.contains("rwv land: projects/web-app: unparseable-project malformed\n"),
         "the refusal is the malformed state of the kind; stderr: {stderr}"
     );
     assert!(

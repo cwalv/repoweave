@@ -589,7 +589,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
 /// also works from inside the workweave." Same fixture as
 /// `workweave_delete_removes_directory_and_worktrees`, but the delete
 /// subprocess's own cwd is the workweave directory it is about to remove,
-/// not the primary weave — the production topology (`rwv sync-to --retire`
+/// not the primary weave — the production topology (`rwv land --retire`
 /// deletes from inside) that no other `tests/*.rs` delete invocation runs
 /// with (every one of them sets `current_dir` to the primary).
 ///
@@ -1512,7 +1512,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // When `rwv workweave create` is invoked from inside a workweave (no
     // `--from` flag), the new peer should fork from that workweave's HEAD,
     // not from primary's. Establishes the rig=workweave model: peer rooted
-    // in rig means rig→peer is a fast-forward and `rwv sync-to` works without
+    // in rig means rig→peer is a fast-forward and `rwv land` works without
     // ancestor divergence.
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
@@ -2721,7 +2721,7 @@ fn workweave_create_refuses_a_project_with_no_clone_before_changing_anything() {
 }
 
 // ============================================================================
-// Workweave parent tracking (the edge a bare `rwv sync-to` lands along)
+// Workweave parent tracking (the edge a bare `rwv land` lands along)
 // ============================================================================
 
 #[test]

@@ -4,7 +4,7 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use crate::alignment::Departure;
-use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnlandedConsent, Lease};
+use crate::cli::consent::{DiscardUnlandedConsent, Lease};
 use crate::naming::FlatAddress;
 use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
@@ -457,7 +457,7 @@ pub enum ConflictOp {
     /// Native rebase (`git rebase`).
     ///
     /// The operator-facing resume path is `rwv sync --continue` /
-    /// `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS
+    /// `rwv land --continue` — not bare `git rebase --continue`. The VCS
     /// hint for this variant stops at staging (`git add <files>`); rwv core
     /// appends the `rwv <verb> --continue` line. Bare `git rebase --continue`
     /// resumes without rwv's hold on the lock merge driver, so the clone's
@@ -2164,9 +2164,8 @@ impl fmt::Display for HeadAttachment {
 // See that module's doc comment.
 //
 // The proof types below stay in this module: they are minted from checks
-// this module runs (`DestroyProof::landed`), from a backup this module writes
-// (`DestroyProof::backed_up`), or paired with a savepoint this module writes
-// (`DiscardWarrant::new`).
+// this module runs (`DestroyProof::landed`), or from a backup this module
+// writes (`DestroyProof::backed_up`).
 //
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`.
@@ -2184,9 +2183,7 @@ pub enum Replace {
 ///
 /// Minted only by [`Vcs::create_savepoint_ref`], whose body is in this
 /// module — so a value of this type is proof the ref exists on disk, not a
-/// claim that one will be written. Carries its repo so a
-/// [`DiscardWarrant`] cannot authorize rewinding a *different* repo than
-/// the one whose state it captured.
+/// claim that one will be written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavepointRef {
     repo: PathBuf,
@@ -2219,32 +2216,6 @@ pub struct SavepointListing {
     /// Refs under the namespace that no key names, spelled as the backend
     /// spells a reference. rwv filed none of them.
     pub unrecognized: Vec<String>,
-}
-
-/// Proof that a rewinding MOVE (a non-fast-forward) may proceed.
-///
-/// Two things must both hold, and the type is constructed from both: a
-/// savepoint under the recovery namespace has been **written** (not
-/// planned), and the operator passed the verb's named override. A rewind
-/// without a savepoint is therefore unrepresentable rather than
-/// discouraged.
-#[derive(Debug)]
-pub struct DiscardWarrant {
-    savepoint: SavepointRef,
-}
-
-impl DiscardWarrant {
-    /// Pair a written savepoint with the operator's consent.
-    pub fn new(savepoint: SavepointRef, consent: DiscardLocalCommitsConsent) -> Self {
-        let _ = consent;
-        Self { savepoint }
-    }
-
-    /// The savepoint this warrant rests on. Consumers check it captured
-    /// the repo they are about to rewind.
-    pub fn savepoint(&self) -> &SavepointRef {
-        &self.savepoint
-    }
 }
 
 /// Where a branch is destroyed: in the repo's own refs, or on a remote.
@@ -3049,7 +3020,7 @@ pub trait Vcs: Send + Sync {
     /// command (those ops have no rwv-native resume path from the sync rebase
     /// flow). For [`ConflictOp::Rebase`], the hint stops at `git add <files>`;
     /// the caller (rwv core) appends the appropriate `rwv sync --continue` /
-    /// `rwv sync-to --continue` line — rwv vocabulary must not appear inside
+    /// `rwv land --continue` line — rwv vocabulary must not appear inside
     /// a VCS impl.
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 
@@ -3474,7 +3445,7 @@ pub trait Vcs: Send + Sync {
     /// For git: runs `git fetch <src_path> HEAD`
     /// in `dst_repo`. For sibling worktrees that share an object store this
     /// is a no-op; for independent clones it copies objects across. Errors
-    /// are swallowed — the caller (e.g. `sync-to` step 3) is expected to
+    /// are swallowed — the caller (e.g. `land` step 3) is expected to
     /// verify reachability by a subsequent operation that will fail loudly
     /// if the fetch was needed but didn't run.
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path);
@@ -4021,32 +3992,6 @@ pub trait Vcs: Send + Sync {
     ) -> Result<(), VcsError> {
         self.verify_attachment(on)?;
         self.advance_if_fast_forward(on.repo(), to)
-    }
-
-    /// Rewind the ref `on` witnesses to `to`, discarding divergent commits.
-    ///
-    /// A rewinding MOVE needs a [`DiscardWarrant`], which cannot exist
-    /// without a savepoint having been written; the warrant is checked to
-    /// belong to *this* repo, so a savepoint taken elsewhere cannot
-    /// authorize this reset.
-    fn reset_attached_ref(
-        &self,
-        on: &AttachedRef,
-        to: &ResolvedRevisionId,
-        warrant: DiscardWarrant,
-    ) -> Result<(), VcsError> {
-        if warrant.savepoint().repo() != on.repo() {
-            return Err(VcsError::StaleRefWitness {
-                repo: on.repo().to_path_buf(),
-                expected: format!("a savepoint taken in {}", on.repo().display()),
-                observed: format!(
-                    "a savepoint taken in {}",
-                    warrant.savepoint().repo().display()
-                ),
-            });
-        }
-        self.verify_attachment(on)?;
-        self.hard_reset(on.repo(), to)
     }
 
     /// Move an already-detached HEAD to `to`.

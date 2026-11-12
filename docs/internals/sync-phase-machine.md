@@ -7,9 +7,9 @@
 > workweaves go through rwv verbs. If you need an operation no verb provides,
 > that is a UX gap: file it rather than working around it at the file level.
 
-The per-phase contract behind `rwv sync-to`, for someone changing
+The per-phase contract behind `rwv land`, for someone changing
 `src/sync.rs`. `rwv sync` no longer runs this machine; its contract is the
-last section below. For `sync-to`: what each phase does, what it persists, and the
+last section below. For `land`: what each phase does, what it persists, and the
 re-entry rule that makes `--continue` safe. The operator contract — the
 direction pair, what the phases mean to an operator, abort's guarantees and
 the strategy choice — is
@@ -21,7 +21,7 @@ in [`op-state.md`](./op-state.md).
 
 ```
 guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
-                                              (sync-to only)   (--retire only)
+                                              (land only)   (--retire only)
 ```
 
 The diagram shows the states a sync operation can be in. The gray box
@@ -44,11 +44,11 @@ stateDiagram-v2
     pre --> replay : savepoints written
 
     replay --> relock
-    relock --> advance_target : sync-to
+    relock --> advance_target : land
     relock --> cleanup : sync (done)
     advance_target : advance-target
     advance_target --> retire : --retire
-    advance_target --> cleanup : sync-to (done)
+    advance_target --> cleanup : land (done)
     retire --> cleanup : checks pass
 
     cleanup --> [*] : op-state cleared
@@ -112,10 +112,10 @@ check on every workspace the op will touch, the lock merge driver's setup
 the source's project checkout, whose committed `.gitattributes` governs the
 replay), lock freshness,
 Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
-preflight (`rwv sync-to`). Refusals here leave no trace.
+preflight (`rwv land`). Refusals here leave no trace.
 
 **Acquisition atomicity.** The no-op-in-progress check is not
-a plain read followed by a later write. `sync` / `sync-to` acquire the
+a plain read followed by a later write. `sync` / `land` acquire the
 owner record and every touched-workspace lease **atomically at guard
 time** via `O_CREAT|O_EXCL`: the OS refuses the second creator, so two
 concurrent invocations cannot both pass the guard and only collide later
@@ -152,7 +152,7 @@ Write a durable pre-op snapshot reference in every repo the op may
 mutate, under `refs/rwv/pre-op/<op-id>`. The op-id is nanosecond
 wall-clock so concurrent or interleaved invocations cannot collide.
 
-For `rwv sync-to`, target-workspace repos are savepointed under
+For `rwv land`, target-workspace repos are savepointed under
 `refs/rwv/pre-op/<op-id>-target` — a separate namespace from the
 source-side `refs/rwv/pre-op/<op-id>`. When both sides share a git
 object store (worktree topology), a single namespace would collide:
@@ -176,7 +176,7 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   `--strategy`. Exception: a plain `sync` from a workweave source whose
   lock is behind its committed HEAD targets that source's committed tips
   instead (tips-as-truth — a note names the lag, and the source's lock
-  is left alone for its own next op to heal). `sync-to` gets no such
+  is left alone for its own next op to heal). `land` gets no such
   exception: a target whose lock is behind its committed HEAD is refused
   at op start, naming the target repo, its commit count and the
   `rwv lock --commit` that fixes it, because replaying CWD against that
@@ -242,7 +242,7 @@ an op while its own lock lags, and nothing about it is published
 anywhere. A primary weave deadlocks identically, so scoping would have
 kept two tests green and left the trap in place.
 
-Unlike `sync-to`'s CWD there is no op-start relock on a pull: the
+Unlike `land`'s CWD there is no op-start relock on a pull: the
 destination's project repo is itself a replay target, and a relock
 commit made before Phase 1' would leave `--strategy=ff` a project repo
 it can no longer fast-forward.
@@ -252,7 +252,7 @@ at its savepoint is redone; a repo mid-conflict resumes via the
 VCS-native continue; a repo already at the converged target is a no-op.
 No resume flags.
 
-`--strategy=ff` with `rwv sync-to`: replay is a no-op (CWD must be
+`--strategy=ff` with `rwv land`: replay is a no-op (CWD must be
 strictly ahead of target per the guard's ff precondition); the
 advance-target phase does all the work.
 
@@ -275,7 +275,7 @@ no-op, not this phase: whatever last moved CWD's member repos — an
 operator's fix between a stranded op and its resume, most of all — leaves
 a lock that no longer pins them, and advance-target publishes that lock.
 
-## advance-target (sync-to only)
+## advance-target (land only)
 
 FF-advance every member repo and the project repo in the target
 workspace to CWD's converged tips (written during relock). This step is

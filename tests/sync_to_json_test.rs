@@ -1,4 +1,4 @@
-//! Regression and doc-claim tests for `rwv sync-to --json` observability fields.
+//! Regression and doc-claim tests for `rwv land --json` observability fields.
 //!
 //! Covers the new fields added:
 //! - `source_workweave` — name of the workweave CWD was invoked from (or null).
@@ -7,7 +7,7 @@
 //! - `project_repo_advance` — step-3 advance for the project repo.
 //! - per-outcome `step3_advance` — step-3 advance for each manifest repo.
 //!
-//! Round-trip test (spec acceptance criterion): invoke `rwv sync-to --retire
+//! Round-trip test (spec acceptance criterion): invoke `rwv land --retire
 //! --json` from a workweave; parse the envelope; assert
 //! - `source_workweave` matches the workweave basename,
 //! - `retired == true`,
@@ -23,7 +23,7 @@
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
-use repoweave::sync::{sync_to_json_run, SyncRequest};
+use repoweave::sync::{land_json_run, SyncRequest};
 use repoweave::workspace::WorkspaceContext;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweav
 /// `git worktree add`. The workweave is named `sample-weave` so tests can assert
 /// that `source_workweave` == `"sample-weave"`.
 ///
-/// The workweave has advanced by one commit so `sync-to` has real work to do.
+/// The workweave has advanced by one commit so `land` has real work to do.
 /// Returns `(primary_root, ww_root, primary_server_dir, ww_server_dir,
 ///           primary_project_dir, ww_project_dir, advance_sha)`.
 #[allow(clippy::type_complexity)]
@@ -150,7 +150,7 @@ fn make_workweave_ahead_fixture(
     );
     common::record_feature(&ww_project, &format!("web-app--{workweave_name}"), "main");
 
-    // Advance the workweave's server repo and relock so sync-to has work.
+    // Advance the workweave's server repo and relock so land has work.
     let advance_sha = make_commit(&ww_server, "ww.txt", "workweave\n", "ww: advance server");
     common::fixture_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &advance_sha)]);
     common::git_in(&ww_project, &["add", "rwv.lock"]);
@@ -168,7 +168,7 @@ fn make_workweave_ahead_fixture(
 }
 
 // ===========================================================================
-// Round-trip test: sync-to --retire --json from a workweave
+// Round-trip test: land --retire --json from a workweave
 //
 // Acceptance criteria:
 //   - `source_workweave` matches the workweave name ("sample-weave")
@@ -179,7 +179,7 @@ fn make_workweave_ahead_fixture(
 //
 // We use `--strategy=rebase` so the replay phase runs and produces per-repo
 // outcomes (with `step3_advance` attached). `--strategy=ff` skips replay in
-// sync-to (CWD is strictly ahead), leaving `outcomes` empty.
+// land (CWD is strictly ahead), leaving `outcomes` empty.
 // ===========================================================================
 
 #[test]
@@ -192,8 +192,7 @@ fn sync_to_retire_json_round_trip() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.to_string_lossy(),
+            "land",
             "--strategy=rebase",
             "--retire",
             "--json",
@@ -235,7 +234,7 @@ fn sync_to_retire_json_round_trip() {
         .unwrap_or_else(|| panic!("retired must be a bool; got:\n{stdout}"));
     assert!(
         retired,
-        "retired must be true when --retire was passed and sync-to succeeded; got:\n{stdout}"
+        "retired must be true when --retire was passed and land succeeded; got:\n{stdout}"
     );
 
     // --- step3_advance.to_sha matches target's HEAD after sync ---
@@ -308,7 +307,7 @@ fn sync_to_retire_json_round_trip() {
 fn sync_to_json_source_workweave_is_null_from_primary() {
     // For this test, we set up two independent primary-like workspaces.
     // "source" plays the role of a primary workweave; "target" is the destination.
-    // Invoking sync-to from "source" (a Weave, not a Workweave) should yield
+    // Invoking land from "source" (a Weave, not a Workweave) should yield
     // source_workweave == null.
     let tmp = common::tempdir().unwrap();
     let parent = tmp.path();
@@ -365,7 +364,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     common::record_feature(&target_project, "web-app--target", "main");
     std::fs::write(target.join(".rwv-active"), "web-app\n").unwrap();
 
-    // Advance source so sync-to has work.
+    // Advance source so land has work.
     let c2 = make_commit(
         &source_server,
         "source.txt",
@@ -376,11 +375,10 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     common::git_in(&source_project, &["add", "rwv.lock"]);
     common::git_in(&source_project, &["commit", "-m", "lock: source at c2"]);
 
-    // Invoke sync-to FROM source (a Weave, not a Workweave) TO target.
+    // Invoke land FROM source (a Weave, not a Workweave) TO target.
     let assert = rwv()
         .args([
-            "sync-to",
-            &target.to_string_lossy(),
+            "land",
             "--strategy=ff",
             "--json",
         ])
@@ -414,8 +412,7 @@ fn sync_to_json_retired_false_without_retire_flag() {
     // Invoke WITHOUT --retire.
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.to_string_lossy(),
+            "land",
             "--strategy=ff",
             "--json",
         ])
@@ -459,8 +456,7 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
 
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.to_string_lossy(),
+            "land",
             "--strategy=rebase",
             "--retire",
             "--json",
@@ -505,7 +501,7 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
 
 #[test]
 fn sync_to_json_step3_advance_absent_for_noop_repos() {
-    // Invoke sync-to when source and target are already in sync.
+    // Invoke land when source and target are already in sync.
     // step3_advance should be absent (no-op advance).
     let tmp = common::tempdir().unwrap();
     let parent = tmp.path();
@@ -563,12 +559,11 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     common::record_feature(&ww_project, "web-app--noop-ww", "main");
 
     // No additional commits in ww; primary and ww are at the same tip.
-    // sync-to --strategy=ff from ww to primary: step 1 is a no-op, step 3
+    // land --strategy=ff from ww to primary: step 1 is a no-op, step 3
     // is also a no-op (already at the same tip).
     let assert = rwv()
         .args([
-            "sync-to",
-            &primary.to_string_lossy(),
+            "land",
             "--strategy=ff",
             "--json",
         ])
@@ -605,7 +600,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     );
 }
 
-/// `rwv sync-to <target> --json` from a directory that is not inside any
+/// `rwv land <target> --json` from a directory that is not inside any
 /// repoweave workspace refuses with the workspace-resolution error, and
 /// nothing on the way there panics: no envelope field is worth resolving a
 /// workspace for a second time, with an `expect` standing in for the refusal
@@ -621,7 +616,7 @@ fn sync_to_json_outside_workspace_no_panic() {
     let tmp = common::tempdir().unwrap();
 
     rwv()
-        .args(["sync-to", "/some/nonexistent/target", "--json"])
+        .args(["land", "/some/nonexistent/target", "--json"])
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -635,7 +630,7 @@ fn sync_to_json_outside_workspace_no_panic() {
 // ===========================================================================
 // A resumed op's envelope
 //
-// `rwv sync-to --continue --json` emits an envelope for an op the invocation
+// `rwv land --continue --json` emits an envelope for an op the invocation
 // did not itself start: `do_continue` sends the machine to the op record,
 // whose owner workspace, target and retire flag are not what the request
 // carries. Each identity field then has two candidate answers that differ —
@@ -649,22 +644,23 @@ fn sync_to_json_outside_workspace_no_panic() {
 // workweave — a workweave-rooted op reporting a retire it did not run. So the
 // two library-level tests below drive the same stranded op from the two sides
 // of it. The binary-level test after them drives a real conflict-interrupted
-// op through `rwv sync-to --continue --json` and validates the envelope
+// op through `rwv land --continue --json` and validates the envelope
 // against the committed schema artifact.
 // ===========================================================================
 
 const RESUMED_OP_ID: &str = "envelope-identity-resume";
 
-/// Plant the owner record a `sync-to` leaves behind when it dies after relock:
+/// Plant the owner record a `land` leaves behind when it dies after relock:
 /// owned by `workspace`, landing into `target`, retiring nothing.
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path, overrides: &str) {
     let body = format!(
-        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [{overrides}], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"overrides\": [{overrides}], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
+        plan = common::land_plan_json(workspace, target, "web-app"),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -691,7 +687,7 @@ fn create_savepoint(repo: &Path) {
     );
 }
 
-/// A `sync-to` op owned by the workweave and stranded at advance-target, with
+/// A `land` op owned by the workweave and stranded at advance-target, with
 /// the lease on the target. Returns `(primary, workweave)`.
 fn stranded_sync_to_op(parent: &Path, workweave_name: &str) -> (PathBuf, PathBuf) {
     let (primary, ww, _primary_server, ww_server, _primary_project, ww_project, _advance_sha) =
@@ -714,14 +710,13 @@ fn resume_request(invocation: &WorkspaceContext) -> SyncRequest {
             repoweave::op_state::resume(invocation.active_path())
                 .expect("the stranded op is recorded"),
         ),
-        discard_local_commits: None,
         project_override: None,
     }
 }
 
 /// The envelope of a run that completed, or a panic naming why it did not — a
 /// fixture that drifts into a refusal must not read as a wrong field.
-fn completed_envelope(run: repoweave::sync::SyncToJsonRun) -> repoweave::sync::SyncToJsonOutput {
+fn completed_envelope(run: repoweave::sync::LandJsonRun) -> repoweave::sync::LandJsonOutput {
     if let Err(e) = &run.project_level_result {
         panic!("the resumed op did not complete: {e:#}");
     }
@@ -730,7 +725,7 @@ fn completed_envelope(run: repoweave::sync::SyncToJsonRun) -> repoweave::sync::S
 }
 
 #[test]
-fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
+fn resumed_land_json_run_reports_the_op_not_the_invocation() {
     let tmp = common::tempdir().unwrap();
     let workweave_name = "sample-weave";
     let (primary, _ww) = stranded_sync_to_op(tmp.path(), workweave_name);
@@ -738,7 +733,7 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
     // From the target, which holds the lease and not the op: this checkout is
     // the primary weave and owns nothing, and the request names no target.
     let invocation = WorkspaceContext::resolve_invocation(&primary, None).unwrap();
-    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request(&invocation)));
+    let envelope = completed_envelope(land_json_run(&invocation, resume_request(&invocation)));
 
     assert_eq!(
         envelope.source_workweave.as_deref(),
@@ -768,7 +763,7 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
 }
 
 #[test]
-fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
+fn resumed_land_json_run_reports_the_retire_that_did_not_run() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = stranded_sync_to_op(tmp.path(), "sample-weave");
 
@@ -776,7 +771,7 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
     // everything it wants: a workweave to name and a run that succeeds. The op
     // still records no retire, and no delete happened.
     let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
-    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request(&invocation)));
+    let envelope = completed_envelope(land_json_run(&invocation, resume_request(&invocation)));
 
     assert!(
         !envelope.retired,
@@ -796,12 +791,12 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
 }
 
 // ===========================================================================
-// Binary-level: a conflict-interrupted sync-to finished via --continue --json
+// Binary-level: a conflict-interrupted land finished via --continue --json
 // ===========================================================================
 
-/// Drive a real interrupted sync-to to completion through the binary: a
+/// Drive a real interrupted land to completion through the binary: a
 /// step-1 rebase conflict parks the op; the resolution is staged; then
-/// `rwv sync-to --continue --json` finishes it and emits the envelope.
+/// `rwv land --continue --json` finishes it and emits the envelope.
 ///
 /// The envelope is validated against the committed artifact its own `$schema`
 /// names, and the `resumed` disclosure is pinned: the op stranded during
@@ -841,7 +836,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
 
     // The op parks at replay on the conflict.
     rwv()
-        .args(["sync-to", &primary.to_string_lossy(), "--json"])
+        .args(["land", "--json"])
         .current_dir(&ww)
         .assert()
         .failure();
@@ -855,7 +850,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
     common::git_in(&ww_server, &["add", "shared.txt"]);
 
     let assert = rwv()
-        .args(["sync-to", "--continue", "--json"])
+        .args(["land", "--continue", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -867,14 +862,14 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
     // The envelope satisfies the artifact its own bytes name.
     let url = doc["$schema"].as_str().expect("envelope carries $schema");
     assert!(
-        url.ends_with("/docs/reference/schemas/sync-to.json"),
-        "envelope must point consumers at the sync-to artifact; got {url}"
+        url.ends_with("/docs/reference/schemas/land.json"),
+        "envelope must point consumers at the land artifact; got {url}"
     );
-    let schema = common::json_schema::committed_schema("sync-to");
+    let schema = common::json_schema::committed_schema("land");
     let (errors, walk) = common::json_schema::conform(&doc, &schema);
     assert!(
         errors.is_empty(),
-        "the resumed envelope does not satisfy docs/reference/schemas/sync-to.json:\n  {}\n\n\
+        "the resumed envelope does not satisfy docs/reference/schemas/land.json:\n  {}\n\n\
          emitted:\n{doc:#}",
         errors.join("\n  ")
     );
@@ -919,7 +914,7 @@ fn a_resume_without_the_recorded_discard_consent_is_refused() {
     let recorded = std::fs::read_to_string(ww.join(".rwv-op")).unwrap();
 
     let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
-    let run = sync_to_json_run(&invocation, resume_request(&invocation));
+    let run = land_json_run(&invocation, resume_request(&invocation));
 
     let err = run
         .project_level_result

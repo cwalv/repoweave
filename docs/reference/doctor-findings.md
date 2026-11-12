@@ -262,7 +262,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 | State | Means | Refused by |
 |---|---|---|
 | `here` | the project's `rwv.toml` at the checked-out tip names member-entry keys an earlier release wrote, each listed with the key that replaces it | every verb that reads the project's `rwv.toml`; `rwv doctor` reports it instead, and `rwv status` and `rwv prime` skip the project with a warning |
-| `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv sync-to`, when the project does not load after the project repo is replayed; `rwv doctor` reports it for every project |
+| `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv land`, when the project does not load after the project repo is replayed; `rwv doctor` reports it for every project |
 | `at` | the `rwv.toml` at the tip of a live branch the verb acts on, not the checked-out one, names member-entry keys an earlier release wrote or does not parse, with the parser's error | the verbs that act on that branch |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -284,7 +284,7 @@ A commit other than the checked-out one that names the old keys is not reported 
 
 #### `malformed`
 
-**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is restored from version control, or written afresh by `rwv lock`, which then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
+**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is restored from version control, or written afresh by `rwv lock`, which then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv land` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and choosing the commits a lock pins is a decision about state, not a repair.
 
@@ -417,11 +417,11 @@ keeps the repo from looking clean.
 **What to do:** the `error` field carries what git said. A directory that is
 not a git repo, a corrupt `.git`, and a permissions problem all land here.
 
-**Also a sync failure kind.** One condition, one name, so `rwv sync-to --json`
+**Also a sync failure kind.** One condition, one name, so `rwv land --json`
 reports a repo whose HEAD it could not read under this same kind, as a per-repo `failure.kind` rather than a `rwv doctor` violation.
-The text lands in `message` there instead of `error`, and sync-to raises it for
+The text lands in `message` there instead of `error`, and land raises it for
 one case a scan cannot see: the source lock pinning a version the source
-workspace itself could not resolve, which leaves sync-to with no HEAD to compare
+workspace itself could not resolve, which leaves land with no HEAD to compare
 against for a reason that is nothing to do with the repo in front of it.
 
 ### `projects-dir-unreadable`
@@ -788,7 +788,7 @@ the project clone, it writes the marker again from the entry and the worktree
 relation (`primary`, `project` and the `parent` the entry keeps). Where nothing
 the entry names is left, it removes the entry. A verb that does not destroy
 the workweave, run from inside it, restores the marker the same way and says
-so; `rwv workweave delete` and `rwv sync-to --retire` refuse instead, naming
+so; `rwv workweave delete` and `rwv land --retire` refuse instead, naming
 `rwv doctor --fix`.
 
 #### `foreign-primary`
@@ -1317,7 +1317,7 @@ derived path.
 A workweave's checkout of the member is a worktree of the canonical clone, so
 moving the canonical clone strands it. In the primary weave, when workweaves
 hold worktrees of the clone, the message names each one and puts landing and
-retiring it first: commit or stash its edits and run `rwv sync-to --retire`
+retiring it first: commit or stash its edits and run `rwv land --retire`
 from it, which lands its commits on the primary weave's branch. The `--json`
 record's `converge` carries those workweaves as `{"here": {"retire_first":
 [...]}}`. In a workweave, the finding names no move: `converge` is
@@ -1452,7 +1452,7 @@ branch tip, so the commits are still anchored by a live branch.
 
 **Warning. Auto-fixable.** The savepoint tip is *not* reachable. The ref is the
 last pointer to commits that would otherwise become unreachable — the same
-reason the reflog is never cut. A savepoint `rwv sync-to
+reason the reflog is never cut. A savepoint `rwv land
 --discard-local-commits` keeps after its operation ended (a tombstone) is one.
 
 **What to do:** `rwv doctor --fix` keeps the commits as a backup, then drops the
@@ -1461,7 +1461,7 @@ when it is not wanted. Nothing reads a savepoint as a backup before `--fix`
 converts it, and no commit is lost in the conversion.
 
 A savepoint that belongs to an operation still in flight is never reported as
-orphaned: that covers both of a `sync-to`'s savepoints, the one in the
+orphaned: that covers both of a `land`'s savepoints, the one in the
 workspace it replays in and the one in the workspace it advances, for as long
 as the operation's record exists.
 
@@ -1482,7 +1482,7 @@ text output prints that command filled in.
 
 **Warning. Report-only.** A `.rwv-op` file is present at a weave root.
 The finding reports the file's age, its path, and the `verb` that started the
-op (`sync` or `sync-to`). A file whose op id, verb, project, workspaces and
+op (`sync` or `land`). A file whose op id, verb, project, workspaces and
 start time parse is reported, and its savepoints held live, even when the
 rest of it does not parse, since `rwv abort` can still restore from them.
 
@@ -1510,7 +1510,7 @@ classical crash between acquire and mark) and `owner-op-id-mismatch` (the
 owner has an `.rwv-op`, but for a different operation, so this lease points at
 one that has already finished).
 
-Verbs that read op-state (`rwv sync`, `rwv sync-to`, `rwv abort`, `rwv
+Verbs that read op-state (`rwv sync`, `rwv land`, `rwv abort`, `rwv
 status`) refuse with this kind when they meet such a lease, naming the
 workspace that holds it: with no owner record, nothing can resume or abort the
 operation the lease names.

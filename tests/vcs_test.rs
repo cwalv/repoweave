@@ -775,7 +775,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
 #[test]
 fn conflict_resolution_hint_rebase_does_not_spell_git_rebase_continue() {
     // Seam-rule: the VCS impl stops at staging for Rebase; rwv core appends
-    // `rwv sync --continue` / `rwv sync-to --continue`. The hint must NOT
+    // `rwv sync --continue` / `rwv land --continue`. The hint must NOT
     // spell `git rebase --continue` in operator-facing text.
     let vcs = git_vcs();
     let hint = vcs.conflict_resolution_hint(ConflictOp::Rebase);

@@ -1,8 +1,8 @@
-//! E2E tests for `rwv sync-to` — the three-step orchestration.
+//! E2E tests for `rwv land` — the three-step orchestration.
 //!
 //! Critical invariants verified:
 //!
-//! 1. **End-state ordering (Option-B check)**: After `sync-to --strategy=rebase`,
+//! 1. **End-state ordering (Option-B check)**: After `land --strategy=rebase`,
 //!    target's project history has CWD's unique commits ON TOP of target's prior
 //!    tip — not below it. This is the load-bearing assertion that distinguishes
 //!    Option B from the previously-rejected Option A.
@@ -11,7 +11,7 @@
 //!    fast-forwards target with no rewrites.
 //!
 //! 3. **rebase path**: CWD has unique commits on top of a shared ancestor;
-//!    after sync-to, target's history has CWD's commits linearly on top.
+//!    after land, target's history has CWD's commits linearly on top.
 //!
 //! 4. **merge path**: Similar to rebase but via merge commit.
 //!
@@ -25,6 +25,7 @@
 //!    refresh" commit appears in the project repo.
 
 use assert_cmd::Command as AssertCommand;
+use repoweave::diagnosis::State;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -74,7 +75,7 @@ const SERVER_PATH: &str = "github/example/server";
 /// Returns (primary_workspace_root, ww_workspace_root, initial_sha).
 ///
 /// Primary acts as the "target" in most tests; the workweave acts as CWD.
-/// This matches the typical workflow: workweave developer runs sync-to primary.
+/// This matches the typical workflow: workweave developer runs land primary.
 struct Workspace {
     root: PathBuf,
     project_dir: PathBuf,
@@ -116,7 +117,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/server",
+            "ww/project",
         ],
     );
 
@@ -176,9 +177,9 @@ fn sync_to_ff_clean_advances_target() {
         common::git_in(&primary.project_dir, &["rev-parse", "HEAD"])
     );
 
-    // Run sync-to from ww → primary with ff strategy.
+    // Run land from ww → primary with ff strategy.
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -187,7 +188,7 @@ fn sync_to_ff_clean_advances_target() {
     let primary_after = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_after, ww_tip,
-        "primary should be at ww's tip after sync-to --strategy=ff"
+        "primary should be at ww's tip after land --strategy=ff"
     );
 
     // Primary's server repo should be at c2.
@@ -206,7 +207,7 @@ fn sync_to_ff_clean_advances_target() {
 //
 // Scenario: primary and workweave diverge. Primary has a commit in its project
 // repo that ww doesn't (a non-lock file commit so it survives rebase);
-// ww has a non-lock project commit that primary doesn't. After sync-to
+// ww has a non-lock project commit that primary doesn't. After land
 // --strategy=rebase from ww:
 //   - ww's non-lock project commit must be ON TOP of primary's prior tip.
 //   - primary should be fast-forwarded to this rebased tip.
@@ -248,19 +249,18 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     common::git_in(&ww.project_dir, &["add", "ww-note.txt"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "feat: ww unique commit"]);
 
-    // Run sync-to from ww → primary with rebase strategy.
+    // Run land from ww → primary with rebase strategy.
     // Both sides have the same lock (initial_sha), so no --force needed.
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy=rebase",
         ])
         .current_dir(&ww.root)
         .assert()
         .success();
 
-    // Read the log of primary's project repo after sync-to.
+    // Read the log of primary's project repo after land.
     // Format: one line per commit, newest first.
     let log = common::git_in(&primary.project_dir, &["log", "--oneline", "--no-decorate"]);
 
@@ -292,13 +292,13 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_tip_after, ww_tip,
-        "primary and ww should be at the same tip after sync-to"
+        "primary and ww should be at the same tip after land"
     );
 
     // Verify the ordering is not just trivially equal (i.e., actually rebased).
     assert_ne!(
         primary_tip_after, primary_project_tip,
-        "primary should have moved beyond its pre-sync-to tip"
+        "primary should have moved beyond its pre-land tip"
     );
 
     // initial_sha is part of the fixture; no need to use it directly.
@@ -356,16 +356,8 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww conflict"]);
 
-    // Run sync-to; expect failure due to conflict in step 1.
-    // --allow-stale-lock replaces the removed --force for bypassing
-    // the lock-freshness precondition.
     let assert = rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=rebase",
-            "--allow-stale-lock", // bypass lock-freshness
-        ])
+        .args(["land", "--strategy=rebase"])
         .current_dir(&ww.root)
         .assert();
 
@@ -434,7 +426,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     // ww then updates its lock to match its server tip (lock fresh) and also
     // adds a unique non-lock project commit.
     //
-    // During sync-to step 1 (ww syncs FROM primary's lock = primary_c2):
+    // During land step 1 (ww syncs FROM primary's lock = primary_c2):
     //   Phase 2 must REBASE ww's server onto primary_c2 (divergent, not ff).
     //   The rebased server gets a NEW sha (different from primary_c2).
     //   Phase 1' rebases ww's project onto primary's tip (lock=primary_c2).
@@ -456,13 +448,12 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     common::git_in(&ww.project_dir, &["add", "ww-note.txt"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "feat: ww unique commit"]);
 
-    // Run sync-to from ww → primary with rebase.
+    // Run land from ww → primary with rebase.
     // ww's lock is fresh (ww_c2 matches ww's server).
     // primary's lock is fresh (primary_c2 matches primary's server).
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy=rebase",
         ])
         .current_dir(&ww.root)
@@ -503,14 +494,14 @@ fn sync_to_clears_op_state_on_success() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
-    // Workweave advances and runs sync-to.
+    // Workweave advances and runs land.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: advance");
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -518,11 +509,11 @@ fn sync_to_clears_op_state_on_success() {
     // Op-state should be cleared from both workspaces.
     assert!(
         !ww.root.join(".rwv-op").exists(),
-        "op-state should be cleared from ww after successful sync-to"
+        "op-state should be cleared from ww after successful land"
     );
     assert!(
         !primary.root.join(".rwv-op").exists(),
-        "op-state should be cleared from primary after successful sync-to"
+        "op-state should be cleared from primary after successful land"
     );
 }
 
@@ -545,11 +536,11 @@ fn sync_to_continue_from_step3_ff() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
     let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    // Run sync-to successfully first to establish a known-good state baseline.
+    // Run land successfully first to establish a known-good state baseline.
     // Then test --continue from clean state (should be a no-op on re-run
     // since there's no op-state).
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -561,7 +552,7 @@ fn sync_to_continue_from_step3_ff() {
     // --continue with no op-state should fail with "nothing to continue".
     // --continue must be passed alone (exclusive); no target or --strategy.
     let err_output = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -571,9 +562,9 @@ fn sync_to_continue_from_step3_ff() {
     assert!(
         stderr.contains("no sync")
             || stderr.contains("nothing to continue")
-            || stderr.contains("no sync/sync-to")
+            || stderr.contains("no sync/land")
             || stderr.contains("in progress"),
-        "expected 'no sync/sync-to op in progress' error; got:\n{stderr}"
+        "expected 'no sync/land op in progress' error; got:\n{stderr}"
     );
 }
 
@@ -603,9 +594,9 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
         &["commit", "-m", "lock: primary advance"],
     );
 
-    // Trying sync-to with --strategy=ff from ww (which is behind primary) should fail.
+    // Trying land with --strategy=ff from ww (which is behind primary) should fail.
     let err_output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -622,7 +613,7 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
 // Test: dirty target refusal
 //
 // Step 3 ff-advances the target via `reset --hard`, which destroys any
-// uncommitted changes in the target's worktrees. sync-to must refuse up
+// uncommitted changes in the target's worktrees. land must refuse up
 // front when the target is dirty, the uncommitted content must survive
 // byte-for-byte, and the refusal must leave no op-state behind (a re-run
 // after the target is cleaned succeeds).
@@ -656,7 +647,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     let server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let err_output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -666,13 +657,13 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     let target = primary.root.display();
     assert!(
         stderr.contains(&format!(
-            "rwv sync-to: {SERVER_PATH} in {target}: edits dirty\n"
+            "rwv land: {SERVER_PATH} in {target}: edits dirty\n"
         )),
         "refusal must name the dirty-target precondition; got:\n{stderr}"
     );
     assert!(
         stderr.contains(&format!(
-            "rwv sync-to: projects/web-app in {target}: edits dirty\n"
+            "rwv land: projects/web-app in {target}: edits dirty\n"
         )),
         "refusal must list the dirty repos; got:\n{stderr}"
     );
@@ -681,12 +672,12 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     assert_eq!(
         std::fs::read_to_string(primary.server_dir.join("README.md")).unwrap(),
         "uncommitted server edit\n",
-        "target server repo's uncommitted edit must survive a refused sync-to"
+        "target server repo's uncommitted edit must survive a refused land"
     );
     assert_eq!(
         std::fs::read_to_string(primary.project_dir.join("README.md")).unwrap(),
         "uncommitted project edit\n",
-        "target project repo's uncommitted edit must survive a refused sync-to"
+        "target project repo's uncommitted edit must survive a refused land"
     );
 
     // Target tips untouched — nothing was reset.
@@ -700,12 +691,12 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     );
 
     // Clean the target and re-run: the refusal must not have left op-state
-    // (or any other residue) that blocks a fresh sync-to.
+    // (or any other residue) that blocks a fresh land.
     common::git_in(&primary.server_dir, &["checkout", "--", "README.md"]);
     common::git_in(&primary.project_dir, &["checkout", "--", "README.md"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -713,7 +704,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         c2,
-        "after cleaning the target, sync-to should ff-advance it normally"
+        "after cleaning the target, land should ff-advance it normally"
     );
 }
 
@@ -738,7 +729,7 @@ fn sync_to_advances_the_target_branch_not_just_head() {
     let ww_project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     let output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -769,7 +760,7 @@ fn sync_to_advances_the_target_branch_not_just_head() {
     // the §2.1 chain that ends "then delete the only ref": a source that
     // silently lost its attachment during the landing is a source whose work
     // the follow-on `--retire` has no branch to find.
-    common::assert_on_branch(&ww.server_dir, "ww/server");
+    common::assert_on_branch(&ww.server_dir, "ww/project");
     common::assert_on_branch(&ww.project_dir, "ww/project");
 
     assert!(
@@ -784,7 +775,7 @@ fn sync_to_advances_the_target_branch_not_just_head() {
 // A detached target has no branch for the landing to advance. Left to run,
 // `merge --ff-only` moves the target's HEAD, every step reports success, and
 // `--retire`/`workweave delete` then force-deletes the source's ephemeral
-// branch — the only remaining ref to the work. sync-to must refuse up front,
+// branch — the only remaining ref to the work. land must refuse up front,
 // naming the detached repos, and leave both sides exactly as they were.
 // ---------------------------------------------------------------------------
 
@@ -802,17 +793,13 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
     common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
     let err_output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
         .get_output()
         .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
-    assert!(
-        stderr.contains("detached HEAD"),
-        "refusal must name the detached-target precondition; got:\n{stderr}"
-    );
+    let stderr = common::cli::refused(&err_output, State::AlignmentDetachedElsewhere);
     assert!(
         stderr.contains(SERVER_PATH),
         "refusal must list the detached repo; got:\n{stderr}"
@@ -821,12 +808,12 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "refs/heads/main"]),
         initial_sha,
-        "target `main` must be untouched by a refused sync-to"
+        "target `main` must be untouched by a refused land"
     );
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         initial_sha,
-        "target HEAD must be untouched by a refused sync-to"
+        "target HEAD must be untouched by a refused land"
     );
     assert!(
         !ww.root.join(".rwv-op").exists(),
@@ -837,19 +824,19 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
     // SHA assertion above green while having performed the ATTACH the operator
     // never consented to.
     common::assert_detached(&primary.server_dir);
-    common::assert_on_branch(&ww.server_dir, "ww/server");
+    common::assert_on_branch(&ww.server_dir, "ww/project");
 
     // Re-attach and re-run: the work lands on the named branch.
     common::git_in(&primary.server_dir, &["checkout", "main"]);
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "refs/heads/main"]),
         c2,
-        "after re-attaching the target, sync-to must advance `main`"
+        "after re-attaching the target, land must advance `main`"
     );
 }
 
@@ -868,22 +855,22 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
     common::git_in(&primary.project_dir, &["checkout", "--detach", "HEAD"]);
 
     let err_output = rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()
         .get_output()
         .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    let stderr = common::cli::refused(&err_output, State::TargetNotCheckedOut);
     assert!(
-        stderr.contains("detached HEAD") && stderr.contains("(project)"),
-        "refusal must name the detached project repo; got:\n{stderr}"
+        stderr.contains("rwv workweave create <ww> --branch main"),
+        "the interim refusal opens the target in a workweave; got:\n{stderr}"
     );
 
     assert_eq!(
         common::git_in(&primary.project_dir, &["rev-parse", "refs/heads/main"]),
         project_main_before,
-        "target project `main` must be untouched by a refused sync-to"
+        "target project `main` must be untouched by a refused land"
     );
     common::assert_detached(&primary.project_dir);
     common::assert_on_branch(&ww.project_dir, "ww/project");
@@ -894,7 +881,7 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
 //
 // The §2.1 chain is two steps: land onto nothing, then delete the only ref.
 // The refusal above closes step one. This closes the seam between them — a
-// refused sync-to must not have moved the source's ephemeral ref either, or
+// refused land must not have moved the source's ephemeral ref either, or
 // `--retire` would be reasoning about a branch the failed landing already
 // advanced.
 // ---------------------------------------------------------------------------
@@ -909,22 +896,22 @@ fn a_refused_landing_leaves_the_source_ref_where_it_was() {
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
-    let source_server_ref = common::git_in(&ww.server_dir, &["rev-parse", "refs/heads/ww/server"]);
+    let source_server_ref = common::git_in(&ww.server_dir, &["rev-parse", "refs/heads/ww/project"]);
     let source_project_ref =
         common::git_in(&ww.project_dir, &["rev-parse", "refs/heads/ww/project"]);
 
     common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure();
 
-    common::assert_on_branch(&ww.server_dir, "ww/server");
+    common::assert_on_branch(&ww.server_dir, "ww/project");
     common::assert_on_branch(&ww.project_dir, "ww/project");
     assert_eq!(
-        common::git_in(&ww.server_dir, &["rev-parse", "refs/heads/ww/server"]),
+        common::git_in(&ww.server_dir, &["rev-parse", "refs/heads/ww/project"]),
         source_server_ref,
         "a refused landing must not move the source's ref"
     );
@@ -936,9 +923,9 @@ fn a_refused_landing_leaves_the_source_ref_where_it_was() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: sync-to with mismatched primary `.rwv-active`
+// Test 9: land with mismatched primary `.rwv-active`
 //
-// A workweave whose project is `web-app` should succeed with `rwv sync-to`
+// A workweave whose project is `web-app` should succeed with `rwv land`
 // even when primary's `.rwv-active` is pointing at a different project
 // (`other-project`).  Before the fix this would fail with "active project
 // mismatch"; after the fix the workweave's project is used as the authoritative
@@ -1016,9 +1003,9 @@ fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
     // the workweave's immutable project ("web-app") overrides the target side.
     std::fs::write(primary.root.join(".rwv-active"), "other-project\n").unwrap();
 
-    // sync-to must succeed despite the mismatch.
+    // land must succeed despite the mismatch.
     rwv()
-        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .args(["land", "--strategy=ff"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1027,7 +1014,7 @@ fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
     let primary_after = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_after, ww_tip,
-        "primary's web-app project should be at ww's tip after sync-to"
+        "primary's web-app project should be at ww's tip after land"
     );
 
     // Primary's server repo should be at c2.
@@ -1191,7 +1178,7 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
         make_nested_workweaves(tmp.path());
 
     // Work lands in the child, lock bumped and committed (the documented
-    // pre-sync step; sync-to refuses on a stale lock).
+    // pre-sync step; land refuses on a stale lock).
     let c2 = make_commit(
         &child_ww.join(SERVER_PATH),
         "feature.txt",
@@ -1203,11 +1190,11 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     common::git_in(&child_project, &["add", "rwv.lock"]);
     common::git_in(&child_project, &["commit", "-m", "lock: child advance"]);
 
-    // Naked sync-to --retire: the target defaults to the recorded parent
+    // Naked land --retire: the target defaults to the recorded parent
     // (the parent workweave), and retire must accept the work as merged
     // once the parent has it.
     rwv()
-        .args(["sync-to", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1258,7 +1245,7 @@ fn nested_workweave_delete_keeps_the_branches_of_unlanded_work() {
     );
 }
 
-/// Work landed in the parent (naked `sync-to`, no retire) is landed: the
+/// Work landed in the parent (naked `land`, no retire) is landed: the
 /// delete that follows deletes the branches and exits 0.
 #[test]
 fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
@@ -1268,7 +1255,7 @@ fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
     child_work_ready_to_retire(&child_ww);
 
     rwv()
-        .args(["sync-to"])
+        .args(["land"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1283,7 +1270,7 @@ fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
 // ===========================================================================
 // The completion claim is terminal-only
 //
-// "sync-to complete" is an OP-scope claim. Under `--retire` the op is not
+// "land complete" is an OP-scope claim. Under `--retire` the op is not
 // complete when advance-target returns: retire is still scheduled, its
 // merged- and dirty-checks can refuse, and cleanup has not run. These two
 // tests pin the outcome on both sides — a refused retire has emitted no
@@ -1313,43 +1300,32 @@ fn a_retire_that_refuses_leaves_no_completion_claim_behind() {
         make_nested_workweaves(tmp.path());
     let c2 = child_work_ready_to_retire(&child_ww);
 
-    // An untracked file passes the op-start dirt preflight (which refuses on
-    // tracked changes only) and fails retire's delete gate, which refuses on
-    // any uncommitted state. So every phase up to retire succeeds and retire
-    // is the one that refuses.
+    // Retiring removes the workweave, so its dirt, untracked files included,
+    // is judged with every other refusal before anything moves.
     std::fs::write(
         child_ww.join(SERVER_PATH).join("scratch.txt"),
         "not committed\n",
     )
     .unwrap();
+    let parent_before = common::git_in(parent_ww.join(SERVER_PATH), &["rev-parse", "HEAD"]);
 
-    let assert = rwv()
-        .args(["sync-to", "--retire"])
-        .current_dir(&child_ww)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    assert!(
-        stderr.contains("--retire: the landing is done and the workweave was not deleted"),
-        "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
-    );
-    // The phases below retire DID their work — so the absent claim is absent
-    // because the op did not complete, not because nothing happened.
+    let out = common::cli::run(&["land", "--retire"], &child_ww);
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(stderr.contains("scratch.txt"), "{stderr}");
     assert_eq!(
         common::git_in(parent_ww.join(SERVER_PATH), &["rev-parse", "HEAD"]),
-        c2,
-        "advance-target must have landed the child's work in the parent"
+        parent_before,
+        "a landing refused up front moves nothing"
     );
+    assert_ne!(parent_before, c2);
     assert!(
         child_ww.exists(),
         "the refused retire must leave the workweave standing"
     );
-
     assert!(
-        !stderr.contains("sync-to complete"),
-        "an op whose retire refused has not completed and must claim nothing of \
-         the sort; got stderr:\n{stderr}"
+        !stderr.contains("land complete"),
+        "an op that refused has not completed and must claim nothing of the sort; got \
+         stderr:\n{stderr}"
     );
 }
 
@@ -1361,7 +1337,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
     child_work_ready_to_retire(&child_ww);
 
     let assert = rwv()
-        .args(["sync-to", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1369,7 +1345,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
 
     assert!(!child_ww.exists(), "the op must have retired the workweave");
     assert_eq!(
-        stderr.matches("sync-to complete").count(),
+        stderr.matches("land complete").count(),
         1,
         "a completed op claims completion exactly once; got stderr:\n{stderr}"
     );
@@ -1378,7 +1354,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
         .find("retired workweave")
         .unwrap_or_else(|| panic!("retire must announce its own outcome; got stderr:\n{stderr}"));
     let complete_at = stderr
-        .find("sync-to complete")
+        .find("land complete")
         .expect("claim counted above");
     assert!(
         retired_at < complete_at,
@@ -1452,8 +1428,7 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
 
     rwv()
         .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
+            "land",
             "--strategy=rebase",
         ])
         .current_dir(&ww_root)
@@ -1492,42 +1467,30 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
 }
 
 // ---------------------------------------------------------------------------
-// A relative <source>/<target> is read from the directory rwv runs in (or
-// -C), never from the primary weave root. The fixture's primary sits one
-// directory below the temp dir, so the weave-root reading of the same
-// spelling lands at a path that does not exist. Under -C the process runs
-// from a directory where the spelling also names nothing, so a path left
-// for the OS to read against the process cwd misses too.
+// `land` takes no target operand: the target is the record's, or `--target`'s
+// for one run. A workspace path is no spelling of a branch.
 // ---------------------------------------------------------------------------
 
-fn elsewhere(tmp: &Path) -> PathBuf {
-    let dir = tmp.join("elsewhere/inner");
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 #[test]
-fn sync_to_reads_a_relative_target_from_the_c_directory() {
+fn land_takes_no_target_operand() {
     let tmp = common::tempdir().unwrap();
     let parent = tmp.path().join("deep");
     let (primary, ww_root, ww_project, ww_server, _initial_sha) = make_marker_ww(&parent);
-
     let c2 = make_commit(&ww_server, "ww.txt", "ww\n", "ww: advance server");
     common::fixture_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww_project, &["add", "rwv.lock"]);
     common::git_in(&ww_project, &["commit", "-m", "lock: ww advance"]);
-    let ww_tip = common::git_in(&ww_project, &["rev-parse", "HEAD"]);
+    let before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    rwv()
-        .arg("-C")
-        .arg(&ww_root)
-        .args(["sync-to", "../../primary", "--strategy=ff"])
-        .current_dir(elsewhere(tmp.path()))
-        .assert()
-        .success();
-
+    let out = common::cli::run(&["land", "../../primary"], &ww_root);
+    assert_eq!(out.status.code(), Some(2), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unexpected argument"),
+        "{}",
+        common::cli::describe(&out)
+    );
     assert_eq!(
         common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
-        ww_tip
+        before
     );
 }

@@ -118,7 +118,7 @@ well-defined.
 
 Every check above tier 0 depends on these three invariants:
 
-- **Merged-check soundness (delete / retire).** `rwv sync-to --retire`
+- **Merged-check soundness (delete / retire).** `rwv land --retire`
   refuses to delete a workweave whose unique commits aren't reachable
   from the parent — an `is_ancestor` query against the parent's tip.
   The query is sound only when both refs live in the same object DAG.
@@ -127,7 +127,7 @@ Every check above tier 0 depends on these three invariants:
   the answer reflects the topology, not the history. A merged-check
   green-lights deletion of work the operator wanted; a red flag refuses
   to delete work that is in fact merged. Both failure modes are silent.
-- **Sync convergence.** `rwv sync` and `rwv sync-to` push refs and
+- **Sync convergence.** `rwv sync` and `rwv land` push refs and
   materialize working trees by reaching across the parent edge of the
   workweave tree (see [workweave-hierarchy](./workweave-hierarchy.md)).
   The "push a ref into the parent" primitive uses git's local-to-local

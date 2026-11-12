@@ -1,4 +1,4 @@
-//! E2E integration tests for `rwv sync` and `rwv sync-to` lock+replay semantics across all
+//! E2E integration tests for `rwv sync` and `rwv land` lock+replay semantics across all
 //! sync strategies with concurrent lock-bumping workweaves.
 //!
 //! ## What these tests cover
@@ -191,7 +191,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From primary: sync WA → primary (ff). Primary now has WA's commit + lock.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wa.root)
         .assert()
         .success();
@@ -243,7 +243,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From primary: sync WB → primary (ff). Both contributions land.
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -298,7 +298,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
     // Primary absorbs WA (ff).
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wa.root)
         .assert()
         .success();
@@ -310,7 +310,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
         .assert()
         .success();
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -352,7 +352,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
     // Land WC into primary (ff).
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wc.root)
         .assert()
         .success();
@@ -375,7 +375,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
 /// Fast-forward does not replay commits — it advances the branch pointer.
 /// A lock-only commit in the source's history must land verbatim in primary's
-/// history after `rwv sync-to` (default ff strategy). The commit
+/// history after `rwv land` (default ff strategy). The commit
 /// count grows by exactly 1 (the lock commit), and it retains its original
 /// author and SHA.
 ///
@@ -404,7 +404,7 @@ fn sync_ff_preserves_lock_only_commits() {
 
     // From primary: sync WW → primary via ff (the default).
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -473,7 +473,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
     rwv_lock_commit(&wa.root);
     rwv()
-        .args(["sync-to", "--strategy", "ff"])
+        .args(["land", "--strategy", "ff"])
         .current_dir(&wa.root)
         .assert()
         .success();
@@ -495,7 +495,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     // .gitattributes is clean, so this must fail on primary's state, not
     // ww's — and the refusal must name primary's directory, not ww's.
     let out = rwv()
-        .args(["sync-to", "--strategy", "rebase"])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -549,7 +549,7 @@ fn bare_git_ok(args: &[&str], dir: &Path) -> String {
 // ---------------------------------------------------------------------------
 // rwv-native `--continue` end-to-end
 //
-// The operator does not have to reach for bare git — `rwv sync-to --continue` itself
+// The operator does not have to reach for bare git — `rwv land --continue` itself
 // drives a stopped rebase through the remaining picks (including a lock-only
 // pick that must resolve to ours via the inline hold on the lock merge driver), runs relock,
 // and clears op-state.
@@ -642,9 +642,9 @@ fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
     );
 }
 
-/// Golden path: a `rwv sync-to --strategy=rebase` that stops on
+/// Golden path: a `rwv land --strategy=rebase` that stops on
 /// a genuine non-lock conflict in the project repo can be resumed by the
-/// operator with `resolve + git add + rwv sync-to --continue` — no `git rebase
+/// operator with `resolve + git add + rwv land --continue` — no `git rebase
 /// --continue` step. `--continue` MUST drive the entire remaining op:
 ///
 ///   1. Complete the mid-rebase (including any lock-only pick that must
@@ -668,7 +668,7 @@ fn sync_to_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() 
 
     // Start the rebase from ww. It must stop on F1's docs conflict.
     rwv()
-        .args(["sync-to", "--strategy", "rebase"])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -693,9 +693,9 @@ fn sync_to_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() 
     .unwrap();
     common::git_in(&ww.project_dir, &["add", "notes/shared.md"]);
 
-    // `rwv sync-to --continue` must complete the whole op.
+    // `rwv land --continue` must complete the whole op.
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -736,7 +736,7 @@ fn sync_to_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() 
     let _ = primary; // silence unused-binding lint; fixture kept for symmetry.
 }
 
-/// Negative-path complement to the golden test: `rwv sync-to --continue` with
+/// Negative-path complement to the golden test: `rwv land --continue` with
 /// the operator's resolution NOT staged must bail cleanly — the conflict
 /// message renders, the repo stays mid-rebase, and op-state is retained so
 /// a second `--continue` after `git add` succeeds. Losing either the
@@ -754,7 +754,7 @@ fn sync_to_continue_with_unstaged_resolution_bails_and_second_continue_succeeds(
 
     // First sync stops on the docs conflict, same as the golden path.
     rwv()
-        .args(["sync-to", "--strategy", "rebase"])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -777,7 +777,7 @@ fn sync_to_continue_with_unstaged_resolution_bails_and_second_continue_succeeds(
     // First `--continue` must fail; specifically it must NOT clear op-state
     // or leave the repo clean of the rebase.
     let out = rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -808,7 +808,7 @@ fn sync_to_continue_with_unstaged_resolution_bails_and_second_continue_succeeds(
     // Now stage the resolution — the second `--continue` must succeed.
     common::git_in(&ww.project_dir, &["add", "notes/shared.md"]);
     rwv()
-        .args(["sync-to", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();

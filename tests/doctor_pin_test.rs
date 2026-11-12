@@ -316,6 +316,6 @@ fn the_sync_refusals_that_keep_two_of_the_names_have_their_entries_on_the_refusa
     for token in ["stale-lock", "unresolvable-lock-entry"] {
         let entry = explain(token);
         assert!(refusals.contains(&entry), "{token}");
-        assert!(entry.contains("`rwv sync-to`"), "{entry}");
+        assert!(entry.contains("`rwv land`"), "{entry}");
     }
 }

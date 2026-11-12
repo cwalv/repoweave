@@ -295,7 +295,7 @@ mutations" above an enumeration of ten, written while its author was producing
 the evidence for this rule.
 
 State the invariant that survives membership change: "callers refuse
-advisorily; the exclusion is taken only by sync and sync-to" outlives a new
+advisorily; the exclusion is taken only by sync and land" outlives a new
 caller, where naming the four does not. When the list itself is load-bearing,
 make it an assertion keyed on the set — a count from `.len()`, a census-shaped
 pin in the style of the audit tests — never prose. A failure message that

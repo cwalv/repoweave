@@ -108,8 +108,8 @@ use repoweave::pull::PullJsonOutput;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
-    auto_relock_commit_message, SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
-    SYNC_TO_JSON_SCHEMA_URL,
+    auto_relock_commit_message, SyncJsonOutput, LandJsonOutput, SYNC_JSON_SCHEMA_URL,
+    LAND_JSON_SCHEMA_URL,
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 use repoweave::update_remote::{UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL};
@@ -310,9 +310,9 @@ fn schema_sync() -> String {
     serde_json::to_string_pretty(&schema).expect("sync schema serializes")
 }
 
-fn schema_sync_to() -> String {
-    let schema = schema_for!(SyncToJsonOutput);
-    serde_json::to_string_pretty(&schema).expect("sync-to schema serializes")
+fn schema_land() -> String {
+    let schema = schema_for!(LandJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("land schema serializes")
 }
 
 fn schema_fetch() -> String {
@@ -462,9 +462,9 @@ fn verbs() -> Vec<Verb> {
             schema: Some(schema_sync),
         },
         Verb {
-            name: "sync-to",
-            summary: "advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance)",
-            schema: Some(schema_sync_to),
+            name: "land",
+            summary: "land this feature into its record's target: compose here, then fast-forward the target",
+            schema: Some(schema_land),
         },
         Verb {
             name: "push",
@@ -508,7 +508,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "abort",
-            summary: "roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched",
+            summary: "roll an in-flight sync or landing back to its savepoints, from either workspace it touched",
             schema: None,
         },
         Verb {
@@ -4783,8 +4783,8 @@ fn main() -> anyhow::Result<()> {
         "SYNC_JSON_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
-        SYNC_TO_JSON_SCHEMA_URL.ends_with("/docs/reference/schemas/sync-to.json"),
-        "SYNC_TO_JSON_SCHEMA_URL no longer points at the committed artifact"
+        LAND_JSON_SCHEMA_URL.ends_with("/docs/reference/schemas/land.json"),
+        "LAND_JSON_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         repoweave::check::DOCTOR_SCHEMA_URL.ends_with("/docs/reference/schemas/doctor.json"),
@@ -8628,7 +8628,7 @@ mod tests {
             - A lock that is present and parseable in `projects/<project>/Cargo.lock` whose bytes differ from the **last `rwv`-accepted generation** is reported as a warning (`fully-owned-digest-mismatch`, not auto-fixed).\n\
             - **Dependency version skew and patch shadowing**: `rwv doctor` also scans workspace members (and nested workspaces) for inconsistent dependency version requirements (`dep-version-skew`) and member `.cargo/config.toml` files that shadow weave-level patches (`patch-shadowed`).\n\
             \n\
-            | Present, locked SHA is not a fast-forward or checkout is on another branch | Refuses (`fetch-realign-refused`), unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`) |\n\
+            | Present, locked SHA is not a fast-forward or checkout is on another branch | Refuses (`fetch-realign-refused`), unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv land`) |\n\
             | 2. Drift settlement | Re-derives generated files whose inputs changed (`derived-state-stale`) and drops attestations for files no enabled integration generates. If an attested file's bytes differ from the accepted generation (`integration-file-drifted`), refuses unless `--regenerate-drifted` or `--adopt-drifted` is passed |\n\
             \n\
             1. `rwv doctor` reports [`alignment`](../../reference/doctor-findings.md#alignment) (`canonical-wrong-branch`).\n\
@@ -8713,14 +8713,14 @@ mod tests {
             "[`alignment`](#x) (`detached`), `missing-lock-merge-driver` (`attribute-absent`,\n",
             "`attribute-legacy`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",
-            "`rwv -w myproj--hotfix sync-to primary`, `rwv workweave\n",
+            "`rwv -w myproj--hotfix land primary`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
-            "`rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n",
+            "`rwv --help`, `rwv explain stale-lock`, `rwv explain land`,\n",
             "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
             // rwv-advice: not-an-invocation
-            "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n",
-            "`sync-to`, `set-default-create-basedir`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
+            "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv land`.\n",
+            "`land`, `set-default-create-basedir`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
             "`rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n",
             // rwv-advice: not-an-invocation
             "`rwv each --role fork -- git status` marks a repo `not-present`.\n",

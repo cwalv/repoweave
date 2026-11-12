@@ -35,7 +35,7 @@ Address a registered workweave by its `<project>--<name>` identifier from
 anywhere in the workspace:
 
 ```
-rwv -w myproj--hotfix sync-to --retire   # from anywhere inside the ecosystem
+rwv -w myproj--hotfix land --retire   # from anywhere inside the ecosystem
 rwv -w myproj--hotfix status
 ```
 
@@ -407,7 +407,7 @@ Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-man
 
 ### `rwv sync [...]`
 
-Take new work into the checked-out weave branch. In a feature, `rwv sync` takes in the branch its record lands into (the target); on any weave branch, `--from <branch>` merges that branch's history in. A declared branch takes nothing in without `--from`: it refuses as `target` `no target`. There is no positional argument; `rwv sync-to` is the verb that lands this workspace's work in another workspace.
+Take new work into the checked-out weave branch. In a feature, `rwv sync` takes in the branch its record lands into (the target); on any weave branch, `--from <branch>` merges that branch's history in. A declared branch takes nothing in without `--from`: it refuses as `target` `no target`. There is no positional argument; `rwv land` is the verb that lands a feature into its target.
 
 **From the target.** Each `owned` or `fork` member the target's lock pins takes in its merge source: the tip of the branch the member lands on (its branch named after the target when the target is itself a feature, else the branch the entries declare), the newer of that branch and its upstream, or the target's pin where that branch exists nowhere. Commits that branch holds beyond the target's pin are listed, since the landing will pin them. A member with no new work follows its merge source: by fast-forward, or, where the merge source lacks the member's tip, by moving to it after a backup. A member holding new work — commits its merge source lacks — cannot fast-forward: the default `--strategy ff` refuses it (`not-fast-forwardable`, naming `--strategy rebase`), and `--strategy rebase` rebases its work onto the merge source after a `rebased` backup. A range holding a merge commit is never rebased: the refusal names `rwv sync --from <target>`, which takes the target in by a merge. Then the project branch takes in the target's tip the same way, and the lock is recorded and committed: each member's pin merged three ways against the merge base's lock, every member the sync moved at its new tip. `dependency` and `reference` members are not moved by the take-in; they are aligned afterwards to the lock the sync committed.
 
@@ -465,44 +465,23 @@ Re-running sync will not prune it. Once nothing in it is needed, remove it by ha
 
 **Exit codes:** `0` when the sync completes or has nothing to take in; `1` when it refuses, stops on a conflict (op record kept; `--continue` or `rwv abort`), or completes with a checkout it could not prune (op record cleared). Under `--json` the envelope's `complete` field tells a stopped sync from a completed one.
 
-### `rwv sync-to [<target>] [...]`
+### `rwv land [--target <T>] [...]`
 
-Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD against target; (2) auto-relock CWD if manifest tips moved; (3) FF-advance target to CWD's new tip. All rewriting happens in CWD; target is only ever advanced via fast-forward.
-
-`<target>` is a workspace name (`primary`, a workweave name) or a path, relative paths resolving against the directory `rwv` runs in (or the `-C`/`-w` directory). Omit inside a workweave to auto-target the parent recorded in `.rwv-workweave`. Required in a primary weave.
+Land the checked-out feature into the branch its record lands into (its target), or into `--target <T>` for one run; the record is unchanged. The work is composed in this workspace: each `owned` or `fork` member holding work its receiving branch lacks is rebased onto that branch's tip, and the project branch onto the target's tip, then the lock is recorded. Then, where the target is checked out, each receiving branch and the target fast-forward in their checkouts; that workspace aligns, and this workspace's members follow the target's new pins. A declared branch refuses as `target` `no target`. Every refusal is reported together, before anything moves: the record changed since this workspace last saw it, the target's mode changed since the record was written (`target` `mode changed`), work built on another lineage (`pin` `off lineage`), a target checked out nowhere (`target` `checked out nowhere`, naming `rwv workweave create <ww> --branch <T>`), any change to the target's member entries (`target` `member changes`), and any branch whose record lands into this one (`target` `dependents`). See `rwv explain land` for every state.
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase` | Default `rebase`. Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
-| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses at the start, restoring nothing, when the workweave's marker, the project clone's index and its project checkout's link to that clone disagree; the refusal names the doctor repair. Refuses, after the landing has completed and with the op parked at the retire phase, while any checkout under the workweave holds uncommitted changes (`edits`) or a detached HEAD with commits no branch reaches (`alignment`); resolve it and `--continue`, or `rwv abort`. Applies the deletion rule to the workweave's branches (see `rwv workweave delete`): one that has not landed survives, listed with its reason, and the exit status is `3` |
-| `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
-| `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
-| `--continue` | Resume after resolving a mid-op conflict. All parameters are read from the in-progress op-state file |
+| `--target <T>` | Land into `T` instead of the record's target, for one run |
+| `--strategy ff\|rebase` | Default `rebase`. `ff` refuses unless the feature already contains the target's tip. The target's own move is a fast-forward whatever this says |
+| `--retire` | Once the landing is done, remove the workweave and apply the deletion rule to the feature's branches (see `rwv workweave delete`): one that has not landed survives, listed with its reason, and the exit status is `3`. Its dirt, untracked files included, is refused with the other refusals before anything moves. Refuses at the start when the workweave's marker, the project clone's index and its project checkout's link to that clone disagree. A no-op with a warning in the primary |
+| `--continue` | Resume after resolving a conflict. Every parameter is read from the op record |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
-| `-j N` | Parallel per-repo step-1 syncs (default: 1) |
+| `-j N` | Parallel per-repo steps (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract.
+**A target that moved.** A target or receiving branch another verb moved after the landing read it stops the landing as `target` `moved mid-operation`, with its op record kept; `rwv abort` restores every ref the landing moved, then `rwv land` judges the new tips. `--continue` refuses it.
 
-**Destination cleanliness preflight.** Before any repo is touched, `rwv sync-to` scans its source (CWD) for uncommitted tracked changes; a dirty path refuses the operation with the offending files listed. Drift attributable to rwv (regenerated ecosystem files, activation-owned symlinks) is excluded. Commit or stash the listed paths and retry.
-
-**A checkout replay could not prune.** Replay removes the checkout of a member the replayed manifest no longer names, and refuses to remove one holding uncommitted changes, commits nothing else reaches, or the weave's only copy of its store. The refusal does not stop the op: replay and relock finish and op-state is cleared, and the verb exits 1 naming each checkout still on disk. Under `--retire` it refuses first.
-
-**Exit codes:** `0` when the op completes; `1` when it parks on a refusal or conflict (op-state held; `--continue` or `rwv abort`), and when it completes with a checkout it could not prune (op-state cleared); `3` for a retire that left a branch of the workweave. Under `--json` the envelope's `complete` field tells the two `1`s apart.
-
-### Direction conventions: `sync` vs. `sync-to`
-
-`rwv sync` and `rwv sync-to` move work in opposite directions. `rwv sync` takes work into the checked-out weave branch, from its target or from the branch `--from` names. `rwv sync-to` lands CWD's work in another workspace.
-
-| Invocation | CWD context | Work comes from | What changes |
-|---|---|---|---|
-| `rwv sync` | a feature | the record's target | CWD takes in the target's new work |
-| `rwv sync --from <branch>` | any weave branch | `<branch>` | CWD merges `<branch>` in |
-| `rwv sync-to <target>` | any workspace | CWD | both: CWD aligns with target's state first (CWD's commits on top); target then FF-advances to CWD's new tip |
-| `rwv sync-to` (bare) | workweave | CWD | same as above; target = parent recorded in `.rwv-workweave` |
-| `rwv sync-to --retire` | workweave | CWD | same as above, plus delete the workweave on success |
-
-The `<target>` argument in `rwv sync-to` is optional inside a workweave (auto-targets parent); required in a primary weave.
+**Exit codes:** `0` when the landing completes; `1` when it refuses or stops (op record kept; `--continue` or `rwv abort`); `3` for a retire that left a branch of the workweave.
 
 ### `rwv push [...]`
 
@@ -538,7 +517,7 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 ### `rwv abort [--abandon-foreign-tip <repo>]`
 
-Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace the op touched: `refs/rwv/pre-op/<op-id>`, and `refs/rwv/pre-op/<op-id>-target` for the repos of a `sync-to`'s target, whose checkouts share a ref store with the workweave's. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`. A repo is named as the flag takes it: its workspace-relative path, or `projects/<name>` for the project repo.
+Roll an in-flight `sync` or `land` back to its savepoints in every workspace the op touched: `refs/rwv/pre-op/<op-id>`, and `refs/rwv/pre-op/<op-id>-target` for the repos of a landing's target, whose checkouts share a ref store with the workweave's. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`. A repo is named as the flag takes it: its workspace-relative path, or `projects/<name>` for the project repo.
 
 | Flag | Effect |
 |---|---|
@@ -575,7 +554,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 ### `rwv branch`
 
-Create a weave branch, record how one is used or how it accepts landings, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+Create a weave branch, record how one is used or how it accepts landings, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `land`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
 ### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]`
 
@@ -604,7 +583,7 @@ Write the record of `<W>`, the project repo's checked-out branch when none is na
 
 A `--target` with no record is refused as `target` `unrecorded`, naming `rwv branch set-mode <T>`. Recording a feature prints where it lands (`target-recorded`): into `<T>`'s member branches when `<T>` is a feature, else into each branch `<T>` declares, listing the members whose entry in `<W>` differs from `<T>`'s. A change to `<W>`'s mode lists each feature that targets `<W>` and recorded its mode differently, which refuses to land until rebound. A branch whose entry two writers set differently (`target` `conflict`) or whose entry does not read (`target` `unreadable`) is settled by this verb, which writes the one value. The records branch's own name and every name below it is refused as `name` `reserved`. Recording a feature is refused where an `owned` or `fork` member's branch of its name is one a live weave branch declares (`name` `declared`) or one another project's feature of that name uses for a member both list (`name` `feature`).
 
-Each workspace keeps the record it last saw for each branch. When the checked-out branch's record differs from it and this workspace did not write the change, because it arrived by fetch or another workspace of this clone wrote it, `status`, `update`, `pull`, `switch`, `push` and `sync-to` report it as `target` `record changed`, with the old and the new value and where it came from, and `rwv sync` refuses on it before anything is fetched or moved. `rwv update` accepts the change, storing the new record; `rwv branch set-mode <W> feature --target <T>`, or `declared`, restores the old value. A record this workspace writes (`branch set-mode`, `branch create`, `branch rename`, `workweave create`) is stored as it is written and never reported to it, and a workspace that has stored no record for the branch stores the one it reads without a report.
+Each workspace keeps the record it last saw for each branch. When the checked-out branch's record differs from it and this workspace did not write the change, because it arrived by fetch or another workspace of this clone wrote it, `status`, `update`, `pull`, `switch`, `push` and `land` report it as `target` `record changed`, with the old and the new value and where it came from, and `rwv sync` refuses on it before anything is fetched or moved. `rwv update` accepts the change, storing the new record; `rwv branch set-mode <W> feature --target <T>`, or `declared`, restores the old value. A record this workspace writes (`branch set-mode`, `branch create`, `branch rename`, `workweave create`) is stored as it is written and never reported to it, and a workspace that has stored no record for the branch stores the one it reads without a report.
 
 ### `rwv branch set-history <linear|merge|ff-only|--unset> [--repo <path>] [--project <name>]`
 
@@ -731,7 +710,7 @@ A repo whose alignment or pin `rwv doctor` cannot read is an error of the run: i
 
 | Flag | Effect |
 |---|---|
-| `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync-to`) |
+| `--locked` | Zero exit iff every repo tip matches its lock entry |
 | `--fix` | Repair every finding marked **Auto-fixable** in [Doctor findings](./doctor-findings.md), which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...], "issues": [...], "advisories": [...], "plugins": [...]}`: rwv's own findings on `violations`, integration findings on `issues` |
 | `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project pins, etc.). By default only the active project is checked |
@@ -822,7 +801,7 @@ Generate shell completions (bash, zsh, fish, etc.). Source the output in your sh
 | `0` | The verb completed everything it set out to do. |
 | `1` | The verb stopped: a refusal, a failed repo, a conflict parked for `--continue` or `rwv abort`. |
 | `2` | The arguments did not parse. |
-| `3` | The verb completed and left part of the work to you. [`rwv clone`](#rwv-clone-source-) ends so when a member is left with no pin or at a pin no ref reaches; its report and `--json` envelope list each member. [`rwv branch delete`](#rwv-branch-delete-w---target-t---discard-unlanded---delete-remote---delete-remote-unlanded-repo---json---project-name), `rwv workweave delete` and `rwv sync-to --retire` end so when the deletion rule keeps a branch; the output and `--json` `survivors` list each with its reason. |
+| `3` | The verb completed and left part of the work to you. [`rwv clone`](#rwv-clone-source-) ends so when a member is left with no pin or at a pin no ref reaches; its report and `--json` envelope list each member. [`rwv branch delete`](#rwv-branch-delete-w---target-t---discard-unlanded---delete-remote---delete-remote-unlanded-repo---json---project-name), `rwv workweave delete` and `rwv land --retire` end so when the deletion rule keeps a branch; the output and `--json` `survivors` list each with its reason. |
 
 A status of `3` is a finished run, not a failure: everything the verb could do was done, and the output names what remains.
 
@@ -890,13 +869,13 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 
 Every page it serves opens with a `rwv <version>` line — the same string `rwv --version` prints — and a blank line, so a saved copy says which build it describes.
 
-Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `clone`, `fetch`, `pull`, `update`, `sync`, `sync-to`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
+Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `clone`, `fetch`, `pull`, `update`, `sync`, `land`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
 
 The rendered bundles are checked in at `docs/reference/explain/` for offline browsing.
 
 ## Project resolution
 
-Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor`) pick their target project via a fixed chain, highest priority first:
+Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `land`, `status`, `log`, `doctor`) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
@@ -922,7 +901,7 @@ Stderr, not stdout, so the line never contaminates a `--json` verb's output. The
 
 ### CWD inside another project
 
-Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
+Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `land`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
 
 ```
 Error: CWD is inside projects/mobile/, but `.rwv-active` selects web, so this would act on web. Pass `--project mobile` to act on mobile, or `--project web` to act on web from here; `rwv activate mobile` switches the active project.
@@ -968,7 +947,7 @@ states and the choices each prints.
 
 | Category | Verbs | Resolution behavior |
 |---|---|---|
-| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor` (project-scoped checks) | Full chain; target line when the pointer decides |
+| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `land`, `status`, `log`, `doctor` (project-scoped checks) | Full chain; target line when the pointer decides |
 | Project named positionally | `activate <project>` | Explicit already; no chain consulted |
 | Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
 
@@ -1032,10 +1011,10 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv update --json` | `outcomes` |
 | `rwv update --remote --json` | `repos` |
 | `rwv sync --json` | `outcomes` |
-| `rwv sync-to --json` | `outcomes` |
+| `rwv land --json` | `outcomes` |
 | `rwv push --json` | `outcomes` |
 
-The `sync` and `sync-to` envelopes also carry `complete`: `true` when the op ran its last phase and cleared op-state, `false` when a phase parked it.
+The `sync` and `land` envelopes also carry `complete`: `true` when the op ran its last phase and cleared op-state, `false` when a phase parked it.
 
 ### Refused repos under `--json`
 
@@ -1046,7 +1025,7 @@ A refusal that judged repo states carries them as records, one per repo and axis
 ```
 
 - `axis` is the kind `rwv explain <axis>` serves; `state` is named as that page names it, and `choices` are the ones it lists for the state, in its order, with the commands spelled out under `run`. `where` is the directory a choice runs in when that is not where the verb ran, else `null`. `path` is the repo's manifest path, `projects/<name>` for the project repo; `workspace`, present only when the repo was judged in another workspace than the verb's (a landing's target), is that workspace; `subject`, absent when the state names nothing, is what it names (the operation in progress, the name taken).
-- `rwv push --json` and `rwv sync`'s and `rwv sync-to`'s envelopes carry them in `refused`, empty when nothing was refused on a repo's state; a `prune-refused` member record carries the checkout's in its own `refused`.
+- `rwv push --json` and `rwv sync`'s and `rwv land`'s envelopes carry them in `refused`, empty when nothing was refused on a repo's state; a `prune-refused` member record carries the checkout's in its own `refused`.
 - A verb that refused on repo states before printing anything prints the refusal envelope instead, `{ "$schema": "<url>", "refused": [...] }`, schema at `docs/reference/schemas/refusal.json`.
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
@@ -1055,7 +1034,7 @@ Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fe
 
 `-j` changes how a verb runs, never what `--json` prints: the envelope is the same under `-j 1` and `-j N`, printed once the verb is done, with its per-repo records sorted by repo path (`push`'s project-repo record last). Nothing streams on stdout. For per-repo progress as each repo finishes, use [`rwv each`](./rwv-each.md)'s `--joblog` and `--results`.
 
-Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope still prints in that last case. A refusal's text always goes to stderr, under `--json` too.
+Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `land` when a checkout replay could not prune is left on disk. The envelope still prints in that last case. A refusal's text always goes to stderr, under `--json` too.
 
 ## External commands
 

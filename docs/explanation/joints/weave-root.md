@@ -56,7 +56,7 @@ against the other two when it starts, writes it again from them when it is
 missing or disagrees — `primary`, `project` and `parent` all come back — and
 says so. A root the marker and the link agree on, but the index lacks, is listed
 again. A verb that destroys the workweave, `rwv workweave delete` or `rwv
-sync-to --retire`, restores nothing when the three disagree: it refuses and
+land --retire`, restores nothing when the three disagree: it refuses and
 names `rwv doctor --fix`, so what it deletes is a workweave all three records
 name.
 

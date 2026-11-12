@@ -115,7 +115,7 @@ fn builtin_all_core_verbs_shadow_path_plugins() {
         "status",
         "abort",
         "sync",
-        "sync-to",
+        "land",
         "push",
         "update",
         "completions",

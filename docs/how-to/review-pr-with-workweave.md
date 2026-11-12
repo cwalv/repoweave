@@ -12,7 +12,7 @@ rwv materialize
 
 The PR is checked out on a detached `HEAD`, so the member's `web-app--pr-42` feature branch stays at the parent workspace's locked revision. For a multi-repo PR, fetch and check out `FETCH_HEAD` detached in each affected member worktree; untouched repositories stay at the parent's locked revisions. `rwv workweave create` ran the install hooks against the parent's committed state; `rwv materialize` runs them again against the PR's.
 
-A review workweave is never landed: do not run `rwv sync-to` from it. With the PR checked out detached, `sync-to` refuses (`head-not-on-branch`) before it changes anything; attaching a branch to the PR commits would let it record them in the workweave's `rwv.lock` and fast-forward the parent's branch onto them, landing the unreviewed PR.
+A review workweave is never landed: do not run `rwv land` from it. With the PR checked out detached, `land` refuses (`head-not-on-branch`) before it changes anything; attaching a branch to the PR commits would let it record them in the workweave's `rwv.lock` and fast-forward the parent's branch onto them, landing the unreviewed PR.
 
 ## What `rwv doctor` reports while you review
 

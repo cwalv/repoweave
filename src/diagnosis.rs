@@ -429,7 +429,7 @@ then pins nothing until `rwv member pin` or `rwv update --remote` gives each mem
 repository entry with no \
 `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in \
 one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each \
-naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the \
+naming the line and what was expected. `rwv sync` and `rwv land` refuse with it when the \
 project does not load after the project repo is replayed, and `rwv abort` rolls that operation \
 back.
 
@@ -537,6 +537,11 @@ pub enum State {
     TargetGone,
     TargetDependents,
     TargetRecordChanged,
+    TargetModeChanged,
+    TargetMemberChanges,
+    TargetNotCheckedOut,
+    TargetMovedMidOperation,
+    PublishTargetUnpublished,
     AlignmentAligned,
     AlignmentOnBranch,
     AlignmentOnBranchWithStrayCommits,
@@ -579,7 +584,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 69] = [
+    pub const ALL: [State; 74] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -640,6 +645,11 @@ impl State {
         Self::HistoryNotFastForward,
         Self::HistoryDisagreement,
         Self::TargetRecordChanged,
+        Self::TargetModeChanged,
+        Self::TargetMemberChanges,
+        Self::TargetNotCheckedOut,
+        Self::TargetMovedMidOperation,
+        Self::PublishTargetUnpublished,
         Self::AlignmentAligned,
         Self::AlignmentOnBranch,
         Self::AlignmentOnBranchWithStrayCommits,
@@ -657,13 +667,13 @@ impl State {
                 axis: Axis::Edits,
                 name: "dirty",
                 means: "the checkout has uncommitted changes, listed by file",
-                refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
+                refused_by: "`rwv sync` and `rwv land`, for a repo they would rebase or \
                              fast-forward (tracked changes only); `rwv lock` without `--dirty`, \
                              for a member (tracked changes only); `rwv pull`, for project-repo \
                              files its fast-forward would overwrite; `rwv member \
                              set-role <repo> reference`; `rwv member remove --delete` and \
                              replay's prune of a dropped member; `rwv workweave delete` and \
-                             `rwv sync-to --retire`, for every checkout in the workweave; \
+                             `rwv land --retire`, for every checkout in the workweave; \
                              `rwv activate`, for a member the project shares with the project \
                              the weave root presents; `rwv update` and `rwv pull`, for such a \
                              member that is not aligned for a project the weave root does not \
@@ -679,7 +689,7 @@ impl State {
                 axis: Axis::Edits,
                 name: "mid-operation",
                 means: "a rebase, merge, cherry-pick or bisect is in progress, named",
-                refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
+                refused_by: "`rwv sync` and `rwv land`, for a repo they would rebase or \
                              fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a \
                              shared member as `dirty` is",
                 offers: &[Form::C32],
@@ -1022,7 +1032,7 @@ impl State {
                 name: "malformed",
                 means: "the project's `rwv.toml` or `rwv.lock` does not parse, listed with the \
                         file that failed and the parser's error",
-                refused_by: "`rwv sync` and `rwv sync-to`, when the project does not load after \
+                refused_by: "`rwv sync` and `rwv land`, when the project does not load after \
                              the project repo is replayed; `rwv doctor` reports it for every \
                              project",
                 offers: &[],
@@ -1112,7 +1122,7 @@ impl State {
                 means: "the branch has no record here: a raw switch or rename made it, its \
                         record was never published, or it came from a remote that carries none. \
                         The branches that could be its target are listed, nearest first",
-                refused_by: "`rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and \
+                refused_by: "`rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv land` and \
                              `rwv push`, for the project repo's checked-out branch; `rwv \
                              workweave create`, for the branch it forks from; `rwv branch \
                              create` with no spelling, for the branch it starts at, and `--target`, \
@@ -1374,7 +1384,7 @@ impl State {
                              renamed name; `rwv push --overwrite`, for a member; `rwv branch \
                              delete` and `rwv workweave delete` with `--delete-remote` or \
                              `--delete-remote-unlanded`, for a member branch of the deleted \
-                             name; `rwv sync` and `rwv sync-to` with `--strategy rebase`, for \
+                             name; `rwv sync` and `rwv land` with `--strategy rebase`, for \
                              a member on the branch that has commits to replay",
                 offers: &[Form::C2UpdateRemote],
                 verb_offers: &[],
@@ -1421,9 +1431,10 @@ impl State {
                 means: "another branch's record names this branch as the one it lands into, \
                         one line for each such branch; deleting this one would leave that \
                         record with no target",
-                refused_by: "`rwv branch delete`, `rwv workweave delete` and `rwv sync-to \
-                             --retire`",
-                offers: &[Form::C12Feature],
+                refused_by: "`rwv branch delete`, `rwv workweave delete`, `rwv sync` where \
+                             it would rewrite the branch, and `rwv land`, which carries no \
+                             dependent along yet",
+                offers: &[Form::C35, Form::C35Retire, Form::C12Feature],
                 verb_offers: &[],
             },
             Self::HistoryUnset => &StateRow {
@@ -1465,6 +1476,62 @@ impl State {
                 offers: &[Form::C11SetHistory],
                 verb_offers: &[],
             },
+            Self::TargetModeChanged => &StateRow {
+                axis: Axis::Target,
+                name: "mode changed",
+                means: "the branch the feature lands into is used another way than when the \
+                        feature's record was written: its mode then and now, listed. A landing \
+                        never redirects into it",
+                refused_by: "`rwv land`, before anything moves, until the feature is rebound or \
+                             the target's mode restored",
+                offers: &[Form::C12Feature, Form::C12RestoreTarget],
+                verb_offers: &[],
+            },
+            Self::TargetMemberChanges => &StateRow {
+                axis: Axis::Target,
+                name: "member changes",
+                means: "the landing would change the target's entry for a member, each changed \
+                        field listed with the target's value and the feature's, or remove the \
+                        member, or change the target's top-level `history`; a landing changes \
+                        the target's entries only where they are named",
+                refused_by: "`rwv land`, before anything moves",
+                offers: &[Form::C12Feature, Form::C11SetBranch, Form::C31],
+                verb_offers: &[],
+            },
+            Self::TargetNotCheckedOut => &StateRow {
+                axis: Axis::Target,
+                name: "checked out nowhere",
+                means: "no workspace of this clone has the branch the feature lands into \
+                        checked out, so nothing holds the checkouts its receiving branches \
+                        fast-forward in",
+                refused_by: "`rwv land`, before anything moves",
+                offers: &[Form::OpenWorkweave],
+                verb_offers: &[],
+            },
+            Self::TargetMovedMidOperation => &StateRow {
+                axis: Axis::Target,
+                name: "moved mid-operation",
+                means: "the target, or a branch the landing fast-forwards, moved after the \
+                        landing read it, so the work composed in the source no longer \
+                        fast-forwards onto it: the repo, the tip it now holds and the tip \
+                        composed for it, listed. The landing stopped with its op record kept \
+                        and the refs it already moved left as moved",
+                refused_by: "`rwv land`, at the fast-forward; `rwv land --continue`, since the \
+                             plan no longer describes the landing",
+                offers: &[Form::LostRace],
+                verb_offers: &[],
+            },
+            Self::PublishTargetUnpublished => &StateRow {
+                axis: Axis::Publish,
+                name: "target unpublished",
+                means: "the feature's record names a target with no push branch on the remote \
+                        the feature publishes to, so another machine reading the record would \
+                        resolve the target to a branch of that name it holds, or to none; the \
+                        project branch and its record were not pushed",
+                refused_by: "`rwv push`, for a feature",
+                offers: &[Form::C7PushTarget, Form::C10, Form::C12Feature],
+                verb_offers: &[],
+            },
             Self::TargetRecordChanged => &StateRow {
                 axis: Axis::Target,
                 name: "record changed",
@@ -1474,7 +1541,7 @@ impl State {
                         fetch or was written in another workspace of this clone",
                 refused_by: "`rwv sync`, before anything is fetched or moved, until the change \
                              is accepted or the old value restored; `rwv status`, `rwv update`, \
-                             `rwv pull`, `rwv switch`, `rwv push` and `rwv sync-to` report it",
+                             `rwv pull`, `rwv switch`, `rwv push` and `rwv land` report it",
                 offers: &[Form::C6, Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },
@@ -1561,6 +1628,7 @@ pub enum ChoiceId {
     RecordCommitted,
     KeepRecordedHistory,
     MigrateLockDriver,
+    LostRace,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1719,7 +1787,7 @@ impl ChoiceId {
             },
             Self::C35 => &ChoiceRow {
                 id: Some("C35"),
-                phrase: "land the dependent into `<W>` first (a landed one: retire it)",
+                phrase: "land `<dep>` into its target first (a landed one: retire it)",
                 keeps_work: "a landing only fast-forwards",
             },
             Self::C36 => &ChoiceRow {
@@ -1772,6 +1840,12 @@ impl ChoiceId {
                 id: None,
                 phrase: "integrate by the setting the branch records",
                 keeps_work: "nothing changes",
+            },
+            Self::LostRace => &ChoiceRow {
+                id: None,
+                phrase: "put back every ref the landing moved, then land again from the new tips",
+                keeps_work: "`rwv abort` moves only what the landing moved, from the tips it \
+                             wrote",
             },
             Self::ConvertIndex => &ChoiceRow {
                 id: None,
@@ -1875,6 +1949,7 @@ pub enum Form {
     C7Push,
     C7PushRepo,
     C7PushBranch,
+    C7PushTarget,
     C9BranchDelete,
     C9BranchDeleteDiscardUnlanded,
     C9WorkweaveDelete,
@@ -1891,6 +1966,7 @@ pub enum Form {
     C11MemberRemove,
     C12Feature,
     C12Declared,
+    C12RestoreTarget,
     C13,
     C13WorkweaveDelete,
     C14Keep,
@@ -1935,6 +2011,7 @@ pub enum Form {
     UpdateRemoteDirty,
     KeepRecordedHistory,
     MigrateLockDriver,
+    LostRace,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -1946,7 +2023,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 73] = [
+    pub const ALL: [Form; 76] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1960,6 +2037,7 @@ impl Form {
         Self::C7Push,
         Self::C7PushRepo,
         Self::C7PushBranch,
+        Self::C7PushTarget,
         Self::C9BranchDelete,
         Self::C9BranchDeleteDiscardUnlanded,
         Self::C9WorkweaveDelete,
@@ -1976,6 +2054,7 @@ impl Form {
         Self::C11MemberRemove,
         Self::C12Feature,
         Self::C12Declared,
+        Self::C12RestoreTarget,
         Self::C13,
         Self::C13WorkweaveDelete,
         Self::C14Keep,
@@ -2020,6 +2099,7 @@ impl Form {
         Self::UpdateRemoteDirty,
         Self::KeepRecordedHistory,
         Self::MigrateLockDriver,
+        Self::LostRace,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -2103,6 +2183,12 @@ impl Form {
             Self::C7PushBranch => &FormRow {
                 choice: C::C7,
                 steps: &[Rwv("rwv push --branch <W>")],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C7PushTarget => &FormRow {
+                choice: C::C7,
+                steps: &[Rwv("rwv push --branch <target>")],
                 at: W::Any,
                 shipped: true,
             },
@@ -2199,6 +2285,12 @@ impl Form {
             Self::C12Declared => &FormRow {
                 choice: C::C12,
                 steps: &[Rwv("rwv branch set-mode <W> declared")],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C12RestoreTarget => &FormRow {
+                choice: C::C12,
+                steps: &[Rwv("rwv branch set-mode <T> <as>")],
                 at: W::Any,
                 shipped: true,
             },
@@ -2371,13 +2463,13 @@ impl Form {
                 choice: C::C35,
                 steps: &[Rwv("rwv land")],
                 at: W::DependentsWorkspace,
-                shipped: false,
+                shipped: true,
             },
             Self::C35Retire => &FormRow {
                 choice: C::C35,
                 steps: &[Rwv("rwv land --retire")],
                 at: W::DependentsWorkspace,
-                shipped: false,
+                shipped: true,
             },
             Self::C36 => &FormRow {
                 choice: C::C36,
@@ -2473,6 +2565,12 @@ impl Form {
                 choice: C::MigrateLockDriver,
                 steps: &[Rwv("rwv doctor --fix")],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::LostRace => &FormRow {
+                choice: C::LostRace,
+                steps: &[Rwv("rwv abort"), Rwv("rwv land")],
+                at: W::Here,
                 shipped: true,
             },
         }
@@ -2803,6 +2901,12 @@ impl Judged {
         &self.repo
     }
 
+    /// The line judged in `workspace`, not the one the verb runs in.
+    pub fn elsewhere(mut self, workspace: &Path) -> Self {
+        self.workspace = Some(workspace.to_path_buf());
+        self
+    }
+
     pub fn subject(&self) -> Option<&str> {
         self.subject.as_deref()
     }
@@ -2910,6 +3014,22 @@ impl Report {
     /// Print `note` after the judged lines.
     pub fn note(&mut self, note: impl fmt::Display) {
         self.notes.push(note.to_string());
+    }
+
+    /// Take `result`'s judged lines into this report, so a judged refusal
+    /// is reported with the rest; any other error comes back as it was.
+    pub fn absorb(&mut self, result: anyhow::Result<()>) -> anyhow::Result<()> {
+        let Err(err) = result else {
+            return Ok(());
+        };
+        match err.downcast::<Refused>() {
+            Ok(Refused(report)) => {
+                self.lines.extend(report.lines);
+                self.notes.extend(report.notes);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// `Ok` when nothing was judged, else the refusal carrying every line.
