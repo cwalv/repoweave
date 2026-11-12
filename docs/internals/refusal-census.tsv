@@ -111,7 +111,7 @@ src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	unparseable-project here	-	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
-src/feature_sync.rs	(untokened:environment-passthrough)	-	3
+src/feature_sync.rs	(untokened:environment-passthrough)	-	5
 src/feature_sync.rs	(untokened:owed)	-	1
 src/feature_sync.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/feature_sync.rs	checkout in another workspace	-	1
@@ -126,7 +126,7 @@ src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
 src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	2
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
-src/feature_sync.rs	target dependents	-	3
+src/feature_sync.rs	target dependents	-	2
 src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
@@ -201,7 +201,7 @@ src/merge_upstream.rs	resume-contradicts-record	-	1
 src/merge_upstream.rs	target dependents	-	1
 src/names.rs	name declared	tests/sync/protection_test.rs	1
 src/names.rs	name feature	-	1
-src/op_state.rs	(untokened:internal-invariant)	-	8
+src/op_state.rs	(untokened:internal-invariant)	-	10
 src/op_state.rs	(untokened:owed)	-	1
 src/op_state.rs	dead-op-lease	tests/doctor/unreadable_op_record_test.rs	2
 src/op_state.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
@@ -254,11 +254,17 @@ src/push_branch.rs	push-branch foreign upstream	-	1
 src/push_branch.rs	push-branch gone	-	1
 src/push_branch.rs	push-branch no push target	-	1
 src/registry.rs	unresolvable-repo-source	tests/docs/doc_claims_clone_test.rs	1
+src/remap.rs	(untokened:environment-passthrough)	-	1
 src/set_history.rs	(untokened:owed)	-	1
 src/set_history.rs	history contradicted	-	1
 src/set_history.rs	history unset	-	1
 src/set_history.rs	repo-not-in-manifest	tests/weave/branch_set_history_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
+src/stack.rs	(untokened:environment-passthrough)	-	2
+src/stack.rs	op-parked	-	1
+src/stack.rs	target dependent checked out elsewhere	-	1
+src/stack.rs	target dependent lacks the tip	-	1
+src/stack.rs	target dependent on another machine	-	1
 src/status.rs	alignment project moved	-	1
 src/status.rs	alignment project unaligned	-	1
 src/status.rs	pin none	tests/doctor/benign_staleness_test.rs	1
@@ -270,8 +276,8 @@ src/switch.rs	name no-such-branch	-	2
 src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
-src/sync.rs	(untokened:environment-passthrough)	-	5
-src/sync.rs	(untokened:internal-invariant)	-	20
+src/sync.rs	(untokened:environment-passthrough)	-	7
+src/sync.rs	(untokened:internal-invariant)	-	21
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	checkout in a raw worktree	-	1
 src/sync.rs	checkout in another workspace	-	1

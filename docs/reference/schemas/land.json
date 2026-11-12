@@ -713,6 +713,68 @@
           }
         },
         {
+          "description": "A dependent's branch `branch` carried along the landing's rebase, from `was`, kept in the `rebased` backup `backup`, to `now`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "branch",
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "carried"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A pin a replayed project commit held on a commit the rebase of `path` dropped, moved to what that rebase made of the commits before it.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "remapped"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
           "description": "A pin the landing moved backward, named by `--allow-member-change`.",
           "type": "object",
           "required": [
