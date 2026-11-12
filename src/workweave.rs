@@ -860,9 +860,8 @@ pub fn preflight_check_heads(
     let project_dir = project_dir(source_root, project);
     if project_vcs.is_repo(&project_dir) && project_vcs.head_revision(&project_dir).is_err() {
         missing.push(format!(
-            "project {name} has no commits yet — run \
-             \"git -C projects/{name} commit\" to land the activate-generated \
-             artifacts before creating a workweave.",
+            "project {name} has no commits yet — commit its files \
+             (\"git -C projects/{name} commit\") before creating a workweave.",
             name = project.as_str(),
         ));
     }
