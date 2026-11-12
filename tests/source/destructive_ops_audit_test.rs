@@ -55,6 +55,7 @@ const TRACKED: &[&str] = &[
     "--force-with-lease=",      // git push --force-with-lease, leased to a tip
     "\"checkout\"",             // git checkout (worktree overwrite when forced)
     "\"update-ref\"",           // ref surgery
+    "\"read-tree\", \"-m\"",    // a merge into the real index, rewriting files with -u
 ];
 
 /// Patterns that must not appear at all. Each introduces a destruction
@@ -239,7 +240,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 3,
+        count: 4,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -257,7 +258,9 @@ const ALLOWLIST: &[Allowed] = &[
             caller holds. commit_only: removes the private index file it \
             wrote under the git directory, named for this process, once the \
             commit through it is made or refused; the repo's own index and \
-            working files are never it.",
+            working files are never it. refresh_paths_if_left: removes the \
+            scratch index it built the merge's target tree in, named for this \
+            process under the checkout's private git directory.",
     },
     Allowed {
         file: "git.rs",
@@ -329,34 +332,24 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 5,
-        callers: &[("refresh_paths_from_head", 2)],
+        count: 4,
+        callers: &[],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
             before writing anything, and with its last \
             caller gone the method went with the rest of the old surface. \
-            What remains is five sites, none of which can reposition a \
+            What remains is four sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
-            (1) refresh_paths_from_head: the one write of a drift refresh, \
-            reached only through the backend's Vcs method of the same name, \
-            whose one caller is check::refresh_drift, which passes only the \
-            paths check::read_drift classified stale in a reading taken \
-            then and again just before the write: the checkout's branch \
-            moved forward under it (its own HEAD reflog's newest entry is \
-            an ancestor of HEAD other than HEAD), the move changed the path, \
-            and its index entry and file both still hold the moved-from \
-            tip's content, which a commit reachable from HEAD keeps. Any \
-            other difference classifies as an edit and is never passed. \
-            (2) set_detached_head: the branch-model ATTACH/MOVE primitive \
+            (1) set_detached_head: the branch-model ATTACH/MOVE primitive \
             for a HEAD that names no branch. No -f, so git's own refusal to \
             overwrite modified paths still applies. Reachable only through \
             detach_head, which requires a Departure proof alignment mints \
             and re-verifies the attachment witness first, or through advance_detached_head, which is a MOVE of an \
             already-detached HEAD and refuses when the repo is mid-op \
             (including mid-bisect). \
-            (3) attach_head_to: reattaches to an EXISTING local branch. \
+            (2) attach_head_to: reattaches to an EXISTING local branch. \
             Omitting -b does NOT make git refuse an absent branch — it \
             invents one from a remote-tracking ref (checkout.guess), or \
             detaches when the name is a tag's, or treats the name as a \
@@ -369,7 +362,7 @@ const ALLOWLIST: &[Allowed] = &[
             Reachable only through reattach_head, which requires a \
             Departure proof alignment mints and refuses when the observed \
             HEAD state differs from the one the caller planned against. \
-            (4) clone_attached_at: the second half of a birth, and it can \
+            (3) clone_attached_at: the second half of a birth, and it can \
             only ever run against a repo the first half of the same call \
             just created — there is no signature that points it at an \
             existing one. `-B` therefore repositions a ref git minted \
@@ -380,7 +373,7 @@ const ALLOWLIST: &[Allowed] = &[
             the -- terminator keeps a path-shaped name out of the pathspec \
             list; the clone runs --no-checkout, so no working tree is ever \
             materialized at the remote tip for this to overwrite. \
-            (5) create_branch_and_attach: creates the branch a verb is \
+            (4) create_branch_and_attach: creates the branch a verb is \
             about to put a checkout on and attaches HEAD to it in one git \
             step (`checkout -b <name> <start>`), carrying edits as git's own \
             branch creation does. It refuses a name already taken before \
@@ -426,7 +419,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 10,
+        count: 11,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -455,7 +448,29 @@ const ALLOWLIST: &[Allowed] = &[
             deletes. (6) the same command spelled in the argument list of \
             the error that refusal returns; it is not a call. (7) the same command \
             spelled in the argument list of the error advance_branch_ref \
-            returns when the move is not a fast-forward; it is not a call.",
+            returns when the move is not a fast-forward; it is not a call. \
+            (8) record_checkout_at_head: a HEAD reflog entry at the commit \
+            HEAD already names, by a compare-and-swap whose old and new \
+            values are both the HEAD it read, so it moves no ref; a branch \
+            moved meanwhile makes it fail rather than move back.",
+    },
+    Allowed {
+        file: "git.rs",
+        pattern: "\"read-tree\", \"-m\"",
+        count: 1,
+        callers: &[("refresh_paths_if_left", 2)],
+        justification: "refresh_paths_if_left, the one write of a drift \
+            refresh: a two-way merge from the moved-from tip to that tip's \
+            tree with the stale paths taken from HEAD, so every other path is \
+            one both sides agree on and git keeps its index entry and file. \
+            git itself refuses the merge, writing nothing, where a stale \
+            path's index entry or file no longer holds the moved-from tip's \
+            content or an untracked file is in the way; no --reset. Reached \
+            through the backend's Vcs method of the same name, whose one \
+            caller is check::refresh_drift, which passes only the paths \
+            check::read_drift classified stale. An ignored file git's merge \
+            treats as expendable; read_drift reads any on disk at a stale \
+            path, or where a leading directory of one would go, as an edit.",
     },
     Allowed {
         file: "git/backup.rs",

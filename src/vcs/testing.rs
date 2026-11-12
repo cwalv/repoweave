@@ -1138,13 +1138,19 @@ impl Vcs for FakeVcs {
         unsupported("path_standings")
     }
 
-    fn refresh_paths_from_head(
+    fn refresh_paths_if_left(
         &self,
         _repo: &Path,
-        _files: &[String],
-        _index_entries: &[String],
-    ) -> Result<(), VcsError> {
-        unsupported("refresh_paths_from_head")
+        _left: &CommitId,
+        _head: &CommitId,
+        _paths: &[String],
+        _scope: crate::vcs::RefreshScope,
+    ) -> Result<bool, VcsError> {
+        unsupported("refresh_paths_if_left")
+    }
+
+    fn record_checkout_at_head(&self, _repo: &Path) -> Result<(), VcsError> {
+        unsupported("record_checkout_at_head")
     }
 
     fn commit_object_exists(&self, _repo: &Path, _id: &CommitId) -> Result<bool, VcsError> {

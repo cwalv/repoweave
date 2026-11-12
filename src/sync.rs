@@ -1651,8 +1651,14 @@ pub(crate) fn refresh_drift_after(
     let refreshed = crate::check::read_drift(vcs, dir)
         .and_then(|reading| crate::check::refresh_drift(vcs, dir, &reading));
     match refreshed {
-        Ok(Some(refreshed)) => eprintln!("rwv {verb}: {repo}: {}", refreshed.describe()),
-        Ok(None) => {}
+        Ok(outcome) => {
+            if let Some(refreshed) = &outcome.refreshed {
+                eprintln!("rwv {verb}: {repo}: {}", refreshed.describe());
+            }
+            if let Some(left) = outcome.describe_left_in_place() {
+                eprintln!("warning: rwv {verb}: {repo}: {left}");
+            }
+        }
         Err(e) => eprintln!("warning: rwv {verb}: {repo}: drift left in place: {e:#}"),
     }
 }
@@ -3495,7 +3501,7 @@ fn guard_and_mark<'a>(
         Err(e) => {
             if crate::diagnosis::report_of(&e).is_some() {
                 match refresh_drifted(&drifted, true) {
-                    Ok(reports) => {
+                    Ok((reports, _)) => {
                         for report in &reports {
                             emit_landing_report(handler, report);
                         }
@@ -3507,8 +3513,8 @@ fn guard_and_mark<'a>(
             return Err(e);
         }
     };
-    let refreshed = match refresh_drifted(&drifted, false) {
-        Ok(reports) => reports,
+    let (refreshed, left_in_place) = match refresh_drifted(&drifted, false) {
+        Ok(outcome) => outcome,
         Err(e) => {
             op_state::release_acquired(&acquired);
             return Err(e);
@@ -3516,6 +3522,10 @@ fn guard_and_mark<'a>(
     };
     for report in &refreshed {
         emit_landing_report(handler, report);
+    }
+    if let Err(e) = left_in_place.into_result() {
+        op_state::release_acquired(&acquired);
+        return Err(e);
     }
     let _ = acquired;
 
@@ -3911,10 +3921,14 @@ fn load_continuing_context<'a>(
             &mut edits,
             &mut drifted,
         );
-        for report in refresh_drifted(&drifted, !edits.is_empty())? {
+        let (reports, left_in_place) = refresh_drifted(&drifted, !edits.is_empty())?;
+        for report in reports {
             if op_state::journal_report(&owner_workspace_dir, &report)? {
                 emit_landing_report(handler, &report);
             }
+        }
+        if edits.is_empty() {
+            edits = left_in_place;
         }
         edits.note(parked_note(record.verb));
         edits.into_result()?;
@@ -4281,6 +4295,7 @@ pub(crate) struct DriftedCheckout {
     vcs: Box<dyn Vcs>,
     at: JudgedCheckout,
     reading: crate::check::DriftReading,
+    dirt: Vec<String>,
     edits_refused: bool,
 }
 
@@ -4312,9 +4327,11 @@ fn judge_edits_beside_drift(
         Some(_) => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
         None => crate::check::DriftReading::default(),
     };
-    let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir))
-        .into_iter()
+    let all_dirt = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir));
+    let dirt: Vec<String> = all_dirt
+        .iter()
         .filter(|file| !reading.refreshes(file))
+        .cloned()
         .collect();
     let judged = crate::diagnosis::judge_edits(
         vcs.as_ref(),
@@ -4332,12 +4349,15 @@ fn judge_edits_beside_drift(
             vcs,
             at,
             reading,
+            dirt: all_dirt,
             edits_refused,
         });
     }
 }
 
-/// Refresh the drift `drifted` classified, returning each checkout's report.
+/// Refresh the drift `drifted` classified, returning each checkout's report,
+/// and the edits of each checkout where a stale path was left in place, judged
+/// on everything the refresh did not replace.
 ///
 /// A landing that proceeds refreshes every one. A landing that refuses
 /// refreshes only the checkouts whose own edits it refused, so the commit or
@@ -4346,13 +4366,14 @@ fn judge_edits_beside_drift(
 fn refresh_drifted(
     drifted: &[DriftedCheckout],
     landing_refused: bool,
-) -> anyhow::Result<Vec<op_state::LandingReport>> {
+) -> anyhow::Result<(Vec<op_state::LandingReport>, Report)> {
     let mut reports = Vec::new();
+    let mut edits = Report::default();
     for checkout in drifted {
         if landing_refused && !checkout.edits_refused {
             continue;
         }
-        let refreshed =
+        let outcome =
             crate::check::refresh_drift(checkout.vcs.as_ref(), &checkout.at.dir, &checkout.reading)
                 .map_err(|e| {
                     crate::untokened!(
@@ -4361,7 +4382,24 @@ fn refresh_drifted(
                         checkout.at.dir.display()
                     )
                 })?;
-        if let Some(refreshed) = refreshed {
+        if !outcome.left_in_place.is_empty() {
+            let unrefreshed = checkout
+                .dirt
+                .iter()
+                .filter(|file| !outcome.refreshed.as_ref().is_some_and(|r| r.replaced(file)))
+                .cloned()
+                .collect();
+            if let Some(judged) = crate::diagnosis::judge_edits(
+                checkout.vcs.as_ref(),
+                &checkout.at.repo,
+                &checkout.at.dir,
+                unrefreshed,
+                checkout.at.elsewhere.as_deref(),
+            ) {
+                edits.add(judged);
+            }
+        }
+        if let Some(refreshed) = outcome.refreshed {
             reports.push(op_state::LandingReport::Refreshed {
                 repo: checkout.at.key.clone(),
                 checkout: checkout.at.dir.clone(),
@@ -4372,7 +4410,7 @@ fn refresh_drifted(
             });
         }
     }
-    Ok(reports)
+    Ok((reports, edits))
 }
 
 /// A repo's tracked dirt, or a status that could not be read standing in as

@@ -186,7 +186,6 @@ enum Update {
     HardReset,
     FastForward,
     RebaseWithNothingToReplay,
-    PathCheckout,
     WorkingTreeRefresh,
     Repair,
 }
@@ -197,7 +196,7 @@ impl Update {
     /// path-level one finds it already at `after`, with the shared file
     /// still holding `before`.
     fn starts_after(self) -> bool {
-        matches!(self, Update::PathCheckout | Update::Repair)
+        matches!(self, Update::Repair)
     }
 
     fn run(self, w: &Weave, vcs: &dyn Vcs, updater: &Path) {
@@ -221,7 +220,6 @@ impl Update {
                     DerivedContentPolicy::vcs_default(),
                 )
                 .unwrap(),
-            Update::PathCheckout => vcs.refresh_paths_from_head(updater, &paths, &[]).unwrap(),
             Update::WorkingTreeRefresh => {
                 let branch = updater.file_name().unwrap().to_str().unwrap();
                 common::git_in(
@@ -235,6 +233,7 @@ impl Update {
                 let reading = repoweave::check::read_drift(vcs, updater).unwrap();
                 repoweave::check::refresh_drift(vcs, updater, &reading)
                     .unwrap()
+                    .refreshed
                     .expect("the moved branch left the shared file stale");
             }
             Update::Repair => population(vcs).check_out_paths(updater, &paths).unwrap(),
@@ -321,8 +320,6 @@ replace_never_rewrite! {
     a_fast_forward_replaces_a_shared_file_without_write_bits: Update::FastForward, writable = false;
     a_rebase_with_nothing_to_replay_replaces_a_shared_file: Update::RebaseWithNothingToReplay, writable = true;
     a_rebase_with_nothing_to_replay_replaces_a_shared_file_without_write_bits: Update::RebaseWithNothingToReplay, writable = false;
-    a_path_checkout_replaces_a_shared_file: Update::PathCheckout, writable = true;
-    a_path_checkout_replaces_a_shared_file_without_write_bits: Update::PathCheckout, writable = false;
     a_working_tree_refresh_replaces_a_shared_file: Update::WorkingTreeRefresh, writable = true;
     a_working_tree_refresh_replaces_a_shared_file_without_write_bits: Update::WorkingTreeRefresh, writable = false;
     a_repair_replaces_a_shared_file: Update::Repair, writable = true;

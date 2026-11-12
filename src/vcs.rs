@@ -2244,7 +2244,16 @@ pub enum Holds {
     Other,
 }
 
-/// One path of a checkout whose index entry or file differs from `HEAD`.
+/// What a drift refresh writes for a path: its index entry and file, or its
+/// index entry alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshScope {
+    IndexAndFiles,
+    IndexOnly,
+}
+
+/// One path of a checkout whose index entry or file differs from `HEAD`, or
+/// that the move under it changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathStanding {
     pub path: String,
@@ -3656,15 +3665,25 @@ pub trait Vcs: Send + Sync {
         left: Option<&CommitId>,
     ) -> Result<Vec<PathStanding>, VcsError>;
 
-    /// Give `files` `HEAD`'s content in both the index and the working tree,
-    /// removing those `HEAD` lacks, and give `index_entries` `HEAD`'s content
-    /// in the index alone. Nothing else in the checkout changes.
-    fn refresh_paths_from_head(
+    /// Give each of `paths` `head`'s content in the index, and with
+    /// [`RefreshScope::IndexAndFiles`] in the working tree too, removing those
+    /// `head` lacks; only where each still holds `left`'s content there, and
+    /// nothing on disk is in the way of a file `head` adds. Where any does not,
+    /// nothing changes and the answer is `false`. Nothing else in the checkout
+    /// changes either way.
+    fn refresh_paths_if_left(
         &self,
         repo: &Path,
-        files: &[String],
-        index_entries: &[String],
-    ) -> Result<(), VcsError>;
+        left: &CommitId,
+        head: &CommitId,
+        paths: &[String],
+        scope: RefreshScope,
+    ) -> Result<bool, VcsError>;
+
+    /// Record in the checkout's own history that it stands where HEAD now
+    /// is, so [`Vcs::left_behind_at`] answers `None` until the branch next
+    /// moves under it.
+    fn record_checkout_at_head(&self, repo: &Path) -> Result<(), VcsError>;
 
     /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.

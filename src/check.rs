@@ -11,7 +11,9 @@ use crate::manifest::{
 use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{CommitId, Holds, PathStanding, RawRevisionId, ResolvedRevisionId, VcsError};
+use crate::vcs::{
+    CommitId, Holds, PathStanding, RawRevisionId, RefreshScope, ResolvedRevisionId, VcsError,
+};
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -7095,6 +7097,8 @@ pub enum PathDrift {
 pub struct DriftReading {
     /// Where the checkout's branch moved from, when it moved under it.
     pub left: Option<CommitId>,
+    /// Where the branch moved to, when it moved under the checkout.
+    pub head: Option<CommitId>,
     pub paths: Vec<(PathStanding, PathDrift)>,
 }
 
@@ -7145,7 +7149,10 @@ impl DriftReading {
 /// A path is drift only where both are shown: the branch moved under the
 /// checkout, and the path still holds what the moved-from tip held. Without
 /// that every difference is an edit, as it is in a checkout stopped in an
-/// operation.
+/// operation, and in one whose index already holds HEAD's entry for a path
+/// the move changed: a checkout left behind holds the old tip at every such
+/// path it has not edited, so one that took part of the move has had it
+/// taken by something its history does not show.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
@@ -7153,11 +7160,25 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
         Some(_) => None,
         None => vcs.left_behind_at(repo)?,
     };
-    let paths = vcs
-        .path_standings(repo, left.as_ref())?
+    let standings = vcs.path_standings(repo, left.as_ref())?;
+    let left = left.filter(|_| {
+        !standings
+            .iter()
+            .any(|standing| standing.moved && standing.index == Holds::Head)
+    });
+    let head = match left {
+        Some(_) => Some(vcs.head_revision(repo)?.id().clone()),
+        None => None,
+    };
+    let paths = standings
         .into_iter()
+        .filter(|standing| (standing.index, standing.file) != (Holds::Head, Holds::Head))
         .map(|standing| {
-            let drift = match (standing.moved, standing.index, standing.file) {
+            let drift = match (
+                left.is_some() && standing.moved,
+                standing.index,
+                standing.file,
+            ) {
                 (false, _, _) => PathDrift::Edited,
                 (true, Holds::LeftTip, Holds::LeftTip) => PathDrift::Stale,
                 (true, Holds::LeftTip, Holds::Head) => PathDrift::StaleIndexEntry,
@@ -7166,7 +7187,7 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
             (standing, drift)
         })
         .collect();
-    Ok(DriftReading { left, paths })
+    Ok(DriftReading { left, head, paths })
 }
 
 /// What [`refresh_drift`] replaced in one checkout.
@@ -7203,37 +7224,85 @@ impl Refreshed {
         }
         said
     }
+
+    /// Whether `path`'s index entry or file was replaced.
+    pub fn replaced(&self, path: &str) -> bool {
+        self.files
+            .iter()
+            .chain(&self.index_entries)
+            .any(|p| p == path)
+    }
 }
 
-/// Replace what `reading` found stale, and only what a reading taken now
-/// still finds stale in the same way. `None` when nothing was replaced.
+/// What [`refresh_drift`] did in one checkout: what it replaced, and the
+/// stale paths it left as they stand because, when it came to write them,
+/// one no longer held the moved-from tip's content or something on disk was
+/// in its way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DriftRefresh {
+    pub refreshed: Option<Refreshed>,
+    pub left_in_place: Vec<String>,
+}
+
+impl DriftRefresh {
+    /// The line naming what was left in place, after the checkout's label.
+    pub fn describe_left_in_place(&self) -> Option<String> {
+        (!self.left_in_place.is_empty()).then(|| {
+            format!(
+                "drift left in place: these paths no longer held the old tip's content \
+                 when the refresh came to write them, or something on disk was in the \
+                 way, and are kept as edits: {}",
+                self.left_in_place.join(", ")
+            )
+        })
+    }
+}
+
+/// Replace what `reading` found stale, each write made only where every path
+/// in it still holds the moved-from tip's content, and record that the
+/// checkout now stands at its HEAD.
 pub fn refresh_drift(
     vcs: &dyn crate::vcs::Vcs,
     repo: &Path,
     reading: &DriftReading,
-) -> Result<Option<Refreshed>, VcsError> {
-    let Some(moved_from) = reading.left.clone() else {
-        return Ok(None);
+) -> Result<DriftRefresh, VcsError> {
+    let (Some(moved_from), Some(moved_to)) = (&reading.left, &reading.head) else {
+        return Ok(DriftRefresh::default());
     };
-    let now = read_drift(vcs, repo)?;
-    if now.left.as_ref() != Some(&moved_from) {
-        return Ok(None);
-    }
-    let still = |paths: Vec<String>, now: Vec<String>| -> Vec<String> {
-        paths.into_iter().filter(|p| now.contains(p)).collect()
+    let mut refreshed = Refreshed {
+        moved_from: moved_from.clone(),
+        moved_to: moved_to.clone(),
+        files: Vec::new(),
+        index_entries: Vec::new(),
     };
-    let files = still(reading.stale_files(), now.stale_files());
-    let index_entries = still(reading.stale_index_entries(), now.stale_index_entries());
-    if files.is_empty() && index_entries.is_empty() {
-        return Ok(None);
+    let mut left_in_place = Vec::new();
+    for (paths, scope) in [
+        (reading.stale_files(), RefreshScope::IndexAndFiles),
+        (reading.stale_index_entries(), RefreshScope::IndexOnly),
+    ] {
+        if paths.is_empty() {
+            continue;
+        }
+        if vcs.refresh_paths_if_left(repo, moved_from, moved_to, &paths, scope)? {
+            match scope {
+                RefreshScope::IndexAndFiles => refreshed.files = paths,
+                RefreshScope::IndexOnly => refreshed.index_entries = paths,
+            }
+        } else {
+            left_in_place.extend(paths);
+        }
     }
-    vcs.refresh_paths_from_head(repo, &files, &index_entries)?;
-    Ok(Some(Refreshed {
-        moved_from,
-        moved_to: vcs.head_revision(repo)?.id().clone(),
-        files,
-        index_entries,
-    }))
+    if refreshed.files.is_empty() && refreshed.index_entries.is_empty() {
+        return Ok(DriftRefresh {
+            refreshed: None,
+            left_in_place,
+        });
+    }
+    vcs.record_checkout_at_head(repo)?;
+    Ok(DriftRefresh {
+        refreshed: Some(refreshed),
+        left_in_place,
+    })
 }
 
 /// The `index-drift` and `working-tree-drift` findings one checkout's reading
@@ -7770,14 +7839,20 @@ fn apply_finding_repairs(
                     let refreshed = read_drift(vcs, repo_abs)
                         .and_then(|reading| refresh_drift(vcs, repo_abs, &reading));
                     match refreshed {
-                        Ok(Some(refreshed)) => {
-                            outln!(
-                                "[fixed] core: drift in {location}: {}",
-                                refreshed.describe()
-                            )
-                        }
-                        Ok(None) => {
-                            outln!("[fixed] core: drift in {location}: nothing left to refresh")
+                        Ok(outcome) => {
+                            match &outcome.refreshed {
+                                Some(refreshed) => outln!(
+                                    "[fixed] core: drift in {location}: {}",
+                                    refreshed.describe()
+                                ),
+                                None if outcome.left_in_place.is_empty() => outln!(
+                                    "[fixed] core: drift in {location}: nothing left to refresh"
+                                ),
+                                None => {}
+                            }
+                            if let Some(left) = outcome.describe_left_in_place() {
+                                fix_errors.push(format!("{location}: {left}"));
+                            }
                         }
                         Err(e) => {
                             fix_errors.push(format!("{location}: drift refresh failed: {e:#}"))
