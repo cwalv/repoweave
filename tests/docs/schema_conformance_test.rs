@@ -102,9 +102,10 @@ use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, LeftBehindOutput,
-    LeftCommitOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput, SyncFailureOutput,
-    SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL, SYNC_JSON_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, LandingReportOutput,
+    LeftBehindOutput, LeftCommitOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput,
+    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
+    SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::update::{
     MemberOutcomeOutput, MemberOutcomeStatus, UpdateJsonOutput, UPDATE_SCHEMA_URL,
@@ -1779,6 +1780,28 @@ fn left_behind() -> Vec<LeftBehindOutput> {
     }]
 }
 
+fn landing_reports() -> Vec<LandingReportOutput> {
+    let id = |byte| repoweave::vcs::CommitId::parse(&sha(byte)).expect("a full commit id");
+    vec![
+        LandingReportOutput::Created {
+            path: "local/remotes/lib".to_owned(),
+            branch: "dev".to_owned(),
+            at: id('a'),
+        },
+        LandingReportOutput::Followed {
+            path: "local/remotes/lib".to_owned(),
+            to: id('a'),
+            was: id('b'),
+            backup: "proj--feat/bbbbbbbbbbbb".to_owned(),
+        },
+        LandingReportOutput::RePinned {
+            path: "local/remotes/app".to_owned(),
+            was: id('c'),
+            now: id('d'),
+        },
+    ]
+}
+
 fn sync_to_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -1798,6 +1821,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 refused: Vec::new(),
                 project_repo_advance: Some(advance()),
                 left_behind: left_behind(),
+                reports: landing_reports(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1819,6 +1843,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 refused: judged_on_every_axis(),
                 project_repo_advance: None,
                 left_behind: Vec::new(),
+                reports: Vec::new(),
                 resolution: None,
             }),
         ),
@@ -1842,6 +1867,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 refused: Vec::new(),
                 project_repo_advance: Some(advance()),
                 left_behind: Vec::new(),
+                reports: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1861,6 +1887,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 refused: Vec::new(),
                 project_repo_advance: None,
                 left_behind: Vec::new(),
+                reports: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1880,6 +1907,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 refused: Vec::new(),
                 project_repo_advance: None,
                 left_behind: Vec::new(),
+                reports: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),

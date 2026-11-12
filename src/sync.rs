@@ -661,6 +661,11 @@ pub struct LandJsonOutput {
     /// that ports them. Empty, not absent, when it leaves none; a resumed op
     /// reports the same list its start did.
     pub left_behind: Vec<LeftBehindOutput>,
+    /// Each move the landing reported as it made it: a receiving branch
+    /// created, a member that followed its receiving branch, a pin moved
+    /// backward by name. Empty, not absent, when it made none; a resumed op
+    /// reports the moves its earlier runs made as well.
+    pub reports: Vec<LandingReportOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -680,6 +685,102 @@ pub struct LeftBehindOutput {
     pub commits: Vec<LeftCommitOutput>,
     /// The copy that ports them onto `now`, in the order the text prints it.
     pub choices: Vec<crate::diagnosis::ChoiceOutput>,
+}
+
+/// One move a landing reported as it made it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum LandingReportOutput {
+    /// A receiving branch that existed nowhere, created at `at`.
+    Created {
+        path: String,
+        branch: String,
+        at: CommitId,
+    },
+    /// A member holding no new work moved to its receiving branch's tip `to`;
+    /// the tip `was` it left is kept in the backup `backup`.
+    Followed {
+        path: String,
+        to: CommitId,
+        was: CommitId,
+        backup: String,
+    },
+    /// A pin the landing moved backward, named by `--allow-member-change`.
+    RePinned {
+        path: String,
+        was: CommitId,
+        now: CommitId,
+    },
+}
+
+impl LandingReportOutput {
+    fn of(report: &op_state::LandingReport) -> Self {
+        match report {
+            op_state::LandingReport::Created { repo, branch, at } => Self::Created {
+                path: repo.to_string(),
+                branch: branch.clone(),
+                at: at.clone(),
+            },
+            op_state::LandingReport::Followed {
+                repo,
+                to,
+                was,
+                backup,
+            } => Self::Followed {
+                path: repo.to_string(),
+                to: to.clone(),
+                was: was.clone(),
+                backup: backup.clone(),
+            },
+            op_state::LandingReport::Repinned { repo, was, now } => Self::RePinned {
+                path: repo.to_string(),
+                was: was.clone(),
+                now: now.clone(),
+            },
+        }
+    }
+}
+
+/// A landing's report of one move, as the handler takes it: printed in
+/// text, recorded under `--json`.
+fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingReport) {
+    if handler.emit_text() {
+        match report {
+            op_state::LandingReport::Created { repo, branch, at } => {
+                outln!("  {repo}: created '{branch}' at {}", at.short());
+            }
+            op_state::LandingReport::Followed {
+                repo,
+                to,
+                was,
+                backup,
+            } => {
+                outln!(
+                    "  {repo}: has no new work, so it takes {} as its pin (was {}, kept in backup \
+                     {backup})",
+                    to.short(),
+                    was.short()
+                );
+            }
+            op_state::LandingReport::Repinned { repo, was, now } => {
+                eprintln!(
+                    "  {repo}: re-pinned {} -> {} (backward, named by --allow-member-change)",
+                    was.short(),
+                    now.short()
+                );
+            }
+        }
+    }
+    handler.record_landing_report(LandingReportOutput::of(report));
+}
+
+/// Journal a move the landing made and report it, once: a move an earlier
+/// run of the op reported is reported again when the op resumes, not here.
+fn report_landing(ctx: &OpContext<'_>, report: op_state::LandingReport) -> anyhow::Result<()> {
+    if op_state::journal_report(&ctx.owner_workspace_dir, &report)? {
+        emit_landing_report(ctx.handler, &report);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -1863,6 +1964,12 @@ pub trait OutputHandler: Send + Sync {
     /// Default implementation is a no-op: the text handler prints them at the
     /// call site.
     fn record_left_behind(&self, _left: LeftBehindOutput) {}
+
+    /// Record one move a landing reported as it made it.
+    ///
+    /// Default implementation is a no-op: the text handler prints it at the
+    /// call site.
+    fn record_landing_report(&self, _report: LandingReportOutput) {}
 }
 
 /// Where an op is running and what it is landing into, as the machine
@@ -3226,6 +3333,9 @@ fn load_continuing_context<'a>(
         }
     }
     report_left_behind(handler, &take_in.left_behind);
+    for report in &take_in.reports {
+        emit_landing_report(handler, report);
+    }
 
     let target_tip = take_in
         .receiving
@@ -4283,15 +4393,15 @@ fn follow_receiving(
         RepoKey::Member(repo_path.clone()),
         source,
     )?;
-    if ctx.handler.emit_text() {
-        outln!(
-            "  {repo_path}: has no new work, so it takes {} as its pin (was {}, kept in backup {})",
-            source.short(),
-            head.id().short(),
-            kept.backup().name
-        );
-    }
-    Ok(())
+    report_landing(
+        ctx,
+        op_state::LandingReport::Followed {
+            repo: RepoKey::Member(repo_path.clone()),
+            to: source.clone(),
+            was: head.id().clone(),
+            backup: kept.backup().name.to_string(),
+        },
+    )
 }
 
 /// Whether settling speaks in text: a run with no handler, `rwv abort`, does,
@@ -4664,23 +4774,23 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             },
         )
         .collect();
-    if ctx.handler.emit_text() {
-        let reach = SourceReach {
-            root: &ctx.cwd_workspace_dir,
-            manifest,
+    let reach = SourceReach {
+        root: &ctx.cwd_workspace_dir,
+        manifest,
+    };
+    for path in &named_members {
+        let (Some(was), Some(now)) = (second.pins.get(path), pins.get(path)) else {
+            continue;
         };
-        for path in &named_members {
-            let (Some(was), Some(now)) = (second.pins.get(path), pins.get(path)) else {
-                continue;
-            };
-            if was != now && crate::lock_merge::Reach::reaches(&reach, path, was, now) != Some(true)
-            {
-                eprintln!(
-                    "  {path}: re-pinned {} -> {} (backward, named by --allow-member-change)",
-                    was.short(),
-                    now.short()
-                );
-            }
+        if was != now && crate::lock_merge::Reach::reaches(&reach, path, was, now) != Some(true) {
+            report_landing(
+                ctx,
+                op_state::LandingReport::Repinned {
+                    repo: RepoKey::Member(path.clone()),
+                    was: was.clone(),
+                    now: now.clone(),
+                },
+            )?;
         }
     }
     let named = crate::repin::Naming::by_name("land", named_members);
@@ -5057,12 +5167,15 @@ fn advance_receiving_ref(
                     at: receiving.tip.clone(),
                 },
             )?;
-            if emit_text && create {
-                outln!(
-                    "  {repo_path}: created '{}' at {}",
-                    receiving.branch,
-                    receiving.tip.short()
-                );
+            if create {
+                report_landing(
+                    ctx,
+                    op_state::LandingReport::Created {
+                        repo: key.clone(),
+                        branch: receiving.branch.clone(),
+                        at: receiving.tip.clone(),
+                    },
+                )?;
             }
             receiving.tip.clone()
         }

@@ -6167,7 +6167,8 @@ pub fn member_change_race_listing() -> Scenario {
 }
 
 /// The member change race under `--json`: the envelope lists the fix as a
-/// commit `dev` lacks, with the copy that ports it.
+/// commit `dev` lacks, with the copy that ports it, and reports `lib`,
+/// holding no new work, following `dev`.
 pub fn member_change_left_behind_in_json() -> Scenario {
     scenario(
         "member change left behind in json",
@@ -6192,14 +6193,51 @@ pub fn member_change_left_behind_in_json() -> Scenario {
                 "lib-fix",
                 "copy these commits onto `dev`",
                 "cherry-pick",
+            ]))
+            .claim(Claim::OutputInOrder(&[
+                "\"reports\": [",
+                "\"kind\": \"followed\"",
+                "\"path\": \"local/remotes/lib\"",
+                "\"backup\": ",
             ])),
         ],
     )
 }
 
+/// A dependency pinned backward in a feature and landed by name, under
+/// `--json`: the envelope reports the re-pin.
+pub fn backward_pin_reported_in_json() -> Scenario {
+    Scenario {
+        name: "backward pin reported in json",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("back"),
+            Step::rwv(&ww("back"), &["member", "pin", LIB, "HEAD~1", "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("back"),
+                &["land", "--allow-member-change", LIB, "--json"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::OutputInOrder(&[
+                "\"reports\": [",
+                "\"kind\": \"re-pinned\"",
+                "\"path\": \"local/remotes/lib\"",
+                "\"was\": ",
+                "\"now\": ",
+            ])),
+        ],
+    }
+}
+
 /// The member change race with the landing stopped on a conflict in `app`:
 /// `--continue` lists the fix `dev` lacks again, with its copy, as the start
-/// did.
+/// did, and reports again that `lib` followed `dev`, a move the stopped run
+/// made.
 pub fn member_change_left_behind_on_continue() -> Scenario {
     scenario(
         "member change left behind on continue",
@@ -6222,7 +6260,10 @@ pub fn member_change_left_behind_on_continue() -> Scenario {
                     "the target's pin reaches commits 'dev' lacks",
                     "lib-fix",
                     "copy these commits onto `dev`",
-                ])),
+                ]))
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: has no new work, so it takes",
+                )),
             Step::git(&ww("feat"), Repo::App, &["checkout", "--theirs", "README"]),
             Step::git(&ww("feat"), Repo::App, &["add", "README"]),
             Step::rwv(&ww("feat"), &["land", "--continue"])
@@ -6233,7 +6274,10 @@ pub fn member_change_left_behind_on_continue() -> Scenario {
                     "the target's pin reaches commits 'dev' lacks",
                     "lib-fix",
                     "copy these commits onto `dev`",
-                ])),
+                ]))
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: has no new work, so it takes",
+                )),
         ],
     )
 }
@@ -6483,11 +6527,6 @@ pub fn raw_merge_member_change() -> Scenario {
     )
 }
 
-/// `roles-in-feature`: a feature's `dependency` and `reference` members get
-/// no branch of its name; `update --remote --repo` re-pins the dependency in
-/// the feature and the landing carries that pin; patching it needs
-/// `member set-role <m> fork`, and landing that role change needs
-/// `--allow-member-change <m>`. A pin moved backward is a change too.
 /// In a feature, `update --remote --repo` naming a `dependency` and a
 /// `reference` member advances each on its declared branch, which the primary
 /// has checked out, so detached at the upstream's tip; the feature's lock
@@ -6553,6 +6592,12 @@ pub fn update_remote_repins_dependency_and_reference_in_a_feature() -> Scenario 
     }
 }
 
+/// `roles-in-feature`: a feature's `dependency` and `reference` members get
+/// no branch of its name; `update --remote --repo` re-pins the dependency in
+/// the feature and the landing, `main` having moved meanwhile, carries that
+/// pin three-way; patching it needs `member set-role <m> fork`, and landing
+/// that role change needs `--allow-member-change <m>`. A pin moved backward
+/// is a change too.
 pub fn roles_in_feature() -> Scenario {
     Scenario {
         name: "roles in feature",
@@ -6578,12 +6623,19 @@ pub fn roles_in_feature() -> Scenario {
                     mark: "lib-up",
                 }),
             Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&a(), Repo::App, "main-app-1"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::PinContains {
                     site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
                     member: Repo::Lib,
                     mark: "lib-up",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::App,
+                    mark: "main-app-1",
                 }),
             create("back"),
             Step::rwv(&ww("back"), &["member", "pin", LIB, "HEAD~1", "--commit"])

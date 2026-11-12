@@ -187,7 +187,7 @@ src/merge_upstream.rs	resume-contradicts-record	-	1
 src/merge_upstream.rs	target dependents	-	1
 src/names.rs	name declared	tests/sync/protection_test.rs	1
 src/names.rs	name feature	-	1
-src/op_state.rs	(untokened:internal-invariant)	-	5
+src/op_state.rs	(untokened:internal-invariant)	-	6
 src/op_state.rs	(untokened:owed)	-	1
 src/op_state.rs	dead-op-lease	tests/doctor/unreadable_op_record_test.rs	2
 src/op_state.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1

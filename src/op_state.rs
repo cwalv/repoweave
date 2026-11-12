@@ -528,6 +528,36 @@ pub struct TakeInRecord {
     /// target's pin reaches that the new receiving branch lacks.
     #[serde(default)]
     pub left_behind: Vec<LeftBehind>,
+    /// What the landing reported as it moved members, so a resumed landing
+    /// reports it again.
+    #[serde(default)]
+    pub reports: Vec<LandingReport>,
+}
+
+/// One move a landing reports as it makes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum LandingReport {
+    /// A receiving branch that existed nowhere, created at `at`.
+    Created {
+        repo: RepoKey,
+        branch: String,
+        at: CommitId,
+    },
+    /// A member holding no new work moved to its receiving branch's tip `to`,
+    /// the tip `was` it left kept in `backup`.
+    Followed {
+        repo: RepoKey,
+        to: CommitId,
+        was: CommitId,
+        backup: String,
+    },
+    /// A pin moved backward by name.
+    Repinned {
+        repo: RepoKey,
+        was: CommitId,
+        now: CommitId,
+    },
 }
 
 /// The commits a declared-branch change leaves on the old branch.
@@ -1203,6 +1233,27 @@ pub fn journal_created_ref(workspace_dir: &Path, created: CreatedRef) -> anyhow:
         take_in.created_refs.push(created);
     }
     write_owner(workspace_dir, &record)
+}
+
+/// Journal a report a landing made; `false` when the record holds it already,
+/// so it was reported before.
+pub fn journal_report(workspace_dir: &Path, report: &LandingReport) -> anyhow::Result<bool> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    let Some(take_in) = record.take_in.as_mut() else {
+        return Ok(true);
+    };
+    if take_in.reports.contains(report) {
+        return Ok(false);
+    }
+    take_in.reports.push(report.clone());
+    write_owner(workspace_dir, &record)?;
+    Ok(true)
 }
 
 /// Remove the `.rwv-op` owner record from `workspace_dir`. No-op if absent.

@@ -92,6 +92,11 @@ fn a_landing_lists_left_behind_commits_in_its_json_envelope() {
 }
 
 #[test]
+fn a_backward_pin_landed_by_name_is_reported_in_the_json_envelope() {
+    runner::run(scenarios::backward_pin_reported_in_json()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_continued_landing_lists_left_behind_commits_again() {
     runner::run(scenarios::member_change_left_behind_on_continue()).assert_fully_decided_green();
 }
@@ -541,6 +546,7 @@ every_scenario!(
     member_change_race_listing,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
+    backward_pin_reported_in_json,
     member_change_choice_order,
     removal_is_member_change,
     dc06_member_set_from_merge,

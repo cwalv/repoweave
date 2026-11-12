@@ -11,6 +11,7 @@
     "outcomes",
     "placements",
     "refused",
+    "reports",
     "retired",
     "target"
   ],
@@ -66,6 +67,13 @@
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"
+      }
+    },
+    "reports": {
+      "description": "Each move the landing reported as it made it: a receiving branch created, a member that followed its receiving branch, a pin moved backward by name. Empty, not absent, when it made none; a resumed op reports the moves its earlier runs made as well.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LandingReportOutput"
       }
     },
     "resolution": {
@@ -567,6 +575,96 @@
           ]
         }
       }
+    },
+    "LandingReportOutput": {
+      "description": "One move a landing reported as it made it.",
+      "oneOf": [
+        {
+          "description": "A receiving branch that existed nowhere, created at `at`.",
+          "type": "object",
+          "required": [
+            "at",
+            "branch",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "created"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A member holding no new work moved to its receiving branch's tip `to`; the tip `was` it left is kept in the backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "to",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "followed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A pin the landing moved backward, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "re-pinned"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        }
+      ]
     },
     "LeftBehindOutput": {
       "description": "One declared-branch change's left-behind commits.",

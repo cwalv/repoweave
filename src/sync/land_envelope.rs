@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::{
-    in_manifest_order, ContainmentOutput, LandJsonOutput, LeftBehindOutput, MemberOutput,
-    OpCoordinates, OutputHandler, RepoSyncOutcome, RetiredWorkweave, Step3AdvanceOutput,
-    SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
+    in_manifest_order, ContainmentOutput, LandJsonOutput, LandingReportOutput, LeftBehindOutput,
+    MemberOutput, OpCoordinates, OutputHandler, RepoSyncOutcome, RetiredWorkweave,
+    Step3AdvanceOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
 };
 use crate::manifest::{RepoKey, WorkweaveName};
 use crate::op_state::OpPhase;
@@ -33,6 +33,7 @@ pub(super) struct LandOutcome {
     placements: Vec<PlacementOutput>,
     members: Vec<MemberOutput>,
     left_behind: Vec<LeftBehindOutput>,
+    reports: Vec<LandingReportOutput>,
     complete: bool,
 }
 
@@ -80,6 +81,7 @@ impl LandOutcome {
             refused,
             project_repo_advance: self.project_repo_advance,
             left_behind: self.left_behind,
+            reports: self.reports,
             resolution,
         })
     }
@@ -168,5 +170,9 @@ impl OutputHandler for LandRecorder {
 
     fn record_left_behind(&self, left: LeftBehindOutput) {
         self.with(|o| o.left_behind.push(left));
+    }
+
+    fn record_landing_report(&self, report: LandingReportOutput) {
+        self.with(|o| o.reports.push(report));
     }
 }
