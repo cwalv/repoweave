@@ -206,6 +206,26 @@ pub(crate) fn recorded(
         .collect())
 }
 
+/// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
+/// its message, and the members it names by name, kept as they were.
+pub(crate) fn copy_with_lock(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    commit: &CommitId,
+    parent: &CommitId,
+    lock: Vec<u8>,
+) -> Result<CommitId, VcsError> {
+    vcs.copy_replayed(
+        dir,
+        commit,
+        parent,
+        &[crate::vcs::FileChange {
+            path: LockFile::FILE_NAME.to_owned(),
+            content: Some(lock),
+        }],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,24 +266,4 @@ mod tests {
             assert_eq!(Repin::parse(&value), None, "{value}");
         }
     }
-}
-
-/// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
-/// its message, and the members it names by name, kept as they were.
-pub(crate) fn copy_with_lock(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    commit: &CommitId,
-    parent: &CommitId,
-    lock: Vec<u8>,
-) -> Result<CommitId, VcsError> {
-    vcs.copy_replayed(
-        dir,
-        commit,
-        parent,
-        &[crate::vcs::FileChange {
-            path: LockFile::FILE_NAME.to_owned(),
-            content: Some(lock),
-        }],
-    )
 }
