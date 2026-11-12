@@ -12572,3 +12572,107 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
         steps,
     )
 }
+
+/// `git-below-2.38`: git answers as a release without `merge-tree
+/// --write-tree`. `main` merges its project branch and rebases `app`;
+/// `w1`'s `sync`, with `w2` landing into `w1`, merges the project in the
+/// source's checkout and carries `w2` along per dependent, `app` replayed
+/// and `w2`'s project branch re-pinned in place, and nothing refuses for the
+/// git release.
+pub fn git_below_2_38() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "set-history",
+                "linear",
+                "--repo",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "w2",
+            }),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["rev-parse", "--verify", "-q", "HEAD^2"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    Scenario {
+        name: "git below 2.38: a merge in the checkout and a carried stack",
+        seed: Seed::default().old_git(),
+        steps,
+    }
+}
+
+/// `stack-carried`, by a landing: `w1`'s `linear` landing rebases `w1`
+/// onto the moved `main` in its seat and carries `w2` along before `main`
+/// fast-forwards.
+pub fn stack_carried_by_a_landing() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.push(
+        Step::rwv(&ww("w1"), &["land"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "w2",
+            })
+            .claim(Claim::PinsReplayed {
+                at: a(),
+                rev: "main",
+                member: Repo::App,
+                subject: "w1-app",
+                reached_from: "main",
+            }),
+    );
+    steps.push(
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "main", "w2"],
+        )
+        .expect(Exit::Succeeds),
+    );
+    scenario("stack: a landing carries a dependent along", steps)
+}

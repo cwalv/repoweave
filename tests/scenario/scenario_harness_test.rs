@@ -644,6 +644,10 @@ macro_rules! every_scenario {
                 "three_way_pins_on_old_git",
                 scenarios::three_way_pins_on_old_git().into_steps(),
             ));
+            every.push((
+                "git_below_2_38",
+                scenarios::git_below_2_38().into_steps(),
+            ));
             every
         }
     };
@@ -653,6 +657,7 @@ every_scenario!(
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
+    stack_carried_by_a_landing,
     stack_two_dependents,
     stack_transitive,
     stack_merge_setting,
@@ -4494,6 +4499,17 @@ fn a_carry_that_conflicts_aborts_to_where_the_stack_was() {
         scenarios::AfterHandContinue::Abort,
     ))
     .assert_fully_decided_green();
+}
+
+#[cfg(unix)]
+#[test]
+fn git_below_2_38_is_green() {
+    runner::run(scenarios::git_below_2_38()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_carried_by_a_landing_is_green() {
+    runner::run(scenarios::stack_carried_by_a_landing()).assert_fully_decided_green();
 }
 
 #[test]

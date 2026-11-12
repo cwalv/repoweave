@@ -143,6 +143,13 @@ pub(crate) fn walk(
                 }
                 tips.push((repo.clone(), tip.id().clone()));
             }
+            let project_moved = parent_moved.iter().any(|(r, _)| r == &RepoKey::Project);
+            if !tips.is_empty() && !project_moved {
+                if let Some(tip) = held.as_ref() {
+                    checked_out.extend(project_vcs.checkouts_of_branch(&project_dir, &name)?);
+                    tips.push((RepoKey::Project, tip.id().clone()));
+                }
+            }
             let why = if !lacking.is_empty() {
                 Some(Why::LacksTip(lacking))
             } else if !checked_out.is_empty() {
@@ -283,20 +290,6 @@ impl Carrier<'_> {
         )
     }
 
-    /// The branch `w` sits on in `repo`'s checkout, where the op rebased it.
-    fn w_branch(&self, rebases: &[Rebasing], repo: &RepoKey) -> Option<String> {
-        rebases
-            .iter()
-            .find(|r| &r.repo == repo && r.branch == self.w.as_str())
-            .map(|r| r.branch.clone())
-            .or_else(|| {
-                rebases
-                    .iter()
-                    .find(|r| &r.repo == repo)
-                    .map(|r| r.branch.clone())
-            })
-    }
-
     /// Finish a carry a stop left in a checkout: drive its replay on, or
     /// take the tip the operator's own continue left, and put the checkout
     /// back on `w`'s branch. Run before anything reads the checkouts.
@@ -321,17 +314,15 @@ impl Carrier<'_> {
             if vcs.is_ancestor(&dir, &rev(&carrying.onto), &rev(&head))? {
                 self.composed(carrying, head, &record.rebases)?;
             }
-            self.back_on_w(&carrying.repo, &record.rebases)?;
+            self.back_on(carrying)?;
         }
         Ok(())
     }
 
-    fn back_on_w(&self, repo: &RepoKey, rebases: &[Rebasing]) -> anyhow::Result<()> {
-        let dir = self.repos.dir(repo);
-        let vcs = self.repos.vcs(repo);
-        let Some(branch) = self.w_branch(rebases, repo) else {
-            return Ok(());
-        };
+    fn back_on(&self, carrying: &Carrying) -> anyhow::Result<()> {
+        let dir = self.repos.dir(&carrying.repo);
+        let vcs = self.repos.vcs(&carrying.repo);
+        let branch = carrying.checkout_on.clone();
         if let crate::vcs::HeadAttachment::Attached(on) = vcs.head_attachment(&dir)? {
             if on.to_string() == branch {
                 return Ok(());
@@ -416,10 +407,17 @@ impl Carrier<'_> {
         judge(&stack, &self.repos, self.t, verb, &mut report);
         report.into_result()?;
         for carry in &stack.carried {
-            for (repo, from) in &carry.tips {
+            let mut tips = carry.tips.clone();
+            tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);
+            for (repo, from) in &tips {
                 let Some((base, onto)) = new_tips
                     .get(&(carry.parent.as_str().to_owned(), repo.clone()))
-                    .cloned()
+                    .map(|(_, new)| new.clone())
+                    .map(|new| {
+                        let (old, _) = &new_tips[&(carry.parent.as_str().to_owned(), repo.clone())];
+                        (old.clone(), new)
+                    })
+                    .or(self.in_place(repo, &carry.parent, from)?)
                 else {
                     continue;
                 };
@@ -440,6 +438,36 @@ impl Carrier<'_> {
         self.move_carried()
     }
 
+    /// Where a dependent's project branch is replayed when its target's is
+    /// not rewritten, so its pins can follow its carried members: onto the
+    /// target's tip, where it holds it, else onto their merge base, its own
+    /// commits replayed in place.
+    fn in_place(
+        &self,
+        repo: &RepoKey,
+        parent: &BranchName,
+        from: &CommitId,
+    ) -> anyhow::Result<Option<(CommitId, CommitId)>> {
+        if repo != &RepoKey::Project {
+            return Ok(None);
+        }
+        let dir = self.repos.dir(repo);
+        let vcs = self.repos.vcs(repo);
+        let Some(tip) = vcs.resolve_local_branch_tip(&dir, &RawRefName::new(parent.as_str()))?
+        else {
+            return Ok(None);
+        };
+        let base = if vcs.is_ancestor(&dir, &tip, &rev(from))? {
+            tip.id().clone()
+        } else {
+            match vcs.merge_bases(&dir, tip.id(), from)?.into_iter().next() {
+                Some(base) => base,
+                None => return Ok(None),
+            }
+        };
+        Ok(Some((base.clone(), base)))
+    }
+
     fn compose(
         &self,
         repo: &RepoKey,
@@ -451,9 +479,17 @@ impl Carrier<'_> {
     ) -> anyhow::Result<CommitId> {
         let dir = self.repos.dir(repo);
         let vcs = self.repos.vcs(repo);
+        let crate::vcs::HeadAttachment::Attached(on) = vcs.head_attachment(&dir)? else {
+            return Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "{}: is on no branch, so no dependent is carried in it",
+                dir.display()
+            ));
+        };
         let carrying = Carrying {
             repo: repo.clone(),
             branch: carry.dependent.as_str().to_owned(),
+            checkout_on: on.to_string(),
             base: base.clone(),
             from: from.clone(),
             onto: onto.clone(),
@@ -471,7 +507,7 @@ impl Carrier<'_> {
         }
         let head = vcs.head_revision(&dir)?.id().clone();
         let tip = self.composed(&carrying, head, rebases)?;
-        self.back_on_w(repo, rebases)?;
+        self.back_on(&carrying)?;
         Ok(tip)
     }
 

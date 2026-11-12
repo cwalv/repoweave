@@ -563,6 +563,9 @@ pub struct Rebasing {
 pub struct Carrying {
     pub repo: RepoKey,
     pub branch: String,
+    /// The branch the checkout the carry replays in was on, which it is put
+    /// back on once the replay ends.
+    pub checkout_on: String,
     pub base: CommitId,
     pub from: CommitId,
     pub onto: CommitId,
