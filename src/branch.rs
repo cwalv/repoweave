@@ -702,8 +702,10 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
     let view = store
         .settle()
         .map_err(|e| write_refusal(vcs.as_ref(), &store, &project, &dir, &old, e))?;
+    let resuming = crate::alignment::is_renaming(vcs.as_ref(), &dir, old.as_str(), new.as_str())?;
     let record = match (view.lookup(&old), view.lookup(&new)) {
-        (Lookup::Value(record), _) | (Lookup::Unrecorded, Lookup::Value(record)) => record,
+        (Lookup::Value(record), _) => record,
+        (Lookup::Unrecorded, Lookup::Value(record)) if resuming => record,
         (lookup, _) => {
             return Err(judge_lookup(vcs.as_ref(), &store, &project, &dir, &old, lookup)?.refused())
         }
@@ -757,6 +759,16 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             )?),
         }
     }
+    if let Some(chain) = view.rename_cycle(&old, &new, &record) {
+        report.add(judge_lookup(
+            vcs.as_ref(),
+            &store,
+            &project,
+            &dir,
+            &new,
+            Lookup::Cycle(chain),
+        )?);
+    }
     let mut repos = moving_repos(
         ctx,
         &project,
@@ -782,6 +794,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
     }
     report.into_result()?;
 
+    crate::alignment::mark_renaming(vcs.as_ref(), &dir, Some((old.as_str(), new.as_str())))?;
     for repo in repos.iter().filter(|repo| repo.member.is_some()) {
         rename_in(repo, &old_raw, &new_raw)?;
     }
@@ -811,6 +824,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
     if let Some(project_repo) = repos.iter().find(|repo| repo.member.is_none()) {
         rename_in(project_repo, &old_raw, &new_raw)?;
     }
+    crate::alignment::mark_renaming(vcs.as_ref(), &dir, None)?;
     for repo in &repos {
         let copies = repo.vcs.remote_copies(&repo.dir, &old_raw)?;
         if copies.is_empty() {

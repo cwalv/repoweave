@@ -481,3 +481,62 @@ fn a_rename_reports_a_workspace_state_that_reads_as_absent() {
         "{text}"
     );
 }
+
+#[test]
+fn a_rename_that_would_close_a_target_cycle_is_refused_before_any_branch_moves() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "old"], ws);
+    common::git_in(&project, &["branch", "x", "main"]);
+    common::records::edit_by_hand(
+        &project,
+        &[
+            ("old", "mode = \"feature\"\ntarget = \"x\"\nas = \"feature\"\n"),
+            ("x", "mode = \"feature\"\ntarget = \"new\"\nas = \"declared\"\n"),
+        ],
+        &[],
+        "a target that is gone",
+    );
+
+    let out = refuse(&["branch", "rename", "new"], ws);
+
+    assert!(out.contains("target cycle"), "{out}");
+    assert!(has_branch(&ws.join(LIB), "old") && !has_branch(&ws.join(LIB), "new"));
+    assert!(has_branch(&project, "old") && !has_branch(&project, "new"));
+}
+
+#[test]
+fn a_never_recorded_branch_does_not_take_up_a_stale_record_of_the_new_name() {
+    let w = weave(&[LIB]);
+    let project = project_dir(&w.workspace);
+    common::git_in(&project, &["switch", "-qc", "raw"]);
+    common::records::edit_by_hand(&project, &[("new", "mode = \"declared\"\n")], &[], "stale");
+
+    let out = refuse(&["branch", "rename", "new"], &w.workspace);
+
+    assert!(out.contains("target unrecorded"), "{out}");
+    assert!(has_branch(&project, "raw") && !has_branch(&project, "new"));
+}
+
+#[test]
+fn a_rename_that_stopped_after_its_record_moved_is_completed_by_running_it_again() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "old"], ws);
+    let git_dir = common::git_in(&project, &["rev-parse", "--git-common-dir"]);
+    let lock = project.join(git_dir).join("refs/heads/new.lock");
+    std::fs::write(&lock, "").unwrap();
+
+    refuse(&["branch", "rename", "new"], ws);
+    assert!(record_of(ws, "new").is_some() && record_of(ws, "old").is_none());
+    assert!(has_branch(&project, "old"));
+
+    std::fs::remove_file(&lock).unwrap();
+    succeed(&["branch", "rename", "new"], ws);
+
+    assert!(has_branch(&project, "new") && !has_branch(&project, "old"));
+    assert!(has_branch(&ws.join(LIB), "new"));
+    assert!(!workspace_state(&project).contains("renaming"));
+}

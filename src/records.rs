@@ -467,6 +467,20 @@ impl View {
         None
     }
 
+    /// The target cycle renaming `old` to `new` would close: a chain from the
+    /// moved record's target back to `new`, or to `old`, whose dependents then
+    /// land into `new`.
+    pub fn rename_cycle(
+        &self,
+        old: &BranchName,
+        new: &BranchName,
+        moved: &Record,
+    ) -> Option<Vec<BranchName>> {
+        let target = moved.target()?;
+        self.chain_back_to(new, vec![target.clone()])
+            .or_else(|| self.chain_back_to(old, vec![target.clone()]))
+    }
+
     /// The name of every branch the records hold an entry for.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.snapshot.keys().map(String::as_str)
@@ -846,10 +860,8 @@ impl<'a> Store<'a> {
                     (Lookup::Unrecorded, _) => return Err(WriteError::Unrecorded(from.clone())),
                     (other, _) => return Err(WriteError::TargetUnreadable(from.clone(), other)),
                 };
-                if let Some(target) = moved.target() {
-                    if let Some(chain) = view.chain_back_to(to, vec![target.clone()]) {
-                        return Err(WriteError::Cycle(chain));
-                    }
+                if let Some(chain) = view.rename_cycle(from, to, &moved) {
+                    return Err(WriteError::Cycle(chain));
                 }
                 let mut writes = vec![Write {
                     branch: to.clone(),

@@ -925,3 +925,23 @@ fn a_name_collision_seen_later_refuses_the_verbs_that_align_or_publish_the_featu
         assert!(out.contains("rwv branch set-mode feat-d declared"), "{out}");
     }
 }
+
+#[test]
+fn an_untracked_file_the_start_tracks_refuses_a_create_before_its_record_is_written() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "dev", "--declared"], ws);
+    std::fs::create_dir_all(project.join("notes")).unwrap();
+    commit_in(&project, "notes/plan.txt");
+    succeed(&["switch", "main"], ws);
+    std::fs::create_dir_all(project.join("notes")).unwrap();
+    std::fs::write(project.join("notes/plan.txt"), "mine\n").unwrap();
+
+    let out = refuse(&["branch", "create", "f", "--target", "dev"], ws);
+
+    assert!(out.contains("edits"), "{out}");
+    assert!(record_of(ws, "f").is_none());
+    assert!(!has_branch(&project, "f"));
+    assert_eq!(head_branch(&project).as_deref(), Some("main"));
+}

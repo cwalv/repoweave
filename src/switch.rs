@@ -149,6 +149,20 @@ impl ProjectMove<'_> {
             let from = vcs.head_revision(self.dir)?;
             let changed = vcs.changed_paths_between(self.dir, &from, to)?;
             dirty.retain(|name| changed.contains(name));
+            let tracked = vcs.tracked_dirty_file_names(self.dir)?;
+            let untracked: Vec<String> = vcs
+                .dirty_file_names(self.dir)?
+                .into_iter()
+                .filter(|name| !tracked.contains(name))
+                .collect();
+            for path in &changed {
+                let overwritten = untracked.iter().any(|name| {
+                    name == path || (name.ends_with('/') && path.starts_with(name.as_str()))
+                });
+                if overwritten && !dirty.contains(path) && !files.contains(path) {
+                    dirty.push(path.clone());
+                }
+            }
         } else {
             dirty.clear();
         }

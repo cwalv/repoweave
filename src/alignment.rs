@@ -69,6 +69,46 @@ pub struct WorkspaceState {
     pub aligned: Option<Aligned>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub stored: BTreeMap<String, Stored>,
+    /// A `branch rename` begun here and not finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renaming: Option<Renaming>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Renaming {
+    pub from: String,
+    pub to: String,
+}
+
+/// Whether the workspace at `project_dir` holds a rename of `from` to `to`
+/// begun and not finished.
+pub fn is_renaming(vcs: &dyn Vcs, project_dir: &Path, from: &str, to: &str) -> anyhow::Result<bool> {
+    let wanted = Renaming {
+        from: from.to_owned(),
+        to: to.to_owned(),
+    };
+    Ok(read_state(vcs, project_dir)?.state.renaming == Some(wanted))
+}
+
+/// Note in the workspace at `project_dir` that a rename of `from` to `to` has
+/// begun (`Some`) or finished (`None`). A state that reads as absent is left
+/// as it is.
+pub fn mark_renaming(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    renaming: Option<(&str, &str)>,
+) -> anyhow::Result<()> {
+    let StateReading { mut state, corrupt } = read_state(vcs, project_dir)?;
+    if corrupt.is_some() {
+        return Ok(());
+    }
+    state.renaming = renaming.map(|(from, to)| Renaming {
+        from: from.to_owned(),
+        to: to.to_owned(),
+    });
+    store_state(vcs, project_dir, &state)?;
+    Ok(())
 }
 
 /// What a workspace last aligned one branch by.
