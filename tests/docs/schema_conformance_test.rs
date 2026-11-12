@@ -1917,6 +1917,16 @@ fn landing_reports() -> Vec<LandingReportOutput> {
                 },
             ],
         },
+        LandingReportOutput::Refreshed {
+            path: "local/remotes/lib".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/ws/local/remotes/lib",
+            )),
+            moved_from: id('a'),
+            moved_to: id('b'),
+            files: vec!["notes.txt".to_owned()],
+            index_entries: vec!["README.md".to_owned()],
+        },
     ]
 }
 

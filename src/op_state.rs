@@ -584,6 +584,18 @@ pub enum LandingReport {
         pins: Vec<PinTakenIn>,
         entries: Vec<EntryTakenIn>,
     },
+    /// Shared-ref drift refreshed in the checkout at `checkout` before its
+    /// edits were judged: its branch moved from `moved_from` to `moved_to`
+    /// outside it, and `files` and `index_entries` still held `moved_from`'s
+    /// content.
+    Refreshed {
+        repo: RepoKey,
+        checkout: PathBuf,
+        moved_from: CommitId,
+        moved_to: CommitId,
+        files: Vec<String>,
+        index_entries: Vec<String>,
+    },
 }
 
 impl LandingReport {

@@ -581,28 +581,6 @@ pub struct SyncJsonOutput {
     pub resolution: Option<Resolution>,
 }
 
-/// One checkout whose shared-ref drift a landing refreshed: its branch was
-/// moved forward from outside it, and these paths still held the content of
-/// the tip it moved from.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct RefreshedOutput {
-    /// The repo as the landing's refusal lines name it: a member's path, or
-    /// `projects/<project>`.
-    pub path: String,
-    pub absolute_path: crate::path_spelling::WirePath,
-    /// The commit the checkout's branch moved from.
-    pub moved_from: String,
-    /// The commit the checkout's branch is at, whose content the paths now
-    /// hold.
-    pub moved_to: String,
-    /// Files whose content and index entry were replaced with `moved_to`'s,
-    /// a file `moved_to` lacks removed.
-    pub files: Vec<String>,
-    /// Index entries reset to `moved_to`'s, whose files already held its
-    /// content.
-    pub index_entries: Vec<String>,
-}
-
 /// Top-level envelope for `rwv land --json`.
 ///
 /// Extends [`SyncJsonOutput`] with land-specific observability fields:
@@ -674,11 +652,6 @@ pub struct LandJsonOutput {
     /// Each repo the op judged when it refused, with that state's choices.
     /// Empty, not absent, when it refused on none.
     pub refused: Vec<crate::diagnosis::JudgedOutput>,
-    /// Each checkout, in either workspace, whose shared-ref drift the landing
-    /// refreshed before judging its edits. Empty, not absent, when it
-    /// refreshed none. A refused landing refreshes only a checkout whose own
-    /// edits it refused.
-    pub refreshed: Vec<RefreshedOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -762,6 +735,20 @@ pub enum LandingReportOutput {
         commits: Vec<LeftCommitOutput>,
         pins: Vec<PinTakenInOutput>,
         member_changes: Vec<crate::pull::MemberChangeOutput>,
+    },
+    /// A checkout, in either workspace, whose branch something outside it
+    /// moved forward from `moved_from` to `moved_to`: before judging its
+    /// edits the landing gave `files` (content and index entry) and
+    /// `index_entries` (index entry alone) `moved_to`'s content, since they
+    /// still held `moved_from`'s. A refused landing refreshes only a checkout
+    /// whose own edits it refused.
+    Refreshed {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+        moved_from: CommitId,
+        moved_to: CommitId,
+        files: Vec<String>,
+        index_entries: Vec<String>,
     },
 }
 
@@ -853,6 +840,21 @@ impl LandingReportOutput {
                         fields: e.fields.clone(),
                     })
                     .collect(),
+            },
+            op_state::LandingReport::Refreshed {
+                repo,
+                checkout,
+                moved_from,
+                moved_to,
+                files,
+                index_entries,
+            } => Self::Refreshed {
+                path: repo.to_string(),
+                absolute_path: crate::path_spelling::WirePath::of(checkout),
+                moved_from: moved_from.clone(),
+                moved_to: moved_to.clone(),
+                files: files.clone(),
+                index_entries: index_entries.clone(),
             },
         }
     }
@@ -946,6 +948,26 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                         entry.repo
                     );
                 }
+            }
+            op_state::LandingReport::Refreshed {
+                repo,
+                checkout,
+                moved_from,
+                moved_to,
+                files,
+                index_entries,
+            } => {
+                let refreshed = crate::check::Refreshed {
+                    moved_from: moved_from.clone(),
+                    moved_to: moved_to.clone(),
+                    files: files.clone(),
+                    index_entries: index_entries.clone(),
+                };
+                eprintln!(
+                    "rwv land: {repo} at {}: {}",
+                    checkout.display(),
+                    refreshed.describe()
+                );
             }
         }
     }
@@ -2107,14 +2129,6 @@ pub trait OutputHandler: Send + Sync {
     /// Default implementation is a no-op: the text handler prints placement
     /// at the call site.
     fn record_placement(&self, _placement: PlacementOutput) {}
-
-    /// Record the drift a landing refreshed in one checkout; `line` is its
-    /// report.
-    ///
-    /// Default implementation prints `line` to stderr.
-    fn record_refreshed(&self, _refreshed: RefreshedOutput, line: &str) {
-        eprintln!("{line}");
-    }
 
     /// Record what replay did with one member checkout outside its per-repo
     /// strategy.
@@ -3317,20 +3331,33 @@ fn guard_and_mark<'a>(
         cwd_workspace_name_str,
         cwd_lock_behind,
         plan,
-    } = match precondition_result
-        .and_then(|outcome| refresh_drifted(&drifted, false, handler).map(|()| outcome))
-    {
+    } = match precondition_result {
         Ok(v) => v,
         Err(e) => {
             if crate::diagnosis::report_of(&e).is_some() {
-                if let Err(refresh) = refresh_drifted(&drifted, true, handler) {
-                    eprintln!("warning: {refresh:#}");
+                match refresh_drifted(&drifted, true) {
+                    Ok(reports) => {
+                        for report in &reports {
+                            emit_landing_report(handler, report);
+                        }
+                    }
+                    Err(refresh) => eprintln!("warning: {refresh:#}"),
                 }
             }
             op_state::release_acquired(&acquired);
             return Err(e);
         }
     };
+    let refreshed = match refresh_drifted(&drifted, false) {
+        Ok(reports) => reports,
+        Err(e) => {
+            op_state::release_acquired(&acquired);
+            return Err(e);
+        }
+    };
+    for report in &refreshed {
+        emit_landing_report(handler, report);
+    }
     let _ = acquired;
     if emit_text {
         for line in plan.fact_lines(&landing.target) {
@@ -3470,6 +3497,7 @@ fn guard_and_mark<'a>(
         );
     }
     take_in.left_behind = plan.left_behind.clone();
+    take_in.reports = refreshed;
     report_left_behind(handler, &take_in.left_behind);
     for change in &plan.landed_changes {
         emit_landing_report(handler, change);
@@ -3666,7 +3694,11 @@ fn load_continuing_context<'a>(
             &mut edits,
             &mut drifted,
         );
-        refresh_drifted(&drifted, !edits.is_empty(), handler)?;
+        for report in refresh_drifted(&drifted, !edits.is_empty())? {
+            if op_state::journal_report(&owner_workspace_dir, &report)? {
+                emit_landing_report(handler, &report);
+            }
+        }
         edits.note(parked_note(record.verb));
         edits.into_result()?;
     }
@@ -3990,6 +4022,7 @@ fn judge_edits_target_preflight<'m>(
         if target_repo.exists() {
             judge_edits_beside_drift(
                 vcs_for(entry.vcs_type),
+                RepoKey::Member(repo_path.clone()),
                 repo_path.to_string(),
                 &target_repo,
                 Some(target_workspace_dir),
@@ -4001,6 +4034,7 @@ fn judge_edits_target_preflight<'m>(
     }
     judge_edits_beside_drift(
         project_vcs(),
+        RepoKey::Project,
         project_rel_path(&cwd_project.name),
         target_project_dir,
         Some(target_workspace_dir),
@@ -4013,6 +4047,7 @@ fn judge_edits_target_preflight<'m>(
 /// A checkout a landing found drift in while judging its edits.
 pub(crate) struct DriftedCheckout {
     vcs: Box<dyn Vcs>,
+    key: RepoKey,
     repo: String,
     dir: PathBuf,
     elsewhere: Option<PathBuf>,
@@ -4028,6 +4063,7 @@ pub(crate) struct DriftedCheckout {
 /// lock.
 fn judge_edits_beside_drift(
     vcs: Box<dyn Vcs>,
+    key: RepoKey,
     repo: String,
     dir: &Path,
     elsewhere: Option<&Path>,
@@ -4051,6 +4087,7 @@ fn judge_edits_beside_drift(
     if reading.is_refreshable() {
         drifted.push(DriftedCheckout {
             vcs,
+            key,
             repo,
             dir: dir.to_path_buf(),
             elsewhere: elsewhere.map(Path::to_path_buf),
@@ -4060,7 +4097,7 @@ fn judge_edits_beside_drift(
     }
 }
 
-/// Refresh the drift `drifted` classified, reporting each checkout's files.
+/// Refresh the drift `drifted` classified, returning each checkout's report.
 ///
 /// A landing that proceeds refreshes every one. A landing that refuses
 /// refreshes only the checkouts whose own edits it refused, so the commit or
@@ -4069,8 +4106,8 @@ fn judge_edits_beside_drift(
 fn refresh_drifted(
     drifted: &[DriftedCheckout],
     landing_refused: bool,
-    handler: &dyn OutputHandler,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<op_state::LandingReport>> {
+    let mut reports = Vec::new();
     for checkout in drifted {
         if landing_refused && !checkout.edits_refused {
             continue;
@@ -4085,24 +4122,17 @@ fn refresh_drifted(
                     )
                 })?;
         if let Some(refreshed) = refreshed {
-            let at = match &checkout.elsewhere {
-                Some(workspace) => format!("{} in {}", checkout.repo, workspace.display()),
-                None => checkout.repo.clone(),
-            };
-            handler.record_refreshed(
-                RefreshedOutput {
-                    path: checkout.repo.clone(),
-                    absolute_path: crate::path_spelling::WirePath::of(&checkout.dir),
-                    moved_from: refreshed.moved_from.to_string(),
-                    moved_to: refreshed.moved_to.to_string(),
-                    files: refreshed.files.clone(),
-                    index_entries: refreshed.index_entries.clone(),
-                },
-                &format!("rwv land: {at}: {}", refreshed.describe()),
-            );
+            reports.push(op_state::LandingReport::Refreshed {
+                repo: checkout.key.clone(),
+                checkout: checkout.dir.clone(),
+                moved_from: refreshed.moved_from,
+                moved_to: refreshed.moved_to,
+                files: refreshed.files,
+                index_entries: refreshed.index_entries,
+            });
         }
     }
-    Ok(())
+    Ok(reports)
 }
 
 /// A repo's tracked dirt, or a status that could not be read standing in as
@@ -4176,6 +4206,7 @@ fn judge_edits_source_preflight(
         if repo.exists() {
             judge_edits_beside_drift(
                 vcs_for(entry.vcs_type),
+                RepoKey::Member(repo_path.clone()),
                 repo_path.to_string(),
                 &repo,
                 None,
@@ -4190,6 +4221,7 @@ fn judge_edits_source_preflight(
     // rwv.lock is the auto-relock's expected input, not dirt.
     judge_edits_beside_drift(
         project_vcs(),
+        RepoKey::Project,
         project_rel_path(&cwd_project.name),
         cwd_project_dir,
         None,

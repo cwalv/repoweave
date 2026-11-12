@@ -452,9 +452,14 @@ fn json_carries_what_was_refreshed() {
     let out = common::cli::succeed(&["land", "--json"], &f.ww);
 
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let refreshed = json["refreshed"].as_array().expect("a `refreshed` array");
+    let refreshed: Vec<&serde_json::Value> = json["reports"]
+        .as_array()
+        .expect("a `reports` array")
+        .iter()
+        .filter(|r| r["kind"] == "refreshed")
+        .collect();
     assert_eq!(refreshed.len(), 1, "{json:#}");
-    let entry = &refreshed[0];
+    let entry = refreshed[0];
     assert_eq!(entry["path"], LIB, "{json:#}");
     assert_eq!(
         entry["absolute_path"].as_str().map(PathBuf::from),
