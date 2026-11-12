@@ -56,6 +56,8 @@ pub struct Plan {
     /// The commits each moved member's receiving branch holds beyond `T`'s
     /// pin, which the landing pins into `T` with the member's work.
     pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
+    /// Each change to `T`'s entries `--allow-member-change` named.
+    pub landed_changes: Vec<crate::op_state::LandingReport>,
 }
 
 impl Plan {
@@ -679,7 +681,7 @@ pub fn judge(
         &landing.target_tip,
         theirs,
     )?;
-    let inapplicable = judge_entry_changes(landing, &sides, source_root, report)?;
+    let (landed_changes, inapplicable) = judge_entry_changes(landing, &sides, source_root, report)?;
     judge_merge_in_range(
         composing,
         vcs,
@@ -703,7 +705,10 @@ pub fn judge(
         crate::alignment::Accounting::default(),
     )?;
     let as_mode = landing.target_mode;
-    let mut plan = Plan::default();
+    let mut plan = Plan {
+        landed_changes,
+        ..Plan::default()
+    };
     for (path, entry) in sides.ours.iter_entries() {
         let mdir = source_root.join(path.as_path());
         let mvcs = vcs_for(entry.vcs_type);
@@ -769,6 +774,47 @@ struct Changed {
     removed: Option<RepoEntry>,
 }
 
+impl Changed {
+    fn lines(&self) -> Vec<String> {
+        match &self.removed {
+            Some(_) => vec!["removed".to_owned()],
+            None => self.fields.iter().map(FieldChange::line).collect(),
+        }
+    }
+
+    fn landed(&self) -> Vec<crate::op_state::LandingReport> {
+        use crate::op_state::LandingReport;
+        let repo = match &self.repo {
+            RepoOperand::Project(_) => RepoKey::Project,
+            RepoOperand::Member(path) => RepoKey::Member(path.clone()),
+        };
+        if self.removed.is_some() {
+            return vec![LandingReport::EntryRemoved { repo }];
+        }
+        self.fields
+            .iter()
+            .map(|f| LandingReport::EntryChanged {
+                repo: repo.clone(),
+                field: f.name.to_owned(),
+                was: f.theirs.clone(),
+                now: f.ours.clone(),
+            })
+            .collect()
+    }
+}
+
+/// How a `target` member changes refusal offers its way on: before the
+/// landing starts, or while it is stopped and resumed by `--continue`.
+#[derive(Clone, Copy)]
+enum Route<'a> {
+    Fresh {
+        feature: &'a BranchName,
+        candidates: &'a [String],
+        consent: &'a [String],
+    },
+    Resumed,
+}
+
 /// Each field of `ours` that differs from `theirs`.
 fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<FieldChange> {
     let mut out = Vec::new();
@@ -806,7 +852,7 @@ fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<FieldChange> {
 /// it, where that moves `T`'s pin to a commit that does not contain it. Pins
 /// the merge cannot settle are not judged here: they refuse as unmerged.
 fn backward_pin(
-    landing: &Landing,
+    into: Option<(&str, Mode)>,
     sides: &Sides,
     path: &RepoPath,
     ours: &RepoEntry,
@@ -816,7 +862,8 @@ fn backward_pin(
     let mvcs = vcs_for(ours.vcs_type);
     let dir = source_root.join(path.as_path());
     if matches!(ours.role, Role::Owned | Role::Fork)
-        && composed(landing, sides, path, ours, mvcs.as_ref(), &dir) != Some(false)
+        && into.and_then(|into| composed(into, sides, path, ours, mvcs.as_ref(), &dir))
+            != Some(false)
     {
         return None;
     }
@@ -846,7 +893,7 @@ fn backward_pin(
 /// branch lacks, or the receiving branch is not `T`'s. `None` where that
 /// cannot be read.
 fn composed(
-    landing: &Landing,
+    (target, mode): (&str, Mode),
     sides: &Sides,
     path: &RepoPath,
     ours: &RepoEntry,
@@ -859,8 +906,8 @@ fn composed(
     }
     let receiving = crate::feature_sync::receiving_branch(
         path,
-        landing.target.as_str(),
-        Some(landing.target_mode),
+        target,
+        Some(mode),
         &sides.ours,
         Some(&sides.theirs),
         sides.base.as_ref(),
@@ -882,63 +929,16 @@ fn composed(
 
 /// The changes the landing would make to `T`'s member entries and top-level
 /// `history`: each field `W` changed since the merge base to a value `T` does
-/// not hold, each member `W` removed, and each backward pin. Where the merge
-/// base's `rwv.toml` cannot be read, every difference counts as `W`'s. A
-/// change `--allow-member-change` names lands and every other one is judged
-/// here. A name that matches no change comes back as its refusal, for the
-/// caller to report once everything else is judged.
-pub(crate) fn judge_entry_changes(
-    landing: &Landing,
+/// not hold, each member `W` removed, and each backward pin of a member the
+/// landing does not compose, judged where `into` names the branch it lands
+/// into and its mode. Where the merge base's `rwv.toml` cannot be read, every
+/// difference counts as `W`'s.
+fn entry_changes(
+    project: &ProjectName,
     sides: &Sides,
     source_root: &Path,
-    report: &mut Report,
-) -> anyhow::Result<Option<anyhow::Error>> {
-    let vcs = project_vcs();
-    let vcs = vcs.as_ref();
-    let dir = project_dir(source_root, &landing.project);
-    let label = project_rel_path(&landing.project);
-    let changes = entry_changes(landing, sides, source_root);
-    let unmatched: Vec<String> = landing
-        .allow_member_change
-        .iter()
-        .filter(|named| !changes.iter().any(|c| &c.repo == *named))
-        .map(ToString::to_string)
-        .collect();
-    let inapplicable = (!unmatched.is_empty()).then(|| {
-        crate::refusal::refusal(
-            RefusalKind::InapplicableFlag,
-            format!(
-                "`--allow-member-change {}` names no change this landing makes to '{}''s \
-                 entries",
-                unmatched.join("`, `--allow-member-change "),
-                landing.target
-            ),
-        )
-    });
-    let unnamed: Vec<&Changed> = changes
-        .iter()
-        .filter(|c| !landing.allow_member_change.contains(&c.repo))
-        .collect();
-    if unnamed.is_empty() {
-        return Ok(inapplicable);
-    }
-    let consent: Vec<String> = changes.iter().map(|c| c.repo.to_string()).collect();
-    let candidates = rebind_candidates(landing, sides, &unnamed, &dir, source_root, vcs)?;
-    for change in unnamed {
-        report.add(judge_change(
-            landing,
-            change,
-            &candidates,
-            &consent,
-            &label,
-            &dir,
-            vcs,
-        ));
-    }
-    Ok(inapplicable)
-}
-
-fn entry_changes(landing: &Landing, sides: &Sides, source_root: &Path) -> Vec<Changed> {
+    into: Option<(&str, Mode)>,
+) -> Vec<Changed> {
     let mut changes: Vec<Changed> = Vec::new();
     for (path, theirs) in sides.theirs.iter_entries() {
         let was = sides.base.as_ref().and_then(|b| b.get_entry(path));
@@ -950,7 +950,7 @@ fn entry_changes(landing: &Landing, sides: &Sides, source_root: &Path) -> Vec<Ch
                     .into_iter()
                     .filter(|f| changed_here.as_ref().is_none_or(|set| set.contains(f.name)))
                     .collect();
-                fields.extend(backward_pin(landing, sides, path, ours, source_root));
+                fields.extend(backward_pin(into, sides, path, ours, source_root));
                 if !fields.is_empty() {
                     changes.push(Changed {
                         repo: RepoOperand::Member(path.clone()),
@@ -973,7 +973,7 @@ fn entry_changes(landing: &Landing, sides: &Sides, source_root: &Path) -> Vec<Ch
         .is_none_or(|base| base.history != sides.ours.history);
     if changed_here && sides.ours.history != sides.theirs.history {
         changes.push(Changed {
-            repo: RepoOperand::Project(landing.project.clone()),
+            repo: RepoOperand::Project(project.clone()),
             fields: vec![FieldChange {
                 name: "history",
                 theirs: crate::set_history::spelled(sides.theirs.history),
@@ -983,6 +983,168 @@ fn entry_changes(landing: &Landing, sides: &Sides, source_root: &Path) -> Vec<Ch
         });
     }
     changes
+}
+
+/// The refusal of the names `--allow-member-change` gives that match none
+/// of `changes`, where there are any.
+fn inapplicable(named: &[RepoOperand], changes: &[Changed], target: &str) -> Option<anyhow::Error> {
+    let unmatched: Vec<String> = named
+        .iter()
+        .filter(|named| !changes.iter().any(|c| &c.repo == *named))
+        .map(ToString::to_string)
+        .collect();
+    (!unmatched.is_empty()).then(|| {
+        crate::refusal::refusal(
+            RefusalKind::InapplicableFlag,
+            format!(
+                "`--allow-member-change {}` names no change this landing makes to '{target}''s \
+                 entries",
+                unmatched.join("`, `--allow-member-change ")
+            ),
+        )
+    })
+}
+
+/// Judge [`entry_changes`] against the consent: a change
+/// `--allow-member-change` names lands and every other one refuses. Returns
+/// the changes that land and, where a name matches no change, its refusal,
+/// for the caller to report once everything else is judged.
+fn judge_entry_changes(
+    landing: &Landing,
+    sides: &Sides,
+    source_root: &Path,
+    report: &mut Report,
+) -> anyhow::Result<(Vec<crate::op_state::LandingReport>, Option<anyhow::Error>)> {
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let dir = project_dir(source_root, &landing.project);
+    let label = project_rel_path(&landing.project);
+    let changes = entry_changes(
+        &landing.project,
+        sides,
+        source_root,
+        Some((landing.target.as_str(), landing.target_mode)),
+    );
+    let refused = inapplicable(
+        &landing.allow_member_change,
+        &changes,
+        landing.target.as_str(),
+    );
+    let (named, unnamed): (Vec<&Changed>, Vec<&Changed>) = changes
+        .iter()
+        .partition(|c| landing.allow_member_change.contains(&c.repo));
+    if !unnamed.is_empty() {
+        let consent: Vec<String> = changes.iter().map(|c| c.repo.to_string()).collect();
+        let candidates = rebind_candidates(landing, sides, &unnamed, &dir, source_root, vcs)?;
+        let route = Route::Fresh {
+            feature: &landing.feature,
+            candidates: &candidates,
+            consent: &consent,
+        };
+        for change in unnamed {
+            report.add(judge_change(
+                landing.target.as_str(),
+                route,
+                change,
+                &label,
+                &dir,
+                vcs,
+            ));
+        }
+    }
+    Ok((named.iter().flat_map(|c| c.landed()).collect(), refused))
+}
+
+/// A landing stopped mid-operation and resumed by `--continue`, as its op
+/// record holds it.
+pub struct Resumed<'a> {
+    pub project: &'a ProjectName,
+    pub target: &'a str,
+    pub target_tip: &'a CommitId,
+    /// The consent the op recorded at its start.
+    pub recorded: &'a [RepoOperand],
+    /// The consent this `--continue` adds.
+    pub added: &'a [RepoOperand],
+}
+
+/// Judge the source's `rwv.toml` as the stop's resolution left it against
+/// `T`'s tip, under the consent recorded and added: the same changes and the
+/// same refusal as at the landing's start. Pins are left to the relock, which
+/// merges them from the tips the op recorded.
+pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Result<Rejudged> {
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let dir = project_dir(source_root, resumed.project);
+    let label = project_rel_path(resumed.project);
+    if !vcs.unmerged_paths(&dir)?.is_empty() {
+        return Ok(Rejudged::Unresolved);
+    }
+    let head = vcs.head_revision(&dir)?.id().clone();
+    let Some(theirs) = manifest_at(vcs, &dir, resumed.target_tip) else {
+        return Err(State::UnparseableProjectAt
+            .of(&label)
+            .project_repo()
+            .subject(format!(
+                "'{}' at {}",
+                resumed.target,
+                resumed.target_tip.short()
+            ))
+            .bind("<b>", resumed.target)
+            .checkout(&dir)
+            .judge(vcs)
+            .refused());
+    };
+    let base_commit = vcs
+        .merge_bases(&dir, &head, resumed.target_tip)?
+        .into_iter()
+        .next();
+    let sides = Sides {
+        ours: Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
+        theirs,
+        base: base_commit.as_ref().and_then(|b| manifest_at(vcs, &dir, b)),
+        our_lock: None,
+        their_lock: None,
+        base_lock: None,
+        history: PinHistory::of(vcs, &dir, resumed.target_tip)?,
+    };
+    let changes = entry_changes(resumed.project, &sides, source_root, None);
+    if let Some(refused) = inapplicable(resumed.added, &changes, resumed.target) {
+        return Err(refused);
+    }
+    let consented =
+        |c: &&Changed| resumed.recorded.contains(&c.repo) || resumed.added.contains(&c.repo);
+    let mut report = Report::default();
+    for change in changes.iter().filter(|c| !consented(c)) {
+        report.add(judge_change(
+            resumed.target,
+            Route::Resumed,
+            change,
+            &label,
+            &dir,
+            vcs,
+        ));
+    }
+    if !report.is_empty() {
+        return Ok(Rejudged::Refused(report));
+    }
+    Ok(Rejudged::Lands(
+        changes
+            .iter()
+            .filter(consented)
+            .flat_map(|c| c.landed())
+            .collect(),
+    ))
+}
+
+/// What [`rejudge_resolved`] found.
+pub enum Rejudged {
+    /// The project repo still holds an unresolved conflict, which the resume
+    /// itself stops on.
+    Unresolved,
+    /// Every change is consented to: those that land.
+    Lands(Vec<crate::op_state::LandingReport>),
+    /// A change no consent covers, judged.
+    Refused(Report),
 }
 
 /// The live weave branches whose entries match `W`'s for every unnamed
@@ -1043,38 +1205,42 @@ fn rebind_candidates(
 }
 
 /// The `target` member changes line for one repo: each changed field with
-/// `T`'s value and `W`'s, then the rebind onto a branch whose entries match
-/// `W`'s, the setter that keeps `T`'s value here, and the consent that lands
-/// it.
+/// `T`'s value and `W`'s. Before the landing starts, then the rebind onto a
+/// branch whose entries match `W`'s, the setter that keeps `T`'s value here,
+/// and the consent that lands it; while it is stopped, the consent given to
+/// `--continue`, and the abort that lets a fresh landing judge again.
 fn judge_change(
-    landing: &Landing,
+    target: &str,
+    route: Route<'_>,
     change: &Changed,
-    candidates: &[String],
-    consent: &[String],
     label: &str,
     dir: &Path,
     vcs: &dyn Vcs,
 ) -> Judged {
     let (repo, subject) = match &change.repo {
-        RepoOperand::Project(_) => (
-            label.to_owned(),
-            format!("'{}''s top-level history", landing.target),
-        ),
-        RepoOperand::Member(path) => (path.to_string(), format!("'{}''s entry", landing.target)),
+        RepoOperand::Project(_) => (label.to_owned(), format!("'{target}''s top-level history")),
+        RepoOperand::Member(path) => (path.to_string(), format!("'{target}''s entry")),
     };
-    let mut lines: Vec<String> = match &change.removed {
-        Some(_) => vec!["removed".to_owned()],
-        None => change.fields.iter().map(FieldChange::line).collect(),
-    };
-    let mut forms: Vec<Form> = Vec::new();
-    let mut judging = State::TargetMemberChanges
+    let mut lines = change.lines();
+    let judging = State::TargetMemberChanges
         .of(&repo)
         .subject(subject)
-        .bind("<W>", &landing.feature)
         .bind("<m>", &change.repo)
-        .bind_each("<changed>", consent)
         .checkout(dir)
         .by_verb("land");
+    let Route::Fresh {
+        feature,
+        candidates,
+        consent,
+    } = route
+    else {
+        return judging
+            .listing(lines)
+            .only_forms(&[Form::C31Continue, Form::LostRace])
+            .judge(vcs);
+    };
+    let mut forms: Vec<Form> = Vec::new();
+    let mut judging = judging.bind("<W>", feature).bind_each("<changed>", consent);
     if let Some(first) = candidates.first() {
         lines.push(format!(
             "--target candidates whose entries match: {}",

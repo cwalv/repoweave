@@ -8346,8 +8346,6 @@ pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
     )
 }
 
-const APP: &str = "local/remotes/app";
-
 /// `stable`, declared from `main` with its own `stable-app` and `stable-lib`
 /// lines, and the primary back on `main`.
 fn stable_lines() -> Vec<Step> {

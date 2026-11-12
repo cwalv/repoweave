@@ -678,7 +678,6 @@ impl MemberPick {
     }
 }
 
-
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
 /// the landing read it, and how the landing moves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
