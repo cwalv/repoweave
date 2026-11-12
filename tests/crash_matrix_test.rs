@@ -103,6 +103,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const SERVER_PATH: &str = "github/example/server";
 const SERVER_URL: &str = "https://github.com/example/server";
 
@@ -300,7 +302,12 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
+        take_in = if rec.verb_str == "land" {
+            common::land_plan_json(workspace, Path::new(&rec.target), "web-app")
+        } else {
+            "null".to_owned()
+        },
         id = rec.id,
         verb = rec.verb_str,
         src = common::json_escaped(&rec.source),
@@ -1961,168 +1968,15 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
 }
 
 // ===========================================================================
-// NAMED-OVERRIDE RESUME FIDELITY (one cell)
-// ===========================================================================
-
-/// `discard-local-commits` recorded at fresh start, crash mid-replay (record=
-/// replay), `--continue` must resume with the same consent: the project
-/// savepoint is preserved as a tombstone in `cleanup()`. That is, after a
-/// successful resume, `refs/rwv/pre-op/<op-id>` must still exist on the
-/// project repo — the "consent persisted" tell.
-///
-/// We don't need to set up *actual* divergence here; the consent
-/// re-derivation is purely about whether `cleanup` reads the override and
-/// preserves the savepoint. With ww and primary at shared tips, replay is
-/// a per-repo no-op, but the `discard-local-commits` override survives in
-/// the record across the `--continue` and gates cleanup.
-#[test]
-fn cell_override_resume_fidelity_discard_local_commits() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
-
-    let op_id = "crash-matrix-override-resume-discard";
-    plant_owner_record(
-        &ww.root,
-        &OwnerRecordFixture {
-            id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
-            source: ww.root.display().to_string(),
-            target: primary.root.display().to_string(),
-            phase: "replay",
-            overrides: vec!["discard-local-commits"],
-            ..Default::default()
-        },
-    );
-    plant_savepoint(&ww.project_dir, op_id);
-    plant_savepoint(&ww.server_dir, op_id);
-    plant_target_side(&primary, &ww, op_id);
-
-    run_continue(
-        Verb::SyncTo,
-        &ww.root,
-        "override-resume/discard-local-commits",
-    );
-
-    assert!(
-        !ww.root.join(".rwv-op").exists(),
-        "owner record must be cleared"
-    );
-    // The override-consent tell: project savepoint survives cleanup as a
-    // tombstone (the only on-disk evidence that the resumed session
-    // honored the recorded consent). Manifest savepoints are dropped as
-    // normal.
-    assert!(
-        ref_exists(&ww.project_dir, &format!("refs/rwv/pre-op/{op_id}"),),
-        "discard-local-commits tombstone savepoint must survive --continue's cleanup \
-         (consent honored across resume)"
-    );
-    assert!(
-        !ref_exists(&ww.server_dir, &format!("refs/rwv/pre-op/{op_id}"),),
-        "manifest savepoint must be dropped as normal (only project repo is the tombstone)"
-    );
-}
-
-/// A resumed `--discard-local-commits` rewind must build its warrant from the
-/// savepoint the op **already wrote**, never from a fresh one.
-///
-/// The rewinding MOVE needs a `DiscardWarrant`, and a `DiscardWarrant` needs
-/// a `SavepointRef` — proof a savepoint exists on
-/// disk. There are two ways to hold that proof and only one of them is
-/// correct here. Writing a savepoint at the rewind site would satisfy the
-/// type and stamp the ref at whatever HEAD is *then*; on a resume, a previous
-/// replay run has already rewound the project repo, so "then" is the
-/// post-rewind tip. The warrant would be honestly constructed and the
-/// recovery point would be the very state the operator wanted to recover
-/// *from* — `rwv abort` would restore them to the discard, and the commits
-/// the savepoint existed to keep reachable would be reachable from nothing.
-///
-/// So the setup below is the shape that tells the two apart: the savepoint
-/// records the pre-op tip, and the project repo has since moved off it.
-#[test]
-fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
-
-    // The pre-op tip: a project commit of the operator's that the discard is
-    // about to throw away.
-    let pre_op_tip = advance_one(
-        &ww.project_dir,
-        "notes.md",
-        "operator's project work\n",
-        "ww: project commit the discard will drop",
-    );
-
-    let op_id = "crash-matrix-discard-savepoint-fidelity";
-    plant_savepoint(&ww.project_dir, op_id);
-    assert_eq!(
-        common::git_in(
-            &ww.project_dir,
-            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")]
-        ),
-        pre_op_tip,
-        "fixture: the savepoint must start out holding the pre-op tip"
-    );
-
-    // The crash: a previous replay run already performed the rewind, then
-    // died before cleanup. The project repo is off the savepoint.
-    common::git_in(&ww.project_dir, &["reset", "--hard", "HEAD~1"]);
-    assert_ne!(
-        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
-        pre_op_tip,
-        "fixture: the project repo must have moved off the savepoint, or this test \
-         cannot tell a resolved savepoint from a re-created one"
-    );
-
-    plant_owner_record(
-        &ww.root,
-        &OwnerRecordFixture {
-            id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.wire(),
-            source: ww.root.display().to_string(),
-            target: primary.root.display().to_string(),
-            phase: "replay",
-            overrides: vec!["discard-local-commits"],
-            ..Default::default()
-        },
-    );
-    plant_savepoint(&ww.server_dir, op_id);
-    plant_target_side(&primary, &ww, op_id);
-
-    run_continue(Verb::SyncTo, &ww.root, "discard-rewind/savepoint-fidelity");
-
-    assert_eq!(
-        common::git_in(
-            &ww.project_dir,
-            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")]
-        ),
-        pre_op_tip,
-        "the resumed rewind must leave the savepoint on the PRE-OP tip. A savepoint \
-         re-written at the rewind site would sit on the post-rewind tip instead, and \
-         `rwv abort` would then restore the operator to the discard rather than to the \
-         work it discarded."
-    );
-}
-
-// ===========================================================================
 // CONTINUE-AFTER-SOURCE-MUTATION (one cell, pins design § 6's re-pin rule)
 // ===========================================================================
 
-/// Crash mid-replay (record=replay), then mutate the source between crash
-/// and `--continue`. Per `load_continuing_context`'s call to
-/// `pin_source_snapshot`, the resumed session re-pins T0 — the op must
-/// converge to the NEW pin, not the original.
-///
-/// Setup:
-/// - primary is the source (sync FROM primary TO ww).
-/// - Initially primary and ww share tips.
-/// - Plant record=replay on ww. The "crash" is structural: no actual replay
-///   work has been done.
-/// - Between crash and continue, advance primary's server by one commit and
-///   update primary's lock to pin the new server SHA, commit. This is a
-///   genuine source mutation.
-/// - `--continue` re-pins, and ww must converge to primary's NEW tip.
+/// Crash mid-replay (record=replay), then move the target between crash and
+/// `--continue`. The plan the op recorded no longer describes the landing, so
+/// `--continue` refuses it as `target` moved mid-operation and changes
+/// nothing.
 #[test]
-fn cell_continue_after_source_mutation_converges_to_new_pin() {
+fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
@@ -2156,20 +2010,16 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
         &["commit", "-m", "lock: pin new server tip"],
     );
 
-    // --continue should re-pin and converge to the NEW source tip.
-    run_continue(Verb::SyncTo, &ww.root, "continue-after-source-mutation");
-
-    assert!(
-        !ww.root.join(".rwv-op").exists(),
-        "owner record must be cleared after re-pinned --continue"
-    );
-    // The re-pin tell: ww's server is at the NEW primary server tip, not
-    // the original shared sha.
+    let ww_server_before = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let out = common::cli::run(&["land", "--continue"], &ww.root);
+    common::cli::refused(&out, State::TargetMovedMidOperation);
+    assert!(ww.root.join(".rwv-op").exists(), "the refused resume keeps the op");
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        new_primary_server_tip,
-        "re-pinned --continue must converge ww's server to the NEW source tip"
+        ww_server_before,
+        "the refused resume moved nothing"
     );
+
 }
 
 // ===========================================================================

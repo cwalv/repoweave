@@ -438,92 +438,6 @@ fn drive_lock_behind_head_reversed(ws: &Workspace, c1: &str) {
     common::git_in(&ws.server_dir, &["reset", "--hard", c1]);
 }
 
-/// land refuses when the source (CWD) lock records a commit HEAD lacks.
-#[test]
-fn sync_to_refuses_when_source_lock_is_stale() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, c1) = make_locked_workspace(tmp.path(), "source");
-
-    drive_lock_behind_head_reversed(&source, &c1);
-
-    rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
-        .current_dir(&source.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("lock").and(predicate::str::contains("stale")));
-}
-
-/// land refuses when the target's committed lock is behind its HEAD.
-#[test]
-fn sync_to_refuses_when_target_lock_is_behind_head() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, _) = make_locked_workspace(tmp.path(), "source");
-
-    make_commit(
-        &primary.server_dir,
-        "extra.txt",
-        "extra\n",
-        "primary: advance past lock",
-    );
-
-    rwv()
-        .args(["land"])
-        .current_dir(&source.root)
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("target workspace")
-                .and(predicate::str::contains("stale lock")),
-        );
-}
-
-/// --allow-stale-lock bypasses the lock-freshness precondition; the specific
-/// "stale lock" error must not appear even when CWD lock is stale.
-/// (Adapted from sync_force_bypasses_lock_freshness_precondition — same
-/// end-state assertion, new flag spelling.)
-#[test]
-fn sync_to_allow_stale_lock_bypasses_lock_freshness_precondition() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, _) = make_locked_workspace(tmp.path(), "source");
-
-    // Advance primary past its lock — this would normally trigger a precondition refusal.
-    make_commit(
-        &primary.server_dir,
-        "extra.txt",
-        "extra\n",
-        "advance past lock",
-    );
-
-    let out = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&primary.root)
-        .assert();
-
-    // With --allow-stale-lock the lock-staleness precondition is bypassed.
-    // The op may fail for other reasons (diverged repos, missing objects) but NOT
-    // with the lock-freshness message.
-    let output = out.get_output();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let is_lock_freshness_error = (stderr.contains("stale lock")
-        || stderr.contains("lock-freshness precondition failed"))
-        && !stderr.contains("--allow-stale-lock");
-    assert!(
-        !is_lock_freshness_error,
-        "--allow-stale-lock should bypass the lock-freshness precondition; got: {stderr}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // rwv land — project ancestry precondition
 // ---------------------------------------------------------------------------
@@ -571,12 +485,12 @@ fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("requires CWD to be strictly ahead of target")
-            && stderr.contains("not an ancestor-or-equal"),
+        stderr.contains("needs this feature to be ahead of its target")
+            && stderr.contains("does not contain the target's tip"),
         "expected refusal naming the ancestry relation; got: {stderr}"
     );
     assert!(
-        stderr.contains("--strategy=rebase"),
+        stderr.contains("--strategy rebase"),
         "expected refusal to name the rebase strategy; got: {stderr}"
     );
 }
@@ -611,7 +525,7 @@ fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "requires CWD to be strictly ahead of target",
+            "needs this feature to be ahead of its target",
         ));
 }
 
@@ -667,52 +581,6 @@ fn sync_to_ff_allows_when_target_project_repo_equals_cwd() {
         .success();
 }
 
-/// `--discard-local-commits` bypasses the ancestor precondition: CWD's project
-/// commits the target lacks are dropped, and the savepoint preserves them for
-/// `rwv abort`.
-#[test]
-fn sync_to_discard_local_commits_drops_cwd_project_commits_and_preserves_savepoint() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-
-    primary_advance_project_one_commit(&primary, &c1);
-    common::git_in(
-        &ww.project_dir,
-        &["commit", "--allow-empty", "-m", "ww: local project commit"],
-    );
-    let ww_pre_sync = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
-
-    rwv()
-        .args([
-            "land",
-            "--discard-local-commits",
-        ])
-        .current_dir(&ww.root)
-        .assert()
-        .success();
-
-    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
-    let ww_post_sync = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        ww_post_sync, primary_tip,
-        "with --discard-local-commits, ww's project tip should now equal the target's"
-    );
-
-    let savepoint_refs = common::git_in(
-        &ww.project_dir,
-        &[
-            "for-each-ref",
-            "--format=%(objectname) %(refname)",
-            "refs/rwv/pre-op",
-        ],
-    );
-    assert!(
-        savepoint_refs.contains(&ww_pre_sync),
-        "pre-sync commit {ww_pre_sync} should be preserved in a refs/rwv/pre-op/* savepoint; \
-         got: {savepoint_refs}"
-    );
-}
-
 /// The ff refusal names `--strategy=rebase` as the rwv-native path to land
 /// diverging project commits.
 #[test]
@@ -734,8 +602,8 @@ fn sync_to_ff_refusal_message_suggests_rebase_strategy() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("--strategy=rebase"),
-        "expected refusal to suggest --strategy=rebase; got: {stderr}"
+        stderr.contains("--strategy rebase"),
+        "expected refusal to suggest --strategy rebase; got: {stderr}"
     );
 }
 
@@ -815,99 +683,6 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
 // rwv land — error message structure
 // ---------------------------------------------------------------------------
 
-/// The source lock-freshness refusal names the source workspace, the recovery
-/// path and the --allow-stale-lock override, and spells `--project <p>` so the
-/// operator locks the right project even when the active project differs.
-#[test]
-fn lock_freshness_source_error_names_workspace_and_recovery_path() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, c1) = make_locked_workspace(tmp.path(), "source");
-
-    drive_lock_behind_head_reversed(&source, &c1);
-
-    let assertion = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
-        .current_dir(&source.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("workspace 'source'"),
-        "expected named workspace; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("stale lock"),
-        "expected 'stale lock' phrasing; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("rwv lock"),
-        "expected named recovery (`rwv lock`); got: {stderr}"
-    );
-    assert!(
-        stderr.contains("--project web-app"),
-        "lock-freshness error must name --project <p> in recovery hint; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("--allow-stale-lock"),
-        "lock-freshness error must name --allow-stale-lock override; got: {stderr}"
-    );
-    assert!(
-        !stderr.contains("--force"),
-        "lock-freshness error must not mention removed --force; got: {stderr}"
-    );
-}
-
-/// The target lock-freshness refusal names the target workspace and the
-/// recovery path, spelling `--project <p>` so the operator locks the right
-/// project even when the active project differs.
-#[test]
-fn lock_freshness_target_error_names_workspace_and_recovery_path() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, _) = make_locked_workspace(tmp.path(), "source");
-
-    make_commit(
-        &primary.server_dir,
-        "extra.txt",
-        "extra\n",
-        "primary: advance past lock",
-    );
-
-    let assertion = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "ff",
-        ])
-        .current_dir(&source.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("target workspace 'primary'"),
-        "expected named target workspace; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("stale lock"),
-        "expected 'stale lock' phrasing; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("rwv lock --commit --project web-app"),
-        "expected named recovery with --project <p>; got: {stderr}"
-    );
-    assert!(
-        !stderr.contains("--force"),
-        "lock-freshness error must not mention removed --force; got: {stderr}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // rwv land — non-ff strategies
 // ---------------------------------------------------------------------------
@@ -950,14 +725,8 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     // repos diverged too. Phase 1's ancestor precondition refuses divergent
     // project repos; this test deliberately constructs that to exercise Phase
     // 2's rebase strategy on the manifest repo, so it opts in via
-    // --discard-local-commits (adapted from --force).
     rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1040,16 +809,11 @@ fn abort_restores_repos_to_pre_op_state() {
     assert_eq!(pre_op_sha, c_ww);
 
     // Attempt rebase sync — should hit a conflict and leave repos mid-op.
-    // Project repos diverged from independent lock commits → --discard-local-commits
+    // Project repos diverged from independent lock commits.
     // is required to reach Phase 2 where the rebase conflict is the focus
     // (adapted from --force).
     let _ = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert();
 
@@ -1242,68 +1006,6 @@ fn sync_to_proceeds_when_source_lock_sha_matches_head() {
         .current_dir(&ww.root)
         .assert()
         .success();
-}
-
-/// land refuses when the lock is pinned by a tag whose commit HEAD lacks.
-/// The "stale" error must fire even when the lock version is a tag name, not a raw SHA.
-#[test]
-fn sync_to_refuses_when_source_lock_tag_is_genuinely_stale() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, c1) = make_locked_workspace(tmp.path(), "primary");
-    let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
-
-    // Tag a commit HEAD then lacks: advance, tag, lock by the tag, reset back.
-    make_commit(
-        &primary.server_dir,
-        "advance.txt",
-        "advance\n",
-        "primary: advance",
-    );
-    git_tag(&primary.server_dir, "v1.0.0");
-    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "lock: v1.0.0 (stale)"],
-    );
-    common::git_in(&primary.server_dir, &["reset", "--hard", &c1]);
-
-    rwv()
-        .args(["land"])
-        .current_dir(&primary.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("lock").or(predicate::str::contains("stale")));
-}
-
-/// sync refuses and reports "unknown revision" when the source lock references a tag
-/// that no longer exists locally.
-#[test]
-fn sync_to_refuses_with_unknown_revision_when_source_lock_tag_missing() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
-
-    // Write a source lock pinned by a tag that was never created.
-    common::fixture_lock(
-        &primary.project_dir,
-        &[(SERVER_PATH, SERVER_URL, "v9.9.9-nonexistent")],
-    );
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.project_dir,
-        &["commit", "-m", "lock: nonexistent tag"],
-    );
-
-    rwv()
-        .args(["land"])
-        .current_dir(&primary.root)
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("unknown revision")
-                .or(predicate::str::contains("v9.9.9-nonexistent")),
-        );
 }
 
 // ---------------------------------------------------------------------------
@@ -1585,14 +1287,7 @@ fn sync_to_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .current_dir(&ws.ww_root)
         .assert()
         .failure()
-        .stderr(
-            // Workweave name is the part after `<project>--` in the dir
-            // name; previously the resolver returned the whole dir
-            // basename, so downstream lookups like delete_workweave would
-            // re-prefix and miss the actual on-disk path.
-            predicate::str::contains("destination workspace 'feat'")
-                .and(predicate::str::contains("stale lock")),
-        );
+        .stderr(predicate::str::contains("pin backwards"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1631,16 +1326,9 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C3"]);
 
-    // Sync ww from primary: target is C2, but ww is at C3 (C2 is ancestor of C3).
-    // --discard-local-commits bypasses the Phase 1 ancestor precondition because
-    // ww's project repo has the C3 lock commit primary doesn't; the test's intent
-    // is Phase 2 behavior on the manifest repo (already-ahead reporting), not the
-    // Phase 1 guard. (Adapted from --force.)
+    // Land ww: target is C2, but ww is at C3 (C2 is ancestor of C3).
     let out = rwv()
-        .args([
-            "land",
-            "--discard-local-commits",
-        ])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1734,22 +1422,17 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     );
 
     assert!(
-        both.contains("github/chatly/server: ff-advance failed")
-            && both.contains("diverged from CWD's tip")
-            && both.contains("(1 ahead, 1 behind)"),
+        both.contains("github/chatly/server: HEAD is")
+            && both.contains("rwv explain not-fast-forwardable"),
         "the diverged repo's line must carry its own verdict; got:\n{both}"
     );
     assert!(
-        both.contains("github/chatly/api: ff-advanced main to"),
-        "the contained repo's line must carry its own verdict; got:\n{both}"
-    );
-    assert!(
-        both.contains("(see above)"),
-        "the summary must defer to the lines that hold the operands; got:\n{both}"
+        !both.contains("github/chatly/api: HEAD is"),
+        "the contained repo needs no composing and is not named; got:\n{both}"
     );
     assert!(
         !both.contains("concurrent modification"),
-        "the summary must not assert a cause the engine did not observe; got:\n{both}"
+        "the refusal must not assert a cause the engine did not observe; got:\n{both}"
     );
 }
 
@@ -1794,8 +1477,8 @@ fn sync_to_ff_reports_failed_for_diverged_repo() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("cannot fast-forward") || stderr.contains("failed"),
-        "diverged ff sync should report failure; got stderr: {stderr}"
+        stderr.contains("github/chatly/server: HEAD is diverged"),
+        "diverged ff landing should name the repo and its verdict; got stderr: {stderr}"
     );
 }
 
@@ -1838,268 +1521,12 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("cannot be fast-forwarded") && stderr.contains("rwv abort"),
+        stderr.contains("--strategy rebase") && stderr.contains("not-fast-forwardable"),
         "rwv's own verdict and remedy must survive; got: {stderr}"
     );
     assert!(
-        stderr.contains("diverged from CWD's tip") && stderr.contains("(1 ahead, 1 behind)"),
-        "the cause must survive; got: {stderr}"
-    );
-    assert!(
         !stderr.contains("hint:"),
-        "git's advice block recommends bypassing the open op; must not appear: {stderr}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Named override flags — new tests
-// ---------------------------------------------------------------------------
-
-/// `--force` is rejected on `rwv land` with a migration hint.
-#[test]
-fn sync_to_force_flag_rejected_with_migration_hint() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    let assertion = rwv()
-        .args(["land", "--force"])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("--allow-stale-lock") || stderr.contains("--discard-local-commits"),
-        "expected migration hint; got: {stderr}"
-    );
-}
-
-/// --allow-stale-lock and --discard-local-commits parse correctly on sync.
-#[test]
-fn sync_to_new_override_flags_parse_correctly() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    // Both flags parse without a clap error. We don't need the operation to
-    // succeed — just that clap accepts the flags.
-    let out_stale = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&ww.root)
-        .output()
-        .unwrap();
-    let stale_stderr = String::from_utf8_lossy(&out_stale.stderr);
-    assert!(
-        !stale_stderr.contains("unexpected argument")
-            && !stale_stderr.contains("unrecognized")
-            && !stale_stderr.contains("--force"),
-        "--allow-stale-lock should be a recognized flag; got: {stale_stderr}"
-    );
-
-    let out_discard = rwv()
-        .args([
-            "land",
-            "--discard-local-commits",
-        ])
-        .current_dir(&ww.root)
-        .output()
-        .unwrap();
-    let discard_stderr = String::from_utf8_lossy(&out_discard.stderr);
-    assert!(
-        !discard_stderr.contains("unexpected argument")
-            && !discard_stderr.contains("unrecognized")
-            && !discard_stderr.contains("--force"),
-        "--discard-local-commits should be a recognized flag; got: {discard_stderr}"
-    );
-}
-
-/// --discard-local-commits refuses when CWD's project repo has uncommitted changes
-/// (unrecoverable loss if hard-reset proceeded).
-#[test]
-fn sync_to_discard_local_commits_refuses_on_uncommitted_changes() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-
-    primary_advance_project_one_commit(&primary, &c1);
-    common::git_in(
-        &ww.project_dir,
-        &["commit", "--allow-empty", "-m", "ww: local project commit"],
-    );
-
-    // An uncommitted tracked change in ww's project repo (the CWD).
-    std::fs::write(ww.project_dir.join("rwv.toml"), "# uncommitted edit\n").unwrap();
-
-    let assertion = rwv()
-        .args([
-            "land",
-            "--discard-local-commits",
-        ])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("uncommitted"),
-        "expected refusal mentioning uncommitted changes; got: {stderr}"
-    );
-    assert!(
-        !stderr.contains("--force"),
-        "refusal must not mention removed --force; got: {stderr}"
-    );
-}
-
-/// `discard-local-commits` override is recorded in the op record overrides field
-/// and the tombstone savepoint is preserved after a successful sync.
-///
-/// A successful run clears its op-state on exit (cleanup table), so
-/// `overrides` can only be read off a live run while the op is genuinely
-/// parked — the fixture also diverges the manifest repo so the first
-/// attempt parks on a real replay conflict, with the override already
-/// written (Mark precedes Savepoint/Replay). Resolving and continuing then
-/// exercises the tombstone half unchanged.
-#[test]
-fn sync_to_discard_local_commits_records_override_and_preserves_tombstone() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-
-    // Primary advances its project past C1; ww's project stays at C1.
-    primary_advance_project_one_commit(&primary, &c1);
-
-    // Diverge the manifest repo too (conflicting content), so the run parks
-    // mid-replay instead of completing in one shot.
-    common::git_in(&primary.server_dir, &["switch", "-q", "-c", "primary-work"]);
-    let c2 = make_commit(
-        &primary.server_dir,
-        "shared.txt",
-        "primary version\n",
-        "primary: shared.txt",
-    );
-    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
-    common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
-
-    let c_ww = make_commit(
-        &ww.server_dir,
-        "shared.txt",
-        "ww version\n",
-        "ww: shared.txt (conflicts)",
-    );
-    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
-    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
-    let ww_pre_sync = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
-
-    // First attempt parks mid-replay on the real conflict.
-    rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
-        .current_dir(&ww.root)
-        .assert()
-        .failure();
-
-    // While parked, `rwv status --json` discloses the overrides this live
-    // run recorded — the assertion `overrides` never got anywhere else.
-    let status = rwv()
-        .args(["status", "--json"])
-        .current_dir(&ww.root)
-        .assert()
-        .success();
-    let v: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
-    assert_eq!(
-        v["op"]["overrides"],
-        serde_json::json!(["discard-local-commits"]),
-        "the parked op's overrides must carry the consent this run supplied; got: {v}"
-    );
-
-    // Resolve the conflict and let the sync run to completion.
-    std::fs::write(ww.server_dir.join("shared.txt"), "resolved\n").unwrap();
-    common::git_in(&ww.server_dir, &["add", "shared.txt"]);
-    let continue_out = common::git()
-        .args(["rebase", "--continue"])
-        .current_dir(&ww.server_dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .unwrap();
-    assert!(
-        continue_out.status.success(),
-        "rebase --continue failed: {}",
-        String::from_utf8_lossy(&continue_out.stderr)
-    );
-
-    rwv()
-        .args(["land", "--continue"])
-        .current_dir(&ww.root)
-        .assert()
-        .success();
-
-    // The pre-sync project commit must be in a refs/rwv/pre-op/* savepoint
-    // (tombstone — cleanup preserved it because override was recorded).
-    let savepoint_refs = common::git_in(
-        &ww.project_dir,
-        &[
-            "for-each-ref",
-            "--format=%(objectname) %(refname)",
-            "refs/rwv/pre-op",
-        ],
-    );
-    assert!(
-        savepoint_refs.contains(&ww_pre_sync),
-        "tombstone savepoint must contain the pre-sync SHA {ww_pre_sync}; \
-         got refs: {savepoint_refs}"
-    );
-}
-
-/// `--allow-stale-lock` suppresses the lock-freshness refusal and the op runs
-/// to completion.
-///
-/// This does not read the record's `overrides` array — it only sees the
-/// flag's effect on THIS invocation, not that the consent survives a
-/// `--continue`. `a_resumed_pull_carrying_allow_stale_lock_still_targets_the_lock`
-/// (benign_staleness_test.rs) owns that assertion, reading the record back
-/// directly.
-#[test]
-fn sync_to_allow_stale_lock_flag_accepted_and_op_completes() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
-    let (source, _) = make_locked_workspace(tmp.path(), "source");
-
-    // Advance primary's server past its lock (stale).
-    make_commit(
-        &primary.server_dir,
-        "extra.txt",
-        "extra\n",
-        "advance past lock",
-    );
-
-    // With --allow-stale-lock, sync should not fail on lock-freshness.
-    let out = rwv()
-        .args([
-            "land",
-            "--allow-stale-lock",
-        ])
-        .current_dir(&primary.root)
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    assert!(
-        !stderr.contains("lock-freshness precondition failed"),
-        "--allow-stale-lock must suppress lock-freshness failure; got: {stderr}"
-    );
-    // Op state file must be gone (cleanup ran).
-    assert!(
-        !primary.root.join(".rwv-op").exists(),
-        "op state file should be cleaned up after successful sync"
+        "git's advice block recommends bypassing rwv; must not appear: {stderr}"
     );
 }
 

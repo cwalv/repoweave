@@ -2668,6 +2668,12 @@ fn run_preconditions_after_acquire(
         }
     }
     let plan = crate::land::judge(landing, cwd_workspace_dir, cwd_ctx.primary_path(), &mut report)?;
+    if strategy == SyncStrategy::Ff {
+        hold(
+            refuse_members_that_need_composing(&cwd_project.manifest, cwd_workspace_dir, &plan),
+            &mut report,
+        );
+    }
     if matches!(strategy, SyncStrategy::Rebase) {
         hold(
             crate::lock_driver::refuse_unmigrated(
@@ -3016,10 +3022,7 @@ fn load_continuing_context<'a>(
     // A target that moved after the landing composed is a plan the landing no
     // longer describes: only `rwv abort` and a fresh landing judge the new
     // tips.
-    if matches!(
-        record.phase,
-        op_state::OpPhase::AdvanceTarget | op_state::OpPhase::Relock
-    ) {
+    if !matches!(record.phase, op_state::OpPhase::Retire) {
         let composed = record
             .tips
             .converged()
@@ -3206,6 +3209,42 @@ fn check_sync_to_ff_precondition(
         );
     }
     Ok(())
+}
+
+/// Under `--strategy ff` nothing is composed, so every member whose branch
+/// does not contain the tip it lands on refuses.
+fn refuse_members_that_need_composing(
+    manifest: &Manifest,
+    root: &Path,
+    plan: &crate::land::Plan,
+) -> anyhow::Result<()> {
+    let mut behind: Vec<String> = Vec::new();
+    for (path, source) in &plan.sources {
+        let Some(entry) = manifest.get_entry(path) else {
+            continue;
+        };
+        let vcs = vcs_for(entry.vcs_type);
+        let dir = root.join(path.as_path());
+        let Ok(head) = vcs.head_revision(&dir) else {
+            continue;
+        };
+        let source = ResolvedRevisionId::from(source.clone());
+        if !vcs.is_ancestor(&dir, &source, &head).unwrap_or(false) {
+            let shape = Containment::observe(vcs.as_ref(), &dir, &head, &source)
+                .map(|c| c.describe(&format!("the tip it lands on ({})", source.id().short())))
+                .unwrap_or_else(|| format!("not a descendant of {}", source.id().short()));
+            behind.push(format!("{path}: HEAD is {shape}"));
+        }
+    }
+    if behind.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::NotFastForwardable,
+        "land --strategy ff composes nothing, and these members do not contain the tip \
+         they land on:\n  {}\nRerun with `--strategy rebase` to compose them onto it first.",
+        behind.join("\n  ")
+    );
 }
 
 /// land dirty-target preflight: refuse if the target workweave has
