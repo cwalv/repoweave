@@ -3448,6 +3448,70 @@ pub fn both_sides_move_app_conflictingly() -> Vec<Step> {
     ]
 }
 
+/// `pull --merge-upstream` stopped on its conflict in `app`, its merge
+/// having also brought in `a-clean.txt` cleanly; the operator edits that
+/// file and does not stage it, so the VCS's own abort of the merge refuses.
+/// `rwv abort` refuses with the VCS's message and the choices that clear
+/// it; the printed `--abandon-foreign-tip` keeps the edit as a backup and
+/// puts `app` back.
+pub fn pull_abort_over_a_cancel_the_vcs_refuses() -> Scenario {
+    scenario(
+        "pull abort over a cancel the VCS refuses",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::rwv(&a(), &["member", "remove", "local/remotes/docs"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+            Step::commit(&a(), Repo::App, "a-clean"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::App, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::App), "main"),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::hand_edit(&b(), Repo::App, "README", "app", "beta"),
+            Step::git(&b(), Repo::App, &["commit", "-qam", "beta"]),
+            Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["pull", "--merge-upstream"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::hand_edit(
+                &b(),
+                Repo::App,
+                "a-clean.txt",
+                "a-clean",
+                "edited mid-merge",
+            ),
+            Step::rwv(&b(), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("could not be canceled"))
+                .claim(Claim::OutputContains("not uptodate"))
+                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip")),
+            Step::git(
+                &b(),
+                Repo::App,
+                &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            ),
+            Step::rwv_printed(&b(), "rwv abort --abandon-foreign-tip")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "its uncommitted edits are kept as backup",
+                )),
+            Step::git(
+                &b(),
+                Repo::App,
+                &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            )
+            .expect(Exit::Code(1)),
+            Step::git(
+                &b(),
+                Repo::App,
+                &["log", "--all", "--format=kept %s", "-Sedited mid-merge"],
+            )
+            .claim(Claim::OutputContains("kept ")),
+            Step::rwv(&b(), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        ],
+    )
+}
+
 pub fn merge_conflict_continues() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
     steps.extend([

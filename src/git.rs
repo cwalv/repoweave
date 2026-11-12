@@ -5195,6 +5195,39 @@ impl GitVcs {
         Ok(())
     }
 
+    /// End an operation whose own abort the VCS refused, under the
+    /// operator's `--abandon-foreign-tip`: keep what the move discards as a
+    /// backup, then move the checkout hard to `to`, where canceling returns.
+    fn finish_refused_cancel(
+        &self,
+        repo: &Path,
+        to: &ResolvedRevisionId,
+        kept: &mut Vec<KeptWork>,
+    ) -> Result<(), VcsError> {
+        self.keep_before_discarding(repo, to, kept)?;
+        Self::run(["reset", "--hard", to.id().as_str()], repo).map(|_| ())
+    }
+
+    /// Cancel the operation `stopped` in `repo` as its own abort does,
+    /// handing back the VCS's refusal where it refuses.
+    fn cancel_stopped(&self, repo: &Path, stopped: ConflictOp) -> Result<(), VcsError> {
+        let verb = match stopped {
+            ConflictOp::Rebase => "rebase",
+            ConflictOp::Merge => "merge",
+            ConflictOp::CherryPick => "cherry-pick",
+            ConflictOp::Revert => "revert",
+        };
+        Self::run([verb, "--abort"], repo)?;
+        if self.mid_op(repo).is_some() {
+            return Err(VcsError::CommandFailed {
+                args: vec![verb.to_owned(), "--abort".to_owned()],
+                repo: repo.to_path_buf(),
+                stderr: format!("the {stopped} in progress is still in progress"),
+            });
+        }
+        Ok(())
+    }
+
     /// Whether the operation `stopped` in `repo` takes in what one of the
     /// op's journaled `steps` does: a merge of its source, a copy of its
     /// commit, a rebase onto its `onto` whose commits so far each replay one
@@ -5335,13 +5368,22 @@ impl GitVcs {
                 };
                 self.keep_before_discarding(repo, &to, kept)?;
             }
-            self.cancel_in_flight_op(repo);
-            if self.mid_op(repo).is_some() {
-                return Err(VcsError::CommandFailed {
-                    args: vec![stopped.to_string(), "--abort".to_owned()],
-                    repo: repo.to_path_buf(),
-                    stderr: format!("the {stopped} in progress could not be canceled"),
-                });
+            if let Err(refused) = self.cancel_stopped(repo, stopped) {
+                let why = match refused {
+                    VcsError::CommandFailed { stderr, .. } => stderr.trim().to_owned(),
+                    other => other.to_string(),
+                };
+                if foreign_tip_policy == ForeignTipPolicy::Refuse {
+                    return Ok(VerifiedRestoreOutcome::CancelRefused { stopped, why });
+                }
+                let to = match self.cancel_returns_to(repo)? {
+                    Some(to) => to,
+                    None => self.head_revision(repo)?,
+                };
+                self.finish_refused_cancel(repo, &to, kept)?;
+                if self.mid_op(repo).is_some() {
+                    return Ok(VerifiedRestoreOutcome::CancelRefused { stopped, why });
+                }
             }
             let then =
                 self.restore_checkout_savepoint(repo, key, attribution, foreign_tip_policy, kept)?;

@@ -386,11 +386,12 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"--hard\"",
-        count: 3,
+        count: 4,
         callers: &[
             ("reset_and_drop_savepoint", 3),
             ("hard_reset", 1),
             ("discard_edits_kept", 1),
+            ("finish_refused_cancel", 1),
         ],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait: \
@@ -419,7 +420,13 @@ const ALLOWLIST: &[Allowed] = &[
             checkout switch back over edits that collide with its saved \
             branch. It runs only under ForeignTipPolicy::Abandon, the \
             operator naming that repo, and only after the edits are kept as \
-            a backup; HEAD does not move, so no commit is touched. The unverified \
+            a backup; HEAD does not move, so no commit is touched. \
+            (4) finish_refused_cancel(): ends an operation in progress whose \
+            own abort the VCS refused (an unstaged edit to a file a merge \
+            staged cleanly), by a reset to where canceling returns. It runs \
+            only under ForeignTipPolicy::Abandon, the operator naming that \
+            repo, and only after the edits the reset discards and a detached \
+            HEAD's commits are kept as backups. The unverified \
             restore_savepoint() that used to sit between these two — a bare \
             `reset --hard` on the public trait, gated by nothing — was \
             deleted, so verified_restore_savepoint is the only way to reach \

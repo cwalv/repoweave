@@ -1100,6 +1100,10 @@ pub enum VerifiedRestoreOutcome {
     /// The checkout is stopped in an operation the op cannot attribute to
     /// itself: one it never starts there begun on a tip it moved, or one
     /// begun on a tip it never wrote. Nothing was touched.
+    /// The checkout is stopped in an operation abort would cancel, and the
+    /// VCS refused to cancel it, saying `why`. Its edits, where any were kept
+    /// first, are in the backup the restore reports.
+    CancelRefused { stopped: ConflictOp, why: String },
     StoppedForeign {
         stopped: ConflictOp,
         /// Where canceling the operation would leave HEAD.

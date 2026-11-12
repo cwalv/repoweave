@@ -762,6 +762,7 @@ every_scenario!(
     cherry_pick_abort_leaves_an_untouched_members_merge,
     pull_abort_refuses_a_merge_begun_on_the_operators_commit,
     pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint,
+    pull_abort_over_a_cancel_the_vcs_refuses,
     abort_refuses_an_interactive_rebase_the_operator_began,
     cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit,
     pull_abort_refuses_a_merge_in_a_member_it_never_merges,
@@ -2880,6 +2881,13 @@ fn update_remote_abort_over_a_ref_moved_since_prints_the_choice_that_clears_it()
 fn abort_keeps_an_own_commit_on_a_rebase_finished_by_hand() {
     runner::run(scenarios::vcs_continue_mid_rebase_then_an_own_commit())
         .assert_fully_decided_green();
+}
+
+/// A cancel the VCS refuses is refused with its message and a choice that,
+/// run, keeps the edit and clears the state.
+#[test]
+fn pull_abort_over_a_cancel_the_vcs_refuses() {
+    runner::run(scenarios::pull_abort_over_a_cancel_the_vcs_refuses()).assert_fully_decided_green();
 }
 
 /// An operator's merge begun at the savepoint, in a repo the pull merges,

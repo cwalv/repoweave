@@ -8951,6 +8951,22 @@ fn report_abort_outcome(
                 .blocked
                 .push((named.clone(), format!("{choice}\nthen rerun:\n\trwv abort")));
         }
+        VerifiedRestoreOutcome::CancelRefused { stopped, why } => {
+            tally.any_foreign = true;
+            let dir = repo_abs.display().to_string();
+            eprintln!("  {label}: the {stopped} in progress could not be canceled: {why}");
+            tally.blocked.push((
+                named.clone(),
+                format!(
+                    "commit or set aside the edits it names, as this shows:\n\t{}\n\
+                     then rerun:\n\trwv abort\n\
+                     or give them up, kept as a backup first:\n\
+                     \trwv abort --abandon-foreign-tip {named}",
+                    vcs.hint(crate::vcs::VcsAction::Status)
+                        .replace("<checkout>", &dir)
+                ),
+            ));
+        }
         VerifiedRestoreOutcome::EditsBlockSwitchBack { savepoint } => {
             tally.any_foreign = true;
             let dir = repo_abs.display().to_string();
