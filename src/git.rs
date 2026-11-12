@@ -9720,7 +9720,9 @@ mod name_reading_tests {
         );
         refresh_paths_from_head(&worktree, &[AWKWARD.to_owned()], &[]).unwrap();
         assert_eq!(
-            std::fs::read_to_string(worktree.join(AWKWARD)).unwrap(),
+            std::fs::read_to_string(worktree.join(AWKWARD))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "ours\n"
         );
         assert!(path_standings(&worktree, left.as_ref()).unwrap().is_empty());
