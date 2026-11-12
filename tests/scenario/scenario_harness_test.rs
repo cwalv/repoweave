@@ -676,6 +676,7 @@ every_scenario!(
         scenarios::ReceivingCase::Created,
         scenarios::AbortFrom::Target
     ),
+    cherry_pick_abort_leaves_an_untouched_members_merge,
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2384,6 +2385,14 @@ holding_rwv! {
             .assert_fully_decided_green();
         }
     }
+}
+
+/// A member the port never touches, stopped in the operator's own merge, is
+/// left in it by `rwv abort`: no cancel, no reset.
+#[test]
+fn a_cherry_pick_abort_leaves_a_merge_in_a_member_it_never_touches() {
+    runner::run(scenarios::cherry_pick_abort_leaves_an_untouched_members_merge())
+        .assert_fully_decided_green();
 }
 
 holding_rwv! {

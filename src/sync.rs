@@ -6606,6 +6606,10 @@ pub fn run_abort(
     }
 
     let mut tally = AbortTally::default();
+    let operates_in = match &reading {
+        op_state::OwnerReading::Whole(record) => Some(record.operates_in()),
+        op_state::OwnerReading::HeaderOnly { .. } => None,
+    };
 
     let mut members = OpMembers::default();
     members.take_project(
@@ -6622,6 +6626,7 @@ pub fn run_abort(
         &op_id,
         tips,
         moved_in_target,
+        operates_in.as_ref(),
         abandon,
         &mut tally,
     );
@@ -6652,6 +6657,7 @@ pub fn run_abort(
                             &op_id,
                             tips,
                             moved_in_target,
+                            operates_in.as_ref(),
                             abandon,
                             &mut tally,
                         );
@@ -6772,6 +6778,7 @@ fn restore_abort_workspace(
     op_id: &OpId,
     tips: Option<&op_state::PhaseTips>,
     moved_in_target: Option<&[RepoKey]>,
+    operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -6819,16 +6826,22 @@ fn restore_abort_workspace(
         if let Some(head) = &head {
             moved_from.insert(abs.clone(), head.clone());
         }
-        if let (AbortSide::LandTarget, Some(stopped)) = (side, vcs.mid_op(&abs)) {
-            if unmoved_target {
+        let someone_elses = match side {
+            AbortSide::LandTarget => true,
+            AbortSide::Replay => operates_in.is_none_or(|ours| !ours.contains(&repo_key)),
+        };
+        if let (true, Some(stopped)) = (someone_elses, vcs.mid_op(&abs)) {
+            let left_alone =
+                unmoved_target || (matches!(side, AbortSide::Replay) && operates_in.is_some());
+            if left_alone {
                 outln!(
-                    "  {label}{named}: left stopped in a {stopped}, which this landing never starts"
+                    "  {label}{named}: left stopped in a {stopped}, which this operation never starts there"
                 );
                 let _ = vcs.drop_checkout_savepoint(&abs, &restore_key);
             } else {
                 eprintln!(
-                    "  {label}{named}: stopped in a {stopped}, which this landing never starts, so \
-                     it is left as it is; finish or abort that {stopped} there, then rerun `rwv abort`"
+                    "  {label}{named}: stopped in a {stopped}, which this operation never starts there, \
+                     so it is left as it is; finish or abort that {stopped} there, then rerun `rwv abort`"
                 );
                 tally.any_foreign = true;
             }

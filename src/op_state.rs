@@ -971,6 +971,28 @@ impl OwnerRecord {
         self.header().savepoint_keys()
     }
 
+    /// The repos of the workspace the op runs in where its own step can
+    /// stop in a VCS operation (a rebase, merge or cherry-pick): the project
+    /// repo, and each member it plans to integrate. A repo stopped in one
+    /// anywhere else is someone else's.
+    pub fn operates_in(&self) -> std::collections::BTreeSet<RepoKey> {
+        let mut repos = std::collections::BTreeSet::from([RepoKey::Project]);
+        if let Some(take_in) = &self.take_in {
+            repos.extend(take_in.upstream_tips.keys().cloned());
+            repos.extend(
+                take_in
+                    .receiving
+                    .iter()
+                    .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
+                    .map(|(key, _)| key.clone()),
+            );
+            if let Some(pick) = &take_in.pick {
+                repos.extend(pick.members.iter().map(|m| m.repo.clone()));
+            }
+        }
+        repos
+    }
+
     /// The owner op-state file within `workspace_dir`.
     pub fn path_in(workspace_dir: &Path) -> StatePath {
         StateFile::OpRecord.in_dir(workspace_dir)

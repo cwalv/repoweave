@@ -8626,6 +8626,46 @@ pub fn cherry_pick_conflict_aborts() -> Scenario {
     scenario("cherry-pick conflict aborted", steps)
 }
 
+/// `cherry-pick-conflict`, abandoned while the operator is stopped in a
+/// merge of their own in `docs`, a member the port never touches: `rwv
+/// abort` puts back what the port moved and leaves that merge as it is,
+/// neither cancelling it nor resetting the branch under it.
+pub fn cherry_pick_abort_leaves_an_untouched_members_merge() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::Docs, &["branch", "own-a"]),
+        Step::git(&ww("p"), Repo::Docs, &["branch", "own-b"]),
+        Step::hand_commit(&ww("p"), Repo::Docs, "own-a", &[("own.txt", "a\n")]),
+        Step::hand_commit(&ww("p"), Repo::Docs, "own-b", &[("own.txt", "b\n")]),
+        Step::git(&ww("p"), Repo::Docs, &["switch", "-q", "own-a"]),
+        Step::git(&ww("p"), Repo::Docs, &["merge", "--no-edit", "own-b"]).expect(Exit::Code(1)),
+        Step::rwv(&ww("p"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .claim(Claim::OutputContains("left stopped in a merge"))
+            .claim(Claim::OnBranch {
+                at: ww("p"),
+                repo: Repo::Docs,
+                branch: "own-a",
+            }),
+        Step::git(
+            &ww("p"),
+            Repo::Docs,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        ),
+        Step::git(
+            &ww("p"),
+            Repo::Docs,
+            &["diff", "--name-only", "--diff-filter=U"],
+        )
+        .claim(Claim::OutputLine("own.txt")),
+    ]);
+    scenario(
+        "cherry-pick abort leaves an untouched member's merge",
+        steps,
+    )
+}
+
 /// `cherry-pick-refusals`: outside a feature, a merge commit without `-m`
 /// and an `-m` on a commit that is no merge, a backward pin, and a member
 /// range holding a merge are each refused before anything moves, naming the
