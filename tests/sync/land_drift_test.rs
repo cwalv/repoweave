@@ -885,3 +885,283 @@ moved_edits! {
     moved_mode_unstaged_refreshed_source: MovedShape::ModeChanged, Staging::Unstaged, Phase::Refreshed, Side::Source;
     moved_mode_unstaged_refreshed_target: MovedShape::ModeChanged, Staging::Unstaged, Phase::Refreshed, Side::Target;
 }
+
+// ---------------------------------------------------------------------------
+// What a refresh never replaces, through `rwv land` and `rwv doctor --fix`
+// ---------------------------------------------------------------------------
+
+fn checkout_of(f: &Fixture, side: Side) -> (PathBuf, &'static str) {
+    match side {
+        Side::Source => (f.ww_lib.clone(), "ww/project"),
+        Side::Target => (f.primary_lib.clone(), "main"),
+    }
+}
+
+/// `rwv doctor --fix` in the workspace holding `side`'s checkout.
+fn fix(f: &Fixture, side: Side) -> std::process::Output {
+    let workspace = match side {
+        Side::Source => &f.ww,
+        Side::Target => &f.primary,
+    };
+    common::cli::run(&["doctor", "--fix"], workspace)
+}
+
+/// Moves `side`'s branch with `change` after `prepare` ran in its checkout,
+/// then lands and runs `rwv doctor --fix`, each refusing or leaving `kept`
+/// exactly as it stood.
+fn landing_and_fix_keep(
+    side: Side,
+    kept: &[&str],
+    prepare: impl FnOnce(&Path),
+    change: impl FnOnce(&Path),
+) {
+    let f = fixture();
+    let (checkout, branch) = checkout_of(&f, side);
+    prepare(&checkout);
+    let moved = f.move_with(branch, change);
+    if side == Side::Target {
+        f.pin_primary(&moved);
+    }
+    let before = path_state(&checkout, kept);
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert_eq!(
+        path_state(&checkout, kept),
+        before,
+        "{side:?}: the landing replaced what was there:\n{stderr}"
+    );
+
+    let out = fix(&f, side);
+
+    assert_eq!(
+        path_state(&checkout, kept),
+        before,
+        "{side:?}: doctor --fix replaced what was there:\n{}",
+        common::cli::describe(&out)
+    );
+}
+
+/// An untracked file stands where the move puts a directory: git would
+/// remove the file to make the directory, and the file is in no commit.
+fn untracked_file_where_the_move_puts_a_directory(side: Side) {
+    landing_and_fix_keep(
+        side,
+        &["docs"],
+        |checkout| std::fs::write(checkout.join("docs"), "never committed\n").unwrap(),
+        |elsewhere| {
+            std::fs::create_dir_all(elsewhere.join("docs")).unwrap();
+            std::fs::write(elsewhere.join("docs/x.txt"), "x\n").unwrap();
+        },
+    );
+}
+
+#[test]
+fn an_untracked_file_where_the_move_puts_a_directory_is_kept_in_the_source() {
+    untracked_file_where_the_move_puts_a_directory(Side::Source);
+}
+
+#[test]
+fn an_untracked_file_where_the_move_puts_a_directory_is_kept_in_the_target() {
+    untracked_file_where_the_move_puts_a_directory(Side::Target);
+}
+
+/// An ignored file stands where the move adds a file: git's merge treats an
+/// ignored file as expendable, so only reading it first keeps it.
+fn ignored_file_where_the_move_adds_one(side: Side) {
+    landing_and_fix_keep(
+        side,
+        &["build.log"],
+        |checkout| {
+            let exclude = common::git_in(
+                checkout,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            );
+            let exclude = Path::new(&exclude).join("info");
+            std::fs::create_dir_all(&exclude).unwrap();
+            std::fs::write(exclude.join("exclude"), "build.log\n").unwrap();
+            std::fs::write(checkout.join("build.log"), "never committed\n").unwrap();
+        },
+        |elsewhere| {
+            std::fs::write(elsewhere.join("build.log"), "committed\n").unwrap();
+            common::git_in(elsewhere, &["add", "-f", "build.log"]);
+        },
+    );
+}
+
+#[test]
+fn an_ignored_file_where_the_move_adds_one_is_kept_in_the_source() {
+    ignored_file_where_the_move_adds_one(Side::Source);
+}
+
+#[test]
+fn an_ignored_file_where_the_move_adds_one_is_kept_in_the_target() {
+    ignored_file_where_the_move_adds_one(Side::Target);
+}
+
+/// A file git does not compare with its index entry carries a change the
+/// move's file would overwrite: skip-worktree, or assume-unchanged.
+fn unwatched_change_under_a_move(side: Side, flag: &'static str) {
+    landing_and_fix_keep(
+        side,
+        &["notes.txt"],
+        |checkout| {
+            common::git_in(checkout, &["update-index", flag, "notes.txt"]);
+            std::fs::write(checkout.join("notes.txt"), "local tweak\n").unwrap();
+        },
+        |elsewhere| std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap(),
+    );
+}
+
+#[test]
+fn a_skip_worktree_change_is_kept_in_the_source() {
+    unwatched_change_under_a_move(Side::Source, "--skip-worktree");
+}
+
+#[test]
+fn a_skip_worktree_change_is_kept_in_the_target() {
+    unwatched_change_under_a_move(Side::Target, "--skip-worktree");
+}
+
+#[test]
+fn an_assume_unchanged_change_is_kept_in_the_source() {
+    unwatched_change_under_a_move(Side::Source, "--assume-unchanged");
+}
+
+#[test]
+fn an_assume_unchanged_change_is_kept_in_the_target() {
+    unwatched_change_under_a_move(Side::Target, "--assume-unchanged");
+}
+
+/// After `rwv doctor --fix` refreshed a move that added a file, the file's
+/// staged deletion is the person's: neither the next fix nor a landing
+/// restores it.
+fn staged_deletion_after_a_fix(side: Side) {
+    let f = fixture();
+    let (checkout, branch) = checkout_of(&f, side);
+    let moved = f.move_with(branch, |elsewhere| {
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap()
+    });
+    if side == Side::Target {
+        f.pin_primary(&moved);
+    }
+    let out = fix(&f, side);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        stdout.contains("refreshed drift") && stdout.contains("new.txt"),
+        "{side:?}: the first fix refreshes the drift:\n{}",
+        common::cli::describe(&out)
+    );
+    common::git_in(&checkout, &["rm", "-q", "new.txt"]);
+    let before = path_state(&checkout, &["new.txt"]);
+
+    let out = fix(&f, side);
+
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("refreshed drift"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    assert_eq!(path_state(&checkout, &["new.txt"]), before);
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        edits_listing(&stderr).iter().any(|l| l == "new.txt"),
+        "{stderr}"
+    );
+    assert_eq!(path_state(&checkout, &["new.txt"]), before, "{stderr}");
+}
+
+#[test]
+fn a_staged_deletion_after_a_fix_is_kept_in_the_source() {
+    staged_deletion_after_a_fix(Side::Source);
+}
+
+#[test]
+fn a_staged_deletion_after_a_fix_is_kept_in_the_target() {
+    staged_deletion_after_a_fix(Side::Target);
+}
+
+/// A checkout refreshed by hand, which leaves no record of where it stands,
+/// then given a staged deletion of a file the move added: the other path the
+/// move changed already holds HEAD's entry, so the checkout is no longer one
+/// left behind, and the deletion is an edit.
+#[test]
+fn a_staged_deletion_after_a_hand_refresh_is_kept() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    common::git_in(&f.ww_lib, &["checkout", "HEAD", "--", "."]);
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+    common::git_in(&f.ww_lib, &["rm", "-q", "new.txt"]);
+    let before = path_state(&f.ww_lib, &["new.txt"]);
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        edits_listing(&stderr).iter().any(|l| l == "new.txt"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(path_state(&f.ww_lib, &["new.txt"]), before, "{stderr}");
+}
+
+/// A file already holding HEAD's content beside its old-tip index entry has
+/// only the entry reset, and the landing proceeds.
+#[test]
+fn a_file_already_holding_heads_content_has_its_index_entry_reset() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "three\n").unwrap();
+
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("these index entries were reset") && stderr.contains("notes.txt"),
+        "{stderr}"
+    );
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// A checkout stopped in a revert, whose branch then moved under it: the
+/// landing refuses the operation and refreshes nothing, the drifted path
+/// included.
+fn stopped_in_a_revert_under_a_move(side: Side) {
+    let f = fixture();
+    let (checkout, branch) = checkout_of(&f, side);
+    let spare = common::git_in(&checkout, &["log", "-n1", "--format=%H", "--", "spare.txt"]);
+    common::git_in(&checkout, &["revert", "--no-commit", &spare]);
+    let moved = f.move_from_elsewhere(branch, "notes.txt", "three\n");
+    if side == Side::Target {
+        f.pin_primary(&moved);
+    }
+    let kept = ["notes.txt", "spare.txt"];
+    let before = path_state(&checkout, &kept);
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsMidOperation);
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(path_state(&checkout, &kept), before, "{stderr}");
+    assert!(
+        !common::git_in(&checkout, &["rev-parse", "-q", "--verify", "REVERT_HEAD"]).is_empty(),
+        "the revert is still in progress"
+    );
+}
+
+#[test]
+fn drift_in_a_source_stopped_in_a_revert_is_left() {
+    stopped_in_a_revert_under_a_move(Side::Source);
+}
+
+#[test]
+fn drift_in_a_target_stopped_in_a_revert_is_left() {
+    stopped_in_a_revert_under_a_move(Side::Target);
+}
