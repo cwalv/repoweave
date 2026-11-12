@@ -100,10 +100,10 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "member_branch.rs",
-        count: 2,
+        count: 3,
         justification: "The branch setter's lookup key: the operator's typed path, from \
-             `member set-branch` or a `<m>=<b>` spelling, is matched against the manifest \
-             and refused when it lists no such member.",
+             `member set-branch` or a `<m>=<b>` or `--pin <m>=<rev>` spelling, is matched \
+             against the manifest and refused when it lists no such member.",
     },
     Allowed {
         file: "member_url.rs",
