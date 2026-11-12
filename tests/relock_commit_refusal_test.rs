@@ -190,7 +190,7 @@ fn park_in_relock(weave: &Weave) -> PathBuf {
     succeed(&s1, &["lock", "--commit"]);
     weave.refuse_commits();
 
-    let out = run(&s1, &["sync", "primary", "--strategy", "rebase"]);
+    let out = run(&s1, &["sync-to", "--strategy", "rebase"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),
@@ -215,7 +215,7 @@ fn a_refused_phase3_relock_parks_and_resumes() {
     let s1 = park_in_relock(&weave);
 
     weave.accept_commits();
-    succeed(&s1, &["sync", "--continue"]);
+    succeed(&s1, &["sync-to", "--continue"]);
     let lib_tip = head(&common::under(&s1, LIB));
     let lock = std::fs::read_to_string(project_dir(&s1).join("rwv.lock")).unwrap();
     assert!(lock.contains(&lib_tip), "{lock}");
