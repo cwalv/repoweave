@@ -2830,7 +2830,7 @@ holding_rwv! {
                     .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
                     .expect(Exit::Succeeds),
                 Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-                Step::rwv_paused(&ww("w"), &["land"], ADVANCE_TARGET, "landing"),
+                Step::rwv_paused(&ww("w"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
                 Step::kill("landing"),
                 Step::rwv(&ww("w"), &["land", "--continue", "--json"])
                     .expect(Exit::Succeeds)
@@ -2878,11 +2878,11 @@ fn upstream_pins_what_this_clone_lacks(seed: Seed) -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
                 .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["fetch", "origin"]),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Lib, State::PinUnreachable))
                 .claim(Claim::OutputContains("rwv fetch")),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::PinContains {
                     site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
@@ -2948,7 +2948,7 @@ fn a_landing_keeps_the_upstream_pin_of_a_member_the_seat_never_touched() {
             )
             .pushes(Remote::origin(Repo::Lib), "main"),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::PinContains {
                     site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
@@ -3001,7 +3001,7 @@ fn a_landing_takes_in_an_upstream_change_of_a_declared_branch() {
                 .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
                 .expect(Exit::Succeeds),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
                     "member-changed local/remotes/lib: branch: main -> line2 (taken in",
