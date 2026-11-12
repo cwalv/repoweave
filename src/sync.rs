@@ -1,4 +1,4 @@
-//! `rwv sync <source>` and `rwv abort` implementation.
+//! `rwv sync-to` and `rwv abort` implementation.
 //!
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
@@ -6,13 +6,10 @@
 use crate::check::UnparseableProjectKind;
 use crate::cli::consent::DiscardLocalCommitsConsent;
 use crate::diagnosis::{Report, State};
-use crate::integration::Integration;
-use crate::integration_runner::enabled_integrations;
-use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath,
-    ResolvedLockFile, WorkweaveName,
+    LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, ResolvedLockFile,
+    WorkweaveName,
 };
 use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerHeader, OwnerRecord, SavepointKey, SyncStrategy,
@@ -30,8 +27,7 @@ use crate::vcs::{
 };
 use crate::wire_token::wire_token;
 use crate::workspace::{
-    project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,
-    WorkspaceContext,
+    project_dir, project_rel_path, AdvisoryOutput, Checkout, Resolution, WorkspaceContext,
 };
 use crate::workweave::{ensure_registered_workweave, refuse_symlinked_members};
 use anyhow::Context;
@@ -172,9 +168,7 @@ fn plural_s(n: usize) -> &'static str {
     }
 }
 
-/// Which read gave replay this repo's target: the source lock's entry for it,
-/// or the source checkout's committed tip pulled ahead of that entry
-/// (tips-as-truth).
+/// Which read gave replay this repo's target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReplayBaseline {
@@ -227,11 +221,10 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// SyncSource — typed source workspace for `rwv sync`
+// SyncSource — typed workspace operand
 // ---------------------------------------------------------------------------
 
-/// A workspace named on the command line: `rwv sync <source>`, `rwv sync-to
-/// <target>` both name one.
+/// A workspace named on the command line by `rwv sync-to <target>`.
 /// [`crate::cli::operand::SourceArg`] is argv's spelling of it, and its
 /// `Path` arm arrives here already located, absolute.
 ///
@@ -1186,83 +1179,9 @@ fn cwd_is_ancestor_or_equal(
         .unwrap_or(false)
 }
 
-/// Phase 1 precondition (ff-strategy only): refuse if fast-forwarding CWD's
-/// project repo to source's tip would discard commits reachable only from CWD.
-///
-/// Cases:
-/// - equal: no-op, allowed.
-/// - CWD ancestor of source (forward): allowed — the normal sync case.
-/// - source ancestor of CWD (CWD ahead): refused — ff cannot discard commits.
-/// - diverged (neither ancestor): refused — ff cannot merge.
-///
-/// `rebase` and `merge` strategies bypass this precondition; they handle
-/// divergence by replaying CWD's project commits (with `rwv.lock` excluded)
-/// onto source's tip.
-fn check_phase1_ancestor(
-    vcs: &dyn Vcs,
-    cwd_project_dir: &Path,
-    cwd_tip: &ResolvedRevisionId,
-    source_tip: &ResolvedRevisionId,
-    cwd_workspace_name: &str,
-    source_workspace_name: &str,
-) -> anyhow::Result<()> {
-    if cwd_is_ancestor_or_equal(vcs, cwd_project_dir, cwd_tip, source_tip) {
-        return Ok(());
-    }
-
-    let other = format!("source workspace '{source_workspace_name}' ({source_tip})");
-    let shape = match Containment::observe(vcs, cwd_project_dir, cwd_tip, source_tip) {
-        Some(c) => c.describe(&other),
-        None => format!("not an ancestor of {other}"),
-    };
-
-    crate::refuse!(
-        RefusalKind::NotFastForwardable,
-        "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} is {shape}.\n\
-         {blocking}\n\
-         \n\
-         To land them: rerun with `--strategy rebase`.\n\
-         To bring source in sync first: sync the other direction.\n\
-         To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
-         (pre-sync state preserved under {savepoints}).\n\
-         \n\
-         This recurs on every fast-forward sync until the commits above reach the source \
-         workspace — land them with `rwv sync-to`, or close the loop by syncing the other \
-         direction.",
-        blocking = blocking_commits_block(vcs, cwd_project_dir, source_tip, cwd_tip),
-        savepoints = vcs.savepoint_namespace(),
-    );
-}
-
 /// Number of commits to show inline per refused repo before summarizing the
 /// rest as "and N more".
 const BLOCKING_COMMITS_CAP: usize = 5;
-
-/// The commits `to` carries that `from` does not, as an indented evidence
-/// block naming at most [`BLOCKING_COMMITS_CAP`] of them.
-fn blocking_commits_block(
-    vcs: &dyn Vcs,
-    repo: &Path,
-    from: &ResolvedRevisionId,
-    to: &ResolvedRevisionId,
-) -> String {
-    let (commits, total) = vcs.commits_in_range(repo, from.id(), to.id(), BLOCKING_COMMITS_CAP);
-    if commits.is_empty() {
-        return "  (commit range unresolvable)".to_owned();
-    }
-    let mut block = commits
-        .iter()
-        .map(|c| format!("  {} {}", c.id.short(), c.subject))
-        .collect::<Vec<_>>()
-        .join("\n");
-    if total > BLOCKING_COMMITS_CAP {
-        block.push_str(&format!(
-            "\n  ... and {} more",
-            total - BLOCKING_COMMITS_CAP
-        ));
-    }
-    block
-}
 
 // ---------------------------------------------------------------------------
 // Conflict-bail messages
@@ -2516,12 +2435,10 @@ struct OpContext<'a> {
     /// Display name of the source workspace, used in human messages
     /// (e.g. the auto-relock commit message and replay's lock-freshness hint).
     source_workspace_name: String,
-    /// Destination workspace (the one phases write into). For plain `sync`
-    /// this is CWD; for `sync-to` this is the target workspace.
+    /// Destination workspace (the one phases write into): the target workspace.
     dest_workspace_dir: PathBuf,
     dest_project_dir: PathBuf,
-    /// CWD's project repo dir. Equal to `dest_project_dir` for plain `sync`
-    /// (where dest is CWD); for `sync-to` it's where replay+relock run, and
+    /// CWD's project repo dir: where replay+relock run, while
     /// `dest_project_dir` is where advance-target lands.
     cwd_project_dir: PathBuf,
     /// CWD project name (used for materialize_missing_repo's ephemeral
@@ -2557,11 +2474,6 @@ struct OpContext<'a> {
 
 /// What a source snapshot classifies about the source's member checkouts.
 ///
-/// The staleness gate and the tips-as-truth pull are two consumers of ONE
-/// classification, so the snapshot takes it once and both read the result.
-/// Two invocations of the same predicate read the checkouts' HEADs at two
-/// instants, and a member that is `Ok` at the first read and `Ahead` at the
-/// second pins no tip while the note announces one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ClassifySource {
     /// No consumer: `--allow-stale-lock` bypasses the gate, and a resumed
@@ -2569,28 +2481,6 @@ enum ClassifySource {
     Skip,
     /// Classify the source's checkouts. The gate's refusals read the relations.
     Relations,
-    /// Classify, and additionally pin the `Ahead` checkouts' committed tips as
-    /// replay's targets.
-    RelationsAndTips,
-}
-
-/// What kind of workspace the op pulls from. Tips-as-truth applies only to a
-/// workweave source: a `behind` primary-weave lock keeps the refusal, because
-/// a locked-snapshot pull from the primary must not silently take live tips
-/// over its committed lock.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SourceKind {
-    Primary,
-    Workweave,
-}
-
-impl SourceKind {
-    fn of(ctx: &WorkspaceContext) -> Self {
-        match ctx.checkout {
-            Checkout::Workweave { .. } => Self::Workweave,
-            Checkout::Primary { .. } => Self::Primary,
-        }
-    }
 }
 
 /// Atomic source snapshot pinned at T0 (start of replay).
@@ -2614,16 +2504,11 @@ struct SourceSnapshot {
     /// context. An entry neither could resolve is absent, never guessed at.
     source_lock: crate::manifest::ResolvedLockFile,
     /// The source's member checkouts classified at T0, `None` under
-    /// [`ClassifySource::Skip`]. The staleness refusals, the tips-as-truth
-    /// note and `pull_tips` all derive from this one value.
+    /// [`ClassifySource::Skip`].
     source_class: Option<LockClassification>,
-    /// Committed member tips of the source's `Ahead` checkouts, read at T0.
-    /// Replay targets these over the lock entries. Empty when tips-as-truth
-    /// does not apply (primary source, sync-to, or `--allow-stale-lock`).
-    pull_tips: std::collections::BTreeMap<RepoPath, ResolvedRevisionId>,
-    /// Committed member tips of EVERY source checkout, read at T0 — where
-    /// `pull_tips` is the decision, this is the disclosure the already-ahead
-    /// line measures against replay's target. Taken from `source_class` when
+    /// Committed member tips of EVERY source checkout, read at T0 — the
+    /// disclosure the already-ahead line measures against replay's target.
+    /// Taken from `source_class` when
     /// the op classified the source, so one read of each checkout answers both.
     source_tips: std::collections::BTreeMap<RepoPath, ResolvedRevisionId>,
     /// Root of the workspace the tips above were read in, and the object store
@@ -2652,25 +2537,6 @@ impl OpContext<'_> {
             )
         })?;
         Ok(record.phase)
-    }
-}
-
-/// Plain enum of which top-level driver entry built this op.
-#[derive(Debug, Clone, Copy)]
-enum MachineVerb {
-    /// `rwv sync <source>`: degenerate machine with no advance-target/retire.
-    Sync,
-    /// `rwv sync-to <target>`: full machine; advance-target always runs;
-    /// retire runs only when `--retire` is set.
-    SyncTo,
-}
-
-impl MachineVerb {
-    fn op_verb(self) -> op_state::OpVerb {
-        match self {
-            Self::Sync => op_state::OpVerb::Sync,
-            Self::SyncTo => op_state::OpVerb::SyncTo,
-        }
     }
 }
 
@@ -2756,34 +2622,6 @@ fn judge_rebase_protection(
     report.into_result()
 }
 
-/// Execute `rwv sync <source>`.
-///
-/// `request.source` is required; there is no bare `rwv sync` that absorbs
-/// from the workweave's recorded parent. `<SOURCE>` is a required CLI
-/// argument and `rwv sync-to` is the verb that reads the parent marker.
-///
-/// `output` is the mode the dispatcher resolved from `--json` and the
-/// request's worker count.
-pub fn run_sync(
-    ctx: &WorkspaceContext,
-    request: SyncRequest,
-    output: OutputMode,
-) -> anyhow::Result<()> {
-    if matches!(request, SyncRequest::Fresh { .. }) {
-        crate::branch::require_recorded(ctx)?;
-    }
-    match output {
-        OutputMode::Json => run_sync_json(ctx, request),
-        OutputMode::Text => {
-            let stdout_lock: Mutex<()> = Mutex::new(());
-            let handler = TextHandler {
-                stdout_lock: &stdout_lock,
-            };
-            run_machine(MachineVerb::Sync, ctx, request, &handler)
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Driver entry: shared by sync and sync-to (text + json modes)
 // ---------------------------------------------------------------------------
@@ -2801,7 +2639,6 @@ pub fn run_sync(
 /// context; it may still resolve *other* workspaces (sync source/target,
 /// lease owner) internally.
 fn run_machine(
-    verb: MachineVerb,
     cwd_ctx: &WorkspaceContext,
     request: SyncRequest,
     handler: &dyn OutputHandler,
@@ -2820,7 +2657,6 @@ fn run_machine(
                 overrides.insert(Override::AllowStaleLock);
             }
             guard_and_mark(
-                verb,
                 cwd_ctx,
                 FreshOp {
                     source,
@@ -2838,7 +2674,6 @@ fn run_machine(
             discard_local_commits,
             project_override,
         } => load_continuing_context(
-            verb,
             cwd_ctx,
             *op,
             discard_local_commits,
@@ -3010,7 +2845,7 @@ fn run_phase(
     }
 }
 
-/// After relock, plain `sync` is done; `sync-to` continues with advance-target.
+/// After relock, `sync-to` continues with advance-target.
 fn next_after_relock(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
     match ctx.verb {
         op_state::OpVerb::Sync | op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => None,
@@ -3066,7 +2901,7 @@ struct PreconditionOutcome {
     /// Human name of the CWD workspace, used in the auto-relock LOUD line.
     cwd_workspace_name_str: String,
     /// CWD repos whose committed lock is behind HEAD — auto-relocked at op
-    /// start in the sync-to landing shape. Empty for plain `sync`.
+    /// start in the sync-to landing shape.
     cwd_lock_behind: Vec<RepoRelation>,
     /// The operator's `--discard-local-commits`, kept only when CWD's project
     /// tip is not an ancestor of the source's, so Phase 1' rewinds past it.
@@ -3087,11 +2922,9 @@ struct PreconditionOutcome {
 #[allow(clippy::too_many_arguments)]
 fn run_preconditions_after_acquire(
     project_vcs: &dyn Vcs,
-    verb: MachineVerb,
     strategy: SyncStrategy,
     overrides: &Overrides,
     discard_local_commits: Option<DiscardLocalCommitsConsent>,
-    source_kind: SourceKind,
     cwd_project_dir: &Path,
     cwd_workspace_dir: &Path,
     cwd_ctx: &WorkspaceContext,
@@ -3103,9 +2936,7 @@ fn run_preconditions_after_acquire(
     dest_project_dir: &Path,
     dest_workspace_dir: &Path,
     cli_path: &Path,
-    handler: &dyn OutputHandler,
 ) -> anyhow::Result<PreconditionOutcome> {
-    let emit_text = handler.emit_text();
     // Pre-flight edits scans: refuse before any mutation when a repo the op
     // will rebase or fast-forward is stopped mid-operation or carries
     // uncommitted tracked changes. Every such repo, on every side the op
@@ -3120,74 +2951,53 @@ fn run_preconditions_after_acquire(
     let mut edits = Report::default();
     let cwd_project_preflight = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
         .context("failed to load CWD project for the edits scan")?;
-    match verb {
-        MachineVerb::Sync => {
-            // sync (pull): replay rebases or ff-advances the CWD repos onto the
-            // source lock. Scan the CWD workspace — the destination that
-            // mutates. The source workspace is read-only (snapshot read only);
-            // dirt there does not affect the op.
-            judge_edits_preflight_sync(
-                project_vcs,
-                &cwd_project_preflight,
-                cwd_workspace_dir,
-                cwd_project_dir,
-                &mut edits,
-            )?;
-        }
-        MachineVerb::SyncTo => {
-            // Source before target: the operator's own workspace is the first
-            // thing they can fix, and a dirty source is the state we most
-            // want to define away.
-            judge_edits_source_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                cwd_workspace_dir,
-                cwd_project_dir,
-                &mut edits,
-            );
-            judge_edits_target_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                dest_workspace_dir,
-                dest_project_dir,
-                &mut edits,
-            );
-        }
-    }
+    // Source before target: the operator's own workspace is the first
+    // thing they can fix, and a dirty source is the state we most
+    // want to define away.
+    judge_edits_source_preflight(
+        project_vcs,
+        &cwd_project_preflight,
+        cwd_workspace_dir,
+        cwd_project_dir,
+        &mut edits,
+    );
+    judge_edits_target_preflight(
+        project_vcs,
+        &cwd_project_preflight,
+        dest_workspace_dir,
+        dest_project_dir,
+        &mut edits,
+    );
     edits.into_result()?;
 
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
     // ahead of target). Bail before any side effects on a refusal.
-    if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
+    if strategy == SyncStrategy::Ff {
         check_sync_to_ff_precondition(project_vcs, cwd_project_dir, dest_project_dir)?;
     }
 
-    if matches!(verb, MachineVerb::SyncTo) {
-        //   - detached-source: the work to land would sit on no branch.
-        //   - detached-target: advance-target would have no branch to land on.
-        check_detached_source_preflight(
-            project_vcs,
-            &cwd_project_preflight,
-            cwd_ctx,
-            cwd_workspace_dir,
-            cwd_project_dir,
-        )?;
-        check_detached_target_preflight(
-            project_vcs,
-            &cwd_project_preflight,
-            dest_workspace_dir,
-            dest_project_dir,
-            cli_path,
-        )?;
-    }
+    //   - detached-source: the work to land would sit on no branch.
+    //   - detached-target: advance-target would have no branch to land on.
+    check_detached_source_preflight(
+        project_vcs,
+        &cwd_project_preflight,
+        cwd_ctx,
+        cwd_workspace_dir,
+        cwd_project_dir,
+    )?;
+    check_detached_target_preflight(
+        project_vcs,
+        &cwd_project_preflight,
+        dest_workspace_dir,
+        dest_project_dir,
+        cli_path,
+    )?;
 
     // Pin the source snapshot now so the remaining replay preconditions are
     // all reads against a coherent T0. This is the "snapshot reads"
     // mechanism: one atomic ref read pins source; manifest + lock are read
-    // at that revision; everything downstream is content-addressed. The one
-    // exception is the tips-as-truth pull, whose member tips are per-repo ref
-    // reads of the source checkouts, pinned here at the same T0.
-    let classify = classify_for(verb, overrides, source_kind);
+    // at that revision; everything downstream is content-addressed.
+    let classify = classify_for(overrides);
     let snapshot = pin_source_snapshot(
         project_vcs,
         source_project_dir,
@@ -3224,18 +3034,7 @@ fn run_preconditions_after_acquire(
     //   - sync-to (landing) TARGET: a lock-behind-HEAD (`Ahead`) target refuses.
     //     Replay's targets come from the target's lock, so the target's unlocked
     //     commits would be missing from the tip CWD replays onto and step 3's
-    //     fast-forward could not proceed; tips-as-truth is scoped to the pull.
-    //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
-    //     for a WORKWEAVE source; a PRIMARY-weave source keeps the refusal.
-    //   - sync (pull) DESTINATION (CWD): a lock-behind-HEAD (`Ahead`) CWD repo
-    //     is benign, LOUD line per repo. Replay's targets come from the source,
-    //     never from CWD's lock, and phase 3 regenerates that lock at op end —
-    //     so the gate was refusing to start over a condition the op's own last
-    //     phase establishes. Every other non-`ok` relation still refuses.
-    //     Unlike sync-to's CWD there is no op-start relock: on a pull the
-    //     project repo is itself a replay target, and a relock commit made
-    //     before Phase 1' would leave `--strategy=ff` a project repo it can no
-    //     longer fast-forward.
+    //     fast-forward could not proceed.
     //
     // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
     // corrupt-lock error distinct from any relation and refuse first, naming the
@@ -3287,9 +3086,6 @@ fn run_preconditions_after_acquire(
             crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
 
-        // CWD side, both verbs: same rule, same refusal. `Ahead` is the benign
-        // in-progress shape each verb then handles its own way below — sync-to
-        // relocks it at op start, a pull announces it and lets relock heal it.
         if let Some(msg) = anomalous_relation_refusal(
             &cwd_class,
             Side::Destination,
@@ -3299,77 +3095,23 @@ fn run_preconditions_after_acquire(
             crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
 
-        match verb {
-            MachineVerb::Sync => {
-                let source_lock_behind: Vec<&RepoRelation> = source_class
-                    .relations
-                    .iter()
-                    .filter(|r| r.relation == LockRelation::Ahead)
-                    .collect();
-                if !source_lock_behind.is_empty() {
-                    if source_kind == SourceKind::Workweave {
-                        if emit_text {
-                            for r in &source_lock_behind {
-                                let n = r
-                                    .ahead_count
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| "?".to_string());
-                                eprintln!(
-                                    "note: {source_workspace_name}/{}: source lock behind HEAD \
-                                     by {n} commits — pulling committed tips (source lock left \
-                                     alone; its next op heals it)",
-                                    r.repo_path,
-                                );
-                            }
-                        }
-                    } else if let Some(msg) = lock_relation_refusal(
-                        Side::Source,
-                        source_workspace_name,
-                        source_project_name,
-                        &source_lock_behind,
-                    ) {
-                        crate::refuse!(RefusalKind::StaleLock, "{msg}");
-                    }
-                }
-
-                if emit_text {
-                    for r in cwd_class
-                        .relations
-                        .iter()
-                        .filter(|r| r.relation == LockRelation::Ahead)
-                    {
-                        let n = r
-                            .ahead_count
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "?".to_string());
-                        eprintln!(
-                            "note: {cwd_workspace_name_str}/{}: lock behind HEAD by {n} commits \
-                             — pulling anyway; this op's relock refreshes it",
-                            r.repo_path,
-                        );
-                    }
-                }
-            }
-            MachineVerb::SyncTo => {
-                let target_lock_behind: Vec<&RepoRelation> = source_class
-                    .relations
-                    .iter()
-                    .filter(|r| r.relation == LockRelation::Ahead)
-                    .collect();
-                if let Some(msg) = target_lock_behind_refusal(
-                    source_workspace_name,
-                    source_project_name,
-                    &target_lock_behind,
-                ) {
-                    crate::refuse!(RefusalKind::TargetLockBehind, "{msg}");
-                }
-                cwd_lock_behind = cwd_class
-                    .relations
-                    .into_iter()
-                    .filter(|r| r.relation == LockRelation::Ahead)
-                    .collect();
-            }
+        let target_lock_behind: Vec<&RepoRelation> = source_class
+            .relations
+            .iter()
+            .filter(|r| r.relation == LockRelation::Ahead)
+            .collect();
+        if let Some(msg) = target_lock_behind_refusal(
+            source_workspace_name,
+            source_project_name,
+            &target_lock_behind,
+        ) {
+            crate::refuse!(RefusalKind::TargetLockBehind, "{msg}");
         }
+        cwd_lock_behind = cwd_class
+            .relations
+            .into_iter()
+            .filter(|r| r.relation == LockRelation::Ahead)
+            .collect();
     }
     let sides = [
         (source_workspace_name, Some(&snapshot.raw_source_lock)),
@@ -3418,17 +3160,6 @@ fn run_preconditions_after_acquire(
             &snapshot.source_project_tip,
         ))
         .then_some(consent)
-    } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
-        // Plain sync + ff: CWD must be ancestor-or-equal of source.
-        check_phase1_ancestor(
-            project_vcs,
-            cwd_project_dir,
-            &cwd_project_tip,
-            &snapshot.source_project_tip,
-            &cwd_workspace_name_str,
-            source_workspace_name,
-        )?;
-        None
     } else {
         None
     };
@@ -3458,7 +3189,6 @@ struct FreshOp {
 /// (per-repo pre-op refs). Returns the immutable [`OpContext`] driving the
 /// loop. Refusals here leave no trace.
 fn guard_and_mark<'a>(
-    verb: MachineVerb,
     cwd_ctx: &WorkspaceContext,
     op: FreshOp,
     handler: &'a dyn OutputHandler,
@@ -3475,21 +3205,12 @@ fn guard_and_mark<'a>(
     let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
-    // For sync this is the source workspace; for sync-to, the target. Both are
-    // resolved before the machine is entered — sync's by clap (`<SOURCE>` is
-    // required), sync-to's by the dispatcher, which reads the marker's parent
-    // for the bare form.
+    // The target, resolved before the machine is entered by the dispatcher,
+    // which reads the marker's parent for the bare form.
     let cli_path = source.resolve(cwd_ctx)?;
 
-    // For plain `sync <src>`: replay rebases CWD onto src, then relocks; no advance-target.
-    //     source = src (replay pulls from here), dest = CWD (relock writes here).
-    // For `sync-to <tgt>`: replay rebases CWD onto tgt, then relocks, then ff-advances tgt.
-    //     source = tgt (replay pulls from here), dest = tgt (advance-target writes here).
-    //     CWD itself is where replay+relock run; tracked via `cwd_project_dir`.
-    let (source_workspace_dir, dest_workspace_dir) = match verb {
-        MachineVerb::Sync => (cli_path.clone(), cwd_workspace_dir.clone()),
-        MachineVerb::SyncTo => (cli_path.clone(), cli_path.clone()),
-    };
+    let source_workspace_dir = cli_path.clone();
+    let dest_workspace_dir = cli_path.clone();
 
     // The op's binding, learned once from the context dispatch resolved and
     // carried by value from here on. Every other workspace this op touches is
@@ -3497,15 +3218,7 @@ fn guard_and_mark<'a>(
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
 
-    // source_workspace_dir is the operator's arg for both verbs (sync's <src>
-    // and sync-to's <tgt> — replay pulls from there in either case).
-    let (
-        source_project_dir,
-        source_workspace_root,
-        source_workspace_name,
-        source_project_name,
-        source_kind,
-    ) = {
+    let (source_project_dir, source_workspace_root, source_workspace_name, source_project_name) = {
         let source_ctx =
             WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
                 .with_context(|| {
@@ -3525,25 +3238,13 @@ fn guard_and_mark<'a>(
             root,
             workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
-            SourceKind::of(&source_ctx),
         )
     };
 
     refuse_symlinked_members(&cwd_workspace_dir, &cwd_project_name)?;
     refuse_symlinked_members(&source_workspace_root, &cwd_project_name)?;
 
-    // dest_project_dir is where the terminal write lands.
-    //   plain sync: CWD (relock writes a new lock commit there).
-    //   sync-to: target (advance-target ff-forwards target's repos to CWD's tips).
-    let dest_project_dir = match verb {
-        MachineVerb::Sync => cwd_project_dir.clone(),
-        MachineVerb::SyncTo => source_project_dir.clone(),
-    };
-
-    // Sibling-sync warning: only meaningful for plain sync.
-    if matches!(verb, MachineVerb::Sync) {
-        warn_on_sibling_sync(cwd_ctx, &source_workspace_dir, handler);
-    }
+    let dest_project_dir = source_project_dir.clone();
 
     // === Acquire op-state (atomic claim) ===
     //
@@ -3574,23 +3275,14 @@ fn guard_and_mark<'a>(
     // place with the final record shape.
     let op_id = OpId::new_now();
     let owner_workspace_dir = cwd_workspace_dir.clone();
-    let initial_record = match verb {
-        MachineVerb::Sync => OwnerRecord::new_sync(
-            &op_id,
-            strategy,
-            cwd_project_name.clone(),
-            &source_workspace_dir,
-            &cwd_workspace_dir,
-        ),
-        MachineVerb::SyncTo => OwnerRecord::new_sync_to(
-            &op_id,
-            strategy,
-            cwd_project_name.clone(),
-            &cwd_workspace_dir,
-            &dest_workspace_dir,
-            retire,
-        ),
-    };
+    let initial_record = OwnerRecord::new_sync_to(
+        &op_id,
+        strategy,
+        cwd_project_name.clone(),
+        &cwd_workspace_dir,
+        &dest_workspace_dir,
+        retire,
+    );
     let touched = op_state::TouchedWorkspaces::of(
         initial_record.verb,
         &owner_workspace_dir,
@@ -3608,11 +3300,9 @@ fn guard_and_mark<'a>(
     let project_vcs = project_vcs();
     let precondition_result = run_preconditions_after_acquire(
         project_vcs.as_ref(),
-        verb,
         strategy,
         &overrides,
         discard_local_commits,
-        source_kind,
         &cwd_project_dir,
         &cwd_workspace_dir,
         cwd_ctx,
@@ -3624,7 +3314,6 @@ fn guard_and_mark<'a>(
         &dest_project_dir,
         &dest_workspace_dir,
         &cli_path,
-        handler,
     );
     let PreconditionOutcome {
         snapshot,
@@ -3708,29 +3397,27 @@ fn guard_and_mark<'a>(
     // both; the CWD restore would drop it, leaving the target restore unable
     // to find it. `SavepointKey::SyncToTarget` gives target repos their own
     // namespace.
-    if matches!(verb, MachineVerb::SyncTo) {
-        let tsp_id = SavepointKey::SyncToTarget(op_id.clone());
-        // Load the target's project to enumerate its repos. Best-effort:
-        // if we cannot load it (e.g. project not yet materialized) skip
-        // — abort will just leave those repos unchanged.
-        let target_presents_the_project =
-            WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
-        if target_presents_the_project {
-            let target_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
-            if create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id).is_ok() {
-                project_anchors.push((target_project_dir.clone(), tsp_id.clone()));
-            }
-            if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(
-                &target_project_dir,
-                cwd_project_name.clone(),
-            ) {
-                for (repo_path, entry) in tp.manifest.iter_entries() {
-                    let abs = dest_workspace_dir.join(repo_path.as_path());
-                    if abs.exists() {
-                        let vcs = vcs_for(entry.vcs_type);
-                        if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
-                            member_anchors.push((vcs, abs, tsp_id.clone()));
-                        }
+    let tsp_id = SavepointKey::SyncToTarget(op_id.clone());
+    // Load the target's project to enumerate its repos. Best-effort:
+    // if we cannot load it (e.g. project not yet materialized) skip
+    // — abort will just leave those repos unchanged.
+    let target_presents_the_project =
+        WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
+    if target_presents_the_project {
+        let target_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
+        if create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id).is_ok() {
+            project_anchors.push((target_project_dir.clone(), tsp_id.clone()));
+        }
+        if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(
+            &target_project_dir,
+            cwd_project_name.clone(),
+        ) {
+            for (repo_path, entry) in tp.manifest.iter_entries() {
+                let abs = dest_workspace_dir.join(repo_path.as_path());
+                if abs.exists() {
+                    let vcs = vcs_for(entry.vcs_type);
+                    if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
+                        member_anchors.push((vcs, abs, tsp_id.clone()));
                     }
                 }
             }
@@ -3825,7 +3512,7 @@ fn guard_and_mark<'a>(
         jobs,
         handler,
         project_vcs,
-        verb: verb.op_verb(),
+        verb: op_state::OpVerb::SyncTo,
         op_id,
         snapshot,
     })
@@ -3842,7 +3529,6 @@ fn guard_and_mark<'a>(
 /// consumes is rooted at the OWNER: `--continue` invoked from a leased
 /// workspace operates identically to owner-side invocation.
 fn load_continuing_context<'a>(
-    verb: MachineVerb,
     invocation_ctx: &'a WorkspaceContext,
     op: op_state::ResolvedOwner,
     discard_local_commits: Option<DiscardLocalCommitsConsent>,
@@ -3856,27 +3542,16 @@ fn load_continuing_context<'a>(
     } = op;
     let op_id = record.id.clone();
 
-    // Everything below reads the recorded verb, and `verb` reaches no other
-    // consumer — so without this refusal `rwv sync --continue` on a `rwv
-    // sync-to` op would complete the recorded op correctly and silently, and
-    // the operator who asked to pull from a source would watch their
-    // workspace land into its target instead. The refusal buys the
-    // diagnosis, not the outcome.
-    let recorded_verb = match record.verb {
-        op_state::OpVerb::Sync => Some(MachineVerb::Sync),
-        op_state::OpVerb::SyncTo => Some(MachineVerb::SyncTo),
-        op_state::OpVerb::Pull | op_state::OpVerb::UpdateRemote => None,
-    };
-    let Some(recorded_verb) = recorded_verb.filter(|recorded| verbs_match(verb, *recorded)) else {
+    if record.verb != op_state::OpVerb::SyncTo {
         crate::refuse!(
             RefusalKind::ResumeContradictsRecord,
             "in-progress op is `{recorded}` but `{invoked}` was invoked. \
              Run `{resume}` instead, or `rwv abort` to discard.",
             recorded = record.verb,
-            invoked = op_state::resume_command(verb.op_verb()),
+            invoked = op_state::resume_command(op_state::OpVerb::SyncTo),
             resume = op_state::resume_command(record.verb),
         );
-    };
+    }
 
     // The record is authoritative for a resumed op, so `--project` can only
     // assert what it already says. Every phase that already ran used the
@@ -3970,39 +3645,20 @@ fn load_continuing_context<'a>(
     let owner_workspace_dir = owner_workspace.into_path_buf();
     let cwd_workspace_dir = owner_workspace_dir.clone();
 
-    // Resolve source/dest workspaces by verb. OwnerRecord's `source`/`target`
-    // are operator-semantic ("where work came from / where it's going").
-    // The engine semantics:
-    //   plain sync:     engine.source = record.source, engine.dest = record.target (== owner CWD)
-    //   sync-to:        engine.source = record.target (replay pulls from target),
-    //                   engine.dest   = record.target (advance-target writes target).
-    //                   record.source (owner CWD) is tracked separately via cwd_project_dir.
+    // engine.source = record.target (replay pulls from target),
+    // engine.dest   = record.target (advance-target writes target).
+    // record.source (owner CWD) is tracked separately via cwd_project_dir.
     // The op's binding comes off the record, never off the owner workspace's
     // pointer: an operator may have activated another project while the op sat
     // parked, and the phases already run are bound to the recorded one.
     let cwd_project_name = record.project.clone();
     let cwd_project_dir = project_dir(&owner_workspace_dir, &cwd_project_name);
 
-    let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
-        MachineVerb::Sync => (
-            record.source.as_path().to_path_buf(),
-            record.target.as_path().to_path_buf(),
-            record.source.as_path().to_path_buf(),
-        ),
-        MachineVerb::SyncTo => (
-            record.target.as_path().to_path_buf(),
-            record.target.as_path().to_path_buf(),
-            record.target.as_path().to_path_buf(),
-        ),
-    };
+    let source_workspace_dir = record.target.as_path().to_path_buf();
+    let dest_workspace_dir = source_workspace_dir.clone();
+    let cli_path = source_workspace_dir.clone();
 
-    let (
-        source_project_dir,
-        source_workspace_root,
-        source_workspace_name,
-        source_project_name,
-        source_kind,
-    ) = {
+    let (source_project_dir, source_workspace_root, source_workspace_name, source_project_name) = {
         let source_ctx = WorkspaceContext::resolve_for_project(
             source_workspace_dir.as_path(),
             &cwd_project_name,
@@ -4021,14 +3677,10 @@ fn load_continuing_context<'a>(
             root,
             workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
-            SourceKind::of(&source_ctx),
         )
     };
 
-    let dest_project_dir = match recorded_verb {
-        MachineVerb::Sync => cwd_project_dir.clone(),
-        MachineVerb::SyncTo => source_project_dir.clone(),
-    };
+    let dest_project_dir = source_project_dir.clone();
 
     // Re-pin the source snapshot for this --continue session. The source's
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
@@ -4039,7 +3691,7 @@ fn load_continuing_context<'a>(
     // takes it: a re-pinned source the gate never reads is a source this op
     // consumes at a state its own first invocation would have refused.
     let project_vcs = project_vcs();
-    let classify = classify_for(recorded_verb, &record.overrides, source_kind);
+    let classify = classify_for(&record.overrides);
     let snapshot = pin_source_snapshot(
         project_vcs.as_ref(),
         &source_project_dir,
@@ -4098,9 +3750,7 @@ fn load_continuing_context<'a>(
     // in `tests/phase_reentry_test.rs`, which resumes onto an untracked file and
     // asserts retire refuses; that test going red is the signal that this skip
     // needs revisiting rather than the test needing an edit.
-    if matches!(entry_phase, op_state::OpPhase::Relock)
-        && matches!(recorded_verb, MachineVerb::SyncTo)
-    {
+    if matches!(entry_phase, op_state::OpPhase::Relock) {
         let cwd_project_preflight =
             Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
                 .context("failed to load CWD project for the resumed op's dirt scan")?;
@@ -4151,48 +3801,9 @@ fn load_continuing_context<'a>(
     })
 }
 
-fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
-    matches!(
-        (invoked, recorded),
-        (MachineVerb::Sync, MachineVerb::Sync) | (MachineVerb::SyncTo, MachineVerb::SyncTo)
-    )
-}
-
 // ---------------------------------------------------------------------------
 // Pre-loop helpers (precondition checks used by guard_and_mark)
 // ---------------------------------------------------------------------------
-
-/// Sibling-sync warning: only meaningful for plain `sync`. CWD is a workweave
-/// and source is another workweave that is NOT CWD's parent → crosses tree
-/// branches; warn (don't refuse — the operator may have a reason).
-fn warn_on_sibling_sync(
-    cwd_ctx: &WorkspaceContext,
-    source_workspace_dir: &Path,
-    handler: &dyn OutputHandler,
-) {
-    if let Checkout::Workweave {
-        dir: cwd_ww,
-        parent: cwd_parent,
-        ..
-    } = &cwd_ctx.checkout
-    {
-        // Resolve the source workspace's location to compare. Best-effort.
-        let source_ctx = match WorkspaceContext::resolve_unbound(source_workspace_dir) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        if let Checkout::Workweave { dir: source_ww, .. } = &source_ctx.checkout {
-            if cwd_ww != source_ww && cwd_parent != source_ww && handler.emit_text() {
-                eprintln!(
-                    "warning: syncing across workweave siblings ({} → {}); \
-                     this skips the recorded parent (informational — proceeding).",
-                    cwd_ww.as_path().display(),
-                    source_ww.as_path().display(),
-                );
-            }
-        }
-    }
-}
 
 /// sync-to `--strategy=ff` precondition: CWD must be strictly ahead of
 /// target. If equal: no-op (signaled by `Ok(())` from a caller that then
@@ -4500,164 +4111,6 @@ fn check_detached_target_preflight(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Sync (pull) destination-side dirt scan
-// ---------------------------------------------------------------------------
-
-/// Classify one dirty checkout for the sync dirt scan.
-///
-/// Returns `false` when every tracked difference is **rwv-attributable**:
-/// doctor's structural drift classification ([`crate::check::classify_drift`])
-/// reports the index tree as an ancestor commit's tree
-/// ([`crate::check::IndexDriftKind::SafeToFix`]) and every modified
-/// working-tree blob as reachable from HEAD
-/// ([`crate::check::WorkingTreeDriftKind::SafeToFix`]). That is the
-/// shared-ref-advance signature — another worktree moved this branch's ref,
-/// and the index/working tree lag the new tip. Sync is DESIGNED to reconcile
-/// that state itself: the replay loop runs
-/// [`Vcs::refresh_index_to_head_if_safe`] /
-/// [`Vcs::refresh_working_tree_to_head_if_safe`] per repo, which apply the
-/// SAME structural reachability test before healing (see
-/// `tests/index_drift_test.rs` / `tests/working_tree_drift_test.rs` — the
-/// self-healing assertions are the spec). Refusing here would both block the
-/// designed behavior and teach the operator to `git commit` a moved-branch
-/// diff they never authored.
-///
-/// Returns `true` for genuine user dirt — live staged content and/or live
-/// working-tree edits.
-///
-/// The attribution is purely structural (tree/blob reachability in the DAG);
-/// no timestamps or heuristics. `classify_drift`'s own conservative fallback
-/// (git errors during classification → live) keeps the scan fail-closed.
-fn is_live_dirt(repo: &Path) -> bool {
-    use crate::check::{IndexDriftKind, WorkingTreeDriftKind};
-    let (index_drift, wt_drift) = crate::check::classify_drift(repo);
-    matches!(index_drift, Some(IndexDriftKind::LiveStaged))
-        || matches!(wt_drift, Some(WorkingTreeDriftKind::LiveEdits))
-}
-
-/// Pre-flight dirt scan for `rwv sync` (pull): refuse before any mutation if
-/// the CWD workspace (the *destination* that replay will rebase or
-/// fast-forward) carries uncommitted **tracked** changes that are not
-/// attributable to rwv's own shared-ref-advance drift, in any manifest repo
-/// or the project repo.
-///
-/// ## Why tracked-only
-///
-/// `git rebase` fails with "cannot rebase: You have unstaged changes" /
-/// "cannot rebase: Your index contains uncommitted changes" when tracked files
-/// are modified (staged or unstaged). Untracked files survive a rebase
-/// untouched — git never touches them during replay. Fast-forward (`ff`) also
-/// leaves untracked files alone. Refusing on untracked-only dirt would block
-/// normal in-progress work (scratch files, build artifacts) without any
-/// corresponding git-layer failure. We therefore refuse only on tracked dirt,
-/// matching git's actual failure conditions.
-///
-/// ## Attributable drift is NOT dirt
-///
-/// A worktree whose branch ref was advanced by another workspace (shared-ref
-/// advance) shows tracked differences in `git status` that the operator never
-/// authored: the index/working tree simply lag the moved tip. Doctor's
-/// structural drift classification distinguishes that state from live user
-/// work (see [`is_live_dirt`]); attributable drift is excluded from the
-/// refusal set and self-heals in the replay loop's safe-refresh step. Only
-/// live staged content / live working-tree edits refuse.
-///
-/// ## What this replaces
-///
-/// Without this check, `rwv sync` starts the op, acquires op-state, creates
-/// savepoints, and then hits `git rebase` or `git merge --ff-only` which
-/// fails mid-op with a raw git error dump. The operator is left with a live
-/// `.rwv-op` they must `rwv abort` before retrying. This preflight makes the
-/// refusal eager, names every dirty repo in a single message, and leaves no
-/// trace (the acquired op-state is released by the caller on `Err`).
-///
-/// ## No rwv.lock carve-out for sync
-///
-/// Unlike [`judge_edits_source_preflight`] (the sync-to source-side scan),
-/// this function does NOT carve out `rwv.lock`. The distinction:
-///
-/// - **sync-to**: replay rebases the manifest repos; the project repo's lock
-///   is regenerated and committed by Phase 3 (not ff'd). A dirty lock is the
-///   auto-relock's input and never blocks Phase 1' for sync-to.
-/// - **sync (pull)**: Phase 1' fast-forwards or rebases the project repo
-///   itself to the source's project tip. Both `git merge --ff-only` and
-///   `git rebase` fail when tracked files (including `rwv.lock`) are dirty.
-///   There is no downstream phase that commits the dirty lock; the operator
-///   must stash or commit it before syncing.
-///
-/// ## Scope
-///
-/// Covers every CWD manifest repo on disk and the project repo.
-fn judge_edits_preflight_sync(
-    project_vcs: &dyn Vcs,
-    cwd_project: &Project,
-    cwd_workspace_dir: &Path,
-    cwd_project_dir: &Path,
-    report: &mut Report,
-) -> anyhow::Result<()> {
-    let mut unreadable: Vec<RepoKey> = Vec::new();
-    let mut scan = |vcs: &dyn Vcs, key: RepoKey, label: String, dir: &Path| {
-        match vcs.tracked_dirty_file_names(dir) {
-            // Only live work is dirt: attributable drift self-heals in replay.
-            Ok(tracked) => {
-                let live = if tracked.is_empty() || !is_live_dirt(dir) {
-                    Vec::new()
-                } else {
-                    tracked
-                };
-                judge_edits_in(vcs, label, dir, live, None, report);
-            }
-            // Unreadable status → fail closed rather than silently rebasing
-            // over an unknown state, but don't prescribe commit/stash for
-            // changes we cannot enumerate.
-            Err(_) => unreadable.push(key),
-        }
-    };
-    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
-        let repo = cwd_workspace_dir.join(repo_path.as_path());
-        if repo.exists() {
-            scan(
-                vcs_for(entry.vcs_type).as_ref(),
-                RepoKey::Member(repo_path.clone()),
-                repo_path.to_string(),
-                &repo,
-            );
-        }
-    }
-    // Project repo: no rwv.lock carve-out (unlike the sync-to source scan).
-    // For sync (pull), Phase 1' ff's or rebases the project repo directly, and
-    // git refuses on any tracked dirty file including rwv.lock.
-    scan(
-        project_vcs,
-        RepoKey::Project,
-        project_rel_path(&cwd_project.name),
-        cwd_project_dir,
-    );
-
-    if unreadable.is_empty() {
-        return Ok(());
-    }
-    let listed = unreadable
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("\n  ");
-    if !report.is_empty() {
-        report.note(format!(
-            "status could not be read in:\n  {listed}\ninspect these with the VCS before re-running"
-        ));
-        return Ok(());
-    }
-    crate::refuse!(
-        RefusalKind::UnreadableStatus,
-        "sync precondition failed: status could not be read in:\n  {listed}\n\
-         \n\
-         Refusing to sync over unknown state. Inspect these repos manually \
-         (`git -C <repo> status`), then re-run."
-    )
-}
-
 /// sync-to source-side cleanliness preflight.
 ///
 /// Before writing op-state or touching any repo, refuse if the CWD side (the
@@ -4858,11 +4311,9 @@ fn relock_recovery(side: Side, project_name: &ProjectName) -> String {
 /// One decision, read by the fresh pin and the resume's re-pin. Two copies of
 /// it would let a resume classify a source its fresh invocation gated, or gate
 /// one its fresh invocation waived, from the same arguments.
-fn classify_for(verb: MachineVerb, overrides: &Overrides, source: SourceKind) -> ClassifySource {
+fn classify_for(overrides: &Overrides) -> ClassifySource {
     if overrides.contains(Override::AllowStaleLock) {
         ClassifySource::Skip
-    } else if matches!(verb, MachineVerb::Sync) && source == SourceKind::Workweave {
-        ClassifySource::RelationsAndTips
     } else {
         ClassifySource::Relations
     }
@@ -5285,15 +4736,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // Born where replay will aim it, so the new checkout needs no move.
         let declared = entry.branch.local_counterpart();
         let start = snapshot
-            .pull_tips
-            .get(repo_path)
-            .or_else(|| {
-                snapshot
-                    .source_lock
-                    .get_entry(repo_path)
-                    .map(|e| &e.version)
-            })
-            .map(|rev| rev.id().as_str())
+            .source_lock
+            .get_entry(repo_path)
+            .map(|e| e.version.id().as_str())
             .unwrap_or_else(|| declared.as_str());
         match materialize_missing_repo(
             vcs_for(entry.vcs_type).as_ref(),
@@ -5387,10 +4832,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .get_entry(repo_path)
             .map(|e| vcs_for(e.vcs_type))
             .unwrap_or_else(crate::vcs::probe_vcs);
-        let (target, baseline) = match snapshot.pull_tips.get(repo_path) {
-            Some(tip) => (tip.clone(), ReplayBaseline::SourceCommittedTip),
-            None => (lock_entry.version.clone(), ReplayBaseline::SourceLockEntry),
-        };
+        let target = lock_entry.version.clone();
+        let baseline = ReplayBaseline::SourceLockEntry;
         let containment = match vcs.head_revision(&abs) {
             Ok(head) => Containment::observe(vcs.as_ref(), &abs, &head, &target),
             Err(e) => {
@@ -5726,24 +5169,12 @@ fn pin_source_snapshot(
 
     let source_class = match classify {
         ClassifySource::Skip => None,
-        ClassifySource::Relations | ClassifySource::RelationsAndTips => {
-            Some(classify_lock_relations(
-                source_workspace_root,
-                &source_manifest,
-                Some(&source_lock),
-                source_lock_unresolvable,
-            ))
-        }
-    };
-
-    let pull_tips = match (classify, &source_class) {
-        (ClassifySource::RelationsAndTips, Some(class)) => class
-            .relations
-            .iter()
-            .filter(|r| r.relation == LockRelation::Ahead)
-            .filter_map(|r| r.tip.clone().map(|tip| (r.repo_path.clone(), tip)))
-            .collect(),
-        _ => std::collections::BTreeMap::new(),
+        ClassifySource::Relations => Some(classify_lock_relations(
+            source_workspace_root,
+            &source_manifest,
+            Some(&source_lock),
+            source_lock_unresolvable,
+        )),
     };
 
     let source_tips = match &source_class {
@@ -5760,7 +5191,6 @@ fn pin_source_snapshot(
         raw_source_lock,
         source_lock,
         source_class,
-        pull_tips,
         source_tips,
         source_workspace_root: source_workspace_root.to_path_buf(),
     })
@@ -6138,139 +5568,8 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 // `--continue` then re-runs that phase (it's idempotent) and reaches
 // cleanup again.
 
-/// Tree difference between a repo's pre-op savepoint and its current HEAD —
-/// what the op left changed in this checkout. `None` when the repo has no
-/// savepoint (it was born during the op; the membership change that birthed
-/// it is the project manifest's to report) or when nothing moved.
-fn delivered_changes(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) -> Option<Vec<String>> {
-    let pre = vcs.resolve_savepoint(repo, key)?;
-    let head = vcs.head_revision(repo).ok()?;
-    if pre == head {
-        return None;
-    }
-    vcs.changed_paths_between(repo, &pre, &head).ok()
-}
-
-/// One delivered change that lands on an input of the materialized project:
-/// the project manifest, the rwv lock, or a member's detection manifest for an
-/// integration the project enables.
-///
-/// The lock is an input because it decides which commit of each member is on
-/// disk, and generated ecosystem state is derived from what those commits
-/// contain. A delivery that moves only the lock moves no manifest and would
-/// otherwise land silently.
-struct MaterializedInputHit {
-    /// The repo the input lives in: the project repo for the project manifest
-    /// and lock, the member otherwise.
-    repo_key: RepoKey,
-    /// The input file's name within that repo (e.g. `Cargo.toml`).
-    file: String,
-    /// The same hit as a workspace-relative path, for the `--json` surface.
-    workspace_path: String,
-}
-
-impl MaterializedInputHit {
-    /// `repo: file` rendering used by the text-path note.
-    fn display(&self) -> String {
-        format!("{}: {}", self.repo_key, self.file)
-    }
-}
-
-/// Delivered changes that are inputs of the materialized project.
-///
-/// Generated ecosystem state is derived from exactly these inputs, and sync
-/// never fires the hooks that would re-derive it — materialization is
-/// activation's mandate — so a hit means this checkout's generated state may
-/// no longer agree with the inputs sync just delivered.
-///
-/// Empty when this root does not present the synced project — then nothing
-/// is materialized here to go stale. The root's own identity files answer
-/// that, not the resolved project name: `--project` can aim a primary's sync
-/// at a project its pointer does not present, and the note must stay quiet
-/// for exactly that delivery.
-fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInputHit> {
-    let presented = crate::workspace::observe_root(&ctx.cwd_workspace_dir)
-        .and_then(|obs| obs.presented_project().cloned());
-    if presented.as_ref() != Some(&ctx.cwd_project_name) {
-        return Vec::new();
-    }
-    let Ok(project) =
-        Project::from_dir_skip_lock(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
-    else {
-        return Vec::new();
-    };
-    let builtin = builtin_integrations();
-    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
-    let default_config = IntegrationConfig::default();
-    let member_inputs: std::collections::BTreeSet<&str> =
-        enabled_integrations(&integrations, &project.manifest, &default_config)
-            .flat_map(|(integration, _)| integration.detection_manifests().iter().copied())
-            .collect();
-
-    let mut hits = Vec::new();
-    if let Some(changed) = delivered_changes(
-        ctx.project_vcs.as_ref(),
-        &ctx.cwd_project_dir,
-        &ctx.savepoint_key(),
-    ) {
-        for file in [Manifest::FILE_NAME, crate::manifest::LockFile::FILE_NAME] {
-            if changed.iter().any(|p| p == file) {
-                hits.push(MaterializedInputHit {
-                    repo_key: RepoKey::Project,
-                    file: file.to_owned(),
-                    workspace_path: format!("{}/{file}", project_rel_path(&ctx.cwd_project_name),),
-                });
-            }
-        }
-    }
-    for (repo_path, entry) in project.manifest.iter_entries() {
-        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        if !abs.exists() {
-            continue;
-        }
-        let vcs = vcs_for(entry.vcs_type);
-        let Some(changed) = delivered_changes(vcs.as_ref(), &abs, &ctx.savepoint_key()) else {
-            continue;
-        };
-        for file in changed
-            .iter()
-            .filter(|p| member_inputs.contains(p.as_str()))
-        {
-            hits.push(MaterializedInputHit {
-                repo_key: RepoKey::Member(repo_path.clone()),
-                file: file.clone(),
-                workspace_path: format!("{repo_path}/{file}"),
-            });
-        }
-    }
-    hits
-}
-
 fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
-
-    // Before the savepoints go: they are the pre-op tips the staleness note
-    // reads its delivered ranges from.
-    if matches!(ctx.verb, op_state::OpVerb::Sync) {
-        let hits = delivered_materialized_input_hits(ctx);
-        if !hits.is_empty() {
-            if emit_text {
-                eprintln!(
-                    "note: delivered changes touch materialized inputs ({}); run `rwv materialize` \
-                     to bring the generated ecosystem state up to date",
-                    hits.iter()
-                        .map(MaterializedInputHit::display)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
-            ctx.handler.record_advisory(AdvisoryOutput {
-                kind: AdvisoryKindOutput::DerivedStateStale,
-                remedy: "rwv materialize".to_owned(),
-                inputs: hits.into_iter().map(|h| h.workspace_path).collect(),
-            });
-        }
-    }
 
     // Savepoint refs (`refs/rwv/pre-op/*`) live in the shared clone refdb, not
     // in any worktree, so `git update-ref -d` from ANY live worktree of the
@@ -7144,58 +6443,6 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
     }
 }
 
-/// Run `rwv sync --json`: collect all per-repo outcomes, then emit
-/// `{ "$schema": "...", "outcomes": [...] }` pretty-printed to stdout on
-/// completion, whatever `-j` is.
-///
-/// The text-mode per-repo chatter that `run_sync` produces is suppressed;
-/// stderr-side diagnostic warnings (e.g. `(project): re-locked after sync
-/// from ...`, `--retire` messages) flow through.
-///
-/// Exit semantics: when any per-repo outcome has kind `failed`, exits with
-/// code 1 directly after emitting the envelope. The `process::exit` avoids anyhow's stderr error display swallowing the
-/// JSON. When all repos succeed, returns `Ok(())` and main exits 0.
-///
-/// Project-level errors raised before any per-repo work (lock freshness,
-/// active-project mismatch, etc.) propagate via `Err` and main's anyhow
-/// printer surfaces them — no JSON is emitted in that case. This matches
-/// the spec's "non-zero iff at least one repo failed" semantic: when sync
-/// can't even reach the per-repo loop, there are no per-repo outcomes to
-/// emit, so the structured channel has nothing to say.
-#[allow(clippy::too_many_arguments)]
-fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
-    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
-    let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
-    let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
-    let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
-    let complete = AtomicBool::new(false);
-    let handler = JsonEnvelopeHandler {
-        records: &records,
-        advisories: &advisories,
-        placements: &placements,
-        members: &members,
-        complete: &complete,
-    };
-    let project_level_result = run_machine(MachineVerb::Sync, ctx, request, &handler);
-
-    let records = in_manifest_order(records.into_inner().unwrap_or_else(|e| e.into_inner()));
-    let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
-    let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
-    let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
-
-    run_sync_json_impl(
-        records,
-        advisories,
-        placements,
-        members,
-        complete.into_inner(),
-        SYNC_JSON_SCHEMA_URL,
-        project_level_result,
-        false,
-        Some(ctx.resolution()),
-    )
-}
-
 /// The repos a failed op's refusal judged, for its envelope.
 fn refused_by(result: &anyhow::Result<()>) -> Vec<crate::diagnosis::JudgedOutput> {
     result
@@ -7205,7 +6452,7 @@ fn refused_by(result: &anyhow::Result<()>) -> Vec<crate::diagnosis::JudgedOutput
         .unwrap_or_default()
 }
 
-/// Shared JSON exit/return tail for `run_sync_json_impl` and `run_sync_to_json`.
+/// JSON exit/return tail of `run_sync_to_json`.
 ///
 /// After serialization is done, both callers share
 /// the same exit logic: exit 1 when any per-repo outcome failed, otherwise
@@ -7232,49 +6479,6 @@ fn json_exit_tail(
     // outcomes JSON has been emitted; surface the error via Err so
     // main's anyhow display fires.
     project_level_result
-}
-
-/// Post-machine JSON emitter for `rwv sync --json`.
-///
-/// Emits the envelope, then delegates to [`json_exit_tail`] for exit/return.
-///
-/// When `emit_empty_envelope` is true, an envelope with an empty `outcomes`
-/// array is emitted even when `records` is empty (used by sync-to where
-/// step 1 may be skipped for ff-clean with no per-repo manifest outcomes).
-/// When false (sync's behavior), empty records propagates the error.
-#[allow(clippy::too_many_arguments)]
-fn run_sync_json_impl(
-    records: Vec<SyncOutcomeOutput>,
-    advisories: Vec<AdvisoryOutput>,
-    placements: Vec<PlacementOutput>,
-    members: Vec<MemberOutput>,
-    complete: bool,
-    schema_url: &str,
-    project_level_result: anyhow::Result<()>,
-    emit_empty_envelope: bool,
-    resolution: Option<Resolution>,
-) -> anyhow::Result<()> {
-    // If we never reached the per-repo loop (project-level precondition
-    // failure), propagate the error so main prints it via anyhow.
-    if records.is_empty() && !emit_empty_envelope {
-        return project_level_result;
-    }
-
-    let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
-    let payload = SyncJsonOutput {
-        schema: schema_url.to_owned(),
-        outcomes: records,
-        placements,
-        members,
-        complete,
-        refused: refused_by(&project_level_result),
-        advisories,
-        resolution,
-    };
-    let out = serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
-    outln!("{out}");
-
-    json_exit_tail(any_failure, project_level_result)
 }
 
 /// Workers record outcomes as they finish, so under `-j N` the buffer holds
@@ -7324,7 +6528,7 @@ pub fn run_sync_to(
             let handler = TextHandler {
                 stdout_lock: &stdout_lock,
             };
-            run_machine(MachineVerb::SyncTo, ctx, request, &handler)
+            run_machine(ctx, request, &handler)
         }
     }
 }
@@ -7371,7 +6575,7 @@ pub struct SyncToJsonRun {
 /// the caller need not be in, and its target is in the op record.
 pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let recorder = sync_to_envelope::SyncToRecorder::default();
-    let project_level_result = run_machine(MachineVerb::SyncTo, ctx, request, &recorder);
+    let project_level_result = run_machine(ctx, request, &recorder);
     let outcome = recorder.into_outcome();
     SyncToJsonRun {
         any_failure: outcome.any_failure(),
@@ -8022,72 +7226,6 @@ mod tests {
             !matches!(outcome, RepoSyncOutcome::AlreadyAhead { .. }),
             "a planned ff-mover must not be silently re-classified behind the \
              record's back; got: {outcome}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // check_phase1_ancestor — the destination↔source refusal
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn the_phase1_refusal_calls_a_contained_source_ahead_and_names_the_blockers() {
-        let tmp = crate::tempdir().unwrap();
-        let repo = tmp.path().join("project");
-        init_repo(&repo);
-        let source_tip = git_vcs().head_revision(&repo).unwrap();
-        let cwd_tip = commit(&repo, "local-work");
-
-        let err = check_phase1_ancestor(
-            git_vcs().as_ref(),
-            &repo,
-            &cwd_tip,
-            &source_tip,
-            "feat",
-            "primary",
-        )
-        .expect_err("a destination holding commits the source lacks must refuse")
-        .to_string();
-
-        assert!(
-            err.contains("strictly ahead of source workspace 'primary'")
-                && err.contains("by 1 commit (contains it)"),
-            "the refusal must render the proven verdict; got: {err}"
-        );
-        assert!(
-            !err.contains("diverged"),
-            "a contained source is not a divergence; got: {err}"
-        );
-        assert!(
-            err.contains("local-work"),
-            "the refusal must name the commits that block it; got: {err}"
-        );
-    }
-
-    #[test]
-    fn the_phase1_refusal_separates_a_diverged_destination_from_an_ahead_one() {
-        let tmp = crate::tempdir().unwrap();
-        let repo = tmp.path().join("project");
-        let (cwd_tip, source_tip) = forked_tips(&repo);
-
-        let err = check_phase1_ancestor(
-            git_vcs().as_ref(),
-            &repo,
-            &cwd_tip,
-            &source_tip,
-            "feat",
-            "primary",
-        )
-        .expect_err("a diverged destination must refuse")
-        .to_string();
-
-        assert!(
-            err.contains("diverged from source workspace 'primary'")
-                && err.contains("(1 ahead, 1 behind)"),
-            "the refusal must render both operands of a divergence; got: {err}"
-        );
-        assert!(
-            !err.contains("strictly ahead"),
-            "a diverged destination contains nothing; got: {err}"
         );
     }
 
