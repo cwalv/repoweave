@@ -7,8 +7,9 @@
 > workweaves go through rwv verbs. If you need an operation no verb provides,
 > that is a UX gap: file it rather than working around it at the file level.
 
-The per-phase contract behind `rwv sync` and `rwv sync-to`, for someone
-changing `src/sync.rs`: what each phase does, what it persists, and the
+The per-phase contract behind `rwv sync-to`, for someone changing
+`src/sync.rs`. `rwv sync` no longer runs this machine; its contract is the
+last section below. For `sync-to`: what each phase does, what it persists, and the
 re-entry rule that makes `--continue` safe. The operator contract — the
 direction pair, what the phases mean to an operator, abort's guarantees and
 the strategy choice — is
@@ -473,3 +474,49 @@ under the same op record. Its order is fixed:
 A member that conflicts at step 3 leaves the project checkout without a commit.
 Without `merge-tree`, step 1 leaves the merge staged in the checkout while the
 members merge; a `--continue` finds it in flight and goes on.
+
+## `rwv sync` (src/feature_sync.rs)
+
+`rwv sync` takes a weave branch's target into it, or merges `--from`'s
+branch, in the workspace it runs in. It has no phases of its own beyond
+judge-then-act, and it runs under the same op record as `pull
+--merge-upstream`.
+
+1. **Judge, moving nothing.** The pruning fetch; the tip of the branch taken
+   in (`tip_of`: the newer of the branch and its upstream, a diverged pair
+   refused); the target's manifest and lock at that tip; every pin of the
+   target's history (`lineage::PinHistory`, every commit reachable from the
+   tip that changed `rwv.lock`). Per `owned` or `fork` member: the receiving
+   branch `U` (the member's branch named after the target when `as` is
+   `feature`, else the branch the merged entries declare), its merge source
+   (`U`'s tip; the target's pin where `U` exists nowhere), and an act:
+   nothing (the work already contains the source), fast-forward or follow (no
+   new work: `lineage::new_work` is empty), rebase (under `--strategy
+   rebase`), merge (`--from`), or reset (`--reset-to-target`). Members with new
+   work, and following members while the branch has dependents, are judged by
+   `lineage::judge`. A target pin this clone lacks is `pin` unreachable.
+   Then the project branch's act, `push-branch` for every branch that would
+   move (three ways for a divergence: unpushed, landed, rewritten), edits,
+   alignment, protection, a range holding a merge under rebase, and
+   dependents of a branch the sync would rewrite. Every refusal is reported
+   together.
+2. **Act, re-entrantly.** `Op::begin` writes the record (verb `sync`,
+   `take_in.sync_from`, `take_in.upstream_tips` holding each member's merge
+   source and the project's source tip) and a savepoint per repo. Each member
+   is taken in by `take_member`, which reads what an earlier run already did
+   (a rebase in progress is continued; a source the branch already contains
+   is left), so `--continue` re-runs the same function. Rebases and follows
+   keep a backup first (`rebased` for a rebase). The project branch is then
+   fast-forwarded, rebased (the lock's derived side kept) or reset; under
+   `--from` it is merged by `ProjectMerge`, with the member merges already
+   made passed in as `MemberMerging::Done`.
+3. **Relock.** The lock is `lock_merge::merge_pins` over the merge base's,
+   the branch's (first) and the target's (second) locks, each member the op
+   moved replaced by its new tip; with the project repo reset, the target's
+   lock with the moved members at their tips. It is committed as `lock:
+   relock after sync from <branch>` when it differs.
+4. **Settle.** Members the new entries drop are pruned, then `update` aligns
+   the workspace, and the op's record and savepoints go.
+
+`rwv abort` restores the savepoints and the ref moves as it does for any
+take-in op.

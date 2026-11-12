@@ -296,8 +296,24 @@ pub fn feature_in_primary_while_main_moves() -> Scenario {
                 }),
             Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["switch", "feat-x"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
-            Step::pending("take in the new main, then land", MissingVerb::Land),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "feat-x"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["sync", "--strategy", "rebase"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "main-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "feat-app",
+                }),
+            Step::pending("land feat-x into main", MissingVerb::Land),
         ],
     )
 }
