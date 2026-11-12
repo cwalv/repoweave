@@ -5449,6 +5449,17 @@ impl crate::lock_merge::Reach for SourceReach<'_> {
             )
             .ok()
     }
+
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId> {
+        let entry = self.manifest.get_entry(member)?;
+        Some(
+            vcs_for(entry.vcs_type)
+                .resolve_revision(&self.root.join(member.as_path()), name)
+                .ok()?
+                .id()
+                .clone(),
+        )
+    }
 }
 
 /// The landing's lock: the three-way merge of the source's and the
@@ -5476,7 +5487,11 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
                 "the op record holds no target tip to relock onto"
             )
         })?;
-    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit);
+    let reach = SourceReach {
+        root: &ctx.cwd_workspace_dir,
+        manifest,
+    };
+    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit, &reach);
     let base = vcs
         .merge_bases(dir, source, target)?
         .into_iter()
@@ -5517,10 +5532,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             merged_declared: &merged_declared,
             member_merges: &member_merges,
         },
-        &SourceReach {
-            root: &ctx.cwd_workspace_dir,
-            manifest,
-        },
+        &reach,
     );
     let mut unmerged = Report::default();
     for finding in &merged.findings {

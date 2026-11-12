@@ -279,6 +279,64 @@ fn a_landing_warns_on_a_tag_pinned_entry_and_its_relock_records_the_commit() {
     }
 }
 
+/// The target re-pins `dep` by naming a newer tag while the seat leaves its
+/// commit pin as their merge base had it: the three-way merge reads the name
+/// as the commit it points at, so the landing keeps the target's change.
+#[test]
+fn a_landing_keeps_the_targets_re_pin_by_name_over_an_unchanged_commit_pin() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    let dep_bare = tmp.path().join("dep.git");
+    let first = tagged_remote(&dep_bare, "v1.0.0");
+    let dep_clone = common::under(&root, DEP);
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            &dep_bare.to_string_lossy(),
+            &dep_clone.to_string_lossy(),
+        ],
+    );
+
+    let project = root.join("projects").join(PROJECT);
+    std::fs::create_dir_all(&project).unwrap();
+    common::git_in(&project, &["init", "-b", "main"]);
+    common::set_up_lock_driver(&project);
+    std::fs::write(project.join(".gitignore"), "*.code-workspace\ngita/\n").unwrap();
+    let dep_url = common::file_url(&dep_bare);
+    std::fs::write(project.join("rwv.toml"), manifest_toml(&[(DEP, &dep_url)])).unwrap();
+    common::fixture_lock(&project, &[(DEP, &dep_url, &first)]);
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "initial"]);
+    common::record_trunk(&project);
+    std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    succeed(&root, &["workweave", "create", "--project", PROJECT, "s1"]);
+    let seat = tmp
+        .path()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--s1"));
+
+    let work = tmp.path().join("dep-work");
+    common::git_in(&work, &["commit", "--allow-empty", "-m", "second"]);
+    common::git_in(&work, &["tag", "-a", "v2.0.0", "-m", "release"]);
+    common::git_in(&work, &["push", "origin", "main", "--tags"]);
+    let second = common::git_in(&work, &["rev-parse", "HEAD"]);
+    common::git_in(&dep_clone, &["fetch", "--tags", "origin"]);
+    common::fixture_lock(&project, &[(DEP, &dep_url, "v2.0.0")]);
+    common::git_in(&project, &["commit", "-am", "re-pin dep by its tag"]);
+
+    succeed(&seat, &["land"]);
+
+    let lock_path = project.join("rwv.lock");
+    assert_eq!(
+        version_in(&lock_path, DEP),
+        second,
+        "the landing must keep the target's re-pin, recorded as the commit its name points at"
+    );
+}
+
 fn json(dir: &Path, args: &[&str]) -> serde_json::Value {
     let (stdout, _) = succeed(dir, args);
     serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("rwv {args:?}: {e}\n{stdout}"))

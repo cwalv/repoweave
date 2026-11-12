@@ -1752,6 +1752,17 @@ impl Reach for MemberReach<'_> {
             .is_ancestor(&self.root.join(member.as_path()), &rev(ancestor), &rev(of))
             .ok()
     }
+
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId> {
+        let entry = self.manifest.get_entry(member)?;
+        Some(
+            vcs_for(entry.vcs_type)
+                .resolve_revision(&self.root.join(member.as_path()), name)
+                .ok()?
+                .id()
+                .clone(),
+        )
+    }
 }
 
 /// Discard the uncommitted versions of the files the integrations author in
@@ -1797,7 +1808,11 @@ fn relock(
     let vcs = sync.vcs.as_ref();
     let dir = &sync.dir;
     let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
-    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit);
+    let reach = MemberReach {
+        root: sync.ctx.active_path(),
+        manifest: &manifest,
+    };
+    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit, &reach);
     let theirs = held(source);
     let pins = if reset_project {
         let mut pins = theirs.pins.clone();
@@ -1827,10 +1842,7 @@ fn relock(
                 merged_declared: &merged_declared,
                 member_merges: moved,
             },
-            &MemberReach {
-                root: sync.ctx.active_path(),
-                manifest: &manifest,
-            },
+            &reach,
         );
         merged.pins
     };

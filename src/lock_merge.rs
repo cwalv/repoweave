@@ -24,9 +24,13 @@ pub enum Parent {
     Second,
 }
 
-/// Whether one commit of a member contains another.
+/// A member's history as one checkout of it holds it.
 pub trait Reach {
+    /// Whether `of` contains `ancestor`.
     fn reaches(&self, member: &RepoPath, ancestor: &CommitId, of: &CommitId) -> Option<bool>;
+    /// The commit `name` points at now, for a lock entry that pins the
+    /// member by name.
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId>;
 }
 
 /// What a merge of two project commits has to settle.
@@ -182,6 +186,10 @@ mod tests {
                         .iter()
                         .any(|(a, o)| commit(*a) == *ancestor && commit(*o) == *of),
             )
+        }
+
+        fn named(&self, _: &RepoPath, _: &str) -> Option<CommitId> {
+            None
         }
     }
 

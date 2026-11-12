@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::lock_merge::Held;
+use crate::lock_merge::{Held, Reach};
 use crate::manifest::{LockFile, Manifest, RepoPath};
 use crate::vcs::{CommitId, RangeCommit, ResolvedRevisionId, Vcs};
 
@@ -51,13 +51,14 @@ pub(crate) struct Finding {
 struct Reader<'a> {
     vcs: &'a dyn Vcs,
     dir: &'a Path,
+    members: &'a [Member<'a>],
     cache: HashMap<CommitId, Held>,
 }
 
 impl Reader<'_> {
     fn held(&mut self, commit: &CommitId) -> &Held {
         if !self.cache.contains_key(commit) {
-            let held = held_at(self.vcs, self.dir, commit);
+            let held = held_at(self.vcs, self.dir, commit, &self.members);
             self.cache.insert(commit.clone(), held);
         }
         &self.cache[commit]
@@ -65,8 +66,9 @@ impl Reader<'_> {
 }
 
 /// The pins and declared branches `commit` of the project repo at `dir`
-/// holds; a file that is absent or does not parse holds nothing.
-pub(crate) fn held_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Held {
+/// holds, a pin by name as the commit `members` resolves it to; a file that
+/// is absent or does not parse holds nothing.
+pub(crate) fn held_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId, members: &dyn Reach) -> Held {
     let at = ResolvedRevisionId::from(commit.clone());
     let mut held = Held::default();
     if let Some(lock) = vcs
@@ -75,7 +77,11 @@ pub(crate) fn held_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Held {
         .and_then(|text| LockFile::from_json_str(&text).ok())
     {
         for (path, entry) in lock.iter_entries() {
-            if let Some(pin) = entry.version.as_commit_id() {
+            let pin = entry
+                .version
+                .as_commit_id()
+                .or_else(|| members.named(path, entry.version.as_str()));
+            if let Some(pin) = pin {
                 held.pins.insert(path.clone(), pin);
             }
         }
@@ -93,6 +99,24 @@ pub(crate) fn held_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Held {
         }
     }
     held
+}
+
+impl<'a> Reach for &'a [Member<'a>] {
+    fn reaches(&self, member: &RepoPath, ancestor: &CommitId, of: &CommitId) -> Option<bool> {
+        reaches(self.iter().find(|m| m.path == member)?, ancestor, of)
+    }
+
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId> {
+        let member = self.iter().find(|m| m.path == member)?;
+        Some(
+            member
+                .vcs
+                .resolve_revision(&member.dir, name)
+                .ok()?
+                .id()
+                .clone(),
+        )
+    }
 }
 
 fn reaches(member: &Member<'_>, ancestor: &CommitId, of: &CommitId) -> Option<bool> {
@@ -119,6 +143,7 @@ pub(crate) fn analyze(
     let mut reader = Reader {
         vcs: project_vcs,
         dir: project_dir,
+        members,
         cache: HashMap::new(),
     };
     let tip_held = reader.held(tip).clone();

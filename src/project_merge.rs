@@ -70,6 +70,7 @@ fn both_changed(
 /// `rwv.toml` does not come out clean.
 pub(crate) fn member_merges_planned(
     vcs: &dyn Vcs,
+    root: &Path,
     dir: &Path,
     sides: &Sides,
 ) -> anyhow::Result<Option<(Manifest, Vec<MemberMerge>)>> {
@@ -95,7 +96,11 @@ pub(crate) fn member_merges_planned(
         .merge_bases(dir, &sides.first, &sides.second)?
         .into_iter()
         .next();
-    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit);
+    let reach = MemberReach {
+        root,
+        manifest: &manifest,
+    };
+    let held = |commit: &CommitId| crate::unmerged::held_at(vcs, dir, commit, &reach);
     let base_held = base.as_ref().map(held);
     let (first, second) = (held(&sides.first), held(&sides.second));
     let merged_declared: BTreeMap<RepoPath, String> = manifest
@@ -472,6 +477,17 @@ impl Reach for MemberReach<'_> {
             )
             .ok()
     }
+
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId> {
+        let entry = self.manifest.get_entry(member)?;
+        Some(
+            vcs_for(entry.vcs_type)
+                .resolve_revision(&self.root.join(member.as_path()), name)
+                .ok()?
+                .id()
+                .clone(),
+        )
+    }
 }
 
 /// One project merge: what it joins and the workspace it runs in.
@@ -533,7 +549,11 @@ impl ProjectMerge<'_> {
         let manifest = Manifest::from_toml_str(&text)
             .context("the merged rwv.toml does not parse; resolve it, then continue")?;
 
-        let held = |commit: &CommitId| crate::unmerged::held_at(vcs, &dir, commit);
+        let reach = MemberReach {
+            root: self.ctx.active_path(),
+            manifest: &manifest,
+        };
+        let held = |commit: &CommitId| crate::unmerged::held_at(vcs, &dir, commit, &reach);
         let base_held = base.as_ref().map(held);
         let (first_held, second_held) = (held(&sides.first), held(&sides.second));
         let merged_declared: BTreeMap<RepoPath, String> = manifest

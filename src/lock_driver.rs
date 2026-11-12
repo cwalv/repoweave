@@ -413,4 +413,15 @@ impl Reach for MemberReach<'_> {
             )
             .ok()
     }
+
+    fn named(&self, member: &RepoPath, name: &str) -> Option<CommitId> {
+        let entry = self.manifest?.get_entry(member)?;
+        Some(
+            vcs_for(entry.vcs_type)
+                .resolve_revision(&self.root?.join(member.as_path()), name)
+                .ok()?
+                .id()
+                .clone(),
+        )
+    }
 }

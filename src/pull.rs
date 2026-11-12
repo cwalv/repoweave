@@ -616,7 +616,12 @@ fn merge_project(
             report.extend(judge_edits(vcs.as_ref(), &path, dir, tracked, None));
             if let (Some(lineage), Some((merged, merging))) = (
                 &lineage,
-                crate::project_merge::member_merges_planned(vcs.as_ref(), dir, &sides)?,
+                crate::project_merge::member_merges_planned(
+                    vcs.as_ref(),
+                    ctx.active_path(),
+                    dir,
+                    &sides,
+                )?,
             ) {
                 lineage.judge_member_merges(
                     ctx.active_path(),

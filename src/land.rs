@@ -652,6 +652,10 @@ impl crate::lock_merge::Reach for CheckoutReach<'_> {
             .is_ancestor(self.dir, &rev(ancestor), &rev(of))
             .ok()
     }
+
+    fn named(&self, _: &RepoPath, name: &str) -> Option<CommitId> {
+        Some(self.vcs.resolve_revision(self.dir, name).ok()?.id().clone())
+    }
 }
 
 fn pin_of(lock: Option<&LockFile>, path: &RepoPath) -> Option<CommitId> {
