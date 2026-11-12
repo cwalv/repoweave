@@ -232,12 +232,17 @@ fn take_within(
             match holder {
                 Ok(holder) => crate::refuse!(
                     RefusalKind::StateClaimHeld,
-                    "another landing into '{target}' holds it: op {op}, recorded in {owner}. If \
-                     it is running, rerun once it ends. If it stopped, either of these, run in \
-                     {owner}, ends it, and then this landing runs:\n  {resume}\n  rwv abort",
+                    "another operation moving '{target}' holds it: op {op}, recorded in {owner}. \
+                     If it is running, rerun once it ends. If it stopped, either of these, run \
+                     in {owner}, ends it, and then this landing runs:\n  {resume}\n  rwv abort",
                     op = holder.op,
                     owner = holder.owner.as_path().display(),
-                    resume = crate::op_state::resume_command(crate::op_state::OpVerb::Land),
+                    resume = crate::op_state::resume_command(
+                        crate::op_state::read_owner(holder.owner.as_path())
+                            .ok()
+                            .flatten()
+                            .map_or(crate::op_state::OpVerb::Land, |record| record.verb)
+                    ),
                 ),
                 Err(text) => crate::refuse!(
                     RefusalKind::StateClaimHeld,

@@ -1462,6 +1462,7 @@ fn act(
             project: &sync.project,
             manifest: &pre_manifest,
         },
+        op: &op.id,
         workspace: &op.workspace,
         verb: OpVerb::Sync,
         w: &branch,
@@ -1615,6 +1616,7 @@ fn act(
         .and_then(|owner| owner.take_in)
         .map(|take_in| take_in.rebased_backups)
         .unwrap_or_default();
+    crate::landing_claim::LandingClaim::release_held_by(sync.vcs.as_ref(), &sync.dir, &op.id)?;
     op.finish(&repos);
     crate::backup::drop_rebased(
         sync.ctx.primary_path(),

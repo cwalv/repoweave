@@ -693,6 +693,7 @@ every_scenario!(
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     stack_at_the_tip_under_update_refs,
     stack_carry_stopped_under_update_refs,
+    a_landing_into_a_dependent_waits_on_its_stopped_carry,
     abort_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
@@ -4858,6 +4859,12 @@ fn a_carry_that_conflicts_aborts_to_where_the_stack_was() {
         scenarios::AfterHandContinue::Abort,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_into_a_dependent_waits_on_its_stopped_carry() {
+    runner::run(scenarios::a_landing_into_a_dependent_waits_on_its_stopped_carry())
+        .assert_fully_decided_green();
 }
 
 #[test]

@@ -6055,6 +6055,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             project: &ctx.cwd_project_name,
             manifest: &pre_op,
         },
+        op: &ctx.op_id,
         workspace: &ctx.owner_workspace_dir,
         verb: ctx.verb,
         w: &feature,
@@ -7496,6 +7497,11 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     for workspace in std::iter::once(&ctx.cwd_workspace_dir).chain(&ctx.dest_workspace_dir) {
         forget_replays_in(workspace, &ctx.cwd_project_name);
     }
+    crate::landing_claim::LandingClaim::release_held_by(
+        ctx.project_vcs.as_ref(),
+        &canonical_project_dir,
+        &ctx.op_id,
+    )?;
 
     op_state::TouchedWorkspaces::of(
         ctx.verb,
@@ -8150,15 +8156,13 @@ pub fn run_abort(
         for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
             op_state::clear_lease_owned_by(dir, owner_workspace.as_path());
         }
-        if header.verb == OpVerb::Land {
-            if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
-                project_vcs().as_ref(),
-                &cwd_project_dir,
-                &op_id,
-            ) {
-                eprintln!("  {e:#}");
-                tally.any_failure = true;
-            }
+        if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
+            project_vcs().as_ref(),
+            &cwd_project_dir,
+            &op_id,
+        ) {
+            eprintln!("  {e:#}");
+            tally.any_failure = true;
         }
     }
     if let (Some(dir), true) = (&other_ws_dir, tally.clean()) {

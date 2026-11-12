@@ -254,6 +254,7 @@ pub(crate) struct Carried {
 /// The op a carry runs under.
 pub(crate) struct Carrier<'a> {
     pub(crate) repos: Repos<'a>,
+    pub(crate) op: &'a crate::op_state::OpId,
     pub(crate) workspace: &'a Path,
     pub(crate) verb: OpVerb,
     pub(crate) w: &'a BranchName,
@@ -384,9 +385,11 @@ impl Carrier<'_> {
     }
 
     /// Carry every dependent of `w` along `w`'s rewrite, as the journaled
-    /// rebases record it: compose each in its repo's checkout, parents
-    /// first, then move every dependent's branch. A dependent that can no
-    /// longer be carried refuses before any of their branches moves.
+    /// rebases record it: claim each as a landing into it would, compose
+    /// each in its repo's checkout, parents first, then move every
+    /// dependent's branch. A dependent that can no longer be carried refuses
+    /// before any of their branches moves. The claims are held until the op
+    /// ends or is aborted.
     pub(crate) fn carry(&self) -> anyhow::Result<Vec<Carried>> {
         self.finish_stopped()?;
         let record = take_in(self.workspace)?;
@@ -414,6 +417,18 @@ impl Carrier<'_> {
         };
         judge(&stack, &self.repos, self.t, verb, &mut report);
         report.into_result()?;
+        let project_dir = self.repos.dir(&RepoKey::Project);
+        let project_vcs = self.repos.vcs(&RepoKey::Project);
+        for carry in &stack.carried {
+            crate::landing_claim::LandingClaim::take(
+                project_vcs.as_ref(),
+                &project_dir,
+                self.repos.project,
+                carry.dependent.as_str(),
+                self.op,
+                self.workspace,
+            )?;
+        }
         for carry in &stack.carried {
             let mut tips = carry.tips.clone();
             tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);

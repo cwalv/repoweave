@@ -14105,6 +14105,59 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
     )
 }
 
+/// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
+/// third workweave meanwhile: the stopped carry holds `w2` as a landing
+/// would, so the landing refuses naming the carry's op, and once the
+/// printed `rwv abort` ends it the landing lands.
+pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "carrying 'w2' along in local/remotes/app",
+            )),
+        create("w3"),
+        dependent_of(&ww("w3"), "w3", "w2"),
+        Step::commit(&ww("w3"), Repo::Lib, "w3-lib"),
+        Step::rwv(&ww("w3"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w3"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::LocalStateUnchanged(ww("w3"))),
+        Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputLacks("foreign")),
+        Step::rwv(&ww("w3"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("w3"),
+                repo: Repo::Lib,
+                rev: "w2",
+                mark: "w3-lib",
+            }),
+    ];
+    scenario(
+        "stack: a landing into a dependent waits on its stopped carry",
+        steps,
+    )
+}
+
 /// `stack-carried` under an operator's `rebase.updateRefs`, with `w2`
 /// holding no `app` commit of its own, so it sits at `w1`'s tip there: the
 /// sync's rebase of `w1` leaves `w2` where it is, and the carry moves it.
