@@ -10113,23 +10113,44 @@ impl LandedStop {
     }
 }
 
+/// A landing run in `w` with `args`, stopped in its retire with the retire
+/// recorded as stopped: killed before it released the target, then continued
+/// into a retire that refuses on an edit in `docs`, which it never moves.
+fn retire_refused_on_dirt(args: &[&str]) -> Vec<Step> {
+    vec![
+        Step::rwv_paused(&ww("w"), args, "retiring", "landing"),
+        Step::kill("landing"),
+        Step::hand_edit(&ww("w"), Repo::Docs, "README", "docs", "w dirt"),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Docs, State::EditsDirty)),
+    ]
+}
+
 /// A landing fast-forwarded `app` in the target's workspace, then was
 /// killed; someone edits `app` there. `rwv abort` run in the target keeps
 /// the edits as a backup, then resets; run from the source, it refuses to
 /// discard edits in a workspace it was not run in, printing the choices,
-/// and once they are set aside there the rerun restores everything.
+/// and once they are set aside there the rerun restores everything. Stopped
+/// in its retire, the landing is aborted from the target only once its retire
+/// refused, so its record shows it stopped.
 pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
     stop: LandedStop,
     from: AbortFrom,
 ) -> Scenario {
-    let mut steps = vec![
-        create("w"),
-        Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
-        Step::kill("landing"),
+    let recorded = stop == LandedStop::Retire && from == AbortFrom::Target;
+    let mut steps = vec![create("w"), Step::commit(&ww("w"), Repo::App, "w-app")];
+    if recorded {
+        steps.extend(retire_refused_on_dirt(&["land", "--retire"]));
+    } else {
+        steps.extend([
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
+            Step::kill("landing"),
+        ]);
+    }
+    steps.extend([
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"]).claim(Claim::OutputLine("w-app")),
         Step::hand_edit(&a(), Repo::App, "README", "app", "edited in the target"),
-    ];
+    ]);
     match from {
         AbortFrom::Target => steps.extend([
             Step::rwv(&a(), &["abort"])
@@ -10167,13 +10188,22 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
             Step::git(&a(), Repo::App, &["stash", "list"]).claim(Claim::OutputContains("stash@")),
         ]),
     }
-    steps.extend([
+    steps.push(
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLacks("w-app")),
+    );
+    if recorded {
+        steps.push(Step::git(
+            &ww("w"),
+            Repo::Docs,
+            &["checkout", "--", "README"],
+        ));
+    }
+    steps.push(
         Step::rwv(&ww("w"), &["land", "--retire"])
             .expect(Exit::Succeeds)
             .claim(Claim::WorkweaveGone(ww("w"))),
-    ]);
+    );
     scenario("abort keeps edits made in the target after the stop", steps)
 }
 
@@ -10741,8 +10771,24 @@ pub fn abort_switch_back_blocked(blocked: SwitchBackBlocked) -> Scenario {
 /// and `main` lacks. Abort, run from the source, does not discard an edit
 /// in the target's workspace to switch the checkout back to `main`: it
 /// refuses, leaving the checkout where it is.
-fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
-    vec![
+fn abort_refused_over_colliding_edits(stop: LandedStop, recorded: bool) -> Vec<Step> {
+    let landing = [
+        "land",
+        "--history",
+        "linear",
+        "--retire",
+        "--allow-member-change",
+        LIB,
+    ];
+    let stopped = if recorded && stop == LandedStop::Retire {
+        retire_refused_on_dirt(&landing)
+    } else {
+        vec![
+            Step::rwv_paused(&ww("w"), &landing, stop.point(), "landing"),
+            Step::kill("landing"),
+        ]
+    };
+    let mut steps = vec![
         create("w"),
         Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
         Step::commit(&a(), Repo::Lib, "dev-own"),
@@ -10760,20 +10806,9 @@ fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
             &["commit", "-qam", "lib onto lib-next"],
         ),
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
-        Step::rwv_paused(
-            &ww("w"),
-            &[
-                "land",
-                "--history",
-                "linear",
-                "--retire",
-                "--allow-member-change",
-                LIB,
-            ],
-            stop.point(),
-            "landing",
-        ),
-        Step::kill("landing"),
+    ];
+    steps.extend(stopped);
+    steps.extend([
         Step::hand_edit(
             &a(),
             Repo::Lib,
@@ -10794,14 +10829,15 @@ fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
                 repo: Repo::Lib,
                 branch: "lib-next",
             }),
-    ]
+    ]);
+    steps
 }
 
 /// The edits keep abort from switching the checkout back
 /// ([`abort_refused_over_colliding_edits`]); the printed command sets them
 /// aside, and the rerun restores everything.
 pub fn abort_refuses_a_switch_back_over_colliding_edits(stop: LandedStop) -> Scenario {
-    let mut steps = abort_refused_over_colliding_edits(stop);
+    let mut steps = abort_refused_over_colliding_edits(stop, false);
     steps.extend([
         Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &["abort"])
@@ -10838,9 +10874,10 @@ pub fn abort_refuses_a_switch_back_over_colliding_edits(stop: LandedStop) -> Sce
 /// The edits keep abort from switching the checkout back
 /// ([`abort_refused_over_colliding_edits`]); run in the target, abort
 /// refuses with its own choices there, and the printed
-/// `--abandon-foreign-tip` keeps them as a backup, then restores.
+/// `--abandon-foreign-tip` keeps them as a backup, then restores. Stopped in
+/// its retire, the retire refused, so abort in the target takes it up.
 pub fn abort_abandons_colliding_edits_keeping_them(stop: LandedStop) -> Scenario {
-    let mut steps = abort_refused_over_colliding_edits(stop);
+    let mut steps = abort_refused_over_colliding_edits(stop, true);
     steps.extend([
         Step::rwv(&a(), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
