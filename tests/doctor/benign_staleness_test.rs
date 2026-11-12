@@ -1064,7 +1064,7 @@ fn the_landing_refusals_that_named_a_stale_lock_are_judged_as_pin_states() {
         .assert()
         .success();
     common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
-    let out = common::cli::run(&["land"], &f.ww.root);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
     common::cli::refused(&out, State::PinBackwards);
     retired("stale-lock", &out);
 
@@ -1079,14 +1079,14 @@ fn the_landing_refusals_that_named_a_stale_lock_are_judged_as_pin_states() {
     );
     common::git_in(&f.main.project_dir, &["add", "rwv.lock"]);
     common::git_in(&f.main.project_dir, &["commit", "-m", "lock: no such tag"]);
-    let out = common::cli::run(&["land"], &f.ww.root);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
     common::cli::refused(&out, State::PinUnreachable);
     retired("unresolvable-lock-entry", &out);
 
     let f = fixture();
     commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: d1");
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
-    let out = common::cli::run(&["land"], &f.ww.root);
+    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
     common::cli::refused(&out, State::PinUnpinned);
     retired("target-lock-behind", &out);
 }

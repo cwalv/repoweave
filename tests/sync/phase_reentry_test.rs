@@ -1065,14 +1065,14 @@ fn re_entering_each_phase_independently_completes_to_a_clean_state() {
 // present either way.
 // ---------------------------------------------------------------------------
 
-fn write_sync_to_record_with_strategy(
+fn write_sync_to_record_with_history(
     owner: &Path,
     target: &Path,
-    strategy: &str,
+    history: &str,
     id: &str,
 ) -> String {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"land\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
+        "{{\"id\": \"{id}\", \"verb\": \"land\", \"history\": {history}, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
@@ -1086,7 +1086,7 @@ fn write_sync_to_record_with_strategy(
 
 /// Plant a stranded advance-target op whose CWD moved after the strand, resume
 /// it, and return `(delivered_target_tip, target_lock_contents)`.
-fn resume_stranded_advance_target(tmp: &Path, strategy: &str, id: &str) -> (String, String) {
+fn resume_stranded_advance_target(tmp: &Path, history: &str, id: &str) -> (String, String) {
     let (primary, ww, _sha) = make_shared_workspaces(tmp);
 
     // The operator's post-strand fix: a manifest-repo commit in CWD that the
@@ -1096,7 +1096,7 @@ fn resume_stranded_advance_target(tmp: &Path, strategy: &str, id: &str) -> (Stri
     common::git_in(&ww.server_dir, &["commit", "-m", "ww: post-strand fix"]);
     let ww_server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
-    let op_id = write_sync_to_record_with_strategy(&ww.root, &primary.root, strategy, id);
+    let op_id = write_sync_to_record_with_history(&ww.root, &primary.root, history, id);
     write_lease(&primary.root, &ww.root);
     create_savepoint(&ww.project_dir, &op_id);
     create_savepoint(&ww.server_dir, &op_id);
@@ -1120,7 +1120,7 @@ fn resume_stranded_advance_target(tmp: &Path, strategy: &str, id: &str) -> (Stri
 fn advance_target_resume_relocks_so_the_target_lock_pins_what_it_delivered() {
     let tmp = common::tempdir().unwrap();
     let (delivered, target_lock) =
-        resume_stranded_advance_target(tmp.path(), "rebase", "reentry-test-relock-on-resume");
+        resume_stranded_advance_target(tmp.path(), "null", "reentry-test-relock-on-resume");
     assert!(
         target_lock.contains(&delivered),
         "the target's lock must pin the manifest tip the resume delivered ({delivered}); lock:\n\
@@ -1128,14 +1128,17 @@ fn advance_target_resume_relocks_so_the_target_lock_pins_what_it_delivered() {
     );
 }
 
-/// `--strategy=ff` makes REPLAY a no-op, not relock: the operator's post-strand
-/// fix moved CWD's manifest repo under either strategy, so the lock has to be
-/// regenerated under either one too.
+/// A one-run `ff-only` changes nothing about the relock: the operator's
+/// post-strand fix moved CWD's manifest repo, so the lock is regenerated
+/// whatever the run was given.
 #[test]
-fn advance_target_resume_relocks_under_ff_strategy_too() {
+fn advance_target_resume_relocks_under_ff_only_too() {
     let tmp = common::tempdir().unwrap();
-    let (delivered, target_lock) =
-        resume_stranded_advance_target(tmp.path(), "ff", "reentry-test-relock-on-resume-ff");
+    let (delivered, target_lock) = resume_stranded_advance_target(
+        tmp.path(),
+        "\"ff-only\"",
+        "reentry-test-relock-on-resume-ff",
+    );
     assert!(
         target_lock.contains(&delivered),
         "the target's lock must pin the manifest tip the resume delivered ({delivered}); lock:\n\

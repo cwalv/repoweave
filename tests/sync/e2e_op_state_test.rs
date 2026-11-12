@@ -4,7 +4,7 @@
 //! 1. Concurrent-op detection: an in-progress op-state blocks new ops on either workspace.
 //! 2. Mid-step-1 resume: conflict → resolve → `--continue` → completion.
 //! 3. Mid-step-3 resume: op-state left at step3-ff phase → `--continue` → FF-advance completes.
-//! 4. Parameter exclusivity: `--strategy` passed alongside `--continue` → error.
+//! 4. Parameter exclusivity: `--history` passed alongside `--continue` → error.
 //! 5. Abort cross-workspace: `rwv abort` from either workspace clears both op-state files.
 //!
 //! Notes:
@@ -12,8 +12,8 @@
 //!   into a parked state via a target-side collision and recover it via `--continue` /
 //!   `rwv abort`.
 //! - Test 1 uses `rwv land` from two directions to trigger the in-progress check.
-//! - Test 2 uses `rwv land --strategy rebase` to induce a conflict, then `--continue`.
-//! - Test 4 uses `rwv sync` with mismatched `--strategy`.
+//! - Test 2 uses `rwv land --history linear` to induce a conflict, then `--continue`.
+//! - Test 4 uses `rwv sync` with mismatched `--history`.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -430,13 +430,13 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
 // Test 4: --continue is exclusive — passing other flags alongside it is rejected
 //
 // `--continue` must be passed alone (no other args/flags except `--project`).
-// Passing `--strategy`, `--force`, `--retire`, or a positional source/target
+// Passing `--history`, `--force`, `--retire`, or a positional source/target
 // alongside `--continue` must produce a clap-level error with an actionable
 // message. Verify the message mentions `rwv abort` as the escape hatch.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn continue_with_strategy_flag_is_rejected() {
+fn continue_with_history_flag_is_rejected() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -451,7 +451,7 @@ fn continue_with_strategy_flag_is_rejected() {
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
-    // Passing --strategy alongside --continue must be rejected.
+    // Passing --history alongside --continue must be rejected.
     let assertion = rwv()
         .args(["sync", "--history", "linear", "--continue"])
         .current_dir(&ww.root)
@@ -509,11 +509,11 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
 }
 
 #[test]
-fn sync_to_continue_with_strategy_flag_is_rejected() {
+fn land_continue_with_history_flag_is_rejected() {
     let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // rwv land --strategy=rebase --continue must be rejected.
+    // rwv land --history=linear --continue must be rejected.
     let assertion = rwv()
         .args(["land", "--history", "linear", "--continue"])
         .current_dir(&ww.root)
@@ -523,7 +523,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
 
     assert!(
         stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for land --strategy=rebase --continue; got: {stderr}"
+        "expected clap exclusivity error for land --history=linear --continue; got: {stderr}"
     );
 }
 

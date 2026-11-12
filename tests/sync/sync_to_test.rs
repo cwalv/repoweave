@@ -188,7 +188,7 @@ fn sync_to_ff_clean_advances_target() {
     let primary_after = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_after, ww_tip,
-        "primary should be at ww's tip after land --strategy=ff"
+        "primary should be at ww's tip after land --history=ff-only"
     );
 
     // Primary's server repo should be at c2.
