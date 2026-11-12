@@ -12056,6 +12056,28 @@ pub fn history_contradicted() -> Scenario {
     scenario("history: a one-run value against a recorded one", steps)
 }
 
+/// A one-run `--history` against a recorded value is refused whether or not
+/// the run needs a setting: a landing that fast-forwards, and a `--from` sync
+/// that merges whatever the setting.
+pub fn history_contradicted_where_no_setting_is_read() -> Scenario {
+    scenario(
+        "history: a contradicting one-run value is refused where nothing reads the setting",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::App, State::HistoryContradicted))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["sync", "--from", "main", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
 /// `history-equal-one-run`: a one-run `--history` equal to the value the
 /// target records is no contradiction: the landing runs by it.
 pub fn history_equal_one_run() -> Scenario {

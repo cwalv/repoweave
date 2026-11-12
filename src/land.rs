@@ -2010,6 +2010,12 @@ impl Composing<'_> {
             head,
             onto,
         } = *self;
+        if let Some(judged) =
+            crate::set_history::contradicted(recorded, one_run, member, &scoped, vcs)
+        {
+            report.add(judged);
+            return Ok(Composed::FastForward);
+        }
         if vcs.is_ancestor(dir, &rev(head), &rev(onto))? {
             return Ok(Composed::FastForward);
         }

@@ -722,6 +722,7 @@ every_scenario!(
     history_unset_moved,
     history_unset_retire_behind,
     history_contradicted,
+    history_contradicted_where_no_setting_is_read,
     history_equal_one_run,
     history_linear_landing,
     history_ff_only,
@@ -4267,6 +4268,12 @@ fn sync_refuses_work_built_on_another_lineage_before_anything_moves() {
 #[test]
 fn sync_json_reports_a_merged_range_and_a_rebased_branch() {
     runner::run(scenarios::sync_json_reports_what_it_merged_and_rebased())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_contradicting_one_run_history_is_refused_where_no_setting_is_read() {
+    runner::run(scenarios::history_contradicted_where_no_setting_is_read())
         .assert_fully_decided_green();
 }
 

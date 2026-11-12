@@ -323,6 +323,12 @@ fn fresh(
     )? {
         return Err(line.refused());
     }
+    if args.from.is_some() && args.history.is_some() {
+        crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "`--from` merges the branch it names whatever the setting, so `--history` has nothing to set; pass one"
+        );
+    }
     let from = match (&args.from, &record, &args.target) {
         (Some(from), _, None) => SyncFrom::From(from.clone()),
         (Some(_), _, Some(_)) => crate::refuse!(
@@ -793,8 +799,22 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             ))
         }
     };
+    let project_scoped = |state: State| {
+        state
+            .of(&label)
+            .project_repo()
+            .checkout(dir)
+            .bind("<T>", sync.source_name())
+            .by_verb("sync")
+    };
+    let project_recorded = theirs.as_ref().and_then(|m| m.history);
     let mut project_merged = None;
-    let project_act = if resets_project {
+    let project_act = if let Some(judged) =
+        crate::set_history::contradicted(project_recorded, sync.history, false, project_scoped, vcs)
+    {
+        report.add(judged);
+        Act::Nothing
+    } else if resets_project {
         report.add_opt(judge_reset_site(sync, vcs, dir, &label, &dependents));
         Act::Reset(source.clone())
     } else if vcs.is_ancestor(dir, &rev(&source), &rev(&head))? {
@@ -1185,6 +1205,22 @@ fn plan_member(
     }
     let pins = inputs.history.of_member(path);
 
+    let recorded = inputs.theirs.and_then(|m| m.history_for(path));
+    let member_scoped = |state: State| {
+        state
+            .of(path)
+            .member()
+            .checkout(&mdir)
+            .bind("<m>", path)
+            .bind("<T>", sync.source_name())
+            .by_verb("sync")
+    };
+    if let Some(judged) =
+        crate::set_history::contradicted(recorded, sync.history, true, member_scoped, mvcs)
+    {
+        report.add(judged);
+        return Ok(Some(member));
+    }
     if inputs.reset {
         let live = crate::pins::live_pins(sync.ctx.primary_path())?;
         let branch = crate::branch_ref::BranchRef::Local(RawRefName::new(attached.to_string()));

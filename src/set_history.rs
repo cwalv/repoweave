@@ -171,6 +171,37 @@ pub(crate) enum Integration {
     Merge,
 }
 
+/// The refusal for `--history` against a value the target records, whether or
+/// not the run needs the setting.
+pub(crate) fn contradicted(
+    recorded: Option<History>,
+    one_run: Option<History>,
+    member: bool,
+    scoped: impl Fn(crate::diagnosis::State) -> crate::diagnosis::Judging,
+    vcs: &dyn crate::vcs::Vcs,
+) -> Option<crate::diagnosis::Judged> {
+    use crate::diagnosis::{Form, State};
+    let (Some(recorded), Some(one_run)) = (recorded, one_run) else {
+        return None;
+    };
+    if recorded == one_run {
+        return None;
+    }
+    let set = if member {
+        Form::C23SetHistoryRepo
+    } else {
+        Form::C23SetHistory
+    };
+    Some(
+        scoped(State::HistoryContradicted)
+            .subject(format!(
+                "`--history {one_run}` for one run, where the target records {recorded}"
+            ))
+            .only_forms(&[set, Form::KeepRecordedHistory])
+            .judge(vcs),
+    )
+}
+
 /// The setting that governs one repo of a `sync` or `land` where a
 /// fast-forward does not do: the target's own, else `--history` for one run.
 /// `--history` stands in only where the target records nothing; a value
@@ -183,20 +214,15 @@ pub(crate) fn governing(
     vcs: &dyn crate::vcs::Vcs,
 ) -> Result<History, Box<crate::diagnosis::Judged>> {
     use crate::diagnosis::{Form, State};
+    if let Some(judged) = contradicted(recorded, one_run, member, &scoped, vcs) {
+        return Err(Box::new(judged));
+    }
     let set = if member {
         Form::C23SetHistoryRepo
     } else {
         Form::C23SetHistory
     };
     match (recorded, one_run) {
-        (Some(recorded), Some(one_run)) if recorded != one_run => Err(Box::new(
-            scoped(State::HistoryContradicted)
-                .subject(format!(
-                    "`--history {one_run}` for one run, where the target records {recorded}"
-                ))
-                .only_forms(&[set, Form::KeepRecordedHistory])
-                .judge(vcs),
-        )),
         (Some(recorded), _) => Ok(recorded),
         (None, Some(one_run)) => Ok(one_run),
         (None, None) => Err(Box::new(
