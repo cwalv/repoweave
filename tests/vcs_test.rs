@@ -1888,7 +1888,7 @@ fn seed_unrelated_work(p: &Path) {
 fn commit_ours(p: &Path) -> bool {
     let vcs = git_vcs();
     vcs.stage_paths(p, &["ours.txt"]).unwrap();
-    vcs.commit_only(p, &["ours.txt"], "ours").unwrap()
+    vcs.commit_only(p, &["ours.txt"], "ours", &[]).unwrap()
 }
 
 #[test]

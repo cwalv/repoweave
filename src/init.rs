@@ -244,18 +244,16 @@ fn commit_written(
         return Ok(());
     }
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-    let committed = vcs
-        .stage_paths(project_dir, &refs)
-        .and_then(|()| {
-            crate::repin::commit(
-                vcs,
-                project_dir,
-                &refs,
-                message,
-                None,
-                &crate::repin::Naming::Unnamed,
-            )
-        });
+    let committed = vcs.stage_paths(project_dir, &refs).and_then(|()| {
+        crate::repin::commit(
+            vcs,
+            project_dir,
+            &refs,
+            message,
+            None,
+            &crate::repin::Naming::Unnamed,
+        )
+    });
     match committed {
         Ok(true) => {
             eprintln!("Committed {}", paths.join(", "));
