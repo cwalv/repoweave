@@ -84,6 +84,11 @@ fn a_diverged_main_resolves_a_derived_path_to_its_upstream() {
 }
 
 #[test]
+fn a_landing_stops_at_alignment_where_the_landed_lock_does_not_read_and_continues() {
+    runner::run(scenarios::landing_stops_where_the_landed_lock_does_not_read()).assert_green();
+}
+
+#[test]
 fn the_printed_reset_of_a_diverged_main_leaves_the_expected_branch_and_its_pin() {
     runner::run(scenarios::main_diverged_reset_leaves_the_expected_branch())
         .assert_fully_decided_green();
@@ -988,6 +993,7 @@ every_scenario!(
     main_diverged_resolves_derived_to_the_upstream,
     main_diverged_still_stops_on_an_undeclared_path,
     main_diverged_reset_leaves_the_expected_branch,
+    landing_stops_where_the_landed_lock_does_not_read,
     main_diverged_conflicting_held,
     main_diverged_conflicting_copied,
     main_diverged_conflicting_published,

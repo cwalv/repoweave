@@ -6982,6 +6982,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
         prune_dropped_in_target(ctx, target_ctx, &cwd_project_final.manifest);
 
+        crate::test_pause::point("aligning-target");
         let aligning = journal_alignment(ctx, dest_workspace_dir, dest_project_dir)?;
         align_after_landing(ctx, target_ctx);
         unjournal_unmoved(ctx, dest_workspace_dir, &aligning)?;
@@ -7323,11 +7324,23 @@ fn journal_alignment(
     dest_workspace_dir: &Path,
     dest_project_dir: &Path,
 ) -> anyhow::Result<Vec<(RepoKey, Option<Standing>)>> {
-    let Ok(landed) = Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()) else {
-        return Ok(Vec::new());
-    };
+    let landed =
+        Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()).with_context(|| {
+            format!(
+                "the landed project in {} does not read, so the alignment it moves cannot be \
+                 journaled; the landing stopped before aligning, and `rwv land --continue` \
+                 resumes it once the project reads",
+                dest_project_dir.display()
+            )
+        })?;
     let Some(lock) = landed.lock.as_ref() else {
-        return Ok(Vec::new());
+        return Err(crate::untokened!(
+            EnvironmentPassthrough,
+            "the landed project in {} has no rwv.lock, so the alignment it moves cannot be \
+             journaled; the landing stopped before aligning, and `rwv land --continue` resumes \
+             it once the lock is back",
+            dest_project_dir.display()
+        ));
     };
     let others =
         crate::shared_members::held_by_presented(dest_workspace_dir, &ctx.cwd_project_name);

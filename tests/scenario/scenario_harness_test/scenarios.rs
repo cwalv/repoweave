@@ -7121,6 +7121,38 @@ pub fn main_diverged_after_member_change_reset() -> Scenario {
     scenario("main diverged after member change, reset", steps)
 }
 
+/// A landing whose target's lock goes missing between its move and the
+/// alignment that follows stops there, leaving its record, and `--continue`
+/// finishes it once the lock is back.
+pub fn landing_stops_where_the_landed_lock_does_not_read() -> Scenario {
+    scenario(
+        "landing stops where the landed lock does not read",
+        vec![
+            create("seat"),
+            Step::commit(&ww("seat"), Repo::App, "feat-app"),
+            Step::rwv_paused(
+                &ww("seat"),
+                &["land", "--history", "linear"],
+                "aligning-target",
+                "aligning",
+            ),
+            Step::git(&a(), Repo::Proj, &["mv", "rwv.lock", "rwv.lock.aside"]),
+            Step::release("aligning")
+                .claim(Claim::OutputContains("has no rwv.lock"))
+                .claim(Claim::OutputContains("rwv land --continue")),
+            Step::git(&a(), Repo::Proj, &["mv", "rwv.lock.aside", "rwv.lock"]),
+            Step::rwv(&ww("seat"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "feat-app",
+                }),
+        ],
+    )
+}
+
 /// `lib`'s `main` as a branch operand: the declared-elsewhere branch the
 /// pushed range still declares.
 const LIB_MAIN: &str = "local/remotes/lib:main";
