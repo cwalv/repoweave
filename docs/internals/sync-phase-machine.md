@@ -569,6 +569,52 @@ mechanism is:
 All of these are intent-named `Vcs` trait methods; the phase machine
 contains no VCS-specific spellings.
 
+### What a rebase records, and the config it holds
+
+`Vcs::rebase` is the one way rwv starts a replay, and `Vcs::rebase_continue`
+the one way it drives one on; both build their argv in `rebase_config_args`
+(`src/git.rs`), so a new call cannot leave a setting out.
+
+**Which commit became which** is what the rebase recorded, never a match on
+authorship or subject. Git keeps that list (`rebase-merge/rewritten-list`)
+only while the rebase is in progress, so every rebase rwv starts carries an
+`--exec` after each pick that copies it to `rwv-replayed-<old tip>-<onto>`
+under the checkout's own git dir. The exec lines are in the rebase's own
+todo, so a continue the operator runs by hand records too. Git notes a
+commit it dropped as left empty against the commit HEAD was on; the reader
+(`src/git/replay.rs`) reads one noted against `onto` or against an earlier
+commit's image as dropped, and one absent from the list (skipped, or dropped
+as already upstream) likewise. `Vcs::replayed` answers `None` where the record
+is missing or names a commit the branch from `onto` no longer holds, and the
+callers that move pins on it refuse `replay-unrecorded`; abort reads `None`
+as "not this op's tip". When the re-map rewrites the replayed project
+commits, `Vcs::record_replayed` rewrites the record to name the copies.
+
+**Config held on every rebase**, start and continue, whatever the operator's
+own config says (`-c`, so it leaves nothing behind; a key a release does not
+know is ignored there):
+
+| Setting | Held at | Why |
+|---|---|---|
+| `rebase.updateRefs` (2.38) | `false` | would move every other branch pointing into the replayed range, a dependent sitting at the tip included, with no backup and no journal entry, behind the carry that moves them under a compare-and-swap |
+| `rebase.autoSquash` | `false` | would reorder and fold `fixup!`/`squash!` commits, changing what is replayed |
+| `rebase.rebaseMerges` (2.42) | `false` | would recreate merges instead of linearizing, changing what the branch holds |
+| `rebase.autoStash` | `false` | would stash and re-apply edits rwv has judged absent, and stop on the re-apply |
+| `rebase.backend` | `merge` | the apply backend runs no exec, so the replay would go unrecorded |
+| `rebase.rescheduleFailedExec` | `false` | would retry a failed record step and stop on it |
+
+**Left to the operator**, because none changes which refs move or which
+commits are replayed: `rebase.missingCommitsCheck` (acts only on a todo the
+operator edits), `rebase.forkPoint` (rwv always names the upstream),
+`rebase.instructionFormat`, `rebase.abbreviateCommands`, `rebase.stat`,
+`rebase.maxLabelLength`, `sequence.editor` (rwv's rebase is not interactive),
+`pull.rebase` (rwv runs no pull), `commit.gpgSign` (a replay signs as the
+operator's commits do; a signing failure stops it as any command failure),
+hooks and `core.hooksPath` (a `pre-rebase` hook that refuses fails the
+rebase, which rwv reports), `rerere.enabled` and `rerere.autoUpdate` (a
+recorded resolution still stops for the operator's continue), and the
+`notes.rewrite*` settings.
+
 ## The bare-sync refusal
 
 `rwv sync` has no "absorb from parent" default, and the prohibition lives

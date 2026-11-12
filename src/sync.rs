@@ -8750,7 +8750,9 @@ fn replay_of(
             .unwrap_or(false)
                 && vcs
                     .replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head)
-                    .is_ok_and(|replayed| {
+                    .ok()
+                    .flatten()
+                    .is_some_and(|replayed| {
                         replayed
                             .written
                             .iter()

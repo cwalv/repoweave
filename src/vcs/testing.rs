@@ -508,7 +508,7 @@ impl Vcs for FakeVcs {
         _onto: &ResolvedRevisionId,
         _upstream: &ResolvedRevisionId,
         _derived: DerivedContentPolicy,
-    ) -> Result<super::Replayed, VcsError> {
+    ) -> Result<(), VcsError> {
         unsupported("rebase")
     }
 
@@ -519,8 +519,18 @@ impl Vcs for FakeVcs {
         _old: &CommitId,
         _onto: &CommitId,
         _new: &CommitId,
-    ) -> Result<super::Replayed, VcsError> {
+    ) -> Result<Option<super::Replayed>, VcsError> {
         unsupported("replayed")
+    }
+
+    fn record_replayed(
+        &self,
+        _repo: &Path,
+        _old: &CommitId,
+        _onto: &CommitId,
+        _replayed: &super::Replayed,
+    ) -> Result<(), VcsError> {
+        unsupported("record_replayed")
     }
 
     fn copy_replayed(

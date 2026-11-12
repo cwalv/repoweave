@@ -398,6 +398,32 @@ fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
     }
 }
 
+/// Config every rebase rwv starts or continues is held at, whatever the
+/// operator's own config says: each of these would otherwise move refs the
+/// rebase was not asked to move (`updateRefs`), reorder or squash what it
+/// replays (`autoSquash`, `rebaseMerges`), stash and re-apply edits rwv
+/// judged absent (`autoStash`), take a backend that cannot record what it
+/// replayed (`backend`), or stop on a failed record step and retry it
+/// (`rescheduleFailedExec`). A key a git release does not know is ignored
+/// there.
+const REBASE_PINNED_CONFIG: [&str; 6] = [
+    "rebase.updateRefs=false",
+    "rebase.autoSquash=false",
+    "rebase.autoStash=false",
+    "rebase.rebaseMerges=false",
+    "rebase.backend=merge",
+    "rebase.rescheduleFailedExec=false",
+];
+
+fn rebase_config_args(policy: DerivedContentPolicy) -> Vec<String> {
+    let mut args = derived_content_git_args(policy);
+    for pinned in REBASE_PINNED_CONFIG {
+        args.push("-c".to_owned());
+        args.push(pinned.to_owned());
+    }
+    args
+}
+
 /// Split a git `-z` stream into its records.
 ///
 /// Git terminates — rather than separates — each record under `-z`, so the
@@ -2977,14 +3003,8 @@ impl Vcs for GitVcs {
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
-    ) -> Result<Replayed, VcsError> {
+    ) -> Result<(), VcsError> {
         let old = Self::head_commit(repo)?;
-        // `git rebase --onto <onto> <upstream>` replays commits in
-        // <upstream>..HEAD onto <onto>. On conflict, git leaves the repo
-        // mid-rebase (rebase-merge/ + conflict markers in WT). We detect that
-        // state and surface VcsError::RebaseConflict so the caller can pair
-        // with conflict_resolution_hint(ConflictOp::Rebase).
-        //
         // `--empty=drop`: drop commits that become empty after rebase. This
         // is what turns a derived-content-only commit into a silent no-op
         // when the policy resolved its paths to the target side, leaving
@@ -3001,6 +3021,7 @@ impl Vcs for GitVcs {
             DerivedContentResolution::KeepTargetSideKeepingEmpty => "--empty=keep",
             _ => "--empty=drop",
         };
+        let record = Self::start_replay_record(repo, &old, onto.id())?;
         let rebase_args = [
             "rebase",
             "--force-rebase",
@@ -3010,8 +3031,10 @@ impl Vcs for GitVcs {
             onto.id().as_str(),
             upstream.id().as_str(),
         ];
-        let mut args = derived_content_git_args(derived);
-        args.extend(rebase_args.iter().map(|a| (*a).to_owned()));
+        let mut args = rebase_config_args(derived);
+        args.extend(rebase_args[..4].iter().map(|a| (*a).to_owned()));
+        args.extend(["--exec".to_owned(), record]);
+        args.extend(rebase_args[4..].iter().map(|a| (*a).to_owned()));
 
         let output = git_command()
             .args(&args)
@@ -3027,8 +3050,7 @@ impl Vcs for GitVcs {
             })?;
 
         if output.status.success() {
-            let new = Self::head_commit(repo)?;
-            return self.replayed(repo, upstream.id(), &old, onto.id(), &new);
+            return Ok(());
         }
 
         // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
@@ -3057,8 +3079,18 @@ impl Vcs for GitVcs {
         old: &CommitId,
         onto: &CommitId,
         new: &CommitId,
-    ) -> Result<Replayed, VcsError> {
-        Self::pair_replayed(repo, from, old, onto, new)
+    ) -> Result<Option<Replayed>, VcsError> {
+        Self::recorded_replay(repo, from, old, onto, new)
+    }
+
+    fn record_replayed(
+        &self,
+        repo: &Path,
+        old: &CommitId,
+        onto: &CommitId,
+        replayed: &Replayed,
+    ) -> Result<(), VcsError> {
+        Self::write_replay_record(repo, old, onto, replayed)
     }
 
     fn copy_replayed(
@@ -3098,7 +3130,7 @@ impl Vcs for GitVcs {
             });
         }
 
-        let mut args = derived_content_git_args(derived);
+        let mut args = rebase_config_args(derived);
         args.push("rebase".to_owned());
         args.push("--continue".to_owned());
 

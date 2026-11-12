@@ -1099,6 +1099,144 @@ fn rebase_clean_advances_head_onto_target() {
     );
 }
 
+fn commit_file(p: &Path, file: &str, content: &str, subject: &str, date: Option<&str>) -> String {
+    fs::write(p.join(file), content).unwrap();
+    common::git_in(p, &["add", file]);
+    match date {
+        Some(date) => common::git_in(p, &["commit", "-q", "-m", subject, "--date", date]),
+        None => common::git_in(p, &["commit", "-q", "-m", subject]),
+    };
+    common::git_in(p, &["rev-parse", "HEAD"])
+}
+
+fn commit(id: &str) -> repoweave::vcs::CommitId {
+    repoweave::vcs::CommitId::parse(id.trim()).unwrap()
+}
+
+fn resolved(id: &str) -> ResolvedRevisionId {
+    ResolvedRevisionId::from_canonical(commit(id), None)
+}
+
+#[test]
+fn a_rebase_moves_no_branch_but_head_s_under_the_operator_s_update_refs() {
+    let (dir, c1) = diverged_repo();
+    let p = dir.path();
+    common::git_in(p, &["config", "rebase.updateRefs", "true"]);
+    let feat = common::git_in(p, &["rev-parse", "feat"]);
+    common::git_in(p, &["branch", "dep", "feat"]);
+    let main_tip = resolved(&common::git_in(p, &["rev-parse", "main"]));
+    git_vcs()
+        .rebase(p, &main_tip, &c1, DerivedContentPolicy::keep_target_side())
+        .unwrap();
+    assert_ne!(common::git_in(p, &["rev-parse", "feat"]), feat);
+    assert_eq!(common::git_in(p, &["rev-parse", "dep"]), feat);
+}
+
+#[test]
+fn a_rebase_maps_what_it_recorded_where_two_commits_share_authorship_and_the_first_is_dropped() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    let date = "1700000000 +0000";
+    let first = commit_file(p, "one", "1\n", "wip", Some(date));
+    let second = commit_file(p, "two", "2\n", "wip", Some(date));
+    let old = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    common::git_in(p, &["cherry-pick", &first]);
+    let onto = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    git_vcs()
+        .rebase(
+            p,
+            &resolved(&onto),
+            &resolved(&base),
+            DerivedContentPolicy::keep_target_side(),
+        )
+        .unwrap();
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    let replayed = git_vcs()
+        .replayed(
+            p,
+            &commit(&base),
+            &commit(&old),
+            &commit(&onto),
+            &commit(&new),
+        )
+        .unwrap()
+        .expect("the rebase recorded what it replayed");
+    assert_eq!(replayed.image(&commit(&first)), None);
+    assert_eq!(replayed.image(&commit(&second)), Some(&commit(&new)));
+}
+
+#[test]
+fn a_rebase_finished_by_hand_maps_as_recorded_and_an_amended_tip_has_no_map() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = commit_file(p, "shared", "v0\n", "add shared", None);
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    let mine = commit_file(p, "mine", "m\n", "mine", None);
+    let clash = commit_file(p, "shared", "feat\n", "clash", None);
+    let old = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    let onto = commit_file(p, "shared", "main\n", "main", None);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    let stopped = git_vcs().rebase(
+        p,
+        &resolved(&onto),
+        &resolved(&base),
+        DerivedContentPolicy::keep_target_side(),
+    );
+    assert!(matches!(stopped, Err(VcsError::RebaseConflict { .. })));
+    fs::write(p.join("shared"), "resolved\n").unwrap();
+    common::git_in(p, &["add", "shared"]);
+    common::git_in_configured(p, &[("core.editor", "true")], &["rebase", "--continue"]);
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    let replayed = git_vcs()
+        .replayed(
+            p,
+            &commit(&base),
+            &commit(&old),
+            &commit(&onto),
+            &commit(&new),
+        )
+        .unwrap()
+        .expect("a continue by hand records what it replayed");
+    assert_eq!(replayed.image(&commit(&clash)), Some(&commit(&new)));
+    assert!(replayed.image(&commit(&mine)).is_some());
+    fs::write(p.join("mine"), "typo fixed\n").unwrap();
+    common::git_in(p, &["commit", "-q", "-a", "--amend", "--no-edit"]);
+    let amended = common::git_in(p, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        git_vcs()
+            .replayed(
+                p,
+                &commit(&base),
+                &commit(&old),
+                &commit(&onto),
+                &commit(&amended)
+            )
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_replay_rwv_did_not_start_has_no_map() {
+    let (dir, c1) = diverged_repo();
+    let p = dir.path();
+    let old = common::git_in(p, &["rev-parse", "feat"]);
+    let onto = common::git_in(p, &["rev-parse", "main"]);
+    common::git_in(p, &["rebase", "-q", "main"]);
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        git_vcs()
+            .replayed(p, c1.id(), &commit(&old), &commit(&onto), &commit(&new))
+            .unwrap(),
+        None
+    );
+}
+
 #[test]
 fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() {
     // Build a repo where main and feat both modify the same line of `shared`.

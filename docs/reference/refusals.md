@@ -1079,6 +1079,22 @@ touching, and repairing it would act on a state nobody surveyed.
 whether it vanished or merely moved is timing, which is why one token covers
 both.
 
+### `replay-unrecorded`
+
+**Condition.** An operation that rebased a branch needs to know which commit
+each replayed commit became, to move the pins of a project branch or carry a
+dependent along, and no record the rebase kept describes the branch's tip: the
+rebase was not started by rwv, or the branch was rewritten afterwards, by an
+amend or a reset, in a way the rebase's record does not cover.
+
+**Why.** Which commit became which is what the rebase itself recorded. Matching
+commits by author, date or subject would guess, and a wrong guess pins a
+commit the branch never held or moves a pin onto the wrong one, without a word.
+
+**Exits.** `rwv abort` puts back what the operation moved; then rerun the verb,
+leaving the rewritten branch as the rebase left it. Nothing was moved by this
+refusal.
+
 ### `repo-not-in-manifest`
 
 **Condition.** `rwv member remove` names a path the manifest does not carry, and

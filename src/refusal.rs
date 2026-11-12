@@ -60,6 +60,8 @@ pub enum RefusalKind {
     ResumeContradictsRecord,
     /// Abort found a tip the op does not account for.
     ForeignTip,
+    /// No record of a rebase the op ran says which commit became which.
+    ReplayUnrecorded,
 
     /// The canonical clone a checkout is derived from is missing.
     MissingCanonicalClone,

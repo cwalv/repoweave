@@ -13620,6 +13620,91 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
     )
 }
 
+/// `stack-carried` under an operator's `rebase.updateRefs`, with `w2`
+/// holding no `app` commit of its own, so it sits at `w1`'s tip there: the
+/// sync's rebase of `w1` leaves `w2` where it is, and the carry moves it.
+pub fn stack_at_the_tip_under_update_refs() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["config", "rebase.updateRefs", "true"],
+        ),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.push(
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            }),
+    );
+    scenario(
+        "stack: under updateRefs, a dependent at the target's tip is carried",
+        steps,
+    )
+}
+
+/// `w3` onto `w2` onto `w1` under an operator's `rebase.updateRefs`, `w3`'s
+/// replay conflicting with `main`: the sync stops on `w3` with `w2`
+/// composed and not moved, and `rwv abort` leaves `w2` as it was, nothing
+/// stranded.
+pub fn stack_carry_stopped_under_update_refs() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w3", "w2"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w3-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["config", "rebase.updateRefs", "true"],
+        ),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("carrying 'w3' along")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputLacks("foreign")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+    ];
+    scenario(
+        "stack: under updateRefs, a stopped carry moves no dependent and aborts clean",
+        steps,
+    )
+}
+
 /// `git-below-2.38`: git answers as a release without `merge-tree
 /// --write-tree`. `main` merges its project branch and rebases `app`;
 /// `w1`'s landing, with `w2` landing into `w1`, merges the project in the

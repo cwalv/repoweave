@@ -344,8 +344,15 @@ impl Carrier<'_> {
         let vcs = self.repos.vcs(&carrying.repo);
         let mut tip = head;
         if carrying.repo == RepoKey::Project {
-            let replayed =
-                vcs.replayed(&dir, &carrying.base, &carrying.from, &carrying.onto, &tip)?;
+            let replayed = crate::remap::recorded(
+                vcs.as_ref(),
+                &dir,
+                &self.repos.label(&carrying.repo),
+                &carrying.base,
+                &carrying.from,
+                &carrying.onto,
+                &tip,
+            )?;
             let carries = take_in(self.workspace)?.carries;
             let replays = crate::remap::member_replays(
                 self.repos.root,
@@ -353,15 +360,16 @@ impl Carrier<'_> {
                 rebases,
                 &carries,
             )?;
-            let (_, rewritten) = crate::remap::remap_project(
+            let remap = crate::remap::remap_project(
                 vcs.as_ref(),
                 &dir,
                 &replayed,
                 &carrying.onto,
                 &replays,
             )?;
-            if let Some(rewritten) = rewritten {
+            if let Some((rewritten, became)) = remap.rewritten {
                 vcs.set_detached_head(&dir, &rev(&rewritten))?;
+                vcs.record_replayed(&dir, &carrying.from, &carrying.onto, &became)?;
                 tip = rewritten;
             }
         }

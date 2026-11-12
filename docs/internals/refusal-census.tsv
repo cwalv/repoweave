@@ -254,6 +254,7 @@ src/push_branch.rs	push-branch gone	-	1
 src/push_branch.rs	push-branch no push target	-	1
 src/registry.rs	unresolvable-repo-source	tests/docs/doc_claims_clone_test.rs	1
 src/remap.rs	(untokened:environment-passthrough)	-	1
+src/remap.rs	replay-unrecorded	-	1
 src/set_history.rs	(untokened:owed)	-	1
 src/set_history.rs	history contradicted	-	1
 src/set_history.rs	history unset	-	1

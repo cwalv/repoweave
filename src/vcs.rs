@@ -3280,23 +3280,27 @@ pub trait Vcs: Send + Sync {
     /// it is in force for exactly this operation and leaves no configuration
     /// behind; the trait hides that spelling so other VCS impls can use their
     /// own mechanism.
+    ///
+    /// The replay records which commit each replayed commit became, in a
+    /// record that outlives a stop and a continue finished by hand, read
+    /// back by [`Vcs::replayed`]. The operator's own configuration never
+    /// changes which refs it moves, which commits it replays, or where it
+    /// stops.
     fn rebase(
         &self,
         repo: &Path,
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
-    ) -> Result<Replayed, VcsError>;
+    ) -> Result<(), VcsError>;
 
-    /// Which commit each commit of `from..old` became, where a replay wrote
-    /// `onto..new` from them: the replay keeps their order and their
-    /// authorship, so each written commit is paired with the next replayed
-    /// commit of the same authorship, those passed over being the ones the
-    /// replay dropped. A written commit paired with none is one the replay
-    /// added. Reads commits only, so it answers alike for a replay this
-    /// process ran and one finished by hand.
-    ///
-    /// For git: the author and author date of each commit, then its subject.
+    /// Which commit each commit of `from..old` became, where a replay of
+    /// `old` onto `onto` by [`Vcs::rebase`] wrote `onto..new`, as that
+    /// replay recorded it, or as [`Vcs::record_replayed`] recorded a rewrite
+    /// of what it wrote. A written commit no commit became is one added
+    /// during the replay. `None` where no record of that replay describes
+    /// `new`: one rwv did not start, or a branch changed since in a way the
+    /// record does not cover.
     fn replayed(
         &self,
         repo: &Path,
@@ -3304,7 +3308,17 @@ pub trait Vcs: Send + Sync {
         old: &CommitId,
         onto: &CommitId,
         new: &CommitId,
-    ) -> Result<Replayed, VcsError>;
+    ) -> Result<Option<Replayed>, VcsError>;
+
+    /// Record `replayed` as what the replay of `old` onto `onto` made, once
+    /// rwv has rewritten the commits that replay wrote.
+    fn record_replayed(
+        &self,
+        repo: &Path,
+        old: &CommitId,
+        onto: &CommitId,
+        replayed: &Replayed,
+    ) -> Result<(), VcsError>;
 
     /// A copy of `commit` whose parent is `parent`, its message and
     /// authorship kept and its tree `commit`'s with `changes` applied,

@@ -4,81 +4,150 @@
 use super::records::{commit_id, failed};
 use super::{git_command, GitVcs};
 use crate::vcs::{AttachedRef, CommitId, FileChange, Replayed, VcsError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Authored {
-    commit: CommitId,
-    author: String,
-    subject: String,
+/// The name, under the checkout's own git dir, of the record a replay of
+/// `old` onto `onto` keeps.
+fn record_name(old: &CommitId, onto: &CommitId) -> String {
+    format!("rwv-replayed-{}-{}", old.as_str(), onto.as_str())
 }
 
-/// Pair each written commit with the next replayed commit of the same
-/// authorship and subject, else of the same authorship alone; a replayed
-/// commit passed over was dropped.
-fn pair(old: &[Authored], new: &[Authored]) -> Replayed {
-    let mut images: Vec<(CommitId, Option<CommitId>)> =
-        old.iter().map(|o| (o.commit.clone(), None)).collect();
-    let mut cursor = 0;
-    for written in new {
-        let rest = &old[cursor..];
-        let found = rest
-            .iter()
-            .position(|o| o.author == written.author && o.subject == written.subject)
-            .or_else(|| rest.iter().position(|o| o.author == written.author));
-        if let Some(offset) = found {
-            images[cursor + offset].1 = Some(written.commit.clone());
-            cursor += offset + 1;
-        }
+/// What a record's pairs, each replayed commit with the commit git noted
+/// for it, say of `olds` replayed onto `onto` as `written`; `None` where a
+/// pair names a commit of neither.
+///
+/// Git notes a commit it dropped as left empty against the commit HEAD was
+/// on, which is the image of the commit before it or `onto`: a commit noted
+/// against `onto` or against an earlier commit's image was dropped.
+fn read_pairs(
+    pairs: &[(CommitId, CommitId)],
+    olds: &[CommitId],
+    onto: &CommitId,
+    written: &[CommitId],
+) -> Option<Replayed> {
+    if pairs.iter().any(|(old, _)| !olds.contains(old)) {
+        return None;
     }
-    Replayed {
+    let mut claimed: Vec<&CommitId> = Vec::new();
+    let mut images = Vec::with_capacity(olds.len());
+    for old in olds {
+        let noted = pairs.iter().find(|(o, _)| o == old).map(|(_, new)| new);
+        let image = match noted {
+            Some(new) if new == onto || claimed.contains(&new) => None,
+            Some(new) if written.contains(new) => {
+                claimed.push(new);
+                Some(new.clone())
+            }
+            Some(_) => return None,
+            None => None,
+        };
+        images.push((old.clone(), image));
+    }
+    Some(Replayed {
         images,
-        written: new.iter().map(|n| n.commit.clone()).collect(),
-    }
+        written: written.to_vec(),
+    })
 }
 
 impl GitVcs {
-    fn authored(repo: &Path, from: &CommitId, tip: &CommitId) -> Result<Vec<Authored>, VcsError> {
-        let range = format!("{}..{}", from.as_str(), tip.as_str());
-        let args = [
-            "-c",
-            "log.showSignature=false",
-            "log",
-            "--no-color",
-            "--reverse",
-            "--topo-order",
-            "--date=raw",
-            "--format=%H%x00%an%x00%ae%x00%ad%x00%s%x1e",
-            range.as_str(),
-        ];
-        let out = Self::run(args, repo)?;
-        out.split('\u{1e}')
-            .map(|record| record.trim_start_matches('\n'))
-            .filter(|record| !record.is_empty())
-            .map(|record| {
-                let fields: Vec<&str> = record.split('\0').collect();
-                let [id, name, email, date, subject] = fields[..] else {
-                    return Err(failed(&args, repo, format!("unreadable record {record:?}")));
-                };
-                Ok(Authored {
-                    commit: commit_id(id, &args, repo)?,
-                    author: format!("{name}\0{email}\0{date}"),
-                    subject: subject.to_owned(),
-                })
-            })
+    fn record_path(repo: &Path, old: &CommitId, onto: &CommitId) -> Result<PathBuf, VcsError> {
+        Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &record_name(old, onto),
+            ],
+            repo,
+        )
+        .map(PathBuf::from)
+    }
+
+    /// Start the record of a replay of `old` onto `onto`, empty, and return
+    /// the command the replay runs after each commit to keep it: a copy of
+    /// git's own list of what it rewrote, which git keeps only while the
+    /// replay is in progress.
+    pub(super) fn start_replay_record(
+        repo: &Path,
+        old: &CommitId,
+        onto: &CommitId,
+    ) -> Result<String, VcsError> {
+        let path = Self::record_path(repo, old, onto)?;
+        std::fs::write(&path, b"").map_err(|source| VcsError::Io {
+            ctx: format!("failed to start {}", path.display()),
+            source,
+        })?;
+        Ok(format!(
+            "cp -f \"$(git rev-parse --git-path rebase-merge/rewritten-list)\" \
+             \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
+            record_name(old, onto)
+        ))
+    }
+
+    fn commits_between(
+        repo: &Path,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        let range = format!("{}..{}", from.as_str(), to.as_str());
+        let args = ["rev-list", "--reverse", "--topo-order", range.as_str()];
+        Self::run(args, repo)?
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| commit_id(line, &args, repo))
             .collect()
     }
 
-    pub(super) fn pair_replayed(
+    pub(super) fn recorded_replay(
         repo: &Path,
         from: &CommitId,
         old: &CommitId,
         onto: &CommitId,
         new: &CommitId,
-    ) -> Result<Replayed, VcsError> {
-        let replayed = Self::authored(repo, from, old)?;
-        let written = Self::authored(repo, onto, new)?;
-        Ok(pair(&replayed, &written))
+    ) -> Result<Option<Replayed>, VcsError> {
+        let path = Self::record_path(repo, old, onto)?;
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to read {}", path.display()),
+                    source,
+                })
+            }
+        };
+        let mut pairs = Vec::new();
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let mut ids = line.split_whitespace().map(CommitId::parse);
+            match (ids.next(), ids.next()) {
+                (Some(Ok(was)), Some(Ok(now))) => pairs.push((was, now)),
+                _ => return Ok(None),
+            }
+        }
+        let olds = Self::commits_between(repo, from, old)?;
+        let written = Self::commits_between(repo, onto, new)?;
+        Ok(read_pairs(&pairs, &olds, onto, &written))
+    }
+
+    pub(super) fn write_replay_record(
+        repo: &Path,
+        old: &CommitId,
+        onto: &CommitId,
+        replayed: &Replayed,
+    ) -> Result<(), VcsError> {
+        let mut text = String::new();
+        let mut last = onto.clone();
+        for (was, image) in &replayed.images {
+            if let Some(image) = image {
+                last = image.clone();
+            }
+            text.push_str(&format!("{} {}\n", was.as_str(), last.as_str()));
+        }
+        let path = Self::record_path(repo, old, onto)?;
+        std::fs::write(&path, text.as_bytes()).map_err(|source| VcsError::Io {
+            ctx: format!("failed to write {}", path.display()),
+            source,
+        })
     }
 
     pub(super) fn copy_with_changes(
@@ -234,55 +303,47 @@ mod tests {
         CommitId::parse(&format!("{n:040x}")).unwrap()
     }
 
-    fn authored(n: u8, author: &str, subject: &str) -> Authored {
-        Authored {
-            commit: commit(n),
-            author: author.to_owned(),
-            subject: subject.to_owned(),
-        }
+    fn pairs(of: &[(u8, u8)]) -> Vec<(CommitId, CommitId)> {
+        of.iter().map(|(o, n)| (commit(*o), commit(*n))).collect()
     }
 
     #[test]
-    fn a_commit_the_replay_dropped_has_no_image_and_the_rest_pair_in_order() {
-        let old = [
-            authored(1, "a 1", "one"),
-            authored(2, "a 2", "two"),
-            authored(3, "a 3", "three"),
-        ];
-        let new = [authored(11, "a 1", "one"), authored(13, "a 3", "three")];
-        let replayed = pair(&old, &new);
-        assert_eq!(replayed.image(&commit(1)), Some(&commit(11)));
-        assert_eq!(replayed.image(&commit(2)), None);
-        assert_eq!(replayed.image(&commit(3)), Some(&commit(13)));
-    }
-
-    #[test]
-    fn commits_of_one_authorship_pair_by_subject_and_a_reworded_one_by_order() {
-        let old = [
-            authored(1, "same", "one"),
-            authored(2, "same", "two"),
-            authored(3, "same", "three"),
-        ];
-        let new = [
-            authored(12, "same", "two, reworded"),
-            authored(13, "same", "three"),
-        ];
-        let replayed = pair(&old, &new);
-        assert_eq!(replayed.image(&commit(1)), Some(&commit(12)));
-        assert_eq!(replayed.image(&commit(3)), Some(&commit(13)));
-        let new = [authored(12, "same", "two"), authored(13, "same", "three")];
-        let replayed = pair(&old, &new);
+    fn a_commit_noted_against_onto_or_an_earlier_image_was_dropped() {
+        let olds = [commit(1), commit(2), commit(3), commit(4)];
+        let written = [commit(12), commit(14)];
+        let replayed = read_pairs(
+            &pairs(&[(1, 9), (2, 12), (3, 12), (4, 14)]),
+            &olds,
+            &commit(9),
+            &written,
+        )
+        .unwrap();
         assert_eq!(replayed.image(&commit(1)), None);
         assert_eq!(replayed.image(&commit(2)), Some(&commit(12)));
+        assert_eq!(replayed.image(&commit(3)), None);
+        assert_eq!(replayed.image(&commit(4)), Some(&commit(14)));
     }
 
     #[test]
-    fn a_written_commit_of_another_authorship_is_no_commit_s_image() {
-        let old = [authored(1, "a", "one")];
-        let new = [authored(11, "b", "added"), authored(12, "a", "one")];
-        let replayed = pair(&old, &new);
-        assert_eq!(replayed.image(&commit(1)), Some(&commit(12)));
-        assert_eq!(replayed.original(&commit(11)), None);
-        assert_eq!(replayed.written, vec![commit(11), commit(12)]);
+    fn a_commit_the_record_does_not_name_was_dropped_and_one_written_unnoted_was_added() {
+        let olds = [commit(1), commit(2)];
+        let written = [commit(11), commit(20)];
+        let replayed = read_pairs(&pairs(&[(2, 11)]), &olds, &commit(9), &written).unwrap();
+        assert_eq!(replayed.image(&commit(1)), None);
+        assert_eq!(replayed.image(&commit(2)), Some(&commit(11)));
+        assert_eq!(replayed.original(&commit(20)), None);
+    }
+
+    #[test]
+    fn a_record_naming_a_commit_the_branch_does_not_hold_describes_nothing() {
+        let olds = [commit(1)];
+        assert_eq!(
+            read_pairs(&pairs(&[(1, 11)]), &olds, &commit(9), &[commit(12)]),
+            None
+        );
+        assert_eq!(
+            read_pairs(&pairs(&[(5, 11)]), &olds, &commit(9), &[commit(11)]),
+            None
+        );
     }
 }
