@@ -81,7 +81,7 @@ fn every_writing_verb_refuses_from_another_projects_directory() {
         &["lock"],
         &["update", "--remote"],
         &["push"],
-        &["sync", "primary"],
+        &["sync"],
         &["sync-to", "primary"],
         &["update"],
         &["fetch"],

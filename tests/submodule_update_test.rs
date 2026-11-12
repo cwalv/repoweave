@@ -503,9 +503,10 @@ fn add_in_a_workweave_creates_a_checkout_with_its_submodules() {
 #[test]
 fn sync_creates_a_checkout_with_its_submodules() {
     let weave = weave();
-    let (_, two, member) = one_adds_two_lacks(&weave);
+    let (one, two, member) = one_adds_two_lacks(&weave);
+    rwv(&one, &["sync-to"]);
 
-    rwv(&two, &["sync", "one"]);
+    rwv(&two, &["sync"]);
 
     assert_populated(&two.join(&member));
 }

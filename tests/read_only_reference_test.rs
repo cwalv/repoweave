@@ -427,7 +427,7 @@ fn sync_moves_a_read_only_reference_member_and_settles_what_it_wrote() {
     let advanced = commit_all(&weave.reference, "primary: advance reference");
     succeed(&["lock", "--commit"], &weave.primary);
 
-    succeed(&["sync", "primary"], &seat);
+    succeed(&["sync"], &seat);
 
     let reference = seat.join(REF_PATH);
     assert_eq!(
@@ -515,7 +515,7 @@ fn a_reference_member_arriving_by_sync_is_read_only() {
         &weave.primary,
     );
 
-    succeed(&["sync", "primary"], &seat);
+    succeed(&["sync"], &seat);
 
     assert_read_only(&seat.join("github/org/late"), "after sync materialized it");
 }
@@ -528,7 +528,7 @@ fn a_role_changed_to_reference_by_sync_is_settled_read_only() {
     assert_writable(&seat.join(OWNED_PATH), "before the role change");
 
     weave.commit_manifest(&weave.project_dir(), "reference", "reference");
-    succeed(&["sync", "primary"], &seat);
+    succeed(&["sync"], &seat);
 
     assert_read_only(
         &seat.join(OWNED_PATH),

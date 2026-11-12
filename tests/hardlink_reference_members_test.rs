@@ -231,7 +231,7 @@ fn a_sync_that_moves_one_seat_leaves_the_file_another_seat_shared_with_it() {
     common::git_in(&clone, &["commit", "-qam", "advance"]);
     run(&["lock", "--commit"], &primary);
 
-    run(&["sync", "primary"], &two);
+    run(&["sync"], &two);
 
     assert_eq!(
         common::read_normalized(two.join(REFERENCE).join("src/a.txt")),

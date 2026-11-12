@@ -302,11 +302,22 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
     let server_primary = primary_root.join(SERVER_PATH);
     let c1 = init_repo(&server_primary);
+    let origin = tmp.path().join("server-origin.git");
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            &server_primary.to_string_lossy(),
+            &origin.to_string_lossy(),
+        ],
+    );
+    let server_url = common::file_url(&origin);
 
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
-    write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    write_manifest(&project_primary, &[(SERVER_PATH, &server_url)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, &server_url, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
     common::record_trunk(&project_primary);
@@ -322,7 +333,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
             "worktree",
             "add",
             "-b",
-            "ww/main",
+            "ww/project",
             &server_ww.to_string_lossy(),
         ],
     );
@@ -354,7 +365,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
     // Primary commits C2 and updates lock.
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
-    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, &server_url, &c2)]);
     common::git_in(&project_primary, &["add", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
@@ -362,12 +373,13 @@ fn sync_post_refresh_clears_stale_working_tree() {
     // that sync's CWD-lock-freshness precondition passes once the server
     // ref is advanced below. (The workweave's freshness check reads its
     // own committed lock, not primary's.)
-    common::fixture_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_ww, &[(SERVER_PATH, &server_url, &c2)]);
     common::git_in(&project_ww, &["add", "rwv.lock"]);
     common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 
     // Set up working-tree drift in the ww server repo.
-    make_working_tree_stale(&server_ww, &server_primary, &c2);
+    advance_ww_branch(&server_primary, "ww/project", &c2);
+    common::git_in(&server_ww, &["reset"]);
 
     let diff_before = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
@@ -379,16 +391,8 @@ fn sync_post_refresh_clears_stale_working_tree() {
         "working tree should be stale before sync"
     );
 
-    // Both sides committed independent lock advances above; project repos
-    // diverged → --discard-local-commits is required to bypass the Phase 1
-    // ancestor precondition. The test's focus is the post-Phase-2
-    // working-tree refresh.
     rwv()
-        .args([
-            "sync",
-            &primary_root.to_string_lossy(),
-            "--discard-local-commits",
-        ])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww_root)
         .assert()
         .success();

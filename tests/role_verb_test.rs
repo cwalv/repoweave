@@ -479,7 +479,7 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
         &other.join(&weave.beta),
         "another workweave, before its sync",
     );
-    succeed(&["sync", "primary"], &other);
+    succeed(&["sync"], &other);
     assert_read_only(
         &other.join(&weave.beta),
         "another workweave, on its next sync",

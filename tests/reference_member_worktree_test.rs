@@ -304,7 +304,7 @@ fn sync_brings_a_reference_advance_into_a_workweave() {
     rwv_lock_commit(&primary.root);
 
     rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -425,11 +425,12 @@ fn abort_restores_a_reference_member_like_any_other() {
     );
     let advanced = commit_file(&ww.ref_checkout, "R", "r\n", "op: advance");
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
-         \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+         \"source\": \"{root}\", \"target\": \"{target}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{\"{REF_PATH}\": \"{advanced}\"}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(&ww.root),
+        target = common::json_escaped(&primary.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), record).unwrap();
     let canonical_main = common::git_in(&primary.ref_canonical, &["rev-parse", "main"]);

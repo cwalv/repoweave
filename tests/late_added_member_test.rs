@@ -337,7 +337,7 @@ fn a_reference_member_arriving_by_sync_is_a_worktree_at_the_pinned_revision() {
     common::git_in(&canonical, &["commit", "-m", "ahead of the pin"]);
     common::git_in(&canonical, &["checkout", "-q", &pin]);
 
-    let synced = run(&["sync", "primary"], &seat);
+    let synced = run(&["sync"], &seat);
     assert!(synced.status.success(), "{}", describe(&synced));
 
     assert_worktree_at(

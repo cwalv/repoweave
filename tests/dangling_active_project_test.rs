@@ -165,9 +165,7 @@ fn sync_fails_on_dangling_active() {
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "deleted-proj");
 
-    // `rwv sync` requires a <source> argument; provide "primary" so we get
-    // past argument-parsing and hit the active-project check.
-    let stderr = fail(&ws, &["sync", "primary"]);
+    let stderr = fail(&ws, &["sync"]);
     assert_dangling_error(&stderr, "deleted-proj");
 }
 

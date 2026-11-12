@@ -1512,7 +1512,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // When `rwv workweave create` is invoked from inside a workweave (no
     // `--from` flag), the new peer should fork from that workweave's HEAD,
     // not from primary's. Establishes the rig=workweave model: peer rooted
-    // in rig means rig→peer is a fast-forward and `rwv sync` works without
+    // in rig means rig→peer is a fast-forward and `rwv sync-to` works without
     // ancestor divergence.
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
@@ -2787,23 +2787,6 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
         ww1_canonical,
         "ww2's parent must be ww1's path (forked from ww1's CWD), got:\n{content}"
     );
-}
-
-#[test]
-fn bare_sync_outside_workweave_errors_clearly() {
-    // make_workspace_with_project_repo gives us a primary weave with a git
-    // project repo. Running `rwv sync` (no source) from primary should
-    // refuse because `source` is now a required argument. The error must
-    // be non-zero and mention source or SOURCE (clap capitalizes args).
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace_with_project_repo(tmp.path(), "p");
-
-    rwv()
-        .args(["sync"])
-        .current_dir(&ws)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("SOURCE").or(predicate::str::contains("source")));
 }
 
 // ============================================================================

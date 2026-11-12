@@ -95,21 +95,21 @@ fn sync_reports_how_the_files_it_moved_were_placed(endings: LineEndings) {
         .success();
 
     let output = common::rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&seat)
         .output()
         .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    assert!(
-        output.status.success(),
-        "sync failed:\n{stdout}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "sync failed:\n{stderr}");
 
-    let line = stdout
+    let line = stderr
         .lines()
-        .find_map(|l| l.trim().strip_prefix(&format!("{MEMBER}: files ")))
-        .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stdout}"));
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("rwv update: ")
+                .and_then(|l| l.strip_prefix(&format!("{MEMBER}: files ")))
+        })
+        .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stderr}"));
     let expected = match (endings, declared_to_clone(tmp.path())) {
         (LineEndings::Converted, _) | (_, Some(false)) => {
             Some("0 reflinked, 0 hardlinked, 2 written")
@@ -145,7 +145,7 @@ fn sync_json_reports_the_placement_as_its_own_record(endings: LineEndings) {
         .success();
 
     let output = common::rwv()
-        .args(["sync", "primary", "--json"])
+        .args(["sync", "--json"])
         .current_dir(&seat)
         .output()
         .unwrap();

@@ -96,6 +96,10 @@ fn commit_in(dir: &Path, file: &str) {
 #[test]
 fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_moves_nothing() {
     let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
+    let project = project_dir(&w.workspace);
+    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::git_in(&project, &["add", ".gitattributes"]);
+    common::git_in(&project, &["commit", "-qm", "replay exclusion"]);
     succeed(
         &["workweave", "create", "--project", PROJECT, "anon"],
         &w.workspace,
@@ -112,10 +116,7 @@ fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_mov
     succeed(&["lock", "--commit"], &w.workspace);
     let before = common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]);
 
-    let text = refuse(
-        &["sync", ww.to_str().unwrap(), "--strategy", "rebase"],
-        &w.workspace,
-    );
+    let text = refuse(&["sync", "--strategy", "rebase"], &ww);
 
     assert!(text.contains("protected declared"), "{text}");
     assert_eq!(

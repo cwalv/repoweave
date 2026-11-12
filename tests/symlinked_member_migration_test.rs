@@ -446,9 +446,9 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["status"]),
         (&weave.seat, vec!["lock"]),
         (&weave.seat, vec!["update", "--remote"]),
-        (&weave.seat, vec!["sync", "primary"]),
+        (&weave.seat, vec!["sync"]),
         (&weave.seat, vec!["sync-to", primary_arg.as_str()]),
-        (&weave.primary, vec!["sync", seat_arg.as_str()]),
+        (&weave.seat, vec!["sync-to"]),
         (
             &weave.primary,
             vec!["workweave", "delete", "--project", PROJECT, SEAT],
@@ -503,7 +503,7 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
         &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &pin],
     );
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
