@@ -932,3 +932,50 @@ fn abort_after_a_landing_pruned_a_dropped_member_in_the_target_names_the_checkou
     succeed(&weave.root, &["update"]);
     assert!(common::under(&weave.root, EXTRA).is_dir());
 }
+
+/// A ref at the savepoint namespace's own name in `lib`'s store, below which
+/// git files no ref: the landing cannot file its savepoints, so it stops
+/// before anything moves, drops the ones it filed, and leaves no op in either
+/// workspace. With the ref gone it lands.
+#[test]
+fn a_landing_that_cannot_file_a_savepoint_does_not_start() {
+    let weave = weave();
+    let s1 = seat(&weave, &weave.root, "s1");
+    let lib = common::under(&s1, LIB);
+    std::fs::write(lib.join("feature.txt"), "feature\n").unwrap();
+    common::git_in(&lib, &["add", "feature.txt"]);
+    common::commit_staged(&lib, "feature");
+    let primary_lib = common::under(&weave.root, LIB);
+    let before = common::git_in(&primary_lib, &["rev-parse", "main"]);
+    let primary_project = common::git_in(&project_dir(&weave.root), &["rev-parse", "HEAD"]);
+    common::git_in(&primary_lib, &["update-ref", "refs/rwv/pre-op", "HEAD"]);
+
+    let out = run(&s1, &["land", "--history", "linear"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("could not file its savepoints, so it did not start"),
+        "{stderr}"
+    );
+    assert_eq!(common::git_in(&primary_lib, &["rev-parse", "main"]), before);
+    assert_eq!(
+        common::git_in(&project_dir(&weave.root), &["rev-parse", "HEAD"]),
+        primary_project
+    );
+    for dir in [project_dir(&s1), project_dir(&weave.root)] {
+        assert_eq!(
+            common::git_in(&dir, &["for-each-ref", "refs/rwv/pre-op/"]),
+            "",
+            "{}",
+            dir.display()
+        );
+    }
+    for workspace in [&s1, &weave.root] {
+        assert!(!workspace.join(".rwv-op").exists());
+        assert!(!workspace.join(".rwv-op-lease").exists());
+    }
+
+    common::git_in(&primary_lib, &["update-ref", "-d", "refs/rwv/pre-op"]);
+    succeed(&s1, &["land", "--history", "linear"]);
+    assert!(common::git_in(&primary_lib, &["log", "--format=%s", "main"]).contains("feature"));
+}
