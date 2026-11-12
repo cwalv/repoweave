@@ -243,7 +243,14 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   then does each dependent's branch move, by compare-and-swap after a
   `rebased` backup, the move journaled in `ref_moves` for `rwv abort`. A
   stop on a carry is finished by `Carrier::finish_stopped` before anything
-  reads the checkouts on `--continue`.
+  reads the checkouts on `--continue`; `sync --continue` takes the branch a
+  stop left the project checkout detached from out of the record (the
+  uncomposed project carry's `checkout_on`, else the journaled project
+  rebase's branch), and a landing's `--continue` leaves its own entries as
+  judged once any carry is journaled. A rerun of the carry reads a
+  dependent the journal shows it already moved at the tip it was carried
+  from, so the walk judges the stack as it first did, and reuses a composed
+  tip only while its `base` and `onto` still match the target's.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, rebased or merged as the
