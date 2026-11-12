@@ -257,6 +257,7 @@ pub fn resolve(
                     .bind("<repo>", &label)
                     .checkout(&dir)
                     .by_verb("land")
+                    .only_forms(&[Form::C2Pull])
                     .judge(vcs),
             );
             local.id().clone()
@@ -1693,6 +1694,7 @@ fn judge_member(
                          ahead, {behind} behind)"
                     ))
                     .by_verb("land")
+                    .only_forms(&[Form::C2UpdateRemote])
                     .judge(vcs),
             );
             return Ok(());

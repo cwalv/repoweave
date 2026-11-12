@@ -953,8 +953,8 @@ pub fn switch_c_wip_in_workweave() -> Scenario {
                     Repo::App,
                     State::AlignmentOnBranchWithStrayCommits,
                 ))
-                .claim(Claim::OutputContains("copy these commits onto `"))
-                .claim(Claim::OutputLacks("`<b>`"))
+                .claim(Claim::OutputContains("keep this work on a branch"))
+                .claim(Claim::OutputLacks("copy these commits onto"))
                 .claim(Claim::OutputLine("rwv explain alignment")),
             Step::rwv(&ww("wip"), &["push"]).expect(Exit::refuses(Repo::Proj, State::NameMinted)),
             Step::pending("land the workweave", MissingVerb::Land),
@@ -8532,7 +8532,8 @@ pub fn land_resolves_a_target_that_publishes_where_its_record_is() -> Scenario {
 }
 
 /// `T` and its upstream diverged: the landing refuses before anything moves,
-/// naming the merge and the take of theirs where `T` is checked out.
+/// naming the merge where `T` is checked out, never the take of theirs, which
+/// the feature landing into `T` refuses.
 pub fn land_refuses_a_target_diverged_from_its_upstream() -> Scenario {
     scenario(
         "land refuses a target diverged from its upstream",
@@ -8548,10 +8549,8 @@ pub fn land_refuses_a_target_diverged_from_its_upstream() -> Scenario {
             Step::commit(&a(), Repo::Proj, "a-proj"),
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
-                .claim(Claim::OutputContains(
-                    "rwv pull --reset-to-upstream projects/proj",
-                ))
                 .claim(Claim::OutputContains("rwv pull --merge-upstream"))
+                .claim(Claim::OutputLacks("--reset-to-upstream"))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(&a(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -8581,8 +8580,8 @@ pub fn land_refuses_a_target_diverged_from_its_upstream() -> Scenario {
 }
 
 /// A moved member's receiving branch and its upstream diverged: the landing
-/// refuses before anything moves, naming the merge and the take of theirs
-/// where it is checked out.
+/// refuses before anything moves, naming the merge where it is checked out,
+/// never the take of theirs, which the feature landing there refuses.
 pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario {
     scenario(
         "land refuses a receiving branch diverged from its upstream",
@@ -8600,11 +8599,9 @@ pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario 
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
                 .claim(Claim::OutputContains(
-                    "rwv update --remote --reset-to-upstream local/remotes/lib",
-                ))
-                .claim(Claim::OutputContains(
                     "rwv update --remote --merge-upstream --repo local/remotes/lib",
                 ))
+                .claim(Claim::OutputLacks("--reset-to-upstream"))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(
                 &a(),
