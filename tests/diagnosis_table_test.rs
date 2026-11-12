@@ -169,7 +169,7 @@ fn every_shipped_form_spells_only_commands_that_parse() {
 /// reported, and so is one with a flag it does not take.
 #[test]
 fn an_unshipped_spelling_is_reported() {
-    assert!(parse_failure("rwv member set-branch <m> <b>").is_some());
+    assert!(parse_failure("rwv branch set-history <h> --repo <m>").is_some());
     assert!(parse_failure("rwv branch rename <new>").is_none());
     assert!(parse_failure("rwv branch rename <new> --adopt").is_none());
     assert!(parse_failure("rwv branch rename <new> --keep").is_some());

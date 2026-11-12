@@ -47,8 +47,16 @@ fn declare_lib_on(ws: &Path, line: &str, branch: &str) {
 
 fn seat_with_declared_branch() -> (common::PushWorkspace, PathBuf, String) {
     let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
-    succeed(&["workweave", "create", "--project", PROJECT, "anon"], &w.workspace);
-    let ww = w.workspace.parent().unwrap().join(".workweaves").join("p--anon");
+    succeed(
+        &["workweave", "create", "--project", PROJECT, "anon"],
+        &w.workspace,
+    );
+    let ww = w
+        .workspace
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("p--anon");
     let branch = "p--anon".to_owned();
     declare_lib_on(&w.workspace, "line", &branch);
     (w, ww, branch)
@@ -59,7 +67,14 @@ fn delete_remote_refuses_a_member_branch_a_live_weave_branch_declares_and_change
     let (w, ww, branch) = seat_with_declared_branch();
 
     let text = refuse(
-        &["workweave", "delete", "anon", "--project", PROJECT, "--delete-remote"],
+        &[
+            "workweave",
+            "delete",
+            "anon",
+            "--project",
+            PROJECT,
+            "--delete-remote",
+        ],
         &w.workspace,
     );
 
@@ -81,8 +96,16 @@ fn commit_in(dir: &Path, file: &str) {
 #[test]
 fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_moves_nothing() {
     let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
-    succeed(&["workweave", "create", "--project", PROJECT, "anon"], &w.workspace);
-    let ww = w.workspace.parent().unwrap().join(".workweaves").join("p--anon");
+    succeed(
+        &["workweave", "create", "--project", PROJECT, "anon"],
+        &w.workspace,
+    );
+    let ww = w
+        .workspace
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("p--anon");
     commit_in(&ww.join(LIB), "theirs");
     succeed(&["lock", "--commit"], &ww);
     commit_in(&w.workspace.join(LIB), "ours");
@@ -95,5 +118,8 @@ fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_mov
     );
 
     assert!(text.contains("protected declared"), "{text}");
-    assert_eq!(common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]),
+        before
+    );
 }

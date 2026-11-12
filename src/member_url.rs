@@ -205,15 +205,7 @@ fn judge_set_url(
         {
             refusals.add(judged);
         }
-        judge_relink(
-            vcs.as_ref(),
-            member,
-            dir,
-            &entry.url,
-            new,
-            VERB,
-            refusals,
-        )?
+        judge_relink(vcs.as_ref(), member, dir, &entry.url, new, VERB, refusals)?
     };
     Ok(Some(SetUrl {
         was: entry.clone(),
@@ -285,10 +277,7 @@ impl SetUrl {
             authored: &authored,
             message: &format!("member set-url {member}\n\n  - {member}: {}", new),
         })?;
-        eprintln!(
-            "rwv {VERB}: {member}: url {} -> {}",
-            self.was.url, new
-        );
+        eprintln!("rwv {VERB}: {member}: url {} -> {}", self.was.url, new);
         match &self.relink {
             Some(relink) => eprintln!("rwv {VERB}: {}", relink.describe(member)),
             None => eprintln!(

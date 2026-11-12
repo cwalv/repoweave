@@ -3123,14 +3123,14 @@ mod tests {
     fn a_state_with_nothing_shipped_prints_no_choices_block() {
         let mut report = Report::default();
         report.add(
-            State::NameARevision
+            State::PushBranchDiverged
                 .of("github/o/lib")
-                .subject("v2.0")
+                .subject("1 ahead, 1 behind")
                 .judge(git().as_ref()),
         );
         let text = report.render("add");
         assert!(!text.contains("choices:"), "{text}");
-        assert!(text.ends_with("\nrwv explain name\n"), "{text}");
+        assert!(text.ends_with("\nrwv explain push-branch\n"), "{text}");
     }
 
     #[test]

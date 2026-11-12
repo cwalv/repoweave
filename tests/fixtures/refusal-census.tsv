@@ -11,6 +11,7 @@ src/add_remove.rs	(untokened:internal-invariant)	-	3
 src/add_remove.rs	adopt-path-outside-weave	tests/invocation_relative_paths_test.rs	1
 src/add_remove.rs	foreign-clone-at-placement	tests/project_and_source_spelling_test.rs	1
 src/add_remove.rs	foreign-clone-in-workweave	tests/invocation_relative_paths_test.rs	1
+src/add_remove.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
 src/add_remove.rs	malformed-repo-path	-	1
 src/add_remove.rs	missing-creation-param	tests/refusal_arrival_test.rs	1
 src/add_remove.rs	name a revision	tests/refusal_arrival_test.rs	1
@@ -77,6 +78,7 @@ src/clone.rs	project-dir-occupied	-	1
 src/clone.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/deletion.rs	protected declared	tests/branch_rename_test.rs	1
 src/deletion.rs	protected declared mode	tests/branch_rename_test.rs	1
 src/deletion.rs	target dependents	tests/branch_gate_test.rs	1
 src/diagnosis.rs	edits dirty	tests/refusal_arrival_test.rs	1
@@ -107,14 +109,29 @@ src/lock.rs	alignment project detached	-	1
 src/lock.rs	edits dirty	tests/refusal_arrival_test.rs	3
 src/lock.rs	pin backwards	tests/backup_verb_test.rs	1
 src/lock.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
+src/lock_commit.rs	(untokened)	-	1
+src/lock_commit.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/log.rs	name no-such-branch	tests/refusal_arrival_test.rs	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	(untokened)	-	2
+src/member_branch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	name a revision	tests/refusal_arrival_test.rs	2
+src/member_branch.rs	name exists	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	name feature	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	3
+src/member_branch.rs	name reserved	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	pin none	tests/backup_verb_test.rs	2
+src/member_branch.rs	pin not on declared branch	tests/backup_verb_test.rs	1
+src/member_branch.rs	push-branch diverged	-	1
+src/member_branch.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/member_pin.rs	alignment detached with unpushed commits	-	1
 src/member_pin.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
 src/member_pin.rs	pin not on declared branch	tests/backup_verb_test.rs	1
 src/member_pin.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/member_settings.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/member_settings.rs	repo-not-in-manifest	tests/role_verb_test.rs	2
+src/member_url.rs	push-branch diverged	-	1
+src/member_url.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/op_state.rs	(untokened:UNCLASSIFIED)	-	1
 src/op_state.rs	(untokened:internal-invariant)	-	2
 src/op_state.rs	dead-op-lease	tests/unreadable_op_record_test.rs	2
@@ -184,6 +201,7 @@ src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/sync.rs	no-such-workweave	-	1
 src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
+src/sync.rs	protected declared	tests/branch_rename_test.rs	1
 src/sync.rs	resume-contradicts-record	-	3
 src/sync.rs	stale-lock	tests/refusal_arrival_test.rs	4
 src/sync.rs	target-diverged-mid-op	-	1

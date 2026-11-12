@@ -70,8 +70,9 @@ impl Loaded {
         crate::branch::require_recorded(ctx)?;
         let (project, workweave_dir) = crate::lock::scope(ctx)?;
         let project_dir = project_dir(ctx.active_path(), &project);
-        let Project { manifest, .. } = Project::from_dir_skip_lock(&project_dir, project.clone())
-            .with_context(|| format!("failed to load project '{project}'"))?;
+        let Project { manifest, .. } =
+            Project::from_dir_skip_lock(&project_dir, project.clone())
+                .with_context(|| format!("failed to load project '{project}'"))?;
         let old = crate::lock::read_old_lock(&LockFile::path_in(&project_dir), verb);
         let aligner = Aligner::open(
             ctx.active_path(),
@@ -255,7 +256,10 @@ pub(crate) fn judge_entry(
         }
     };
     if matches!(
-        crate::records::BranchName::parse(project_vcs().as_ref(), tracking.local_counterpart().as_str()),
+        crate::records::BranchName::parse(
+            project_vcs().as_ref(),
+            tracking.local_counterpart().as_str()
+        ),
         Err(crate::records::NameError::Reserved)
     ) {
         return Ok(refused_name(
@@ -269,7 +273,10 @@ pub(crate) fn judge_entry(
             ChoiceId::C11,
         ));
     }
-    if let Ok(name) = crate::records::BranchName::parse(project_vcs().as_ref(), tracking.local_counterpart().as_str()) {
+    if let Ok(name) = crate::records::BranchName::parse(
+        project_vcs().as_ref(),
+        tracking.local_counterpart().as_str(),
+    ) {
         let mut features = crate::branch::other_projects_with_feature(
             ctx.primary_path(),
             &loaded.project,
@@ -653,7 +660,10 @@ fn candidate_plan(
     lock: &LockFile,
 ) -> anyhow::Result<Plan> {
     let raw = RawRefName::new(step.branch.local_counterpart().as_str());
-    let exists = member.vcs.resolve_local_branch_tip(member.dir, &raw)?.is_some()
+    let exists = member
+        .vcs
+        .resolve_local_branch_tip(member.dir, &raw)?
+        .is_some()
         || !member.vcs.remote_copies(member.dir, &raw)?.is_empty();
     if exists {
         return aligner.plan(member, Some(lock));
@@ -698,8 +708,7 @@ pub fn run_set_branch(
         },
     };
     let member = entry_request.member.clone();
-    let new_url: Option<crate::manifest::RepoUrl> =
-        request.url.map(str::parse).transpose()?;
+    let new_url: Option<crate::manifest::RepoUrl> = request.url.map(str::parse).transpose()?;
     let mut refusals = Report::default();
     let step = judge_entry(ctx, &loaded, VERB, &entry_request, &mut refusals)?;
     let located = loaded.checkout(ctx, &member);
@@ -755,7 +764,16 @@ pub fn run_set_branch(
             );
         }
         if located.aligns && !owned_in_feature {
-            judge_move(&loaded, vcs, &member, &dir, &after, step, &new_lock, &mut refusals)?;
+            judge_move(
+                &loaded,
+                vcs,
+                &member,
+                &dir,
+                &after,
+                step,
+                &new_lock,
+                &mut refusals,
+            )?;
         }
     }
     refusals.into_result()?;
@@ -803,11 +821,17 @@ pub fn run_set_branch(
         ));
     }
     if located.aligns && !owned_in_feature {
-        notes.extend(align_member(&loaded, vcs, &member, &dir, &after, &new_lock, VERB)?);
+        notes.extend(align_member(
+            &loaded, vcs, &member, &dir, &after, &new_lock, VERB,
+        )?);
     }
     if let Some(relink) = &relink {
         relink.apply(vcs, &dir)?;
-        notes.push(relink.describe(&member).replacen(&format!("{member}: "), "", 1));
+        notes.push(
+            relink
+                .describe(&member)
+                .replacen(&format!("{member}: "), "", 1),
+        );
     }
 
     let branch_was = entry.branch.clone();
@@ -841,8 +865,7 @@ pub fn run_set_branch(
                     version: crate::vcs::RawRevisionId::new(pin.id().as_str()),
                 },
             );
-        } else if let (Some(url), Some(held)) = (&url_now, l.get_entry(&member_for_lock).cloned())
-        {
+        } else if let (Some(url), Some(held)) = (&url_now, l.get_entry(&member_for_lock).cloned()) {
             l.insert_entry(
                 member_for_lock.clone(),
                 crate::manifest::LockEntry {
@@ -852,8 +875,11 @@ pub fn run_set_branch(
             );
         }
     };
-    let settled_authored =
-        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest, &manifest]);
+    let settled_authored = crate::manifest_commit::authored_across(
+        ctx,
+        &loaded.project,
+        &[&loaded.manifest, &manifest],
+    );
     let touches_lock = step.pin.is_some() || new_url.is_some();
     crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
         project: &loaded.project,

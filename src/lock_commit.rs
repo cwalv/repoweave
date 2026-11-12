@@ -22,7 +22,8 @@ pub(crate) struct WholeChanges {
 }
 
 fn other_tables(manifest: &Manifest) -> toml::Value {
-    let mut value = toml::Value::try_from(manifest).unwrap_or(toml::Value::Table(Default::default()));
+    let mut value =
+        toml::Value::try_from(manifest).unwrap_or(toml::Value::Table(Default::default()));
     if let Some(table) = value.as_table_mut() {
         table.remove("repositories");
     }
@@ -75,10 +76,7 @@ struct Moving {
     after: crate::manifest::RepoEntry,
 }
 
-fn relocking_for<'a>(
-    relocking: &Relocking<'a>,
-    whole: WholeFile<'a>,
-) -> Relocking<'a> {
+fn relocking_for<'a>(relocking: &Relocking<'a>, whole: WholeFile<'a>) -> Relocking<'a> {
     Relocking {
         verb: relocking.verb,
         acting: relocking.acting,
@@ -99,11 +97,9 @@ pub(crate) fn run(
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let loaded = Loaded::open(ctx, VERB)?;
     let working = loaded.manifest.clone();
-    let committed = crate::manifest_commit::committed_manifest(
-        project_vcs().as_ref(),
-        &loaded.project_dir,
-    )?
-    .unwrap_or_else(|| working.clone());
+    let committed =
+        crate::manifest_commit::committed_manifest(project_vcs().as_ref(), &loaded.project_dir)?
+            .unwrap_or_else(|| working.clone());
     let authored =
         crate::manifest_commit::authored_across(ctx, &loaded.project, &[&committed, &working]);
 
@@ -119,7 +115,8 @@ pub(crate) fn run(
             rev: None,
             creation: Creation::Existing,
         };
-        let Some(step) = crate::member_branch::judge_entry(ctx, &loaded, VERB, &request, &mut refusals)?
+        let Some(step) =
+            crate::member_branch::judge_entry(ctx, &loaded, VERB, &request, &mut refusals)?
         else {
             continue;
         };
@@ -170,7 +167,12 @@ pub(crate) fn run(
             VERB,
             &mut refusals,
         )? {
-            relinks.push((change.path.clone(), located.dir.clone(), change.now.vcs_type, relink));
+            relinks.push((
+                change.path.clone(),
+                located.dir.clone(),
+                change.now.vcs_type,
+                relink,
+            ));
         }
     }
     for change in changes
@@ -222,7 +224,9 @@ pub(crate) fn run(
 
     let vcs_of = |t| vcs_for(t);
     for path in &changes.added {
-        let entry = working.get_entry(path).expect("an added member is in the manifest");
+        let entry = working
+            .get_entry(path)
+            .expect("an added member is in the manifest");
         let vcs = vcs_of(entry.vcs_type);
         let located = loaded.checkout(ctx, path);
         if let Some(pin) = crate::add_remove::first_pin(vcs.as_ref(), &located.dir, entry)? {

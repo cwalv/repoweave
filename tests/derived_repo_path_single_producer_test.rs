@@ -98,6 +98,25 @@ const ALLOWLIST: &[Allowed] = &[
              matched against the manifest, and a path it does not list is refused \
              rather than asserted into it.",
     },
+    Allowed {
+        file: "member_branch.rs",
+        count: 2,
+        justification: "The branch setter's lookup key: the operator's typed path, from \
+             `member set-branch` or a `<m>=<b>` spelling, is matched against the manifest \
+             and refused when it lists no such member.",
+    },
+    Allowed {
+        file: "member_url.rs",
+        count: 1,
+        justification: "The url setter's lookup key: the operator's typed path is matched \
+             against the manifest and refused when it lists no such member.",
+    },
+    Allowed {
+        file: "entry_report.rs",
+        count: 1,
+        justification: "A lookup key read back from the workspace's stored entries, which \
+             are keyed by the path the manifest listed.",
+    },
 ];
 
 /// `file -> [\"file:line: text\", ...]` for every production line outside

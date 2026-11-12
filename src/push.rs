@@ -279,7 +279,8 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     }
 
     if pushed.checked_out && request.mode == PushMode::Publish {
-        let project_aligner = Aligner::open(ctx.active_path(), &pushed.project, Accounting::default())?;
+        let project_aligner =
+            Aligner::open(ctx.active_path(), &pushed.project, Accounting::default())?;
         crate::entry_report::report(
             "push",
             ctx,

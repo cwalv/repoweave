@@ -123,20 +123,36 @@ fn a_hand_declared_branch_runs_the_setters_step_and_commits_the_whole_file_once(
     let w = two_members();
     let tip = lib_with_dev(&w);
     hand_declare_lib_on(&w, "dev");
-    let hand = format!("{}\n[integrations.vscode-workspace]\nenabled = false\n", manifest(&w));
+    let hand = format!(
+        "{}\n[integrations.vscode-workspace]\nenabled = false\n",
+        manifest(&w)
+    );
     std::fs::write(project(&w).join("rwv.toml"), hand).unwrap();
     let before = commits(&w);
 
     let text = succeeded(&run(&w, &["lock", "--commit"]));
 
-    assert_eq!(commits(&w), before + 1, "one commit carries the whole file:\n{text}");
+    assert_eq!(
+        commits(&w),
+        before + 1,
+        "one commit carries the whole file:\n{text}"
+    );
     assert_eq!(pin_of(&w, LIB).as_deref(), Some(tip.as_str()));
     common::assert_on_branch(&member(&w, LIB), "dev");
     let committed = git_in(project(&w), &["show", "HEAD:rwv.toml"]);
     assert!(committed.contains("branch = \"dev\""), "{committed}");
     assert!(committed.contains("vscode-workspace"), "{committed}");
-    assert_eq!(git_in(project(&w), &["status", "--porcelain", "--untracked-files=no"]), "");
-    assert!(text.contains(&format!("{LIB}: branch main -> dev")), "{text}");
+    assert_eq!(
+        git_in(
+            project(&w),
+            &["status", "--porcelain", "--untracked-files=no"]
+        ),
+        ""
+    );
+    assert!(
+        text.contains(&format!("{LIB}: branch main -> dev")),
+        "{text}"
+    );
 }
 
 #[test]
@@ -153,6 +169,12 @@ fn a_hand_removed_member_is_committed_removed_and_its_checkout_is_kept() {
 
     assert!(!git_in(project(&w), &["show", "HEAD:rwv.toml"]).contains(LIB));
     assert!(!git_in(project(&w), &["show", "HEAD:rwv.lock"]).contains(LIB));
-    assert!(member(&w, LIB).join(".git").exists(), "the checkout was deleted");
-    assert!(text.contains(&format!("{LIB}: a member removed by hand")), "{text}");
+    assert!(
+        member(&w, LIB).join(".git").exists(),
+        "the checkout was deleted"
+    );
+    assert!(
+        text.contains(&format!("{LIB}: a member removed by hand")),
+        "{text}"
+    );
 }

@@ -1262,6 +1262,11 @@ clone's `origin` URL; this one compares the manifest *path* against
 `placement` of the manifest URL — so an entry can trip either, both, or
 neither independently.
 
+The URL it takes is the entry's URL on the project's default branch, the
+one the member was added with, so a mirror URL that another branch's entry
+carries (`rwv member set-url` on that branch) raises no finding. A member the
+default branch does not list is compared by the URL it has where it is read.
+
 `reference`-role and `fork`-role entries are exempt: a `reference` mirror URL
 under the path of the upstream it mirrors, or a `fork` keyed on either its
 fork coordinates or its upstream coordinates (per [Roles](./roles.md) §`fork`),

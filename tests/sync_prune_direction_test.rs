@@ -339,7 +339,7 @@ fn parked_pull_of_a_drop(weave: &Weave, conflicted: fn(&Path) -> PathBuf) -> Pat
     let s1 = seat(weave, &weave.root, "s1");
     commit_note(&conflicted(&s1), "seat\n");
     commit_note(&conflicted(&weave.root), "primary\n");
-    succeed(&weave.root, &["lock"]);
+    succeed(&weave.root, &["lock", "--commit"]);
     drop_and_commit(&weave.root, "drop extra");
 
     let out = run(&s1, &["sync", "primary", "--strategy", "rebase"]);

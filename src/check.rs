@@ -4242,7 +4242,8 @@ pub fn scan_provenance(
                 continue;
             }
             let on_default = url_on_default_branch(workspace_dir, &project.name, repo_path);
-            let Some(expected) = crate::registry::placement(on_default.as_ref().unwrap_or(&entry.url))
+            let Some(expected) =
+                crate::registry::placement(on_default.as_ref().unwrap_or(&entry.url))
             else {
                 continue;
             };

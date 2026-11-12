@@ -1789,7 +1789,7 @@ fn lock_commit_message_names_a_manifest_only_change() {
 
     assert_eq!(
         files_in_head_commit(&project_dir),
-        vec!["rwv.toml".to_string()]
+        vec!["alpha.code-workspace".to_string(), "rwv.toml".to_string()]
     );
     assert_eq!(
         common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
@@ -1889,7 +1889,11 @@ fn lock_commit_carries_a_modified_manifest() {
 
     assert_eq!(
         files_in_head_commit(&project_dir),
-        vec!["rwv.lock".to_string(), "rwv.toml".to_string()]
+        vec![
+            "alpha.code-workspace".to_string(),
+            "rwv.lock".to_string(),
+            "rwv.toml".to_string()
+        ]
     );
     assert!(
         !common::git_in(&project_dir, &["show", "HEAD:rwv.lock"]).contains("local/org/b"),

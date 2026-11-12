@@ -5,7 +5,8 @@
 Change which repos the active project's `rwv.toml` lists, or how it lists
 one: `member add` clones a repo and registers it, `member remove` takes it out,
 `member set-role` changes its `role`, `member set-recurse-submodules`
-changes whether new checkouts of it populate its submodules, and `member pin`
+changes whether new checkouts of it populate its submodules, `member set-branch`
+declares the branch it follows, `member set-url` changes its url, and `member pin`
 pins it at a commit you choose.
 
 Each but `member pin` is an **authoring verb**: it mutates the manifest and
@@ -23,7 +24,18 @@ rwv member remove <path> [--delete] [--delete-shared-clone] [--project <name>] [
 rwv member set-role <repo> <role> [--project <name>] [--no-materialize]
 rwv member set-recurse-submodules <repo> <true|false> [--project <name>] [--no-materialize]
 rwv member pin <repo> <rev> [--commit] [--project <name>]
+rwv member set-branch <repo> <branch> [--new] [--at <rev>] [--url <url>] [--project <name>] [--no-materialize]
+rwv member set-url <repo> <url> [--project <name>] [--no-materialize]
 ```
+
+Every member verb commits its own change and nothing else: another uncommitted
+edit to `rwv.toml` stays uncommitted. `member set-branch` has two meanings with
+two spellings: without `--new` the branch must exist (else `name`
+`no-such-branch`, naming `rwv fetch` and `--new`); with `--new` it must exist
+nowhere (else `name` `exists`) and is created at the pin or at `--at`. Entry
+changes are reported as `member-changed` until the push branch carries them.
+`member add` of a registered member refuses a `--role` or
+`--no-recurse-submodules` that disagrees with the entry, naming the setter.
 
 Every form takes `--project <name>` to operate on that project rather than the
 active one (this does not change `.rwv-active`) and `--no-materialize` to skip

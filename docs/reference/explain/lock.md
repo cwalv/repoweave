@@ -69,9 +69,14 @@ single repo) to record the new cross-repo state. Common patterns:
 
 - Manual cross-repo feature: commit in each affected repo, then `rwv lock`
   to capture the joint state.
-- After `rwv member set-role`/`rwv member remove`: those verbs regenerate integration
-  files but do not auto-lock; run `rwv lock --commit` to checkpoint the change.
-  `rwv member add` commits its own change, with the member's first pin.
+- After a hand edit of `rwv.toml`: `rwv lock --commit` commits the whole file.
+  It first runs the step of each setter for the entries that changed (a
+  declared branch is pinned at its tip and the member switched onto it, a
+  branch that exists nowhere refusing as `name` `no-such-branch`; a url
+  relinks; a hand-added member gets its first pin), then commits every other
+  change as it stands, `[integrations]` and `[workweave]` included, with the
+  files its regeneration rewrites. Every refusal is judged before anything is
+  written. The `member` verbs commit their own change.
 
 Do **not** run `rwv lock` in place of `rwv update --remote`. `lock` records
 *current local HEADs*; `update --remote` fetches from the network and advances

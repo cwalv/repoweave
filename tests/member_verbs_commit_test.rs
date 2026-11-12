@@ -89,7 +89,10 @@ fn set_recurse_submodules_commits_the_setting() {
     let w = two_members();
     let before = commits(&w);
 
-    succeeded(&run(&w, &["member", "set-recurse-submodules", LIB, "false"]));
+    succeeded(&run(
+        &w,
+        &["member", "set-recurse-submodules", LIB, "false"],
+    ));
 
     assert_eq!(commits(&w), before + 1);
     assert!(committed_manifest(&w).contains("recurse-submodules = false"));
@@ -127,7 +130,11 @@ fn a_member_verb_refuses_unrelated_project_edits_before_it_changes_anything() {
     ] {
         let text = refused(&run(&w, args));
         assert!(text.contains("edits dirty"), "{args:?}: {text}");
-        assert_eq!((commits(&w), manifest(&w)), before, "{args:?} changed something");
+        assert_eq!(
+            (commits(&w), manifest(&w)),
+            before,
+            "{args:?} changed something"
+        );
     }
 }
 
@@ -138,9 +145,15 @@ fn add_of_a_registered_member_refuses_a_flag_that_disagrees_and_names_the_setter
     let clone = clone.to_str().unwrap();
     let before = (commits(&w), manifest(&w));
 
-    let text = refused(&run(&w, &["member", "add", "--adopt", clone, "--role", "fork"]));
+    let text = refused(&run(
+        &w,
+        &["member", "add", "--adopt", clone, "--role", "fork"],
+    ));
     assert!(text.contains("rwv member set-role"), "{text}");
-    let text = refused(&run(&w, &["member", "add", "--adopt", clone, "--no-recurse-submodules"]));
+    let text = refused(&run(
+        &w,
+        &["member", "add", "--adopt", clone, "--no-recurse-submodules"],
+    ));
     assert!(text.contains("rwv member set-recurse-submodules"), "{text}");
     assert_eq!((commits(&w), manifest(&w)), before);
 }

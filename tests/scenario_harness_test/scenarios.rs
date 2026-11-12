@@ -2606,9 +2606,18 @@ pub fn dc25_url_provenance() -> Scenario {
         steps: vec![
             Step::git(&a(), Repo::Proj, &["switch", "-q", "-c", "stable"]),
             Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["member", "set-url", "local/remotes/lib", "url:mirror-keeping:lib"])
-                .expect(Exit::Succeeds),
-            Step::rwv(&a(), &["doctor", "--all"]).claim(Claim::OutputLacks("placement-disagreement")),
+            Step::rwv(
+                &a(),
+                &[
+                    "member",
+                    "set-url",
+                    "local/remotes/lib",
+                    "url:mirror-keeping:lib",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["doctor", "--all"])
+                .claim(Claim::OutputLacks("placement-disagreement")),
         ],
     }
 }
@@ -2620,11 +2629,24 @@ pub fn url_change_raw_merge() -> Scenario {
         steps: vec![
             Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["switch", "-q", "-c", "mirror-url"]),
-            Step::rwv(&a(), &["branch", "set-mode", "mirror-url", "declared"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["member", "set-url", "local/remotes/lib", "url:mirror-keeping:lib"])
+            Step::rwv(&a(), &["branch", "set-mode", "mirror-url", "declared"])
                 .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "member",
+                    "set-url",
+                    "local/remotes/lib",
+                    "url:mirror-keeping:lib",
+                ],
+            )
+            .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["switch", "-q", "main"]),
-            Step::git(&a(), Repo::Proj, &["merge", "-q", "--no-ff", "-m", "merge", "mirror-url"]),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["merge", "-q", "--no-ff", "-m", "merge", "mirror-url"],
+            ),
             Step::rwv(&a(), &["update"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("member-changed url:")),
@@ -2644,16 +2666,22 @@ pub fn set_branch_new() -> Scenario {
                 .claim(Claim::OutputContains("name no-such-branch"))
                 .claim(Claim::OutputContains("--new"))
                 .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "hold", "--new"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OnBranch {
-                    at: a(),
-                    repo: Repo::Lib,
-                    branch: "hold",
-                }),
-            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "main", "--new"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("name exists")),
+            Step::rwv(
+                &a(),
+                &["member", "set-branch", "local/remotes/lib", "hold", "--new"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "hold",
+            }),
+            Step::rwv(
+                &a(),
+                &["member", "set-branch", "local/remotes/lib", "main", "--new"],
+            )
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("name exists")),
         ],
     )
 }
@@ -2668,9 +2696,12 @@ pub fn member_pin_behind() -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["branch", "other"]),
             Step::rwv(&a(), &["branch", "set-mode", "other", "declared"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["member", "pin", "local/remotes/lib", "HEAD~1", "--commit"])
-                .expect(Exit::Succeeds)
-                .may_rewind(&[Repo::Lib]),
+            Step::rwv(
+                &a(),
+                &["member", "pin", "local/remotes/lib", "HEAD~1", "--commit"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
             Step::rwv(&a(), &["status"]).claim(Claim::OutputContains("pin ahead")),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         ],

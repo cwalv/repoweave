@@ -54,6 +54,10 @@ pub struct WorkspaceState {
     pub aligned: Option<Aligned>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entries: BTreeMap<String, BTreeMap<String, RepoEntry>>,
+    /// The entries each branch last stood in without a change to report: what
+    /// an entry change is reported against until its push branch carries it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub baseline: BTreeMap<String, BTreeMap<String, RepoEntry>>,
 }
 
 pub struct StateReading {
@@ -129,6 +133,9 @@ pub fn rename_branch(
     }
     if state.aligned == Some(Aligned::Branch(from.to_owned())) {
         state.aligned = Some(Aligned::Branch(to.to_owned()));
+    }
+    if let Some(baseline) = state.baseline.remove(from) {
+        state.baseline.insert(to.to_owned(), baseline);
     }
     if let Some(entries) = state.entries.remove(from) {
         state.entries.insert(to.to_owned(), entries);
@@ -1114,18 +1121,29 @@ impl Aligner {
         self.next_state_storing(manifest, true)
     }
 
-    /// [`Self::next_state`], keeping the entries stored for the branch as they
-    /// are where `store_entries` is false: a change that is still reported
+    /// [`Self::next_state`], keeping the baseline an entry change is reported
+    /// against where `advance_baseline` is false: a change still reported
     /// stays reported.
-    pub fn next_state_storing(&self, manifest: &Manifest, store_entries: bool) -> WorkspaceState {
+    pub fn next_state_storing(
+        &self,
+        manifest: &Manifest,
+        advance_baseline: bool,
+    ) -> WorkspaceState {
         let mut next = self.state.clone();
         match (&self.mode, &self.checked_out) {
             (Mode::Detached, _) => next.aligned = Some(Aligned::Detached),
             (_, Some(branch)) => {
                 next.aligned = Some(Aligned::Branch(branch.clone()));
-                if store_entries {
+                {
+                    let current: BTreeMap<String, RepoEntry> = manifest
+                        .iter_entries()
+                        .map(|(path, entry)| (path.to_string(), entry.clone()))
+                        .collect();
+                    if advance_baseline || !next.baseline.contains_key(branch) {
+                        next.baseline.insert(branch.clone(), current);
+                    }
                     next.entries.insert(
-                    branch.clone(),
+                        branch.clone(),
                         manifest
                             .iter_entries()
                             .map(|(path, entry)| (path.to_string(), entry.clone()))

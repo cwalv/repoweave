@@ -120,7 +120,7 @@ pub(crate) fn standing(
     let baseline = published(vcs, project_dir).or_else(|| {
         aligner
             .checked_out()
-            .and_then(|branch| aligner.state.entries.get(branch))
+            .and_then(|branch| aligner.state.baseline.get(branch))
             .cloned()
     });
     match baseline {
@@ -206,7 +206,10 @@ pub(crate) fn render(
         let mut bindings = BTreeMap::new();
         bindings.insert("<m>", change.path.to_string());
         bindings.insert("<rev>", "<rev>".to_owned());
-        bindings.insert("<checkout>", member_dir(ctx, &change.path).display().to_string());
+        bindings.insert(
+            "<checkout>",
+            member_dir(ctx, &change.path).display().to_string(),
+        );
         bindings.insert(
             "<ids>",
             unpushed
@@ -216,7 +219,10 @@ pub(crate) fn render(
                 .collect::<Vec<_>>()
                 .join(" "),
         );
-        bindings.insert("<b>", change.now.branch.local_counterpart().as_str().to_owned());
+        bindings.insert(
+            "<b>",
+            change.now.branch.local_counterpart().as_str().to_owned(),
+        );
         let mut forms: Vec<Form> = Vec::new();
         if change.changed("branch") {
             forms.push(Form::C25);
@@ -237,7 +243,11 @@ pub(crate) fn render(
             restores.push_str(&format!("{key}={}\n", field.was));
         }
         let _ = restores;
-        out.push_str(&crate::diagnosis::choices_text(vcs.as_ref(), &forms, &bindings));
+        out.push_str(&crate::diagnosis::choices_text(
+            vcs.as_ref(),
+            &forms,
+            &bindings,
+        ));
     }
     out
 }

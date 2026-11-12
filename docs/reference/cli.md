@@ -219,7 +219,7 @@ A forward move over commits no remote-tracking branch reaches reports them when 
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-The generated commit message names what the commit holds: `lock: refresh N repo(s)` (followed by the per-repo list) when pins moved, `lock: drop <repo>` (or `drop N repos`) when repos left the manifest, `lock: record rwv.toml` when only `rwv.toml` changed, each joined when several apply, and `lock: no changes` otherwise. `--commit` prints `Committed rwv.lock` or `Committed rwv.lock, rwv.toml`, or `Lock unchanged, nothing to commit.`
+The generated commit message names what the commit holds: `lock: refresh N repo(s)` (followed by the per-repo list) when pins moved, `lock: drop <repo>` (or `drop N repos`) when repos left the manifest, `lock: record rwv.toml` when only `rwv.toml` changed, each joined when several apply, and `lock: no changes` otherwise. `--commit` over a `rwv.toml` that differs from the committed one commits the whole file: it first runs the step of each setter for the entries that changed (a changed declared branch is pinned at its tip and the member switched onto it, a branch that exists nowhere refusing with `name` `no-such-branch`; a changed url relinks; a hand-added member is given its first pin; a hand-removed member's checkout is kept), then commits every other change as it stands, `[integrations]` and `[workweave]` included, with the files its regeneration rewrites. Every refusal is judged before anything is written. `--commit` prints `Committed rwv.lock` or `Committed rwv.lock, rwv.toml`, or `Lock unchanged, nothing to commit.`
 
 No integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv materialize` (or `rwv activate <project>` when switching the active project).
 
@@ -294,10 +294,10 @@ The positional argument has one spelling per meaning:
 
 | Flag | Effect |
 |---|---|
-| `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
+| `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. For a member the manifest already lists, a role other than its own refuses (`inapplicable-flag`), naming `rwv member set-role` |
 | `--adopt` | Register an existing clone; the positional argument is its path (relative to the invocation directory) under the weave root. Conflicts with `--new` |
 | `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain member`. |
-| `--no-recurse-submodules` | Record `recurse-submodules = false` for the new member, so new checkouts of it leave its submodules uninitialized. A member the manifest already lists keeps its entry; `rwv member set-recurse-submodules` changes it |
+| `--no-recurse-submodules` | Record `recurse-submodules = false` for the new member, so new checkouts of it leave its submodules uninitialized. For a member the manifest already lists that recurses, the flag refuses (`inapplicable-flag`), naming `rwv member set-recurse-submodules` |
 | `--param <name>=<value>` | A creation parameter for `--new` (repeatable). Requires `--new` |
 | `--params-json <json>` | The same parameters as one JSON object of string values. Requires `--new` |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
@@ -313,7 +313,7 @@ The positional argument has one spelling per meaning:
 
 ### `rwv member remove <path> [...]`
 
-Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, and re-run integration install hooks. If the entry was already removed from `rwv.toml` by hand, `rwv member remove` converges the integration files and optional checkout deletion (`--delete`) to match.
+Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, re-run integration install hooks, and commit the removal with the member's pin dropped from `rwv.lock` and the files it regenerated, leaving every other uncommitted edit where it is. Uncommitted changes to tracked files of the project repo outside `rwv.toml`, `rwv.lock` and the regenerated files refuse (`edits`) before anything changes. If the entry was already removed from `rwv.toml` by hand, `rwv member remove` converges the integration files and optional checkout deletion (`--delete`) to match.
 
 | Flag | Effect |
 |---|---|
@@ -335,9 +335,31 @@ Every refusal is reported before the lock is written or the member moves. A deta
 | `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
+### `rwv member set-branch <path> <branch> [--new] [--at <rev>] [--url <url>]`
+
+Declare the branch the member follows. The two meanings have two spellings. Without `--new`, `<branch>` must exist, locally or on a remote as last fetched; one that exists nowhere refuses (`name` `no-such-branch`), naming `rwv fetch` (the branch may sit on a remote not yet fetched) and the same command with `--new`. With `--new`, `<branch>` must exist nowhere (else `name` `exists`, naming the spelling without it) and is created.
+
+In a declared workspace, and for a `dependency` or `reference` member of a feature, the member is re-pinned to the branch's tip, or to `--at <rev>` on the branch or its upstream (else `pin` `not on declared branch`), in either direction and by name (`re-pinned` is reported when it moves backward). With `--new` the branch is created at the member's pin, or at `--at`, and pinned there. The member then switches onto the branch, and the entry and the pin are committed together; a detached HEAD holding commits no branch has is backed up first. An existing branch ahead of `--at` is reported: a landing merges into its tip, so a pin that must stay put needs a branch of its own (`--new --at <rev>`). A branch another live weave branch also declares is reported as the fact `shared`, listing them.
+
+For an `owned` or `fork` member of a feature only the entry changes: `--at` is refused (`inapplicable-flag`), the member and its pin stay, and with `--new` the branch is created at the branch the feature lands into's pin of the member.
+
+`--url <url>` sets the member's url in the same commit, as `member set-url` does. A branch name a feature of that name uses refuses (`name` `feature`). Every refusal is reported before anything changes, and the commit holds the entry and the pin and nothing else the project repo holds uncommitted. The aligning verbs, `lock`, `push` and `status` report each entry change as `member-changed`, with the previous and the new value and the old branch's unpushed commits, until the push branch carries it or it is restored.
+
+| Flag | Effect |
+|---|---|
+| `--new` | Create the branch |
+| `--at <rev>` | Pin at this commit of the branch or its upstream; with `--new`, create the branch there |
+| `--url <url>` | Also set the member's url |
+| `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+### `rwv member set-url <path> <url>`
+
+Set the member's url. The branch the member sits on in this workspace, when its upstream is on the old url's remote and it has no push remote of its own, takes the new url's remote's branch of the same name as its upstream; a branch that has diverged from it refuses (`push-branch` `diverged`) before anything changes. A new url whose remote name another url holds refuses (`name` `taken`). The new url's remote must already have been fetched for the relink to happen; otherwise the verb says so, and the next aligning verb relinks once it has. A url change that arrives by a merge relinks the same way at the next aligning verb, reported with the entry changes. The entry and the lock's url are committed alone.
+
 ### `rwv member set-role <path> <role>`
 
-Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files.
+Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. The change is committed alone: any other uncommitted edit to `rwv.toml` stays uncommitted, and uncommitted changes to other tracked files of the project repo refuse (`edits`) before anything changes.
 
 | Flag | Effect |
 |---|---|
@@ -346,7 +368,7 @@ Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace
 
 ### `rwv member set-recurse-submodules <path> <true|false>`
 
-Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-managed workspace files. The setting says whether a new checkout of the member populates the submodules it records; a checkout that already exists keeps the submodules it has. `true` is the default and is not written out. If the key was already edited in `rwv.toml` by hand, `rwv member set-recurse-submodules` converges the integration files to match.
+Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-managed workspace files. The setting says whether a new checkout of the member populates the submodules it records; a checkout that already exists keeps the submodules it has. `true` is the default and is not written out. If the key was already edited in `rwv.toml` by hand, `rwv member set-recurse-submodules` converges the integration files to match. The change is committed alone, as `member set-role`'s is.
 
 | Flag | Effect |
 |---|---|

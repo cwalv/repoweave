@@ -1986,6 +1986,7 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
 
     // Diverge the manifest repo too (conflicting content), so the run parks
     // mid-replay instead of completing in one shot.
+    common::git_in(&primary.server_dir, &["switch", "-q", "-c", "primary-work"]);
     let c2 = make_commit(
         &primary.server_dir,
         "shared.txt",

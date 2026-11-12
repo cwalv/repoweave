@@ -26,8 +26,12 @@ pub(crate) fn authored_across(
     project: &ProjectName,
     manifests: &[&Manifest],
 ) -> BTreeSet<String> {
+    let dir = crate::workspace::project_dir(ctx.active_path(), project);
+    let committed = committed_manifest(project_vcs().as_ref(), &dir).ok().flatten();
     manifests
         .iter()
+        .copied()
+        .chain(committed.as_ref())
         .flat_map(|manifest| crate::activate::owned_paths(ctx.active_path(), project, manifest))
         .collect()
 }
@@ -55,7 +59,10 @@ pub(crate) fn judge(
     report.into_result()
 }
 
-pub(crate) fn committed_manifest(vcs: &dyn Vcs, project_dir: &Path) -> anyhow::Result<Option<Manifest>> {
+pub(crate) fn committed_manifest(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+) -> anyhow::Result<Option<Manifest>> {
     let Ok(head) = vcs.head_revision(project_dir) else {
         return Ok(None);
     };

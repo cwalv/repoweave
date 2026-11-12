@@ -123,7 +123,8 @@ fn set_branch_declares_an_existing_branch_pins_its_tip_and_commits_the_entry_and
 }
 
 #[test]
-fn a_branch_that_exists_nowhere_is_refused_naming_the_fetch_and_the_new_spelling_and_nothing_changes() {
+fn a_branch_that_exists_nowhere_is_refused_naming_the_fetch_and_the_new_spelling_and_nothing_changes(
+) {
     let w = two_members();
     let before = (commits(&w), manifest_text(&w), pin_of(&w, LIB));
 
@@ -169,7 +170,10 @@ fn new_at_creates_the_branch_at_the_revision_and_pins_it_there() {
     commit_in(&lib, "ahead");
     publish_branch(&lib, "main");
 
-    succeeded(&run(&w, &["member", "set-branch", LIB, "hold", "--new", "--at", &older]));
+    succeeded(&run(
+        &w,
+        &["member", "set-branch", LIB, "hold", "--new", "--at", &older],
+    ));
 
     assert_eq!(git_in(&lib, &["rev-parse", "hold"]), older);
     assert_eq!(pin_of(&w, LIB).as_deref(), Some(older.as_str()));
@@ -196,7 +200,10 @@ fn at_a_commit_the_branch_does_not_reach_is_refused_naming_the_pin_choice() {
     let on_main_only = commit_in(&lib, "main-only");
     let before = (commits(&w), manifest_text(&w));
 
-    let text = refused(&run(&w, &["member", "set-branch", LIB, "dev", "--at", &on_main_only]));
+    let text = refused(&run(
+        &w,
+        &["member", "set-branch", LIB, "dev", "--at", &on_main_only],
+    ));
 
     assert!(text.contains("pin not on declared branch"), "{text}");
     assert!(text.contains("rwv member pin"), "{text}");
@@ -290,7 +297,10 @@ fn set_url_leaves_a_branch_with_a_push_remote_of_its_own() {
     let bare = mirror_of_lib(&w);
     git_in(&lib, &["config", "branch.main.pushRemote", "origin"]);
 
-    succeeded(&run(&w, &["member", "set-url", LIB, &common::file_url(&bare)]));
+    succeeded(&run(
+        &w,
+        &["member", "set-url", LIB, &common::file_url(&bare)],
+    ));
 
     assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
 }
@@ -303,7 +313,12 @@ fn set_url_refuses_a_diverged_branch_and_changes_nothing() {
     let seed = w._tmp.path().join("seed");
     git_in(
         w._tmp.path(),
-        &["clone", "-q", bare.to_str().unwrap(), seed.to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            bare.to_str().unwrap(),
+            seed.to_str().unwrap(),
+        ],
     );
     git_in(&seed, &["config", "user.email", "t@t"]);
     git_in(&seed, &["config", "user.name", "T"]);
@@ -313,7 +328,10 @@ fn set_url_refuses_a_diverged_branch_and_changes_nothing() {
     commit_in(&lib, "ours");
     let before = (commits(&w), manifest_text(&w));
 
-    let text = refused(&run(&w, &["member", "set-url", LIB, &common::file_url(&bare)]));
+    let text = refused(&run(
+        &w,
+        &["member", "set-url", LIB, &common::file_url(&bare)],
+    ));
 
     assert!(text.contains("push-branch diverged"), "{text}");
     assert_eq!((commits(&w), manifest_text(&w)), before);
@@ -359,7 +377,10 @@ fn an_entry_change_is_reported_with_both_values_verb_after_verb_until_the_push_b
         );
     }
     let status = stdout_of(&run(&w, &["status"]));
-    assert!(status.contains("member-changed branch: main -> dev"), "{status}");
+    assert!(
+        status.contains("member-changed branch: main -> dev"),
+        "{status}"
+    );
 
     git_in(&lib, &["push", "-q", "origin", "main"]);
     succeeded(&run(&w, &["lock", "--commit"]));
@@ -406,7 +427,17 @@ fn a_url_change_a_raw_merge_carried_is_reported_and_relinks_at_the_next_aligning
     git_in(&proj, &["commit", "-qam", "lib: mirror url"]);
     git_in(&proj, &["switch", "-q", "main"]);
     commit_in(&proj, "elsewhere");
-    git_in(&proj, &["merge", "-q", "--no-ff", "-m", "merge mirror-url", "mirror-url"]);
+    git_in(
+        &proj,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge mirror-url",
+            "mirror-url",
+        ],
+    );
     assert_eq!(git_in(&lib, &["config", "branch.main.remote"]), "origin");
 
     let update = succeeded(&run(&w, &["update"]));
@@ -418,7 +449,10 @@ fn a_url_change_a_raw_merge_carried_is_reported_and_relinks_at_the_next_aligning
         "the merge carried the url change but nothing relinked:\n{update}"
     );
     let again = succeeded(&run(&w, &["update"]));
-    assert!(again.contains("member-changed url:"), "reported until published:\n{again}");
+    assert!(
+        again.contains("member-changed url:"),
+        "reported until published:\n{again}"
+    );
 }
 
 #[test]
@@ -438,11 +472,13 @@ fn placement_disagreement_compares_with_the_url_on_the_default_branch() {
     git_in(&proj, &["push", "-q", "origin", "main"]);
     git_in(&proj, &["remote", "set-head", "origin", "main"]);
     git_in(&proj, &["switch", "-q", "-c", "stable"]);
-    let moved = manifest_text(&w).replace("github/acme/lib\"\n", "github/acme/lib\"\n").replacen(
-        "url = \"github/acme/lib\"",
-        "url = \"github/mirror/lib\"",
-        1,
-    );
+    let moved = manifest_text(&w)
+        .replace("github/acme/lib\"\n", "github/acme/lib\"\n")
+        .replacen(
+            "url = \"github/acme/lib\"",
+            "url = \"github/mirror/lib\"",
+            1,
+        );
     assert_ne!(moved, manifest_text(&w));
     std::fs::write(proj.join("rwv.toml"), moved).unwrap();
     git_in(&proj, &["commit", "-qam", "stable: mirror url"]);
