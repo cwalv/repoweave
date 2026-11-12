@@ -23,7 +23,6 @@ mod common;
 
 use common::cli::{describe, refused, run, succeed};
 use repoweave::diagnosis::State;
-use repoweave::refusal::RefusalKind;
 
 const RECORDS: &str = common::records::BRANCH;
 const DECLARED: &str = "mode = \"declared\"\n";
@@ -467,7 +466,7 @@ fn a_workweave_create_from_an_unrecorded_branch_refuses_before_it_makes_anything
     let weave = Weave::new();
     weave.raw_branch("raw");
     let before = weave.state();
-    let stderr = refused(
+    refused(
         &run(
             &["workweave", "create", "--project", "demo", "ww"],
             &weave.ws,
@@ -487,7 +486,7 @@ fn a_workweave_create_from_an_unrecorded_branch_refuses_before_it_makes_anything
 fn a_workweave_create_from_a_detached_project_repo_refuses() {
     let weave = Weave::new();
     common::git_in(weave.project(), &["switch", "-q", "--detach"]);
-    let stderr = refused(
+    refused(
         &run(
             &["workweave", "create", "--project", "demo", "ww"],
             &weave.ws,
