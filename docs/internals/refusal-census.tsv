@@ -150,7 +150,6 @@ src/integrations/uv_workspace.rs	(untokened:integration-channel)	-	4
 src/land.rs	(untokened:internal-invariant)	-	1
 src/land.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/land.rs	alignment unaligned	-	1
-src/land.rs	checkout in another workspace	-	2
 src/land.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/land.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/land.rs	pin not on declared branch	-	3
@@ -205,7 +204,7 @@ src/op_state.rs	(untokened:internal-invariant)	-	10
 src/op_state.rs	(untokened:owed)	-	1
 src/op_state.rs	dead-op-lease	tests/doctor/unreadable_op_record_test.rs	2
 src/op_state.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
-src/op_state.rs	op-acquisition-raced	-	2
+src/op_state.rs	op-acquisition-raced	-	3
 src/op_state.rs	op-in-progress	tests/docs/refusal_arrival_test.rs	1
 src/op_state.rs	op-parked	-	1
 src/op_state.rs	resume-contradicts-record	-	1

@@ -45,6 +45,10 @@ Add `--json` for a machine-readable envelope. To read a workweave from outside i
   move without a checkout, and a branch it declares beyond its pin refuses
   (`pin` `unpinned`), naming the `rwv workweave create` that opens a
   workspace on the target to record it in.
+- A receiving branch checked out in a third workspace, such as the primary
+  detached on the project with its members still on `main`, fast-forwards
+  in place there; that checkout must be clean, and the workspace is leased
+  to the landing while it runs.
 - Every repo the landing moves, here and in the target's workspace, must be
   clean; under `--retire`, every checkout of the workweave, untracked files
   included.

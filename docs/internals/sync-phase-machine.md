@@ -511,6 +511,16 @@ where it was, and abort carries on with the others.
 A refused foreign tip writes nothing: the tip is still on its branch, and the
 refusal names none.
 
+### Checkouts a landing fast-forwarded in place
+
+A receiving branch checked out in a third workspace is fast-forwarded in
+that checkout, journaled first. Abort run from that workspace acts as if run
+from the owner. Each such checkout the journal names is restored from its
+`-in-place` savepoint as a target checkout is, the tip the op wrote being
+the composed one; one the journal does not name is left, its savepoint
+dropped. The landing's lease on the workspace goes once its checkouts are
+back.
+
 ### Branches a landing moved as refs
 
 Once every checkout of both workspaces is restored, abort walks every member

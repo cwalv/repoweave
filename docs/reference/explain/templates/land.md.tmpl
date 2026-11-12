@@ -62,7 +62,13 @@ nothing could be landed into. Then, under an op record:
    receiving branch fast-forwards in its checkout, then the target's project
    branch: each the branch the landing planned, to exactly what was composed
    and recorded, never a commit made in this workspace since. Nothing there
-   is ever rebased or merged. Where the target is checked out nowhere, it and
+   is ever rebased or merged. A receiving branch checked out in a third
+   workspace, the primary or another workweave, whichever project it
+   presents, fast-forwards in place in that checkout, which must be clean
+   (`edits`); the landing leases that workspace until it releases the target,
+   and `rwv abort`, from any of the three, puts that checkout back. A
+   receiving branch checked out anywhere else refuses (`checkout`). Where the
+   target is checked out nowhere, it and
    each receiving branch move as refs instead, each by compare-and-swap
    against the tip the landing read; one another verb moved since stops the
    landing as `target` `moved mid-operation` with the refs already moved left
