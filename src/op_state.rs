@@ -2310,33 +2310,34 @@ pub fn acquire_more_leases(
     let fresh: Vec<PathBuf> = widened.leases[acquired.touched.leases.len()..].to_vec();
     let mut written: Vec<PathBuf> = Vec::with_capacity(fresh.len());
     for ws in &fresh {
-        let refused = match in_flight_refusal_for(ws)? {
-            Some(err) => Some(err),
-            None => {
-                let lease = LeaseRecord {
-                    id: owner_record.id.clone(),
-                    owner: CanonicalPath::of(acquired.touched.owner()),
-                    created_at: Some(utc_now_rfc3339()),
-                };
-                let json = serde_json::to_string_pretty(&lease)
-                    .context("failed to serialize lease record")?;
-                match LeaseRecord::path_in(ws).create(json.as_bytes()) {
-                    Ok(()) => None,
-                    Err(CreateNewError::AlreadyExists) => {
-                        Some(in_flight_refusal_for(ws)?.unwrap_or_else(|| {
-                            crate::refusal::refusal(
-                                RefusalKind::OpAcquisitionRaced,
-                                format!("raced with a concurrent op at {}; retry", ws.display()),
-                            )
-                        }))
-                    }
-                    Err(CreateNewError::Io(e)) => Some(
-                        anyhow::Error::new(e)
-                            .context(format!("failed to acquire a lease at {}", ws.display())),
-                    ),
-                }
+        let lease_one = || -> anyhow::Result<Option<anyhow::Error>> {
+            if let Some(err) = in_flight_refusal_for(ws)? {
+                return Ok(Some(err));
             }
+            let lease = LeaseRecord {
+                id: owner_record.id.clone(),
+                owner: CanonicalPath::of(acquired.touched.owner()),
+                created_at: Some(utc_now_rfc3339()),
+            };
+            let json =
+                serde_json::to_string_pretty(&lease).context("failed to serialize lease record")?;
+            Ok(match LeaseRecord::path_in(ws).create(json.as_bytes()) {
+                Ok(()) => None,
+                Err(CreateNewError::AlreadyExists) => {
+                    Some(in_flight_refusal_for(ws)?.unwrap_or_else(|| {
+                        crate::refusal::refusal(
+                            RefusalKind::OpAcquisitionRaced,
+                            format!("raced with a concurrent op at {}; retry", ws.display()),
+                        )
+                    }))
+                }
+                Err(CreateNewError::Io(e)) => Some(
+                    anyhow::Error::new(e)
+                        .context(format!("failed to acquire a lease at {}", ws.display())),
+                ),
+            })
         };
+        let refused = lease_one().unwrap_or_else(Some);
         if let Some(err) = refused {
             for taken in &written {
                 clear_lease(taken);
@@ -4020,6 +4021,34 @@ mod tests {
 
     fn make_land_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
         OwnerRecord::new_land(op_id, None, test_project(), owner, Some(target), false)
+    }
+
+    #[test]
+    fn more_leases_that_fail_to_read_take_back_every_lease_they_wrote() {
+        let tmp = crate::tempdir().unwrap();
+        let [owner_dir, target_dir, third, fourth] =
+            ["owner", "target", "third", "fourth"].map(|name| tmp.path().join(name));
+        for dir in [&owner_dir, &target_dir, &third, &fourth] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let record = make_land_record(&OpId::new_now(), &owner_dir, &target_dir);
+        let mut acquired = acquire_op(&land_touched(&owner_dir, &target_dir), &record).unwrap();
+        let unreadable = LeaseRecord::path_in(&fourth);
+        std::fs::create_dir_all(unreadable.dir().join(unreadable.file().file_name())).unwrap();
+
+        assert!(acquire_more_leases(&mut acquired, &[third.clone(), fourth], &record).is_err());
+
+        assert!(
+            !LeaseRecord::path_in(&third)
+                .dir()
+                .join(LeaseRecord::path_in(&third).file().file_name())
+                .exists(),
+            "the lease written before the failing one is taken back"
+        );
+        assert!(LeaseRecord::path_in(&target_dir)
+            .dir()
+            .join(LeaseRecord::path_in(&target_dir).file().file_name())
+            .exists());
     }
 
     #[test]
