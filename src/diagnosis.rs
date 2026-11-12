@@ -508,6 +508,7 @@ pub enum State {
     PinAhead,
     PinUnpinned,
     PinDiverged,
+    PinOffLineage,
     PinOffRemote,
     PinBackwards,
     PinUnmerged,
@@ -553,6 +554,7 @@ impl State {
         Self::PinUnpinned,
         Self::PinNone,
         Self::PinDiverged,
+        Self::PinOffLineage,
         Self::PinNotOnDeclaredBranch,
         Self::PinUnreachable,
         Self::PinOffRemote,
@@ -1205,6 +1207,19 @@ impl State {
                         ancestor of the other",
                 refused_by: "`rwv push`; `rwv status` reports it",
                 offers: &[Form::C25, Form::C2UpdateRemote],
+                verb_offers: &[],
+            },
+            Self::PinOffLineage => &StateRow {
+                axis: Axis::Pin,
+                name: "off lineage",
+                means: "the member's work is built on a commit the branch it would move into \
+                        lacks: its base, the newest commit of its first-parent chain that a \
+                        lock in the target's history pins or built on, listed with the \
+                        receiving branch",
+                refused_by: "`rwv sync`, for a member it would integrate, or that would follow \
+                             while the branch has dependents; `rwv pull --merge-upstream` and \
+                             `rwv update --remote --merge-upstream`, for a feature's member",
+                offers: &[Form::C22, Form::C11SetBranch],
                 verb_offers: &[],
             },
             Self::PinOffRemote => &StateRow {
@@ -2139,7 +2154,7 @@ impl Form {
                 choice: C::C22,
                 steps: &[Rwv("rwv sync --reset-to-target <m>")],
                 at: W::WithFeature,
-                shipped: false,
+                shipped: true,
             },
             Self::C23SetHistory => &FormRow {
                 choice: C::C23,
@@ -2232,7 +2247,7 @@ impl Form {
                 choice: C::C36,
                 steps: &[Rwv("rwv sync")],
                 at: W::WithFeature,
-                shipped: false,
+                shipped: true,
             },
             Self::C37BranchCreate => &FormRow {
                 choice: C::C37,

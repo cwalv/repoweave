@@ -634,6 +634,8 @@ fn merge_project(
             jobs: how.jobs,
             opts: how.activation,
             message: format!("Merge the upstream of {attached} into {attached}"),
+            head: crate::lock_merge::Parent::Second,
+            members: crate::project_merge::MemberMerging::BothChanged,
         }
         .run(&Sides {
             first: upstream.id().clone(),

@@ -322,60 +322,45 @@ pub enum Commands {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
+    /// Take the target's new work into this feature, or merge another weave branch in
     ///
-    /// Absorbs `<source>`'s committed lock and advances each member repo to the locked SHA.
-    /// Default strategy is `ff` (fast-forward only); pass `--strategy=rebase` when histories
-    /// have diverged and ff would bail.
+    /// In a feature, each member takes in the branch it lands on, then the project branch
+    /// takes in the target's tip, with the relock. A member with no new work follows forward;
+    /// work built on another lineage is refused before anything moves. `--from <branch>`
+    /// merges that branch's history instead, in any weave branch.
     ///
     /// Examples:
     ///
-    ///   Bring primary's HEAD into the workweave you are iterating in:
+    ///   rwv sync
     ///
-    ///   rwv sync primary
+    ///   rwv sync --strategy rebase
     ///
-    ///   Rebase instead of fast-forward when divergent:
+    ///   rwv sync --from stable
     ///
-    ///   rwv sync primary --strategy=rebase
+    ///   rwv sync --reset-to-target github/o/app
     Sync {
-        /// Source workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the invocation directory). Required unless
-        /// `--continue` is passed (source is then read from the in-progress
-        /// op-state file). If you meant to land work upward, use `rwv sync-to`.
-        #[arg(required_unless_present = "do_continue")]
-        source: Option<SourceArg>,
-        /// Sync strategy: ff (default) or rebase
+        /// Merge this weave branch's history in for one run, as a merge commit, whatever the setting
+        #[arg(long, value_name = "BRANCH", conflicts_with_all = ["do_continue", "target"])]
+        from: Option<String>,
+        /// Take in this branch instead of the record's target, for one run
+        #[arg(long, value_name = "T", conflicts_with = "do_continue")]
+        target: Option<String>,
+        /// Move this repo's branch to the branch it lands on, keeping a backup and listing the new work it drops; repeat per repo (`projects/<p>` for the project branch, to the target's tip with its lock)
+        #[arg(long = "reset-to-target", value_name = "REPO", conflicts_with = "do_continue")]
+        reset_to_target: Vec<crate::manifest::RepoOperand>,
+        /// How a branch holding new work takes in: ff (fast-forward only, the default) or rebase
         #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
         strategy: SyncStrategy,
-        /// Consent: skip the lock-freshness precondition on both source and destination.
-        /// Use when the lock is intentionally ahead of HEAD (e.g. you know the workspace
-        /// was updated without a fresh `rwv lock` run). Usual fix without this flag:
-        /// run `rwv lock` in the relevant workspace first.
-        #[arg(long, conflicts_with = "do_continue")]
-        allow_stale_lock: bool,
-        /// Consent: discard CWD's project commits that are not reachable from source,
-        /// hard-resetting the project repo to source's tip. Pre-sync state is preserved
-        /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
-        /// project repo has uncommitted changes (unrecoverable loss).
-        #[allow(rustdoc::invalid_html_tags)]
-        #[arg(long, conflicts_with = "do_continue")]
-        discard_local_commits: bool,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
+        /// Emit the refusal envelope as JSON. See `rwv explain sync`.
         #[arg(long, conflicts_with = "do_continue")]
         json: bool,
-        /// Run up to N per-repo manifest syncs in parallel. Default: 1 (serial).
+        /// Run up to N per-repo fetches in parallel. Default: 1 (serial).
         #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// Resume a sync that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (source, strategy, project, overrides, etc.) are read from the
-        /// in-progress op-state file. No other flags may be passed alongside `--continue`
-        /// (except `--project`, which asserts rather than rebinds: it must name the project
-        /// the op was started for, and a value contradicting the record is refused — the
-        /// phases already run are bound to it). To change parameters mid-op, run
-        /// `rwv abort` and re-invoke.
+        /// Resume a sync a conflict stopped, after resolving it; every parameter comes from the op record
         #[arg(long = "continue")]
         do_continue: bool,
     },

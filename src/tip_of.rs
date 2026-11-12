@@ -36,11 +36,6 @@ impl TipOf {
             (None, None, _) => Ok(None),
         }
     }
-
-    /// Whether the branch exists nowhere this clone knows of.
-    pub(crate) fn is_nowhere(&self) -> bool {
-        self.local.is_none() && self.upstream.is_none()
-    }
 }
 
 /// `branch` in `repo`, with its upstream; a branch with none, or with no

@@ -78,6 +78,10 @@ impl Joined {
 pub(crate) enum Order {
     SourceFirst,
     HeadFirst,
+    /// The source second, and a merge commit even where the branch could
+    /// fast-forward to it: a merge naming another branch than the one the
+    /// branch lands into.
+    HeadFirstAlwaysMerge,
 }
 
 /// A refusal of a conflict where no checkout can hold it.
@@ -157,7 +161,7 @@ pub(crate) fn merge_member(
     if vcs.is_ancestor(dir, &source_rev, &head)? {
         return Ok(Joined::Nothing);
     }
-    if vcs.is_ancestor(dir, &head, &source_rev)? {
+    if !matches!(order, Order::HeadFirstAlwaysMerge) && vcs.is_ancestor(dir, &head, &source_rev)? {
         vcs.advance_attached_ref(&attached, &source_rev)?;
         journal(source)?;
         return Ok(Joined::Moved(source.clone()));
@@ -194,7 +198,7 @@ pub(crate) fn merge_member(
 fn parents(order: Order, head: &CommitId, source: &CommitId) -> (CommitId, CommitId) {
     match order {
         Order::SourceFirst => (source.clone(), head.clone()),
-        Order::HeadFirst => (head.clone(), source.clone()),
+        Order::HeadFirst | Order::HeadFirstAlwaysMerge => (head.clone(), source.clone()),
     }
 }
 
@@ -238,7 +242,7 @@ fn merge_member_as_refs(
         )?;
         Ok(())
     };
-    if vcs.is_ancestor(dir, &tip, &source_rev)? {
+    if !matches!(order, Order::HeadFirstAlwaysMerge) && vcs.is_ancestor(dir, &tip, &source_rev)? {
         vcs.advance_branch_ref(dir, &branch, &at, source)?;
         moved(source)?;
         return Ok(Joined::Moved(source.clone()));
@@ -394,6 +398,33 @@ pub(crate) struct ProjectMerge<'a> {
     pub(crate) jobs: usize,
     pub(crate) opts: ActivateOptions,
     pub(crate) message: String,
+    /// Which side the checkout holds: the other is merged in.
+    pub(crate) head: Parent,
+    pub(crate) members: MemberMerging,
+}
+
+/// How a project merge settles its members.
+pub(crate) enum MemberMerging {
+    /// Merge each member whose pin both sides changed under one branch.
+    BothChanged,
+    /// The members were merged before the project: their tips.
+    Done(BTreeMap<RepoPath, CommitId>),
+}
+
+impl Sides {
+    fn incoming(&self, head: Parent) -> &CommitId {
+        match head {
+            Parent::First => &self.second,
+            Parent::Second => &self.first,
+        }
+    }
+
+    fn held(&self, head: Parent) -> &CommitId {
+        match head {
+            Parent::First => &self.first,
+            Parent::Second => &self.second,
+        }
+    }
 }
 
 impl ProjectMerge<'_> {
@@ -426,17 +457,20 @@ impl ProjectMerge<'_> {
             })
             .collect();
 
-        let member_merges = self.merge_members(
-            vcs,
-            &dir,
-            &manifest,
-            (base_held.as_ref(), &first_held, &second_held),
-            &merged_declared,
-            sides,
-            base.as_ref(),
-        )?;
+        let member_merges = match &self.members {
+            MemberMerging::BothChanged => self.merge_members(
+                vcs,
+                &dir,
+                &manifest,
+                (base_held.as_ref(), &first_held, &second_held),
+                &merged_declared,
+                sides,
+                base.as_ref(),
+            )?,
+            MemberMerging::Done(tips) => tips.clone(),
+        };
 
-        let before = read_manifest_at(vcs, &dir, &sides.second);
+        let before = read_manifest_at(vcs, &dir, sides.held(self.head));
         if let Some(before) = &before {
             for (path, entry) in before.iter_entries() {
                 if !manifest.contains_repo(path) {
@@ -450,7 +484,7 @@ impl ProjectMerge<'_> {
         }
 
         if matches!(merged, Merged::Tree(_)) {
-            let paths = vcs.start_merge(&dir, &sides.first)?;
+            let paths = vcs.start_merge(&dir, sides.incoming(self.head))?;
             if !paths.iter().all(|path| path == LockFile::FILE_NAME) {
                 return Err(crate::untokened!(
                     InternalInvariant,
@@ -528,7 +562,7 @@ impl ProjectMerge<'_> {
                 &setters,
             )
         };
-        if vcs.merge_in_flight(dir)? == Some(sides.first.clone()) {
+        if vcs.merge_in_flight(dir)? == Some(sides.incoming(self.head).clone()) {
             let unmerged: Vec<String> = vcs
                 .unmerged_paths(dir)?
                 .into_iter()
@@ -557,7 +591,7 @@ impl ProjectMerge<'_> {
             }
         }
         let paths: Vec<String> = vcs
-            .start_merge(dir, &sides.first)?
+            .start_merge(dir, sides.incoming(self.head))?
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();

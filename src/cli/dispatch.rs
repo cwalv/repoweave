@@ -548,22 +548,12 @@ pub fn run() -> anyhow::Result<()> {
     // the shim (`crate::health_floor` documents the floor-gated arms).
     {
         let raw_args: Vec<String> = std::env::args().collect();
-        // Detect: rwv sync --retire (--retire has moved to sync-to)
-        if raw_args.get(1).map(|s| s.as_str()) == Some("sync")
-            && raw_args.iter().any(|a| a == "--retire")
-        {
-            eprintln!(
-                "error: `--retire` has moved to `rwv sync-to`; use `rwv sync-to --retire` instead"
-            );
-            std::process::exit(2);
-        }
-        // Detect: rwv sync --force / rwv sync-to --force (--force has been
+        // Detect: rwv sync-to --force (--force has been
         // split into named overrides; emit a friendly migration message).
-        let is_sync = raw_args.get(1).map(|s| s.as_str()) == Some("sync")
-            || raw_args.get(1).map(|s| s.as_str()) == Some("sync-to");
+        let is_sync = raw_args.get(1).map(|s| s.as_str()) == Some("sync-to");
         if is_sync && raw_args.iter().any(|a| a == "--force") {
             eprintln!(
-                "error: `--force` has been removed from `rwv sync` and `rwv sync-to`.\n\
+                "error: `--force` has been removed from `rwv sync-to`.\n\
                  \n\
                  Replace it with the specific override(s) you need:\n\
                    --allow-stale-lock        skip the lock-freshness precondition\n\
@@ -1325,44 +1315,29 @@ pub fn run() -> anyhow::Result<()> {
             }
         },
         Some(Commands::Sync {
-            source,
+            from,
+            target,
+            reset_to_target,
             strategy,
-            allow_stale_lock,
-            discard_local_commits,
             json,
             jobs,
             project,
             do_continue,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx =
-                resolve_project_scoped(origin_dir, project_override.clone(), use_workweave_flag)?;
-            let jobs = match jobs {
-                Some(n) => crate::parallel::resolve_jobs(Some(n)),
-                None => 1,
-            };
-            let request = if do_continue {
-                let op = Box::new(crate::op_state::resume(ctx.active_path())?);
-                sync::SyncRequest::Continue {
-                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_record(&op),
-                    op,
-                    project_override,
-                }
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let run = if do_continue {
+                crate::feature_sync::Run::Continue
             } else {
-                sync::SyncRequest::Fresh {
-                    source: source
-                        .expect("clap requires <SOURCE> unless --continue")
-                        .locate(&invocation),
+                crate::feature_sync::Run::Fresh(crate::feature_sync::Args {
+                    from,
+                    target,
+                    reset_to_target,
                     strategy,
-                    allow_stale_lock,
-                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_flag(
-                        discard_local_commits,
-                    ),
-                    retire: false,
-                    jobs,
-                }
+                    jobs: jobs.map_or(1, |n| crate::parallel::resolve_jobs(Some(n))),
+                })
             };
-            sync::run_sync(&ctx, request, OutputMode::from_flag(json))?;
+            crate::feature_sync::run_sync(&ctx, run, OutputMode::from_flag(json))?;
         }
         Some(Commands::SyncTo {
             target,

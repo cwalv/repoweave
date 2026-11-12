@@ -303,7 +303,7 @@ impl fmt::Display for SyncStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpVerb {
-    /// Single-step sync (existing `rwv sync`).
+    /// `rwv sync`: a feature takes in its target, or a branch merges `--from`.
     Sync,
     /// Two-step sync-to.
     SyncTo,
@@ -505,6 +505,22 @@ pub struct TakeInRecord {
     pub upstream_tips: BTreeMap<RepoKey, CommitId>,
     /// Each branch the op moved as a ref, where it was and where it went.
     pub ref_moves: Vec<RefMove>,
+    /// The branch a `sync` takes in: its target, or `--from`'s branch.
+    #[serde(default)]
+    pub sync_from: Option<SyncFrom>,
+    /// The repos `sync --reset-to-target` names, spelled as an operand.
+    #[serde(default)]
+    pub reset_to_target: Vec<String>,
+}
+
+/// What a `sync` takes in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "branch", rename_all = "kebab-case")]
+pub enum SyncFrom {
+    /// The record's target, or `--target`'s.
+    Target(String),
+    /// `--from`'s branch, merged whatever the setting.
+    From(String),
 }
 
 /// A branch checked out nowhere that the op moved.
