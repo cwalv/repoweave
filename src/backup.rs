@@ -427,20 +427,16 @@ pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Whether `branch` is published: it takes in from its own name, and its push
-/// branch is there as last fetched.
+/// Whether `branch` is published: its push target holds a remote-tracking
+/// copy of its name, as last fetched, whether or not it takes in from it.
 pub(crate) fn published(
     vcs: &dyn Vcs,
     dir: &std::path::Path,
     branch: &crate::vcs::RawRefName,
 ) -> bool {
-    let Ok(Some(upstream)) = vcs.upstream_of(dir, branch) else {
-        return false;
-    };
-    if upstream.branch != *branch {
-        return false;
-    }
-    let Ok(Some(target)) = vcs.push_target_of(dir, branch, Some(&upstream.remote)) else {
+    let upstream = vcs.upstream_of(dir, branch).ok().flatten();
+    let Ok(Some(target)) = vcs.push_target_of(dir, branch, upstream.as_ref().map(|u| &u.remote))
+    else {
         return false;
     };
     vcs.remote_copies(dir, branch)
@@ -605,4 +601,54 @@ pub(crate) fn rebased_holding(
                 .iter()
                 .any(|l| rebased_of(&l.backup, branch, push_tip))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn a_branch_pushed_raw_with_no_upstream_is_published() {
+        let tmp = crate::tempdir().unwrap();
+        let (remote, repo) = (tmp.path().join("remote.git"), tmp.path().join("repo"));
+        std::fs::create_dir_all(&remote).unwrap();
+        git(&remote, &["init", "--bare", "-b", "main"]);
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-b", "main"]);
+        for (key, value) in [
+            ("user.email", "t@t"),
+            ("user.name", "T"),
+            ("remote.pushDefault", "origin"),
+        ] {
+            git(&repo, &["config", key, value]);
+        }
+        git(
+            &repo,
+            &["remote", "add", "origin", &remote.display().to_string()],
+        );
+        git(&repo, &["commit", "--allow-empty", "-m", "one"]);
+        git(&repo, &["checkout", "-b", "feat"]);
+        git(&repo, &["commit", "--allow-empty", "-m", "two"]);
+        let vcs = crate::git::git_vcs();
+        let feat = crate::vcs::RawRefName::new("feat");
+        assert!(!published(vcs.as_ref(), &repo, &feat));
+
+        git(&repo, &["push", "origin", "feat"]);
+
+        assert!(vcs.upstream_of(&repo, &feat).unwrap().is_none());
+        assert!(published(vcs.as_ref(), &repo, &feat));
+    }
 }
