@@ -4917,3 +4917,80 @@ pub fn uncommitted_manifest_beside_an_unaligned_member() -> Scenario {
         ],
     )
 }
+
+/// `app`'s PR squashed on the forge and its branch deleted: the feature's
+/// pin is off every remote, and its change matches the squash on `main`, so
+/// `fetch` names the match and C22, which, run as printed, resets `app`.
+pub fn squashed_pin_off_remote_offers_the_reset() -> Scenario {
+    let mut steps = published_feature();
+    steps.extend([
+        Step::forge(Forge::Merge {
+            repo: Repo::App,
+            branch: "feat-x",
+            how: MergeHow::Squash,
+        }),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::App,
+            branch: "feat-x",
+        })
+        .may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&a(), &["fetch"])
+            .may_leave_unresolved(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: pin off remote"))
+            .claim(Claim::OutputContains("patch-equivalent: "))
+            .claim(Claim::OutputContains(
+                "rwv sync --reset-to-target local/remotes/app",
+            ))
+            .claim(Claim::OutputLacks("rwv push --repo local/remotes/app")),
+        Step::rwv(&a(), &["sync", "--reset-to-target", "local/remotes/app"])
+            .may_leave_unresolved(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "pr-app",
+                marked: None,
+            }),
+    ]);
+    scenario("a squashed pin off remote offers the reset", steps)
+}
+
+/// `w` took in `main`'s `app`, then its `app` was rebuilt by hand on the old
+/// base with the same change: the pin is landed and the checkout diverges
+/// from it, so `status` names the match and C22, which, run as printed,
+/// resets `app` to `main`'s.
+pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
+    scenario(
+        "a landed pin a checkout diverged from offers the reset",
+        vec![
+            create("w"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_rewind(&[Repo::App]),
+            Step::git(&ww("w"), Repo::App, &["cherry-pick", "main"]),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app: pin diverged"))
+                .claim(Claim::OutputContains("pin-landed"))
+                .claim(Claim::OutputContains("patch-equivalent: "))
+                .claim(Claim::OutputContains(
+                    "rwv sync --reset-to-target local/remotes/app",
+                )),
+            Step::rwv(
+                &ww("w"),
+                &["sync", "--reset-to-target", "local/remotes/app"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::AtPin {
+                at: ww("w"),
+                repo: Repo::App,
+            }),
+        ],
+    )
+}

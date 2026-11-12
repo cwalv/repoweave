@@ -213,7 +213,7 @@ fn report_standing(
     let live = crate::pins::live_pins(ctx.primary_path())?;
     let held = live.get(path).map(Vec::as_slice).unwrap_or_default();
     let standing = crate::pins::standing(vcs, dir, &head, pin, held)?;
-    if let Some(line) = crate::pins::judge(path, dir, vcs, &standing, &head, pin) {
+    if let Some(line) = crate::pins::judge(path, dir, vcs, &standing, (&head, pin), None) {
         report_lines(vec![line]);
     }
     Ok(())

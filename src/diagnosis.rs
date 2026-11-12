@@ -1306,7 +1306,7 @@ impl State {
                 means: "neither the checkout's commit nor the commit the lock pins is an \
                         ancestor of the other",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C25, Form::C2UpdateRemote],
+                offers: &[Form::C25, Form::C2UpdateRemote, Form::C22],
                 verb_offers: &[],
             },
             Self::PinOffLineage => &StateRow {
@@ -1338,7 +1338,13 @@ impl State {
                         pinning another commit; elsewhere the state is a fact and offers \
                         waiting",
                 refused_by: "nothing refuses; `rwv fetch` and `rwv pull` report it",
-                offers: &[Form::C7PushRepo, Form::C27, Form::C25, Form::C19],
+                offers: &[
+                    Form::C22,
+                    Form::C7PushRepo,
+                    Form::C27,
+                    Form::C25,
+                    Form::C19,
+                ],
                 verb_offers: &[],
             },
             Self::PinUnmerged => &StateRow {

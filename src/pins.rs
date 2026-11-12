@@ -199,8 +199,8 @@ pub(crate) fn judge(
     dir: &Path,
     vcs: &dyn Vcs,
     standing: &Standing,
-    head: &ResolvedRevisionId,
-    pin: &ResolvedRevisionId,
+    (head, pin): (&ResolvedRevisionId, &ResolvedRevisionId),
+    reset: Option<&crate::feature_sync::ResetOffer>,
 ) -> Option<Judged> {
     let judging = |state: State| {
         state
@@ -235,17 +235,29 @@ pub(crate) fn judge(
             pin.id().short()
         )),
         Standing::Diverged => {
-            let judging = judging(State::PinDiverged).subject(format!(
+            let mut judging = judging(State::PinDiverged).subject(format!(
                 "neither HEAD nor the pin is an ancestor of the other: {heads}"
             ));
-            let reaches_pin = push_branch
+            let mut only = Vec::new();
+            if push_branch
                 .as_ref()
-                .is_some_and(|tip| vcs.is_ancestor(dir, pin, tip).unwrap_or(false));
-            if reaches_pin {
-                judging.only(&[ChoiceId::C2])
-            } else {
-                judging.only(&[])
+                .is_some_and(|tip| vcs.is_ancestor(dir, pin, tip).unwrap_or(false))
+            {
+                only.push(ChoiceId::C2);
             }
+            if let Some(reset) = reset.filter(|r| r.landed(vcs, dir, pin.id())) {
+                judging = judging.fact(Fact {
+                    kind: FactKind::PinLanded,
+                    about: None,
+                });
+                if let Some(fact) = reset.patch_fact(vcs, dir, head.id()) {
+                    judging = judging.fact(fact);
+                }
+                if reset.runs {
+                    only.push(ChoiceId::C22);
+                }
+            }
+            judging.only(&only)
         }
         Standing::Ahead(beyond) => {
             let mut judging = judging(State::PinAhead).subject(format!(
@@ -320,6 +332,7 @@ pub(crate) fn off_remote(
     repo: &RepoPath,
     live: &[LivePin],
     holding: impl Fn(&CommitId) -> Holding,
+    reset: impl Fn() -> Option<crate::feature_sync::ResetOffer>,
 ) -> anyhow::Result<Vec<Judged>> {
     if vcs.recorded_urls(dir)?.is_empty() {
         return Ok(Vec::new());
@@ -336,22 +349,35 @@ pub(crate) fn off_remote(
         if reached_by_any_remote(vcs, dir, &resolved)? {
             continue;
         }
+        let mut judging = State::PinOffRemote
+            .of(repo)
+            .member()
+            .checkout(dir)
+            .bind("<m>", repo.as_str())
+            .subject(commit.short())
+            .listing(holders.iter().map(|p| p.held_by.clone()));
         let only: &[ChoiceId] = match holding(commit) {
-            Holding::Feature => &[ChoiceId::C7, ChoiceId::C27],
+            Holding::Feature => {
+                let squashed = reset().and_then(|r| {
+                    let fact = r.patch_fact(vcs, dir, commit)?;
+                    Some((r, fact))
+                });
+                match squashed {
+                    Some((reset, fact)) => {
+                        judging = judging.fact(fact);
+                        if reset.runs {
+                            &[ChoiceId::C22]
+                        } else {
+                            &[ChoiceId::C7, ChoiceId::C27]
+                        }
+                    }
+                    None => &[ChoiceId::C7, ChoiceId::C27],
+                }
+            }
             Holding::Declared => &[ChoiceId::C25],
             Holding::NotHeld => &[ChoiceId::C19],
         };
-        lines.push(
-            State::PinOffRemote
-                .of(repo)
-                .member()
-                .checkout(dir)
-                .bind("<m>", repo.as_str())
-                .subject(commit.short())
-                .listing(holders.iter().map(|p| p.held_by.clone()))
-                .only(only)
-                .judge(vcs),
-        );
+        lines.push(judging.only(only).judge(vcs));
     }
     Ok(lines)
 }

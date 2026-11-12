@@ -1021,7 +1021,8 @@ fn judge_member(
             return Ok(());
         }
     };
-    if let Some(judged) = crate::pins::judge(path, &member.dir, vcs, &standing, &head, &pin) {
+    if let Some(judged) = crate::pins::judge(path, &member.dir, vcs, &standing, (&head, &pin), None)
+    {
         if judged.state() == State::PinAhead {
             reported.add(judged);
         } else {

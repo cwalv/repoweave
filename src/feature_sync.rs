@@ -1875,6 +1875,90 @@ fn delivered_materialized_inputs(sync: &Sync<'_>, key: &SavepointKey) -> Vec<(Re
     hits
 }
 
+/// Where `rwv sync --reset-to-target <m>` stands for a feature's member: the
+/// tip of the branch it lands on, and whether that spelling, run here, would
+/// plan without a refusal.
+pub(crate) struct ResetOffer {
+    pub(crate) landing_tip: CommitId,
+    pub(crate) runs: bool,
+}
+
+impl ResetOffer {
+    /// `pin` is on the branch the member lands on.
+    pub(crate) fn landed(&self, vcs: &dyn Vcs, dir: &Path, pin: &CommitId) -> bool {
+        vcs.is_ancestor(dir, &rev(pin), &rev(&self.landing_tip))
+            .unwrap_or(false)
+    }
+
+    /// The `patch-equivalent` fact for `unlanded` against where it lands.
+    pub(crate) fn patch_fact(
+        &self,
+        vcs: &dyn Vcs,
+        dir: &Path,
+        unlanded: &CommitId,
+    ) -> Option<Fact> {
+        patch_fact(vcs, dir, unlanded, &self.landing_tip)
+    }
+}
+
+/// The reset offer for `path` in the feature `ctx` has checked out; `None`
+/// where the branch is no feature or the member lands nowhere.
+pub(crate) fn reset_offer(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    path: &RepoPath,
+) -> Option<ResetOffer> {
+    let dir = project_dir(ctx.active_path(), project);
+    let vcs = project_vcs();
+    let branch = crate::branch::checked_out(vcs.as_ref(), &dir).ok()??;
+    let name = crate::branch::named(vcs.as_ref(), project, &dir, &branch).ok()?;
+    let Record::Feature { target, as_mode } =
+        crate::branch::recorded_value(vcs.as_ref(), project, &dir, &name).ok()?
+    else {
+        return None;
+    };
+    let url_remote = vcs.project_url_remote(&dir).ok().flatten();
+    let tip = newer(
+        vcs.as_ref(),
+        &dir,
+        &RawRefName::new(target.to_string()),
+        url_remote.as_ref(),
+    )
+    .ok()?
+    .ok()??;
+    let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME)).ok()?;
+    let entry = ours.get_entry(path)?;
+    let theirs = manifest_at(vcs.as_ref(), &dir, tip.id());
+    let receiving = receiving_branch(
+        path,
+        target.as_str(),
+        Some(as_mode),
+        &ours,
+        theirs.as_ref(),
+        None,
+    )?;
+    let mdir = ctx.active_path().join(path.as_path());
+    let mvcs = vcs_for(entry.vcs_type);
+    let landing_tip = newer(mvcs.as_ref(), &mdir, &receiving, None)
+        .ok()?
+        .ok()??
+        .id()
+        .clone();
+    let sync = Sync {
+        ctx,
+        project: project.clone(),
+        dir,
+        vcs,
+        branch,
+        from: SyncFrom::Target(target.to_string()),
+        target: Some(target.to_string()),
+        strategy: SyncStrategy::Ff,
+        jobs: 1,
+    };
+    let runs = plan(&sync, Some(as_mode), &[RepoOperand::Member(path.clone())]).is_ok();
+    Some(ResetOffer { landing_tip, runs })
+}
+
 /// What the lineage rule reads for a feature's members: its target's pins
 /// and entries.
 pub(crate) struct FeatureLineage {

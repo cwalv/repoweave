@@ -589,6 +589,8 @@ every_scenario!(
     sync_writes_no_record,
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
+    squashed_pin_off_remote_offers_the_reset,
+    landed_pin_diverged_offers_the_reset,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2699,6 +2701,16 @@ fn a_reset_to_target_in_syncs_own_lock_commit_waives_the_merge_it_abandons() {
 fn update_aligns_under_an_uncommitted_manifest_so_lock_commit_can_follow() {
     runner::run(scenarios::uncommitted_manifest_beside_an_unaligned_member())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_squashed_pin_off_every_remote_offers_the_reset_to_target() {
+    runner::run(scenarios::squashed_pin_off_remote_offers_the_reset()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landed_pin_a_checkout_diverged_from_offers_the_reset_to_target() {
+    runner::run(scenarios::landed_pin_diverged_offers_the_reset()).assert_fully_decided_green();
 }
 
 #[test]

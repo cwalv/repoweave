@@ -415,17 +415,21 @@ pub(crate) fn fetch_repos(
 
 /// What `pin off remote` is judged against: the pins every live lock holds,
 /// and how the lock this workspace has checked out holds them.
-struct OffRemote {
+struct OffRemote<'a> {
+    ctx: &'a WorkspaceContext,
+    project: ProjectName,
     live: std::collections::BTreeMap<crate::manifest::RepoPath, Vec<crate::pins::LivePin>>,
     checked_out: Option<crate::manifest::LockFile>,
     mode: Option<crate::alignment::Mode>,
 }
 
-impl OffRemote {
-    fn open(ctx: &WorkspaceContext, project: &ProjectName) -> Self {
+impl<'a> OffRemote<'a> {
+    fn open(ctx: &'a WorkspaceContext, project: &ProjectName) -> Self {
         let project_dir = project_dir(ctx.active_path(), project);
         let lock_path = crate::manifest::LockFile::path_in(&project_dir);
         Self {
+            ctx,
+            project: project.clone(),
             live: crate::pins::live_pins(ctx.primary_path()).unwrap_or_default(),
             checked_out: lock_path
                 .exists()
@@ -465,7 +469,14 @@ impl OffRemote {
                 Some(crate::alignment::Mode::Detached) | None => crate::pins::Holding::NotHeld,
             }
         };
-        match crate::pins::off_remote(target.vcs.as_ref(), &target.dir, member, live, holding) {
+        match crate::pins::off_remote(
+            target.vcs.as_ref(),
+            &target.dir,
+            member,
+            live,
+            holding,
+            || crate::feature_sync::reset_offer(self.ctx, &self.project, member),
+        ) {
             Ok(lines) => lines,
             Err(e) => {
                 eprintln!(

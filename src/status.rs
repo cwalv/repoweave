@@ -549,14 +549,21 @@ pub fn run_status(
                         });
                         let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
                         match crate::pins::standing(vcs.as_ref(), &repo_abs, head, pin, held) {
-                            Ok(standing) => crate::pins::judge(
-                                repo_path,
-                                &repo_abs,
-                                vcs.as_ref(),
-                                &standing,
-                                head,
-                                pin,
-                            ),
+                            Ok(standing) => {
+                                let reset = matches!(standing, crate::pins::Standing::Diverged)
+                                    .then(|| {
+                                        crate::feature_sync::reset_offer(ctx, &pname, repo_path)
+                                    })
+                                    .flatten();
+                                crate::pins::judge(
+                                    repo_path,
+                                    &repo_abs,
+                                    vcs.as_ref(),
+                                    &standing,
+                                    (head, pin),
+                                    reset.as_ref(),
+                                )
+                            }
                             Err(e) => {
                                 eprintln!(
                                     "rwv status: {repo_path}: could not judge its pin: {e:#}"
