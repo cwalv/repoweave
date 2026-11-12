@@ -291,20 +291,6 @@ fn update_for_project(
         project_name,
     )?;
 
-    if commit.is_some() {
-        let authored = if filter.is_empty() {
-            crate::activate::owned_paths(active_root, project_name, &project.manifest)
-        } else {
-            BTreeSet::new()
-        };
-        lock::judge_unrelated_dirt(
-            crate::vcs::project_vcs().as_ref(),
-            project_name,
-            &project_dir,
-            &authored,
-        )?;
-    }
-
     // Snapshot the repo list into a Vec so the parallel loop can index by
     // position. The BTreeMap iteration is deterministic, so the resulting
     // Vec mirrors the previous serial loop's order exactly.

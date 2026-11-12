@@ -64,9 +64,9 @@ added without a pin and reported as `pin` `none`, with the verbs that give one
 (`rwv member pin <repo> <rev> --commit`, `rwv update --remote --repo <repo>
 --commit`). Re-running `add` over an entry written by hand gives the member
 the pin it lacks, in a commit that carries the entry. The add refuses before
-it changes anything over uncommitted changes to tracked files of the project
-repo outside `rwv.toml`, `rwv.lock` and the files it regenerates, and when the
-project directory is not a repository.
+it changes anything when the project directory is not a repository.
+Uncommitted changes to other tracked files of the project repo stay out of
+every member verb's commit and as they are, named in one line.
 
 #### Clone placement
 

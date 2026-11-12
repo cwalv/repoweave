@@ -123,9 +123,9 @@ rwv lock [--dirty] [--repo <selector>]... [--commit [-m <MSG>]] [--project <name
   same commit: the lock is derived from the manifest, so a membership edit and
   the relock it calls for are one change. The message then also names
   `rwv.toml` (`lock: refresh 2 repos, record rwv.toml`, `lock: drop <repo>` for a removal, or `lock: record
-  rwv.toml` when no pin moved). Refuses if the project repo has
-  uncommitted changes outside `rwv.lock` and `rwv.toml` — the auto-commit must
-  not bundle unrelated work-in-progress.
+  rwv.toml` when no pin moved). Uncommitted changes to other tracked files
+  of the project repo, staged or not, stay out of the commit and as they are,
+  named in one line.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
   generated one. Without `--commit` it is a usage error (exit 2).
 - `--project <name>` — operate on this project rather than the active project.
@@ -187,10 +187,6 @@ rwv lock --dirty
 - *repo has uncommitted changes to tracked files; commit or use --dirty to override* — one or
   more repos have staged or unstaged edits to tracked files. Commit the changes, or pass
   `--dirty` to record the committed portion of HEAD anyway.
-- *project repo has uncommitted changes outside rwv.lock and rwv.toml* —
-  `--commit` was passed but the project repo has work-in-progress beyond the
-  lock and the manifest. Commit or stash the other changes before using
-  `--commit`.
 - *workspace could not be resolved* — CWD is not inside a weave or workweave;
   run from within the workspace.
 - *pin backwards* — a member's HEAD is behind the pin, has diverged from it, or

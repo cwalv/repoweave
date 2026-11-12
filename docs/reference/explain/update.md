@@ -197,10 +197,9 @@ is needed, because there is no branch to abandon. It refuses while the repo is
 stopped mid-rebase, mid-merge or mid-bisect — a detached HEAD cannot say which of
 those it is, and only one of them is rwv's to move.
 
-With `--commit`, the project repo is judged before anything moves: uncommitted
-changes to tracked files outside `rwv.toml`, `rwv.lock` and the integration files
-the run regenerates refuse (`edits` `dirty`) with the lock and the members as
-they were.
+With `--commit`, uncommitted changes to tracked files of the project repo
+outside `rwv.toml`, `rwv.lock` and the integration files the run regenerates
+stay out of the commit and as they are, staged or not, named in one line.
 
 ## Invocation
 
@@ -227,8 +226,8 @@ rwv update --remote --continue
   together with the integration files regenerated against the new tips and with
   `rwv.toml` when it has uncommitted changes, under an auto-generated message
   listing which repos advanced (and naming `rwv.toml` when it is in the
-  commit). Refuses before anything moves if the project repo has uncommitted
-  changes outside that set.
+  commit). Uncommitted changes outside that set stay out of the commit and as
+  they are, named in one line.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
   generated one. Without `--commit` it is a usage error (exit 2).
 - `--role <role>` / `--repo <selector>` — limit the update to a subset of the

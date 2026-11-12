@@ -6,7 +6,7 @@ use crate::diagnosis::{Judged, Report, State};
 use crate::lock::{self, CommitMessage};
 use crate::manifest::{LockFile, Project, RepoPath};
 use crate::refusal::RefusalKind;
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment};
+use crate::vcs::{vcs_for, HeadAttachment};
 use crate::workspace::{project_dir, WorkspaceContext};
 use anyhow::Context;
 use std::collections::BTreeSet;
@@ -109,14 +109,6 @@ pub fn run_pin(
                 refusals.add(line);
             }
         }
-    }
-    if commit.is_some() {
-        refusals.extend(lock::unrelated_dirt_line(
-            project_vcs().as_ref(),
-            &project_name,
-            &dir_of_project,
-            &BTreeSet::new(),
-        )?);
     }
     refusals.into_result()?;
 

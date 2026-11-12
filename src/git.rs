@@ -910,6 +910,54 @@ impl GitVcs {
         })
     }
 
+    fn commit_through_own_index(
+        repo: &Path,
+        index: &str,
+        born: bool,
+        paths: &[&str],
+        message: &str,
+    ) -> Result<bool, VcsError> {
+        let in_index = |args: &[&str], input: &[u8]| {
+            Self::run_bytes_in(args, repo, input, &[("GIT_INDEX_FILE", index)])
+        };
+        if born {
+            in_index(&["read-tree", "HEAD"], &[])?;
+        }
+        let mut listing = vec!["ls-files", "-s", "-z", "--"];
+        listing.extend_from_slice(paths);
+        let staged = Self::run_bytes_in(&listing, repo, &[], &[])?;
+        let present: Vec<String> = staged
+            .split(|byte| *byte == 0)
+            .filter_map(|entry| {
+                let tab = entry.iter().position(|byte| *byte == b'\t')?;
+                Some(String::from_utf8_lossy(&entry[tab + 1..]).into_owned())
+            })
+            .collect();
+        if !present.is_empty() {
+            in_index(&["update-index", "-z", "--index-info"], &staged)?;
+        }
+        let absent: Vec<&str> = paths
+            .iter()
+            .copied()
+            .filter(|path| !present.iter().any(|p| p == path))
+            .collect();
+        if !absent.is_empty() {
+            let mut remove = vec!["update-index", "--force-remove", "--"];
+            remove.extend_from_slice(&absent);
+            in_index(&remove, &[])?;
+        }
+        let changed = if born {
+            in_index(&["diff-index", "--cached", "--name-only", "HEAD"], &[])?
+        } else {
+            in_index(&["ls-files"], &[])?
+        };
+        if changed.iter().all(u8::is_ascii_whitespace) {
+            return Ok(false);
+        }
+        in_index(&["commit", "-q", "-m", message], &[])?;
+        Ok(true)
+    }
+
     fn run_trimmed(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         Self::run(args, dir).map(|s| s.trim().to_string())
     }
@@ -2288,6 +2336,21 @@ impl Vcs for GitVcs {
     }
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(["commit", "-m", message], repo).map(|_| ())
+    }
+    fn commit_only(&self, repo: &Path, paths: &[&str], message: &str) -> Result<bool, VcsError> {
+        let index = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &format!("rwv-commit-index-{}", std::process::id()),
+            ],
+            repo,
+        )?;
+        let born = !matches!(self.head_attachment(repo)?, HeadAttachment::Unborn(_));
+        let outcome = Self::commit_through_own_index(repo, &index, born, paths, message);
+        let _ = std::fs::remove_file(&index);
+        outcome
     }
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
         let path = GitArg::from_path(path, "path")?;

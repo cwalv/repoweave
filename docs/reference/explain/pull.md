@@ -30,8 +30,10 @@ the checkout has edits.
    anything is taken in; `rwv update` aligns the members to the lock as it
    stands without the network.
 2. **The project branch.** Before it moves, the project repo is judged for
-   uncommitted changes to tracked files and a VCS operation in progress
-   (`edits`); either refuses. A branch behind its upstream then fast-forwards,
+   a VCS operation in progress, an uncommitted `rwv.toml` or `rwv.lock`, and
+   uncommitted changes to files the fast-forward would overwrite (`edits`);
+   each refuses. Other uncommitted changes stay as they are, named in one
+   line. A branch behind its upstream then fast-forwards,
    and `pull` reports what the commits it took in changed:
    - `re-pinned <member>: <was> -> <now>` for each member whose pin the pulled
      lock moves to a commit that does not descend from the old one;
@@ -1070,8 +1072,8 @@ rwv pull --repo github/acme/server
 - *push-branch diverged* — the project branch and its upstream each hold
   commits the other lacks. `--merge-upstream` or `--reset-to-upstream
   projects/<name>` takes it in.
-- *edits dirty* — the project repo has uncommitted changes to tracked files;
-  commit or stash them, then rerun.
+- *edits dirty* — the project repo has uncommitted changes to files the
+  fast-forward would overwrite, listed; commit or stash them, then rerun.
 - *pull could not complete the fetch* — a remote was unreachable or refused;
   `rwv update` aligns the members to the lock as it stands.
 - *target unrecorded* — the checked-out branch of the project repo has no record

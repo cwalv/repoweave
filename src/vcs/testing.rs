@@ -439,6 +439,10 @@ impl Vcs for FakeVcs {
         unsupported("commit")
     }
 
+    fn commit_only(&self, _repo: &Path, _paths: &[&str], _message: &str) -> Result<bool, VcsError> {
+        unsupported("commit_only")
+    }
+
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RawRefName>, VcsError> {
         unsupported("tag_at_head")
     }

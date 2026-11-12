@@ -214,7 +214,6 @@ pub(crate) fn run(
             relocking,
             WholeFile {
                 skipping: Some(&skipping),
-                authored: Some(&authored),
                 judge_only: true,
             },
         ),
@@ -300,7 +299,6 @@ pub(crate) fn run(
             relocking,
             WholeFile {
                 skipping: None,
-                authored: Some(&authored),
                 judge_only: false,
             },
         ),

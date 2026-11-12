@@ -39,11 +39,7 @@ pub(crate) fn authored_across(
 }
 
 /// What a commit would leave out, judged before the verb writes anything.
-pub(crate) fn judge(
-    project: &ProjectName,
-    project_dir: &Path,
-    authored: &BTreeSet<String>,
-) -> anyhow::Result<()> {
+pub(crate) fn judge(project_dir: &Path) -> anyhow::Result<()> {
     let vcs = project_vcs();
     if !vcs.is_repo(project_dir) {
         return Err(crate::untokened!(
@@ -53,14 +49,7 @@ pub(crate) fn judge(
         ));
     }
     crate::op_state::check_no_op_in_progress(&[project_dir])?;
-    let mut report = crate::diagnosis::Report::default();
-    report.extend(crate::lock::unrelated_dirt_line(
-        vcs.as_ref(),
-        project,
-        project_dir,
-        authored,
-    )?);
-    report.into_result()
+    Ok(())
 }
 
 pub(crate) fn committed_manifest(
@@ -144,23 +133,23 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         }
     }
 
-    if !vcs
-        .has_staged_changes(dir)
-        .context("failed to check staged changes")?
-    {
-        return Ok(false);
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let committed = match vcs.commit_only(dir, &refs, change.message) {
+        Ok(committed) => committed,
+        Err(refused) => {
+            let refused = anyhow::Error::from(refused).context("failed to commit the change");
+            return Err(match vcs.unstage_paths(dir, &refs) {
+                Ok(()) => refused,
+                Err(e) => refused.context(format!(
+                    "{} left staged: unstaging after the refused commit failed ({e:#})",
+                    paths.join(", ")
+                )),
+            });
+        }
+    };
+    if committed {
+        eprintln!("Committed {}", paths.join(", "));
     }
-    if let Err(refused) = vcs.commit(dir, change.message) {
-        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let refused = anyhow::Error::from(refused).context("failed to commit the change");
-        return Err(match vcs.unstage_paths(dir, &refs) {
-            Ok(()) => refused,
-            Err(e) => refused.context(format!(
-                "{} left staged: unstaging after the refused commit failed ({e:#})",
-                paths.join(", ")
-            )),
-        });
-    }
-    eprintln!("Committed {}", paths.join(", "));
-    Ok(true)
+    crate::lock::report_left_edits(vcs, change.project, dir, change.authored)?;
+    Ok(committed)
 }

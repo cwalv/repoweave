@@ -120,19 +120,21 @@ pub(crate) fn uncommitted_names(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Vec
 }
 
 /// What the move of the project repo's checkout is held back by.
-struct ProjectMove<'a> {
-    project: &'a ProjectName,
-    dir: &'a Path,
-    detached: bool,
-    verb: &'static str,
+pub(crate) struct ProjectMove<'a> {
+    pub(crate) project: &'a ProjectName,
+    pub(crate) dir: &'a Path,
+    pub(crate) detached: bool,
+    pub(crate) verb: &'static str,
     /// The files that refuse the move where uncommitted.
-    refused_files: &'static [&'static str],
+    pub(crate) refused_files: &'static [&'static str],
     /// The commit the checkout ends at, where it is not the one it is at.
-    destination: Option<&'a ResolvedRevisionId>,
+    pub(crate) destination: Option<&'a ResolvedRevisionId>,
 }
 
 impl ProjectMove<'_> {
-    fn judge(&self, vcs: &dyn Vcs, report: &mut Report) -> anyhow::Result<()> {
+    /// Refuse the uncommitted files the move refuses, and every edited file
+    /// the move to the destination would overwrite.
+    pub(crate) fn judge(&self, vcs: &dyn Vcs, report: &mut Report) -> anyhow::Result<()> {
         let uncommitted = uncommitted_names(vcs, self.dir)?;
         let files: Vec<String> = uncommitted
             .iter()

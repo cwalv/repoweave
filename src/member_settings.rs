@@ -44,16 +44,6 @@ fn commit_entry(
     Ok(())
 }
 
-fn judge_commit(
-    ctx: &WorkspaceContext,
-    project: &crate::manifest::ProjectName,
-    project_dir: &std::path::Path,
-    manifest: &Manifest,
-) -> anyhow::Result<()> {
-    let authored = crate::activate::owned_paths(ctx.active_path(), project, manifest);
-    crate::manifest_commit::judge(project, project_dir, &authored)
-}
-
 /// Execute `rwv member set-role <repo> <role>`.
 ///
 /// The manifest edit and the regeneration it drives land together or not at
@@ -89,7 +79,7 @@ pub fn run_set_role(
     };
     let was = entry.role;
     let before = manifest.clone();
-    judge_commit(ctx, &project, &project_dir, &manifest)?;
+    crate::manifest_commit::judge(&project_dir)?;
     let vcs = vcs_for(entry.vcs_type);
     let member = ctx.active_path().join(repo_path.as_path());
     let checked_out = !member.is_symlink() && vcs.is_repo(&member);
@@ -205,7 +195,7 @@ pub fn run_set_recurse_submodules(
     let was = entry.recurse_submodules;
     let recurse = bool::from(recursion);
     let before = manifest.clone();
-    judge_commit(ctx, &project, &project_dir, &manifest)?;
+    crate::manifest_commit::judge(&project_dir)?;
     if was == recursion {
         settle_manifest(ctx, &project, None, &[], opts)?;
         commit_entry(

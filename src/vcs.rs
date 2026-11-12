@@ -2886,6 +2886,15 @@ pub trait Vcs: Send + Sync {
     /// `git commit -m <message>`.
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError>;
 
+    /// Record what the index holds for `paths`, and nothing else it holds, as
+    /// a new commit with `message`: every other staged change stays staged,
+    /// and the working files are not read. `false` where `paths` hold no
+    /// change, and no commit is made.
+    ///
+    /// For git: a private index read from `HEAD` takes the index's entries
+    /// for `paths`, and `git commit` runs over it, hooks included.
+    fn commit_only(&self, repo: &Path, paths: &[&str], message: &str) -> Result<bool, VcsError>;
+
     /// Return the tag name pointing at HEAD, if any.
     ///
     /// When multiple tags point at HEAD the implementation may return any one

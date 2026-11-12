@@ -529,9 +529,8 @@ impl State {
                 means: "the checkout has uncommitted changes, listed by file",
                 refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
                              fast-forward (tracked changes only); `rwv lock` without `--dirty`, \
-                             for a member (tracked changes only); `rwv lock --commit` and `rwv \
-                             update --commit`, for project-repo changes outside `rwv.lock` and \
-                             `rwv.toml`; `rwv member \
+                             for a member (tracked changes only); `rwv pull`, for project-repo \
+                             files its fast-forward would overwrite; `rwv member \
                              set-role <repo> reference`; `rwv member remove --delete` and \
                              replay's prune of a dropped member; `rwv workweave delete` and \
                              `rwv sync-to --retire`, for every checkout in the workweave; \

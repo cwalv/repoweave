@@ -957,9 +957,7 @@ pub fn run_set_branch(
     let vcs = vcs_for(entry.vcs_type);
     let vcs = vcs.as_ref();
 
-    let authored =
-        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
-    if let Err(e) = crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored) {
+    if let Err(e) = crate::manifest_commit::judge(&loaded.project_dir) {
         crate::member_url::merge_refusal(&mut refusals, e)?;
     }
 

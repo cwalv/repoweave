@@ -128,7 +128,7 @@ A member with a remote also reports each commit that some project's live lock pi
 Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. Three steps, in order:
 
 1. The pruning fetch of every repo, as [`rwv fetch`](#rwv-fetch-). A repo it could not complete refuses the pull before anything is taken in.
-2. The project branch fast-forwards when it is behind its upstream, and reports what the commits it took in changed: `re-pinned` for a member whose pin the pulled lock moved to a commit that does not descend from the old one, and `member-changed` for each member entry the pulled `rwv.toml` added, removed or changed. A branch that is at its upstream, ahead of it, or has none has nothing to take in. One that has diverged refuses as `push-branch` `diverged`, with nothing changed, unless `--merge-upstream` merges it or `--reset-to-upstream projects/<name>` moves it to its upstream. Uncommitted changes to tracked files in the project repo refuse as `edits` `dirty` before the branch moves.
+2. The project branch fast-forwards when it is behind its upstream, and reports what the commits it took in changed: `re-pinned` for a member whose pin the pulled lock moved to a commit that does not descend from the old one, and `member-changed` for each member entry the pulled `rwv.toml` added, removed or changed. A branch that is at its upstream, ahead of it, or has none has nothing to take in. One that has diverged refuses as `push-branch` `diverged`, with nothing changed, unless `--merge-upstream` merges it or `--reset-to-upstream projects/<name>` moves it to its upstream. Before the branch moves, an uncommitted change to a file the fast-forward would overwrite refuses as `edits` `dirty`, listing the files, and an uncommitted `rwv.toml` or `rwv.lock` refuses as `edits` `rwv.toml or rwv.lock uncommitted`; other uncommitted changes stay as they are, named in one line.
 3. [`rwv update`](#rwv-update-), which `--role` and `--repo` narrow.
 
 | Flag | Effect |
@@ -192,7 +192,7 @@ The lock records the members the run advanced and no others, every other pin as 
 | `--reset-to-upstream <repo>` | Move this member's branch to its upstream, keeping the tip it leaves in a backup; repeat per repo. Refused where the upstream is gone, a record lands into the branch, or the checkout has edits. Needs `--remote` |
 | `--continue` | Resume the update a conflict stopped. Needs `--remote` |
 | `--dirty` | Allow update with uncommitted changes in repos when relocking. Needs `--remote` |
-| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) before anything moves. Needs `--remote` |
+| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo stay out of the commit and as they are, named in one line. Needs `--remote` |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--no-materialize` | Skip the install hooks of the regeneration `update --remote` runs at primary; `rwv materialize` runs them later. Inside a workweave `update --remote` runs no hooks either way |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
@@ -213,7 +213,7 @@ Reads HEAD from each member the run acts on and records its resolved 40-characte
 - A detached workspace, or a detached project repo, refuses (`alignment` `project detached`): there is no branch to record the pins on.
 - Uncommitted changes to tracked files in a member refuse (`edits` `dirty`); use `--dirty` to bypass. Untracked files are fine.
 
-Every member is judged before `rwv.lock` is written, the project repo's unrelated edits under `--commit` included, and all refusals are reported together.
+Every member is judged before `rwv.lock` is written, and all refusals are reported together. Under `--commit`, the project repo's other uncommitted changes stay out of the commit and as they are, named in one line.
 
 A forward move over commits no remote-tracking branch reaches reports them when another project's lock for the member does not pin them: the other project's own `rwv status` then lists the member as `pin` `ahead`, with the fact `pinned-by` naming this project's lock.
 
@@ -221,7 +221,7 @@ A forward move over commits no remote-tracking branch reaches reports them when 
 |---|---|
 | `--dirty` | Allow locking repos with uncommitted changes to tracked files |
 | `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them move its pin backward. A selector matching no member refuses (`repo-not-in-manifest`) |
-| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`edits`) |
+| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo stay out of the commit and as they are |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
@@ -289,7 +289,7 @@ Add a repo to the active project, remove one, or change how the manifest lists o
 
 ### `rwv member add <url> [...]`
 
-Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. It then commits the entry, the regenerated files and `rwv.lock` in one commit, with the member's **first pin** in the lock: the commit it cloned. With `--adopt`, the pin is the clone's HEAD where HEAD sits on the declared branch or that branch's upstream reaches it; a clone holding commits only it has, and a repo `--new` made with no commits, have none, reported as `pin` `none` with the verbs that give one. If the repo entry was already added to `rwv.toml` by hand, `rwv member add` converges the on-disk clone, permissions, and integration files to match, and gives the member the pin it lacks in a commit that carries the entry. The add refuses before it changes anything over uncommitted changes to tracked files of the project repo outside `rwv.toml`, `rwv.lock` and the files it regenerates, and when the project directory is not a repository.
+Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. It then commits the entry, the regenerated files and `rwv.lock` in one commit, with the member's **first pin** in the lock: the commit it cloned. With `--adopt`, the pin is the clone's HEAD where HEAD sits on the declared branch or that branch's upstream reaches it; a clone holding commits only it has, and a repo `--new` made with no commits, have none, reported as `pin` `none` with the verbs that give one. If the repo entry was already added to `rwv.toml` by hand, `rwv member add` converges the on-disk clone, permissions, and integration files to match, and gives the member the pin it lacks in a commit that carries the entry. The add refuses before it changes anything when the project directory is not a repository. Uncommitted changes to other tracked files of the project repo, staged or not, stay out of the commit and as they are, named in one line.
 
 The positional argument has one spelling per meaning:
 
@@ -319,7 +319,7 @@ The positional argument has one spelling per meaning:
 
 ### `rwv member remove <path> [...]`
 
-Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, re-run integration install hooks, and commit the removal with the member's pin dropped from `rwv.lock` and the files it regenerated, leaving every other uncommitted edit where it is. Uncommitted changes to tracked files of the project repo outside `rwv.toml`, `rwv.lock` and the regenerated files refuse (`edits`) before anything changes. If the entry was already removed from `rwv.toml` by hand, `rwv member remove` converges the integration files and optional checkout deletion (`--delete`) to match.
+Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, re-run integration install hooks, and commit the removal with the member's pin dropped from `rwv.lock` and the files it regenerated, leaving every other uncommitted edit where it is. Uncommitted changes to other tracked files of the project repo, staged or not, stay out of the commit and as they are, named in one line. If the entry was already removed from `rwv.toml` by hand, `rwv member remove` converges the integration files and optional checkout deletion (`--delete`) to match.
 
 | Flag | Effect |
 |---|---|
@@ -338,7 +338,7 @@ Every refusal is reported before the lock is written or the member moves. A deta
 
 | Flag | Effect |
 |---|---|
-| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) |
+| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo stay out of the commit and as they are |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 ### `rwv member set-branch <path> <branch> [--new] [--at <rev>] [--url <url>]`
@@ -365,7 +365,7 @@ Set the member's url. The branch the member sits on in this workspace, when its 
 
 ### `rwv member set-role <path> <role>`
 
-Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. The change is committed alone: any other uncommitted edit to `rwv.toml` stays uncommitted, and uncommitted changes to other tracked files of the project repo refuse (`edits`) before anything changes.
+Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. The change is committed alone: any other uncommitted edit to `rwv.toml` stays uncommitted, and so do uncommitted changes to other tracked files of the project repo, named in one line.
 
 | Flag | Effect |
 |---|---|

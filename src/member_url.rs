@@ -190,9 +190,7 @@ pub fn run_set_url(
     let new: RepoUrl = url.parse()?;
     let mut refusals = Report::default();
     let step = judge_set_url(ctx, &loaded, &member, &new, &mut refusals)?;
-    let authored =
-        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
-    if let Err(e) = crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored) {
+    if let Err(e) = crate::manifest_commit::judge(&loaded.project_dir) {
         merge_refusal(&mut refusals, e)?;
     }
     refusals.into_result()?;

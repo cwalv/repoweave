@@ -423,7 +423,7 @@ pub fn run_add(
         refuse_foreign_clone_at_placement(vcs.as_ref(), &clone_url, &dest, &repo_path)?;
     }
 
-    judge_commit_of_add(ctx, &project, &project_dir, &manifest)?;
+    judge_commit_of_add(&project_dir)?;
 
     // Warn when this clone path is already registered by another project.
     // The physical clone is shared; the operator should know. This is not a
@@ -553,14 +553,9 @@ pub(crate) fn first_pin(
     Ok((sits_on_declared || reached_by_upstream).then_some(head))
 }
 
-/// Refuse, before the add changes anything, project-repo changes the add's
-/// commit would have to leave out.
-fn judge_commit_of_add(
-    ctx: &WorkspaceContext,
-    project: &ProjectName,
-    project_dir: &Path,
-    manifest: &Manifest,
-) -> anyhow::Result<()> {
+/// Refuse, before the add changes anything, a project with no repo to commit
+/// the addition to.
+fn judge_commit_of_add(project_dir: &Path) -> anyhow::Result<()> {
     if !crate::vcs::project_vcs().is_repo(project_dir) {
         return Err(crate::untokened!(
             Owed,
@@ -569,12 +564,7 @@ fn judge_commit_of_add(
             project_dir.display()
         ));
     }
-    crate::lock::judge_unrelated_dirt(
-        crate::vcs::project_vcs().as_ref(),
-        project,
-        project_dir,
-        &crate::activate::owned_paths(ctx.active_path(), project, manifest),
-    )
+    Ok(())
 }
 
 /// Settle the manifest that adds `repo_path`, then commit the addition with
@@ -798,13 +788,7 @@ pub fn run_add_adopt(
             candidate.display()
         );
     }
-    judge_commit_of_add(
-        ctx,
-        &project,
-        &project_dir,
-        &Manifest::from_path(&manifest_path)
-            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?,
-    )?;
+    judge_commit_of_add(&project_dir)?;
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
     let registration = run_add_from_local_path(
         vcs.as_ref(),
@@ -1359,8 +1343,7 @@ pub fn run_remove(
         Some(plan) if plan.removes_anything() => std::slice::from_ref(&repo_path),
         _ => &[],
     };
-    let authored = crate::manifest_commit::authored_across(ctx, &project, &[&before, &manifest]);
-    crate::manifest_commit::judge(&project, &project_dir, &authored)?;
+    crate::manifest_commit::judge(&project_dir)?;
     let settled = settle_manifest(
         ctx,
         &project,
@@ -1811,7 +1794,7 @@ pub fn run_add_new(
         );
     }
 
-    judge_commit_of_add(ctx, &project, &project_dir, &manifest)?;
+    judge_commit_of_add(&project_dir)?;
 
     // Warn when this repo path is already registered by another project with
     // a potentially different role. The physical init'd repo is shared; the

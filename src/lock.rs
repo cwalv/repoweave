@@ -241,25 +241,19 @@ fn stage_and_commit(
     vcs.stage_paths(project_dir, paths)
         .context("failed to stage paths for the lock commit")?;
 
-    if !vcs
-        .has_staged_changes(project_dir)
-        .context("failed to check staged changes")?
-    {
-        return Ok(false);
+    match vcs.commit_only(project_dir, paths, message) {
+        Ok(committed) => Ok(committed),
+        Err(refused) => {
+            let refused = anyhow::Error::from(refused).context("failed to commit the lock");
+            Err(match vcs.unstage_paths(project_dir, paths) {
+                Ok(()) => refused,
+                Err(e) => refused.context(format!(
+                    "{} left staged: unstaging after the refused commit failed ({e:#})",
+                    paths.join(", ")
+                )),
+            })
+        }
     }
-
-    if let Err(refused) = vcs.commit(project_dir, message) {
-        let refused = anyhow::Error::from(refused).context("failed to commit the lock");
-        return Err(match vcs.unstage_paths(project_dir, paths) {
-            Ok(()) => refused,
-            Err(e) => refused.context(format!(
-                "{} left staged: unstaging after the refused commit failed ({e:#})",
-                paths.join(", ")
-            )),
-        });
-    }
-
-    Ok(true)
 }
 
 /// What a lock commit is recorded under.
@@ -275,52 +269,41 @@ impl CommitMessage {
     }
 }
 
-/// The line for uncommitted changes to tracked files of the project repo
-/// outside `rwv.lock`, `rwv.toml` and `authored`: a lock commit must not
-/// bundle unrelated work in progress.
-pub(crate) fn unrelated_dirt_line(
+/// The tracked files of the project repo with uncommitted changes outside
+/// `rwv.lock`, `rwv.toml` and `authored`: edits no rwv commit carries.
+pub(crate) fn unrelated_edits(
     vcs: &dyn Vcs,
-    project: &crate::manifest::ProjectName,
     project_dir: &Path,
     authored: &BTreeSet<String>,
-) -> anyhow::Result<Option<Judged>> {
-    let tracked_dirty = vcs
+) -> anyhow::Result<Vec<String>> {
+    Ok(vcs
         .tracked_dirty_file_names(project_dir)
-        .context("failed to read project repo status")?;
-    let unrelated: Vec<&String> = tracked_dirty
-        .iter()
+        .context("failed to read project repo status")?
+        .into_iter()
         .filter(|path| {
             path.as_str() != LockFile::FILE_NAME
                 && path.as_str() != Manifest::FILE_NAME
                 && !authored.contains(path.as_str())
         })
-        .collect();
-    if unrelated.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
-        State::EditsDirty
-            .of(crate::workspace::project_rel_path(project))
-            .listing(unrelated)
-            .checkout(project_dir)
-            .judge(vcs),
-    ))
+        .collect())
 }
 
-/// Refuse when the project repo has uncommitted changes to tracked files
-/// outside `rwv.lock`, `rwv.toml` and `authored`.
-///
-/// Pure judgment, so a verb that commits the lock can ask it before it writes
-/// the lock.
-pub(crate) fn judge_unrelated_dirt(
+/// Say which edits a commit of the project repo left as they are.
+pub(crate) fn report_left_edits(
     vcs: &dyn Vcs,
     project: &crate::manifest::ProjectName,
     project_dir: &Path,
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
-    let mut report = Report::default();
-    report.extend(unrelated_dirt_line(vcs, project, project_dir, authored)?);
-    report.into_result()
+    let left = unrelated_edits(vcs, project_dir, authored)?;
+    if !left.is_empty() {
+        eprintln!(
+            "{}: edited files left as they are: {}",
+            crate::workspace::project_rel_path(project),
+            left.join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// Commit `rwv.lock` from `project_dir`, together with a dirty `rwv.toml`
@@ -332,8 +315,7 @@ pub(crate) fn judge_unrelated_dirt(
 /// tips this lock records; the two changes are one change and belong in one
 /// commit. It is empty for a verb that authors nothing.
 ///
-/// Refuses if the project repo has uncommitted changes outside that set —
-/// the auto-commit must not bundle unrelated work-in-progress.
+/// Changes outside that set are left as they are, staged or not, and named.
 fn commit_lock_file(
     vcs: &dyn Vcs,
     project: &crate::manifest::ProjectName,
@@ -343,15 +325,11 @@ fn commit_lock_file(
     authored: &BTreeSet<String>,
     message: &CommitMessage,
 ) -> anyhow::Result<()> {
-    // Two questions, two answers, one predicate between them: everything
-    // dirty says which carried paths to stage, and everything dirty *and
-    // tracked* says whether anything unrelated is in the way. Files omitted
-    // from the dirty set — absent, or ignored by operator policy — are
-    // omitted from the commit for the same reason.
+    // Files omitted from the dirty set — absent, or ignored by operator
+    // policy — are omitted from the commit.
     let dirty = vcs
         .dirty_file_names(project_dir)
         .context("failed to read project repo status")?;
-    judge_unrelated_dirt(vcs, project, project_dir, authored)?;
     let carried = |path: &str| {
         path == LockFile::FILE_NAME || path == Manifest::FILE_NAME || authored.contains(path)
     };
@@ -375,7 +353,7 @@ fn commit_lock_file(
     } else {
         eprintln!("Lock unchanged, nothing to commit.");
     }
-    Ok(())
+    report_left_edits(vcs, project, project_dir, authored)
 }
 
 /// Execute `rwv lock` for the current workspace context.
@@ -458,8 +436,6 @@ pub(crate) struct Relocking<'a> {
 pub(crate) struct WholeFile<'a> {
     /// Members a setter's step moves first: judged and recorded by it.
     pub(crate) skipping: Option<&'a BTreeSet<RepoPath>>,
-    /// The files the commit carries beside `rwv.toml` and `rwv.lock`.
-    pub(crate) authored: Option<&'a BTreeSet<String>>,
     /// Judge, write nothing.
     pub(crate) judge_only: bool,
 }
@@ -785,14 +761,6 @@ pub(crate) fn relock(
             crate::refusal::RefusalKind::RepoNotInManifest,
             "--repo selects no member of the manifest"
         );
-    }
-    if commit.is_some() {
-        refusals.extend(unrelated_dirt_line(
-            project_vcs().as_ref(),
-            &project_name,
-            &project_dir,
-            relocking.whole.authored.unwrap_or(&BTreeSet::new()),
-        )?);
     }
     if !failures.is_empty() {
         if refusals.is_empty() {

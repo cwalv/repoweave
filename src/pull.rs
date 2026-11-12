@@ -388,15 +388,21 @@ fn take_in_project(
         );
     }
 
-    let tracked = vcs.tracked_dirty_file_names(&dir)?;
     let mut report = Report::default();
-    if let Some(edits) = judge_edits(vcs.as_ref(), &path, &dir, tracked, None) {
-        report.add(edits);
+    crate::switch::ProjectMove {
+        project,
+        dir: &dir,
+        detached: false,
+        verb: "pull",
+        refused_files: &[Manifest::FILE_NAME, LockFile::FILE_NAME],
+        destination: Some(&upstream),
     }
+    .judge(vcs.as_ref(), &mut report)?;
     report.into_result()?;
 
     let before = Recorded::read(&dir)?;
     vcs.advance_attached_ref(&attached, &upstream)?;
+    crate::lock::report_left_edits(vcs.as_ref(), project, &dir, &BTreeSet::new())?;
     let after = Recorded::read(&dir)?;
     taken.result = TakeIn::Advanced;
     taken.from = Some(head.id().as_str().to_owned());
