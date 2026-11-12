@@ -516,7 +516,7 @@ fn push_overwrite_never_rewrites_a_declared_branch() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("a branch some weave branch declares"),
+        stderr.contains("protected declared"),
         "the refusal names why; got: {stderr}"
     );
     assert_eq!(bare_main_sha(&fixture.manifest_bare), Some(sha_b));

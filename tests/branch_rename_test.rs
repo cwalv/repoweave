@@ -66,6 +66,14 @@ fn refuse(args: &[&str], dir: &Path) -> String {
     describe(&out)
 }
 
+fn assert_routes_to(refusal: &str, token: &str) {
+    let routes: Vec<&str> = refusal
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, [token], "the refusal was:\n{refusal}");
+}
+
 fn minted(name: &str) -> String {
     format!("{PROJECT}--{name}")
 }
@@ -178,12 +186,13 @@ fn a_member_branch_a_live_weave_branch_declares_protects_the_rename_and_nothing_
     declare_lib_on(&w, "line", &old);
     let record_before = record_of(&w.workspace, &old);
 
-    let refusal = refuse(&["branch", "rename", "feat-x"], &ww);
+    let stderr = refuse(&["branch", "rename", "feat-x"], &ww);
 
     assert!(
-        refusal.contains("protected declared") && refusal.contains("line (projects/p)"),
-        "{refusal}"
+        stderr.contains("protected declared") && stderr.contains("line (projects/p)"),
+        "{stderr}"
     );
+    assert_routes_to(&stderr, "protected");
     assert!(has_branch(&ww.join(LIB), &old));
     assert!(!has_branch(&ww.join(LIB), "feat-x"));
     assert!(has_branch(&project_dir(&ww), &old));
@@ -291,10 +300,10 @@ fn adopting_a_remote_branch_that_has_diverged_is_refused_and_nothing_changes() {
     commit_in(&project_dir(&ww), "mine.txt");
     publish_project_branch(&w, "forge-name", true);
 
-    let refusal = refuse(&["branch", "rename", "forge-name", "--adopt"], &ww);
+    let stderr = refuse(&["branch", "rename", "forge-name", "--adopt"], &ww);
 
-    assert!(refusal.contains("push-branch diverged"), "{refusal}");
-    assert!(refusal.contains("mine.txt"), "{refusal}");
+    assert!(stderr.contains("push-branch diverged"), "{stderr}");
+    assert!(stderr.contains("mine.txt"), "{stderr}");
     assert!(has_branch(&project_dir(&ww), &old));
     assert!(has_branch(&ww.join(LIB), &old));
     assert!(record_of(&w.workspace, &old).is_some());
@@ -370,4 +379,42 @@ fn a_gone_project_push_branch_offers_the_rename_that_adopts() {
     let text = describe(&out);
     assert!(text.contains("push-branch gone"), "{text}");
     assert!(text.contains("rwv branch rename <new> --adopt"), "{text}");
+}
+
+#[test]
+fn a_declared_mode_project_branch_is_protected_against_an_overwrite_and_an_unlanded_remote_delete()
+{
+    let w = weave(&[LIB]);
+    common::git_in(
+        &project_dir(&w.workspace),
+        &["push", "-q", "origin", "main"],
+    );
+
+    let stderr = refuse(&["push", "--overwrite", "projects/p"], &w.workspace);
+    assert!(
+        stderr.contains("protected declared mode (main)"),
+        "{stderr}"
+    );
+    assert_routes_to(&stderr, "protected");
+
+    common::git_in(&project_dir(&w.workspace), &["branch", "side"]);
+    succeed(&["branch", "set-mode", "side", "declared"], &w.workspace);
+    let stderr = refuse(
+        &[
+            "branch",
+            "delete",
+            "main",
+            "--target",
+            "side",
+            "--discard-unlanded",
+            "--delete-remote-unlanded",
+            "projects/p",
+        ],
+        &w.workspace,
+    );
+    assert!(
+        stderr.contains("protected declared mode (main)"),
+        "{stderr}"
+    );
+    assert_routes_to(&stderr, "protected");
 }

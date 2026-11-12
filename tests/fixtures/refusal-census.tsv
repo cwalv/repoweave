@@ -41,10 +41,15 @@ src/alignment.rs	pin unreachable	tests/backup_verb_test.rs	1
 src/alignment.rs	push-branch foreign upstream	-	1
 src/backup.rs	pin would be unreachable	tests/backup_verb_test.rs	1
 src/bin/rwv-each/select.rs	(untokened:plugin)	-	6
-src/branch.rs	head-not-on-branch	-	2
+src/branch.rs	head-not-on-branch	-	3
 src/branch.rs	invalid-ref-name	-	1
-src/branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/branch.rs	name declared	tests/refusal_arrival_test.rs	1
+src/branch.rs	name exists	tests/refusal_arrival_test.rs	2
+src/branch.rs	name feature	tests/refusal_arrival_test.rs	1
+src/branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	2
 src/branch.rs	name reserved	tests/refusal_arrival_test.rs	1
+src/branch.rs	protected declared	tests/branch_rename_test.rs	1
+src/branch.rs	push-branch diverged	-	1
 src/branch.rs	target conflict	tests/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/branch_gate_test.rs	1
 src/branch.rs	target no target	tests/branch_gate_test.rs	1
@@ -70,8 +75,9 @@ src/clone.rs	pin none	tests/backup_verb_test.rs	1
 src/clone.rs	pin unreachable	tests/backup_verb_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
 src/clone.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
-src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	3
+src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/deletion.rs	protected declared mode	tests/branch_rename_test.rs	1
 src/deletion.rs	target dependents	tests/branch_gate_test.rs	1
 src/diagnosis.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/diagnosis.rs	edits mid-operation	tests/refusal_arrival_test.rs	1
@@ -132,7 +138,7 @@ src/push.rs	(untokened:tally)	-	1
 src/push.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	tests/refusal_arrival_test.rs	1
 src/push.rs	head-not-on-branch	-	2
-src/push.rs	inapplicable-flag	tests/refusal_arrival_test.rs	4
+src/push.rs	inapplicable-flag	tests/refusal_arrival_test.rs	2
 src/push.rs	name minted	tests/refusal_arrival_test.rs	1
 src/push.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
 src/push.rs	pin ahead	tests/backup_verb_test.rs	1
@@ -141,6 +147,8 @@ src/push.rs	pin unmerged	tests/backup_verb_test.rs	2
 src/push.rs	pin unreachable	tests/backup_verb_test.rs	2
 src/push.rs	pin waived	tests/backup_verb_test.rs	1
 src/push.rs	pin would be unreachable	tests/backup_verb_test.rs	1
+src/push.rs	protected declared	tests/branch_rename_test.rs	1
+src/push.rs	protected declared mode	tests/branch_rename_test.rs	1
 src/push.rs	publish no pin	tests/refusal_arrival_test.rs	1
 src/push.rs	publish records rejected	tests/refusal_arrival_test.rs	1
 src/push.rs	publish withheld	tests/refusal_arrival_test.rs	2
