@@ -616,7 +616,7 @@ fn sync_to_json_outside_workspace_no_panic() {
     let tmp = common::tempdir().unwrap();
 
     rwv()
-        .args(["land", "/some/nonexistent/target", "--json"])
+        .args(["land", "--json"])
         .current_dir(tmp.path())
         .assert()
         .failure()

@@ -1,244 +1,205 @@
-# rwv sync-to
+# rwv land
 
 ## Purpose
 
-Advance a target workspace to CWD's tip via a three-step orchestration. The
-user-facing promise: CWD's unique commits land linearly on top of target's
-prior history; target absorbs CWD's state with CWD as the newest contribution.
+Land the checked-out feature into the branch its record lands into (its
+target): the work is composed in this workspace, then the target and each
+member's receiving branch fast-forward where the target is checked out. The
+target is the record's, or `--target <T>`'s for one run; the record is
+unchanged. A declared branch lands nowhere: it refuses as `target`
+`no target`, naming `rwv branch set-mode <W> feature --target <T>`.
 
-This is the inverse of `rwv sync`: rather than pulling from a source into CWD,
-`rwv sync-to` pushes CWD's state into a target — but all rewriting happens in
-CWD, and target is only ever advanced via fast-forward.
+Every refusal is judged before anything moves, and all of them are reported
+together. Then, under an op record:
 
-### The three steps
+1. **Compose (replay).** Each `owned` or `fork` member the target lists is
+   composed onto the tip of its **receiving branch**: its branch named after
+   the target when the target is itself a feature, else the branch the merged
+   entries declare, read as the newer of that branch and its upstream. A member
+   whose work that branch lacks is rebased onto it (`--strategy rebase`, the
+   default); a member with nothing to land follows it. The project branch is
+   rebased onto the target's tip, again the newer of the target and its
+   upstream. Every rebase happens in this workspace; nothing outside it moves.
+2. **Relock.** The lock is recorded and committed: each member's pin merged
+   three ways against the merge base's lock, every composed member at its
+   composed tip. A `dependency` or `reference` member takes the pin the merge
+   gives it.
+3. **Fast-forward (advance-target).** Where the target is checked out, each
+   receiving branch fast-forwards in its checkout, then the target's project
+   branch, to what was composed. Nothing there is ever rebased or merged.
+4. **Align.** The workspace with the target checked out aligns its members as
+   `rwv update` does, storing the entries without reporting them; then this
+   workspace's members follow the target's new pins. A member alignment leaves
+   where it was is reported, with `rwv update` there to finish it.
+5. **Retire** (`--retire`). The workweave is removed, and the deletion rule
+   decides each of the feature's branches: one that landed is deleted, one
+   that did not survives and is listed with its reason.
 
-1. **Step 1 — rebase CWD against target.** Equivalent to `rwv sync <target>
-   --strategy=<X>` from CWD: the existing sync engine is called with target as
-   source and CWD as destination. End state: CWD has target's history with CWD's
-   unique commits replayed on top (per `--strategy`).
+Before anything is judged, `rwv land` reads the checked-out branch's record,
+with the records remotes' as last fetched merged in. A record that differs from
+the one this workspace last saw, and that this workspace did not write, refuses
+as `target` `record changed`, with the old and the new value, until `rwv update`
+accepts it or `rwv branch set-mode` restores the old value.
 
-2. **Step 2 — auto-relock.** If step 1 moved any member-repo tip in CWD,
-   regenerate `rwv.lock` and commit it in CWD's project repo with the message
-   `lock: auto-relock after sync from <source>`. This keeps the lock consistent without requiring
-   a separate `rwv lock` invocation.
+**The `as` check.** A feature's record stores the target's mode when it was
+written. A target used another way now refuses as `target` `mode changed`:
+rebind the feature (`rwv branch set-mode <W> feature --target <T>`) or restore
+the target's mode (`rwv branch set-mode <T> <as>`). A landing is never
+redirected. `--target <T>` takes the target's mode now.
 
-3. **Step 3 — FF-advance target.** Fast-forward the branch each member repo
-   and the project repo in target is on to CWD's converged tips. This step is
-   always FF regardless of `--strategy` — all rewriting happened in CWD during
-   step 1. If FF is not possible (e.g. concurrent modification), the operation
-   bails with an actionable error. The member repos go first and the project
-   repo last: the project repo carries the lock, so advancing it while a member
-   repo failed to land would leave the target's lock naming revisions the target
-   does not hold. A failed member repo skips the project advance entirely. A
-   member CWD holds and a target workweave lacks is created there, on the
-   target's ephemeral branch, at CWD's tip.
+**A record published by another machine** names a target this machine reads
+only through that remote: the target published there, and a local branch of
+that name taking in from it. Anything else refuses as `target` `gone`, never
+landing into an unrelated branch that shares the name.
 
-### End-state semantics
+**The lineage rule.** A member holding work its receiving branch lacks moves
+only when that branch contains its base: the newest commit of its first-parent
+chain that a lock in the target's history pins. Otherwise the landing refuses as
+`pin` `off lineage`, listing the base and the branch, with the fact
+`patch-equivalent` where commits on that branch carry the same changes. A pin
+this clone lacks, where the rule must read it, is `pin` `unreachable`.
 
-After `rwv sync-to <target> --strategy=rebase`:
-- CWD: unique commits rebased onto target's prior tip (plus auto-relock commit).
-- Target: fast-forwarded to CWD's new tip — same history as CWD.
-- If target had unique commits since CWD's fork point, those form the BASE of
-  the resulting linear history, with CWD's contributions ON TOP.
+**The source's lock.** A member whose checkout is beyond its pin is relocked
+forward at op start, after the savepoints, so `rwv abort` rolls the relock back
+with the rest; one line per member names the pin it took. A member whose relock
+would move its pin backward refuses as `pin` `backwards`; one with no pin as
+`pin` `none`.
 
-### Reference repos
+**The target's checkouts.** A receiving branch holding commits beyond the
+target's pin that no live lock and no remote reaches refuses as `pin`
+`unpinned`, naming `rwv lock --commit` in the target's workspace: the landing
+would pin work the target never recorded. Commits another live lock pins, or a
+remote holds, are pinned by the landing. A receiving branch that does not reach
+the target's pin refuses as `pin` `not on declared branch`.
 
-`role: reference` repos take every step like any other member: each is a
-worktree on the workweave's ephemeral branch. A workweave holding a member as
-a symlink — the shape older releases gave `reference` repos — on either side
-refuses the op with `workweave-drift`; run `rwv doctor --fix` there first.
+A target checked out in no workspace refuses as `target` `checked out
+nowhere`, naming `rwv workweave create <ww> --branch <T>`. A receiving branch
+checked out outside the target's workspace refuses as `checkout` `in another
+workspace`. From the primary, a target a workweave has checked out refuses as
+`checkout` `in another workspace`.
 
-### Strategy semantics
+A landing changes none of the target's member entries and not its top-level
+`history`: any change it would make refuses as `target` `member changes`,
+listing each changed field with the target's value and the feature's. Adding a
+member is no change. Another weave branch that lands into this one refuses as
+`target` `dependents`, one line per dependent, before anything moves.
 
-- `--strategy=ff` — step 1 is a no-op; CWD must already be strictly ahead of
-  target. Step 3 FFs target. If CWD isn't strictly ahead, bail with an error
-  pointing at `--strategy=rebase`.
-- `--strategy=rebase` (default) — step 1 rebases CWD's unique commits onto
-  target's tip. Step 2 auto-relocks. Step 3 FFs target.
+**A target that moved.** The fast-forward compares each branch against what
+was composed for it. A target or receiving branch that another verb moved
+after the landing read it stops the landing as `target` `moved mid-operation`,
+with its op record kept and the refs it already moved left as moved. `rwv
+abort` restores every ref the landing moved; then `rwv land` again judges the
+new tips. `rwv land --continue` refuses it, since the plan no longer describes
+the landing.
 
-(A `merge` strategy is not offered; `ff` requires CWD to already be strictly
-ahead of target.)
+## Refusals
 
-### Source-side cleanliness preflight
+| Axis | State | When |
+|---|---|---|
+| `target` | `no target` | the checked-out branch is declared |
+| `target` | `record changed` | the branch's record changed since this workspace last saw it |
+| `target` | `mode changed` | the target is used another way than the record says |
+| `target` | `gone` | the target exists nowhere, or only as a branch another machine's record does not name |
+| `target` | `checked out nowhere` | no workspace has the target checked out |
+| `target` | `member changes` | the landing would change the target's entries or top-level `history` |
+| `target` | `dependents` | another weave branch lands into this one |
+| `target` | `moved mid-operation` | the target or a receiving branch moved after the landing read it |
+| `pin` | `off lineage` | a member's base is not on its receiving branch |
+| `pin` | `unreachable` | the target pins a commit this clone lacks |
+| `pin` | `not on declared branch` | a receiving branch does not reach the target's pin |
+| `pin` | `unpinned` | a receiving branch holds commits nothing records |
+| `pin` | `backwards` | the source's relock would move a pin backward |
+| `pin` | `none` | the source's lock has no pin for a member |
+| `push-branch` | `diverged` | the target or a receiving branch has diverged from its upstream |
+| `protected` | `declared` | a rebase would rewrite a member branch some weave branch declares |
+| `edits` | `dirty` | a repo the landing moves holds uncommitted changes; under `--retire`, any checkout of the workweave |
+| `edits` | `mid-operation` | a repo the landing moves is in the middle of a rebase, merge or other operation |
+| `checkout` | `in another workspace` | a receiving branch, or from the primary the target, is checked out elsewhere |
+| `alignment` | any | a member here, or in the target's workspace, is not where its branch expects it |
 
-Before step 1 begins, `sync-to` checks that CWD has no uncommitted **tracked**
-changes in any member repo or (outside `rwv.lock`) in the project repo.
-Untracked files are fine. A project repo that is dirty only in `rwv.lock` is
-also fine — the op commits that file itself. If tracked dirt is found, sync-to
-refuses up front, naming the offending paths, so you can commit or stash before
-running again.
+`not-fast-forwardable` refuses `--strategy ff` where the feature does not
+already contain the target's tip. `missing-lock-merge-driver` refuses where
+the project repo's lock merge driver is absent or was set up by an earlier
+release, in this workspace or, under `--strategy rebase`, in the target's;
+run `rwv doctor --fix` where the refusal names. A conflict while composing stops the landing
+with its op record kept (`op-parked`): resolve it in the checkout named, then
+`rwv land --continue`, or `rwv abort` to put every repo back at its savepoint.
 
-### Target-side preflights
+## Op record
 
-Step 3 lands by fast-forwarding the branch each target repo is on, so the
-target must be in a state to receive it. Before step 1 begins, `sync-to`
-refuses when any target repo (manifest or project) has uncommitted tracked
-changes step 3 would fast-forward over, or is on a **detached HEAD** — there
-is no branch there to advance, so the landing would be recorded nowhere. A
-`dependency` or `reference` member detached at its pin is not such a repo: it
-receives no landing, and holds nothing of its own. Check out the receiving
-branch in any other target repo that is detached and re-run.
+Op-state is written to this workspace and the target's before anything moves.
+The owner record (`.rwv-op`) here holds the landing's plan — the target, its tip
+and each receiving branch's tip it composes onto, and this workspace's project
+tip after the op-start relock — and the current phase (replay → relock →
+advance-target → retire); the target's workspace holds a lease (`.rwv-op-lease`)
+pointing back here. A verb that hits a workspace an op holds refuses, naming
+the op and its two exits: `rwv land --continue` from the owning workspace, or
+`rwv abort`.
 
-Untracked files in the target are not scanned by this preflight — a
-fast-forward only overwrites a path the incoming commits write, so an
-unrelated untracked file survives it untouched. The exact set of incoming
-paths doesn't exist until step 1 has rebased CWD, so this preflight cannot
-ask the narrower question up front; step 3 catches an actual collision at
-fast-forward time instead, naming the colliding path and leaving op-state in
-place — move or remove the file, then `rwv sync-to --continue`.
-
-### Op-start auto-relock
-
-If one or more of CWD's member repos has new commits since the last lock
-(`LockRelation::Ahead` — lock is behind HEAD), `sync-to` auto-relocks at op
-start (after writing savepoints, so the auto-relock commit is covered by
-`rwv abort`). One line per affected repo is printed naming the repo and how
-many commits HEAD is ahead of the lock. Phase 3 re-relocks idempotently at op
-end regardless.
-
-If that commit is refused (a `commit-msg` hook, for instance), the op does not
-start: the refusal carries the full cause, including the hook's own text, and
-the project repo's `rwv.lock`, index and op-state are left as they were, so
-there is nothing to `--continue` or `rwv abort`. Clear the cause and re-run. A
-relock refused later, in Phase 3, parks the op instead; it resumes with
-`rwv sync-to --continue` once the cause is gone. Either way a refused lock
-commit leaves `rwv.lock` unstaged.
-
-The same relation on the TARGET side refuses instead. Step 1 replays CWD
-against the target's committed lock, so a target holding commits its lock does
-not record would leave those commits missing from CWD's tip and step 3 could
-not fast-forward the target onto it. `sync-to` names the target repo and its
-commit count at op start, before anything mutates, and the fix is to run
-`rwv lock --commit` in the target workspace and re-run. Taking the target's
-committed tips instead is deliberately not done: that relaxation is scoped to
-the `sync` pull's source.
-
-### Multi-workspace op-state
-
-Op-state is written to both CWD and target before step 1. The owner record
-(`.rwv-op`) at CWD holds all op parameters plus the current phase (replay →
-relock → advance-target → retire); the target workspace holds a thin lease
-(`.rwv-op-lease`) pointing back at CWD. Named overrides supplied at invocation
-(`--allow-stale-lock`, `--discard-local-commits`) are recorded in the
-`overrides` field so `--continue` resumes with the same consents.
-
-If another verb (sync, `update --remote`, `lock --commit`, workweave delete, retire) hits
-a workspace that is already involved in an in-flight op, it refuses immediately,
-naming the op, its age, the phase it stalled in, and the two exits:
-`rwv sync-to --continue` from the owning workspace, or `rwv abort` to roll back.
-This check runs first — before lock-freshness classification — so the error is
-always about the in-flight op, not about a stale lock computed on a mutating
-workspace.
-
-If any step fails, op-state is left in place so the operator can resolve and
-rerun with `rwv sync-to --continue`, or use `rwv abort` to roll back both
-workspaces.
-
-A resume recorded at `advance-target` re-enters `relock` first, and says so on
-the line it prints. Advance-target publishes CWD's manifest tips and CWD's lock
-together; relock is what makes those two agree. Resolving the failure means
-moving CWD, so the agreement relock reached before the failure no longer holds —
-re-entering it gives the resumed path what the fresh path already has, relock
-immediately before advance-target with no operator window between them.
+A resume recorded at `advance-target` re-enters `relock` first, and says so:
+relock is what makes the lock it lands agree with the tips it lands.
 
 ## Invocation
 
 ```
-rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--retire] [--project <name>] [--continue]
+rwv land [--target <T>] [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
+rwv land --continue [--json] [--project <name>]
 ```
 
-- `<target>` is the target workspace: `primary`, a bare workweave name, or
-  a path (absolute, or relative to the directory rwv runs in, or the `-C`/`-w`
-  directory). Omit inside
-  a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
-  in a primary weave.
-- `--json` emits machine-readable output (see Output below).
-- `--strategy` picks the step-1 strategy (`rebase` default or `ff`).
-  Step 3 is always FF regardless of this flag. (`merge` is not offered; `ff`
-  requires CWD to be strictly ahead of target with no divergence.)
-- `--allow-stale-lock` skips the lock-freshness precondition on both sides.
-  Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
-  fidelity on `--continue`.
-- `--discard-local-commits` hard-resets CWD's project repo to target's tip,
-  discarding local committed divergence (pre-op savepoint preserved as
-  tombstone, which `rwv doctor --fix` turns into a backup; refused if
-  uncommitted changes are present). Recorded as
-  `discard-local-commits` in `overrides`; `--continue` resumes with the same
-  consent.
-- `--retire` deletes the current workweave on success (after all three steps
-  complete). Requires a workweave context; emits a warning and is a no-op in
-  a primary weave. Use to close out a workweave in one step. Retire refuses,
-  parking the op at `retire`, while any checkout under the workweave holds
-  uncommitted changes (`edits`) or a detached HEAD with commits no branch
-  reaches (`alignment`): deleting the workweave would destroy them. Retire
-  then applies the deletion rule to the workweave's branches, as `rwv workweave
-  delete` does (`rwv explain workweave`): a branch that landed is deleted, and
-  one that did not survives, listed under `survivors` with its reason.
-- `-j <N>` runs up to `N` per-repo manifest syncs in parallel during step 1.
-  Default is `1` (serial).
-- `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
-  resolving a conflict). The recorded parameters must match — mismatch is an error.
-  A resume recorded at `advance-target` re-enters `relock` first, so the lock it
-  lands pins the tips it lands. May be combined with `--json` (see below); every
-  other flag except `--project` conflicts with `--continue`, because the resumed
-  op's parameters come from its op-state record, not the invocation. `--project`
-  asserts against that record rather than rebinding it: it must name the project
-  the op was started for, and a contradicting value is refused.
+- `--target <T>` — land into `T` instead of the record's target, for one run.
+- `--strategy` — how a member holding work its receiving branch lacks is
+  composed: `rebase` (the default) replays it onto that branch's tip; `ff`
+  refuses unless the feature already contains the target's tip. The
+  fast-forward of the target is a fast-forward whatever this flag says.
+- `--retire` — once the landing is done, remove the workweave and apply the
+  deletion rule to the feature's branches. Its dirt, untracked files included,
+  is judged with every other refusal before anything moves. From the primary
+  there is no workweave to remove, and it is a no-op with a warning.
+- `--json` — emit the envelope described under Output.
+- `-j <N>` — run up to `N` per-repo steps in parallel. Default `1`.
+- `--project <name>` — operate on this project instead of the active one.
+- `--continue` — resume a landing a conflict stopped. Every parameter comes
+  from the op record; `--project` asserts the recorded project and refuses
+  another.
 
-Run `rwv sync-to --help` for the full clap surface.
+Run `rwv land --help` for the full clap surface.
 
 ## Output
 
-Default text output reports each step with one line per repo.
+Default text output reports each phase with one line per repo.
 
 Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 
 ```
 {
   "$schema": "<url>",
+  "source_workweave": "...",
+  "target": "...",
+  "retired": false,
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "complete": true,
+  "refused": [],
   "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
 }
 ```
 
-Outcome `kind` tags, and the order of `outcomes` (sorted by repo path), are identical to
-`rwv sync` — only the `$schema` URL differs (pointing at
-`docs/reference/schemas/sync-to.json`). Each advance-target fast-forward that
-moved a branch pointer is reported as its repo's `step3_advance`, or as
-`project_repo_advance` for the project repo, each with `from_sha` and `to_sha`.
-`members` carries the same record kinds as on `rwv sync`, for the member
-checkouts replay keeps, prunes or fails to create in CWD; a
-`materialize-failed` record carries the `refusal` token when there is one.
-
-`complete` is as on `rwv sync`: true once every step ran and op-state is
-cleared, whatever the exit code, so a complete op prints its envelope even on
-a resume that has no outcomes to report.
-
-`placements` covers both workspaces: a checkout here that replay moved or
-created, and one in the target that advance-target moved or created. Each is
-reported under its own `absolute_path`, so one repo can have two.
-
-`--continue --json` resumes an interrupted op and emits the same envelope, so a
-consumer that drove the op through `--json` can finish it without falling back
-to text. The envelope's identity fields (`source_workweave`, `target`,
-`retired`) report the machine's own answers read from the op record, and a
-`resumed` field names the phase the interrupted op had reached. `resumed:
-"replay"` — the common interruption, a step-1 conflict — means `outcomes`
-carries every repo, exactly as on a fresh run. A later `resumed` value means
-replay had already completed before the interruption, so `outcomes` is empty;
-read the target's state with `rwv status --json` if per-repo confirmation is
-needed. (`-j` conflicts with `--continue`: a resumed op runs serially.)
+`outcomes` holds one record per composed repo, sorted by repo path. Each
+fast-forward that moved a branch is reported as its repo's `step3_advance`, or
+as `project_repo_advance` for the project repo. `target` is the workspace that
+has the target checked out. `complete` is true once every phase ran and
+op-state is cleared. `--continue --json` emits the same envelope with a
+`resumed` field naming the phase the stopped landing had reached; a value past
+`replay` leaves `outcomes` empty.
 
 Schema:
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json`.\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "title": "LandJsonOutput",
+  "description": "Top-level envelope for `rwv land --json`.\n\nExtends `SyncJsonOutput` with land-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/land.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -491,7 +452,7 @@ Schema:
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — `Vcs::mid_op` constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
       "oneOf": [
         {
-          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
+          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv land --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
           "type": "string",
           "enum": [
             "rebase"
@@ -932,7 +893,7 @@ Schema:
       ]
     },
     "OpPhase": {
-      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (land only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
           "description": "Project repo, then member repos: Phase 1' and Phase 2.",
@@ -949,7 +910,7 @@ Schema:
           ]
         },
         {
-          "description": "FF-advance every target repo to its converged tip (sync-to only).",
+          "description": "FF-advance every target repo to its converged tip (land only).",
           "type": "string",
           "enum": [
             "advance-target"
@@ -1079,7 +1040,7 @@ Schema:
       }
     },
     "Step3AdvanceOutput": {
-      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
+      "description": "Step-3 fast-forward advance record for one repo in `rwv land --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
       "type": "object",
       "required": [
         "from_sha",
@@ -1246,7 +1207,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1307,7 +1268,7 @@ Schema:
               ]
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1351,7 +1312,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1399,7 +1360,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1637,95 +1598,46 @@ Schema:
 
 ## Exit codes
 
-- `0` — all three steps completed; target is at CWD's tip, and every member
-  checkout the replayed manifest no longer names was pruned from CWD.
-- `3` — every step completed and the workweave was retired, and the deletion
+- `0` — the landing completed; the target is at this workspace's tip.
+- `3` — the landing completed and the workweave was retired, and the deletion
   rule kept at least one of its branches. `survivors` lists each with its
   `repo`, `branch`, `reason` and `detail`.
-- non-zero — at least one step failed (inspect the error output for
-  details), or every step completed but replay could not prune a member
-  checkout from CWD. In the second case op-state is cleared, so `rwv abort`
-  does not apply; the error names each checkout left on disk, and each has a
-  `prune-refused` record under `members`.
+- non-zero — a refusal, or a phase stopped with its op record kept.
 
 ## Examples
 
-Advance the recorded parent (bare form, inside a workweave):
+Land this workweave's feature into its target:
 
 ```
-rwv sync-to
+rwv land
 ```
 
-Land work and delete the workweave in one step:
+Land, and remove the workweave in one step:
 
 ```
-rwv sync-to --retire
+rwv land --retire
 ```
 
-Advance an explicit target:
+Land into another branch for one run:
 
 ```
-rwv sync-to primary
-```
-
-Advance primary, show per-repo outcomes:
-
-```
-rwv sync-to primary --json | jq '.outcomes[] | {path, kind}'
+rwv land --target stable
 ```
 
 Resume after resolving a conflict:
 
 ```
-# (resolve conflicts in the relevant repos)
-rwv sync-to --continue
+rwv land --continue
 ```
 
-Resume with the machine-readable envelope (note `resumed`):
-
-```
-rwv sync-to --continue --json | jq '{resumed, outcomes: [.outcomes[] | {path, kind}]}'
-```
-
-Roll back after a failed sync-to:
+Put everything back after a stopped landing:
 
 ```
 rwv abort
 ```
 
-## Common errors
+The auto-relock commit the op-start relock writes reads:
 
-- *step 1 conflict* — a repo's HEAD diverged from the lock and replay couldn't
-  merge cleanly. Resolve manually in the repo, then `rwv sync-to --continue`.
-- *ff-impossible (--strategy=ff)* — CWD is not strictly ahead of target. Use
-  `--strategy=rebase` to replay CWD's commits onto target's tip first.
-- *step 3 FF-advance failed* — the target holds commits CWD's tip does not, so
-  landing CWD onto it would drop them. Either the target moved after step 1, or
-  `--allow-stale-lock` let step 1 replay against a lock that was behind those
-  commits. The target's project repo is left un-advanced, so its lock still
-  describes the target's pre-op state. Roll back with `rwv abort` and re-run.
-- *missing-lock-merge-driver* — the project repo's lock merge driver is
-  absent or set up by an earlier release, in the workspace or, under
-  `--strategy rebase`, in the one replayed onto. Run `rwv doctor --fix`
-  where the refusal names.
-- *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
-  workweave context. Provide an explicit `<target>` or run from inside a workweave.
-- *lock-freshness precondition failed (stale lock)* — a repo's lock↔HEAD relation
-  is not `ok` (e.g. `behind`, `diverged`, `no-lock`), or the TARGET's lock is
-  behind its HEAD. Usual fix: run `rwv lock --commit` in the workspace the
-  refusal names, then retry. `--allow-stale-lock` skips the check, but for a
-  target whose lock is behind its HEAD it only defers the failure to step 3 —
-  refresh that lock instead.
-- *uncommitted tracked changes in source* — CWD has tracked dirt in a member
-  repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
-  retry.
-- *target is on a detached HEAD* — a target repo has no branch for step 3 to
-  advance. Check out the branch that should receive the work in the target,
-  then retry.
-- *op in progress* — CWD or target is already involved in a sync-to (or other
-  mutating) op. Resume with `rwv sync-to --continue` from the owner workspace,
-  or roll back with `rwv abort`.
-- *target unrecorded* — the checked-out branch of the project repo has no record
-  of how it is used, so this verb, which lands work, refuses before changing
-  anything. The record may be published but not yet fetched (`rwv fetch`);
-  otherwise say how the branch is used with `rwv branch set-mode`.
+```
+lock: auto-relock after sync from <source>
+```

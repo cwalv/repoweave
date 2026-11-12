@@ -2542,6 +2542,7 @@ fn run_preconditions_after_acquire(
     cwd_project_name: &ProjectName,
     dest_project_dir: &Path,
     dest_workspace_dir: &Path,
+    dest_workspace_name: &str,
 ) -> anyhow::Result<PreconditionOutcome> {
     let mut report = landing.judged.clone();
     let mut unjudged: Option<anyhow::Error> = None;
@@ -2635,7 +2636,7 @@ fn run_preconditions_after_acquire(
         .collect();
     let sides = [
         (cwd_workspace_name_str.as_str(), cwd_project.lock.as_ref()),
-        ("target", Some(&snapshot.raw_source_lock)),
+        (dest_workspace_name, Some(&snapshot.raw_source_lock)),
     ];
     for (workspace, lock) in sides {
         for (repo_path, version) in lock.into_iter().flat_map(|l| l.entries_pinned_by_name()) {
@@ -2755,6 +2756,7 @@ fn guard_and_mark<'a>(
         &cwd_project_name,
         &dest_project_dir,
         &dest_workspace_dir,
+        &source_workspace_name,
     );
     let PreconditionOutcome {
         snapshot,

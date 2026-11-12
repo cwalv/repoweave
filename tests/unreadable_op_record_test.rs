@@ -8,6 +8,8 @@ use std::process::Output;
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const PROJECT: &str = "app";
 const LIB: &str = "local/owner/lib";
 
@@ -313,12 +315,10 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
 
     std::fs::remove_file(record_path(&parked)).unwrap();
 
-    let seat = parked.seat.root.to_string_lossy().into_owned();
     for (dir, args) in [
         (&parked.seat.root, &["land"][..]),
         (&target, &["abort"][..]),
         (&target, &["status"][..]),
-        (&target, &["land", seat.as_str()][..]),
     ] {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);
@@ -352,16 +352,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
 
     assert_no_op_residue(&parked);
     let out = rwv(&parked.seat.root, &["land"]);
-    let stderr = stderr_of(&out);
-    assert!(
-        stderr.contains("rwv explain stale-lock")
-            && stderr.contains(
-                "record the current HEAD by name with `rwv member pin local/owner/lib HEAD --commit`"
-            ),
-        "the replay the removal left in place pins the member at the target's tip, \
-         which the next land reports with its own remedy:\n{}",
-        transcript(&out)
-    );
+    common::cli::refused(&out, State::PinBackwards);
     succeed(
         &parked.seat.root,
         &["member", "pin", LIB, "HEAD", "--commit"],

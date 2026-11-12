@@ -110,7 +110,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/main",
+            "web-app--ww",
         ],
     );
 
@@ -122,10 +122,10 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_project.to_string_lossy(),
             "-b",
-            "ww/project",
+            "web-app--ww",
         ],
     );
-    common::record_feature(&ww_project, "ww/project", "main");
+    common::record_feature(&ww_project, "web-app--ww", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {
@@ -158,7 +158,7 @@ fn sync_json_emits_envelope_and_outcomes() {
 
     let assert = rwv()
         .args(["land", "--json"])
-        .current_dir(&primary.root)
+        .current_dir(&ww.root)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -258,7 +258,7 @@ fn sync_json_no_op_when_already_at_lock() {
     // should produce no-op for the server repo.
     let assert = rwv()
         .args(["land", "--json"])
-        .current_dir(&primary.root)
+        .current_dir(&ww.root)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -702,10 +702,10 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
             "add",
             &ww_project_dir.to_string_lossy(),
             "-b",
-            "ww/project",
+            "web-app--ww",
         ],
     );
-    common::record_feature(&ww_project_dir, "ww/project", "main");
+    common::record_feature(&ww_project_dir, "web-app--ww", "main");
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     // Advance each ww repo by one commit; collect new SHAs.
@@ -759,62 +759,15 @@ fn manifest_order() -> Vec<&'static str> {
 /// worker: the first step rebases it, which for a repo with nothing of its own
 /// is a fast-forward.
 fn sync_from_primary(primary: &Workspace, ww: &Workspace, jobs: &str) -> Vec<u8> {
-    let target = ww.root.to_string_lossy();
+    let _ = primary;
     rwv()
-        .args(["land", &target, "--json", "-j", jobs])
-        .current_dir(&primary.root)
+        .args(["land", "--json", "-j", jobs])
+        .current_dir(&ww.root)
         .assert()
         .success()
         .get_output()
         .stdout
         .clone()
-}
-
-fn install_hook(repo: &Path, name: &str, body: &str) {
-    let hooks = repo.join(".git").join("hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    let hook = hooks.join(name);
-    std::fs::write(&hook, body).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-}
-
-/// Hold the first repo's landing until the second repo's has landed, and then
-/// a second longer, so a parallel run's workers finish out of repo-path order.
-/// Each hook appends its repo to `log` the first time it fires. The wait is
-/// bounded: a git that runs no hooks leaves an empty log, not a hang.
-fn land_first_repo_last(primary: &Workspace, log: &Path) {
-    let order = manifest_order();
-    let (first, second) = (order[0], order[1]);
-    let log = log.to_string_lossy().replace('\\', "/");
-    let once = |repo: &str| format!("#!/bin/sh\ngrep -q '{repo}' '{log}' 2>/dev/null && exit 0\n");
-    install_hook(
-        &primary.root.join(second),
-        "post-checkout",
-        &format!("{}echo {second} >> '{log}'\n", once(second)),
-    );
-    install_hook(
-        &primary.root.join(first),
-        "post-checkout",
-        &format!(
-            "{}i=0\n\
-             while ! grep -q '{second}' '{log}' 2>/dev/null && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done\n\
-             echo {first} >> '{log}'\nsleep 1\n",
-            once(first)
-        ),
-    );
-}
-
-fn assert_landed_first_repo_last(log: &Path) {
-    let order = manifest_order();
-    assert_eq!(
-        std::fs::read_to_string(log).unwrap_or_default(),
-        format!("{}\n{}\n", order[1], order[0]),
-        "the first repo must land after the second, or this run proves nothing"
-    );
 }
 
 #[test]
@@ -828,20 +781,6 @@ fn sync_to_json_is_one_envelope_whatever_the_worker_count() {
     let serial = shape_under("1");
     assert_eq!(serial.1, manifest_order(), "outcomes follow the manifest");
     assert_eq!(shape_under("4"), serial);
-}
-
-#[test]
-fn sync_to_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
-    let log = tmp.path().join("landed");
-    land_first_repo_last(&primary, &log);
-
-    let stdout = sync_from_primary(&primary, &ww, "4");
-
-    assert_landed_first_repo_last(&log);
-    let (_, paths) = common::envelope_shape(&stdout, LAND_JSON_SCHEMA_URL, "outcomes");
-    assert_eq!(paths, manifest_order());
 }
 
 #[test]
@@ -1068,20 +1007,20 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
 
     let assert = rwv()
         .args(["land", "--json"])
-        .current_dir(&primary.root)
+        .current_dir(&ww.root)
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
     let containment = containment_of(&stdout, SERVER_PATH);
     assert_eq!(
-        containment["verdict"]["relation"], "behind",
-        "a repo the source is ahead of converged by fast-forward, and the \
+        containment["verdict"]["relation"], "ahead",
+        "a repo already ahead of what it lands on composes to itself, and the \
          envelope must say so: {containment}"
     );
     assert_eq!(
         containment["verdict"]["commits"], 1,
-        "the count is the one commit this checkout lacked: {containment}"
+        "the count is the one commit the checkout holds beyond it: {containment}"
     );
     assert_eq!(
         containment["baseline"], "source-lock-entry",

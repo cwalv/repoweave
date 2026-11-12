@@ -207,7 +207,7 @@ fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, Str
     let ww_api = ww.root.join(API_PATH);
     common::git_in(
         &primary_api,
-        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/api"],
+        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/project"],
     );
 
     write_manifest(
@@ -2239,7 +2239,6 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
 
     rwv()
         .arg("land")
-        .arg(&primary.root)
         .args(args)
         .current_dir(&ww.root)
         .output()

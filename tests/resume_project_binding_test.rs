@@ -105,7 +105,7 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/server",
+            "ww/project",
         ],
     );
 

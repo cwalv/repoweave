@@ -320,9 +320,12 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
         succeed(&seat, &["update", "--json", "-j", "1"]);
         assert!(seat.join(EXTRA).is_dir() && !target.join(EXTRA).exists());
 
-        let target_arg = target.to_string_lossy();
-        let (records, placements) =
-            outcomes_and_placements(&seat, &["land", &target_arg, "--json"], "outcomes", jobs);
+        let (records, placements) = outcomes_and_placements(
+            &seat,
+            &["land", "--target", "app--target", "--json"],
+            "outcomes",
+            jobs,
+        );
         let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(target.join(EXTRA).is_dir(), "{context}");
         let placement = placement_of(&placements, &target.join(EXTRA), &context);
@@ -494,9 +497,9 @@ fn file_counts_sit_only_in_placement_records_in_every_committed_schema() {
         holding,
         [
             "clone",
+            "land",
             "pull",
             "sync",
-            "land",
             "update",
             "update-remote"
         ],

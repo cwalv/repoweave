@@ -291,7 +291,6 @@ fn a_seeded_duplicate_of_a_shared_entry_is_reported() {
         ("dangling-active-project", "###"),
         ("pin", "###"),
         ("unparseable-project", "###"),
-        ("dangling-parent", "####"),
     ] {
         assert!(shared.contains(seed), "`{seed}` is no longer shared");
         let mut pages = entry_pages();
@@ -328,8 +327,8 @@ fn explain_serves_the_page_section_verbatim() {
 
     for token in [
         "head-not-on-branch",
-        "stale-lock",
-        "dangling-parent",
+        "not-fast-forwardable",
+        "dangling-active-project",
         "edits",
         &last_entry,
     ] {
@@ -364,13 +363,13 @@ fn explain_serves_the_page_section_verbatim() {
 #[test]
 fn a_mistyped_token_is_suggested() {
     let out = common::rwv()
-        .args(["explain", "stale-lok"])
+        .args(["explain", "not-fast-forwardabel"])
         .output()
         .expect("rwv should run");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("did you mean: stale-lock"),
+        stderr.contains("did you mean: not-fast-forwardable"),
         "expected a token suggestion, got:\n{stderr}"
     );
 }

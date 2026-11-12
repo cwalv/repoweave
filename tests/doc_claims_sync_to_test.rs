@@ -106,7 +106,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/server",
+            "ww/project",
         ],
     );
 

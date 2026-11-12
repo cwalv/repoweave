@@ -33,7 +33,7 @@ Run `rwv status --help` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
-When this workspace owns an in-flight `sync`/`sync-to` op, or leases one to
+When this workspace owns an in-flight `sync`/`land` op, or leases one to
 another workspace, a header line prints ahead of the table: verb, op id,
 phase, age, and the owning workspace, followed by the two remedies
 (`--continue` from the owning workspace, or `rwv abort`). This is the same
@@ -124,7 +124,7 @@ in `repos`. The table prints a warning for each instead, and the exit code is
 still 0. Empty, not absent, when every project loaded.
 
 `op` is present only when this workspace owns or leases an in-flight op: an
-`OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
+`OpStatus` record carrying `id`, `verb` (`sync`/`land`), `phase`
 (`replay`/`relock`/`advance-target`/`retire`), `started_at`, the `owner`
 workspace (where `--continue`/`abort` must run), `source`, `target`, and
 `overrides`. Absent (not `null`) when no op is in progress.
@@ -173,7 +173,7 @@ Schema:
       }
     },
     "op": {
-      "description": "The sync/sync-to op parked at this workspace, or leased to one elsewhere, if any. Absent when no op is in progress — the same disclosure the in-flight refusal makes, before an operator has to attempt a mutation to learn it.",
+      "description": "The sync/land op parked at this workspace, or leased to one elsewhere, if any. Absent when no op is in progress — the same disclosure the in-flight refusal makes, before an operator has to attempt a mutation to learn it.",
       "anyOf": [
         {
           "$ref": "#/definitions/OpStatus"
@@ -728,7 +728,7 @@ Schema:
       ]
     },
     "OpPhase": {
-      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (land only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
           "description": "Project repo, then member repos: Phase 1' and Phase 2.",
@@ -745,7 +745,7 @@ Schema:
           ]
         },
         {
-          "description": "FF-advance every target repo to its converged tip (sync-to only).",
+          "description": "FF-advance every target repo to its converged tip (land only).",
           "type": "string",
           "enum": [
             "advance-target"
@@ -819,10 +819,10 @@ Schema:
           ]
         },
         {
-          "description": "Two-step sync-to.",
+          "description": "`rwv land`: compose in the source, then fast-forward the target.",
           "type": "string",
           "enum": [
-            "sync-to"
+            "land"
           ]
         },
         {
@@ -879,22 +879,8 @@ Schema:
     },
     "Override": {
       "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serializes to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
-      "oneOf": [
-        {
-          "description": "The lock-freshness precondition was waived on both sides.",
-          "type": "string",
-          "enum": [
-            "allow-stale-lock"
-          ]
-        },
-        {
-          "description": "Phase 1' may hard-reset the project repo past commits the source does not carry.",
-          "type": "string",
-          "enum": [
-            "discard-local-commits"
-          ]
-        }
-      ]
+      "type": "string",
+      "enum": []
     },
     "ParentInfo": {
       "description": "Recorded-parent exposure for a per-repo status entry.\n\nParent identity comes from the workweave's `.rwv-workweave` marker (`parent:`), never from the branch name: a workweave's branch is the flat `<project>--<name>`, which names no parent, and adoption can re-point the parent to primary. Consumers that need the parent must read this field.\n\n`path` is the recorded parent workspace path (identical for every repo in the workweave). `tip` is this specific repo's parent tip — the SHA that `git rev-parse HEAD` yields in the parent's checkout of the SAME repo — or `None` when the parent has no checkout of this repo (or HEAD is unreadable). The tip is what `git log <parent-tip>..HEAD` needs to compute the workweave's unique commits without re-deriving branch layout.",

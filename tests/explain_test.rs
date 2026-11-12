@@ -234,10 +234,9 @@ fn explain_close_typo_suggests_status() {
 }
 
 #[test]
-fn explain_close_typo_suggests_sync_to() {
-    // "sync-tto" has an extra 't' — should suggest "land".
+fn explain_close_typo_suggests_land() {
     rwv()
-        .args(["explain", "sync-tto"])
+        .args(["explain", "lannd"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("did you mean: land"));

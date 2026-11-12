@@ -165,7 +165,7 @@ under the same `--strategy`:
 A rebase replays each commit as a three-way merge; rwv holds the lock merge
 driver for the replay, so a lock-only commit replays as an empty patch rather
 than a conflict, and Phase 3 relocks. The replay reads the attribute line the
-tree it replays onto commits: `rwv sync-to --strategy=rebase` refuses
+tree it replays onto commits: `rwv land --strategy=rebase` refuses
 `missing-lock-merge-driver` for the source's project checkout as well as for
 the workspace it writes, and `rwv doctor --fix`, run where the refusal names,
 migrates it. Where that tree assigns `rwv.lock` no driver, rwv's own replay

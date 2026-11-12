@@ -7,7 +7,7 @@ in the branch the feature's record lands into (its target). On any weave branch,
 `--from <branch>` merges that branch's history in instead. A declared branch has
 no target: without `--from` it refuses as `target` `no target`.
 
-To land this workspace's work in another workspace instead, use `rwv sync-to`.
+To land this workspace's work in another workspace instead, use `rwv land`.
 
 Every refusal is judged before anything moves, and all of them are reported
 together. Then, under an op record:
@@ -153,7 +153,7 @@ Under `--json`, output is one pretty-printed envelope:
 }
 ```
 
-`outcomes` is empty: `rwv sync-to` fills it. Each checkout whose files the sync
+`outcomes` is empty: `rwv land` fills it. Each checkout whose files the sync
 moved gets a placement record under `placements`: `path`, `absolute_path` (the
 checkout the files are in), and `files` (`reflinked`, `hardlinked`, `written`).
 
@@ -426,7 +426,7 @@ Schema:
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — `Vcs::mid_op` constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
       "oneOf": [
         {
-          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
+          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv land --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
           "type": "string",
           "enum": [
             "rebase"
@@ -941,7 +941,7 @@ Schema:
       }
     },
     "Step3AdvanceOutput": {
-      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
+      "description": "Step-3 fast-forward advance record for one repo in `rwv land --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
       "type": "object",
       "required": [
         "from_sha",
@@ -1080,7 +1080,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1141,7 +1141,7 @@ Schema:
               ]
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1185,7 +1185,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"
@@ -1233,7 +1233,7 @@ Schema:
               "type": "string"
             },
             "step3_advance": {
-              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv land --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
               "anyOf": [
                 {
                   "$ref": "#/definitions/Step3AdvanceOutput"

@@ -381,7 +381,7 @@ impl Axis {
 }
 
 const LOCK_DRIVER_REFUSED_BY: &str = "every verb that writes the project repo or its lock, \
-before it writes anything: `rwv lock`, `rwv sync`, `rwv sync-to` (under `--strategy rebase`, for \
+before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (under `--strategy rebase`, for \
 the project checkout replayed onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
 verbs, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and \
 `delete`; `rwv doctor` reports it instead";

@@ -83,7 +83,6 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
     let weave = Weave::broken();
     let beta = origin(weave.tmp.path(), "beta");
     let ws = weave.ws.as_path();
-    let primary_dir = ws.to_str().unwrap().to_owned();
     let cases: Vec<(Vec<&str>, &Path)> = vec![
         (vec!["lock"], ws),
         (vec!["update"], ws),
@@ -94,7 +93,6 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
         (vec!["member", "set-role", MEMBER, "reference"], ws),
         (vec!["member", "remove", MEMBER], ws),
         (vec!["workweave", "delete", "--project", "app", "one"], ws),
-        (vec!["land", &primary_dir], &weave.workweave),
         (vec!["sync"], &weave.workweave),
         (vec!["land"], &weave.workweave),
     ];

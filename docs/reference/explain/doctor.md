@@ -55,7 +55,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   clone's HEAD, and the pin is given up. Named for what it destroys.
 
 **`--fix` deletes no branch.** Branches are deleted by the deletion rule, run
-by `rwv branch delete`, `rwv workweave delete` and `rwv sync-to --retire`;
+by `rwv branch delete`, `rwv workweave delete` and `rwv land --retire`;
 doctor reports where a checkout stands against the branch it should be on
 (`alignment`) and removes nothing from a repo's refs.
 
@@ -854,10 +854,10 @@ Schema:
           ]
         },
         {
-          "description": "Two-step sync-to.",
+          "description": "`rwv land`: compose in the source, then fast-forward the target.",
           "type": "string",
           "enum": [
-            "sync-to"
+            "land"
           ]
         },
         {
@@ -2759,7 +2759,7 @@ Schema:
       "description": "Discriminator for `CheckViolation::WorkweaveTreeIntegrity` findings.",
       "oneOf": [
         {
-          "description": "The marker's `parent:` path no longer exists on disk. The workweave's parent was retired or deleted out-of-band (a crash mid-adopt, or a hand-deletion) while this child remained. Bare `rwv sync-to` would otherwise mis-fire; instead it now surfaces friendly doctor-remediation text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary (which always exists). Normal retire/delete adopts children before the parent is destroyed, so this only arises off the happy path.",
+          "description": "The marker's `parent:` path no longer exists on disk. The workweave's parent was retired or deleted out-of-band (a crash mid-adopt, or a hand-deletion) while this child remained. Bare `rwv land` would otherwise mis-fire; instead it now surfaces friendly doctor-remediation text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary (which always exists). Normal retire/delete adopts children before the parent is destroyed, so this only arises off the happy path.",
           "type": "object",
           "required": [
             "dangling-parent"
@@ -3117,7 +3117,7 @@ rwv doctor --fix
   marker records a `parent:` path that no longer exists on disk (the parent
   was retired or deleted out-of-band). Run `rwv doctor --fix` to re-point
   the marker to the primary workspace. Branch names are left untouched. Once
-  fixed, re-run `rwv sync` or `rwv sync-to` from the workweave.
+  fixed, re-run `rwv sync` or `rwv land` from the workweave.
 - *workweave-tree-integrity / parent-chain-anomaly*, *unregistered-dir*,
   *foreign-primary* — other marker tree anomalies; report-only (`--fix` does
   not auto-remediate them).

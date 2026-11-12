@@ -750,10 +750,10 @@ fn judge_receiving_checkout(
         dir: &there,
         vcs,
     };
-    let lock = LockFile::from_path(
-        &project_dir(&landing.target_workspace, &landing.project).join(LockFile::FILE_NAME),
-    )
-    .ok();
+    let lock = LockFile::path_in(&project_dir(&landing.target_workspace, &landing.project))
+        .read_to_string()
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok());
     let planned = target_aligner.plan(&checked, lock.as_ref())?;
     match target_aligner.refusal(&checked, &planned, path)? {
         Some(off) => report.add(off.elsewhere(&landing.target_workspace)),

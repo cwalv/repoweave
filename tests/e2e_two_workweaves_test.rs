@@ -727,7 +727,7 @@ fn sync_to_retire_clean_path_deletes_workweave() {
     assert!(ww1.root.exists(), "workweave must exist pre-retire");
 
     rwv()
-        .args(["land", "--retire", &main.root.to_string_lossy()])
+        .args(["land", "--retire"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -762,7 +762,7 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
     std::fs::write(ww1.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
-        .args(["land", "--retire", &main.root.to_string_lossy()])
+        .args(["land", "--retire"])
         .current_dir(&ww1.root)
         .assert()
         .failure();

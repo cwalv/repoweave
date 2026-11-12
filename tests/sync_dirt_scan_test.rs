@@ -156,7 +156,7 @@ fn fixture() -> Fixture {
             "add",
             &ww_repo.to_string_lossy(),
             "-b",
-            "ww/main",
+            "ww/project",
         ],
     );
 
@@ -679,7 +679,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     let f = fixture();
     let new_sha = advance_primary(&f);
     // A feature's member sits on the feature's own branch.
-    common::git_in(&f.ww.repo_dir, &["branch", "-m", "ww/main", "ww/project"]);
+    common::git_in(&f.ww.repo_dir, &["branch", "-m", "ww/project", "ww/project"]);
 
     // Shared-ref advance: move ww's branch to the new tip from the canonical
     // store, leaving ww's index/working tree at the old state. Structurally

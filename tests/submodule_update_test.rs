@@ -516,7 +516,7 @@ fn sync_to_creates_a_checkout_with_its_submodules() {
     let weave = weave();
     let (one, two, member) = one_adds_two_lacks(&weave);
 
-    rwv(&one, &["land", "two"]);
+    rwv(&one, &["land", "--target", &format!("{PROJECT}--two")]);
 
     assert_populated(&two.join(&member));
 }

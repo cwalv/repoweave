@@ -201,8 +201,7 @@ fn a_pull_from_a_seat_forked_before_the_add_keeps_the_added_member() {
     let child = seat(&weave, &home, "child");
     add_and_commit(&home, &weave.extra_url, "owned");
 
-    let child_dir = child.to_string_lossy().into_owned();
-    let stdout = succeed(&home, &["land", &child_dir, "--strategy", "rebase"]);
+    let stdout = succeed(&home, &["land", "--target", "app--child", "--strategy", "rebase"]);
     assert_not_pruned(&stdout, &home);
     assert!(
         names_extra(&home),
@@ -418,8 +417,7 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
     let s2 = seat(&weave, &weave.root, "s2");
     drop_and_commit(&s2, "drop extra");
 
-    let s2_dir = s2.to_string_lossy().into_owned();
-    let stdout = succeed(&s1, &["land", &s2_dir, "--strategy", "rebase"]);
+    let stdout = succeed(&s1, &["land", "--target", "app--s2", "--strategy", "rebase"]);
     assert!(
         stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
         "{stdout}"

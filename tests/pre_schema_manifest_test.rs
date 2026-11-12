@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const OLD_MANIFEST: &str = "\
 # The members of this project.
 [repositories.\"github/acme/server\"]
@@ -420,7 +422,7 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/main",
+            "ww/project",
         ],
     );
     common::git_in(
@@ -452,8 +454,7 @@ fn primary_and_workweave(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 #[test]
-fn a_sync_to_a_target_whose_tip_names_the_old_keys_reads_its_manifest_as_empty_and_its_lock_as_pins(
-) {
+fn a_landing_into_a_target_whose_tip_names_the_old_keys_refuses_naming_doctor_fix() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _pinned) = primary_and_workweave(tmp.path());
 
@@ -474,31 +475,15 @@ fn a_sync_to_a_target_whose_tip_names_the_old_keys_reads_its_manifest_as_empty_a
     common::git_in(&ww.project, &["add", "rwv.lock"]);
     common::git_in(&ww.project, &["commit", "-m", "lock: ww change"]);
 
-    let mut sync = common::rwv();
-    sync.current_dir(&ww.root).args([
-        "land",
-        "--strategy",
-        "rebase",
-        "--json",
-    ]);
-    let assert = sync.assert().success();
-    let report: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
-        .unwrap_or_else(|e| panic!("land --json prints JSON: {e}"));
-    let server = report["outcomes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["path"] == SERVER_PATH)
-        .unwrap_or_else(|| panic!("no outcome for the server in {report}"));
-    assert_eq!(server["kind"], "already-ahead", "{report}");
-    assert_eq!(
-        server["containment"]["baseline"], "source-lock-entry",
-        "the target's lock still pins the member, though its manifest names nothing: {report}"
-    );
+    let before = common::git_in(&primary.server, &["rev-parse", "main"]);
+    let out = common::cli::run(&["land", "--strategy", "rebase"], &ww.root);
+    common::cli::refused(&out, State::UnparseableProjectAt);
     assert_eq!(
         common::git_in(&primary.server, &["rev-parse", "main"]),
-        advanced
+        before,
+        "a landing into a pre-schema tip moves nothing"
     );
+    let _ = advanced;
 }
 
 #[test]

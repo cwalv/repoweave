@@ -856,7 +856,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
     plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
-        .args(["land", "--retire", &primary.root.to_string_lossy()])
+        .args(["land", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .failure();

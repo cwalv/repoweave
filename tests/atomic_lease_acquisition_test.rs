@@ -125,7 +125,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/main",
+            "ww/project",
         ],
     );
 
@@ -215,12 +215,7 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // in flight on disk — a real holder produced by the production acquire
     // path, exactly what a crashed/conflicted peer leaves behind.
     let assertion = rwv()
-        .args([
-            "land",
-            "--strategy",
-            "rebase",
-            "--discard-local-commits",
-        ])
+        .args(["land", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -434,10 +429,9 @@ fn doctor_leaves_live_lease_alone() {
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
-        plan = common::land_plan_json(&owner_ws, &ww.root, "web-app"),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &owner_json).unwrap();
 
@@ -484,10 +478,9 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
         "{{\"id\": \"fresh-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
-        plan = common::land_plan_json(&owner_ws, &ww.root, "web-app"),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &fresh_json).unwrap();
 

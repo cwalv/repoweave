@@ -434,7 +434,6 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
     let tmp = common::tempdir().unwrap();
     let weave = unmigrated_weave(tmp.path());
     let remedy = format!("rwv -C {} doctor --fix", weave.seat.display());
-    let primary_arg = weave.primary.to_string_lossy().into_owned();
     let linked_before = canonical_state(&weave.linked_canonical);
 
     let refusals: Vec<(&Path, Vec<&str>)> = vec![
@@ -442,7 +441,6 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["lock"]),
         (&weave.seat, vec!["update", "--remote"]),
         (&weave.seat, vec!["sync"]),
-        (&weave.seat, vec!["land", primary_arg.as_str()]),
         (&weave.seat, vec!["land"]),
         (
             &weave.primary,

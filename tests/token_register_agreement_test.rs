@@ -61,7 +61,7 @@
 //!
 //! Widening the walk to the full population did find a real collision, not a
 //! vacuous pass: four of the doctor sub-kind vocabularies deliberately mirror
-//! seven `RefusalKind` conditions — the same D1 sentence one level below the
+//! six `RefusalKind` conditions — the same D1 sentence one level below the
 //! five registers, recorded in [`INTENDED_SUBKIND_REUSE`] rather than
 //! [`INTENDED_REUSE`] because a sub-kind is not a token any of the five
 //! registers mints.
@@ -850,11 +850,11 @@ fn the_vocabulary_walk_reads_every_shape_the_schemas_hold() {
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than
 /// [`INTENDED_REUSE`] reaches.
 ///
-/// `src/refusal.rs`'s own module doc states the rule these seven follow: some
+/// `src/refusal.rs`'s own module doc states the rule these six follow: some
 /// `RefusalKind` variants "deliberately mint a token a `rwv doctor` finding
 /// ... already publishes, because a token names one condition wherever it
 /// appears," and each is marked "Shared with the finding" at its declaration.
-/// Two of the seven go further than documentation: `MarkerDefect::kind()`
+/// Two of the six go further than documentation: `MarkerDefect::kind()`
 /// (`src/workspace.rs`) builds `RefusalKind::DanglingPrimary` and
 /// `RefusalKind::UnreadableMarker` directly from the doctor variant, so those
 /// two cannot drift apart in code even if this list went stale.
@@ -881,7 +881,6 @@ const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
     ("derived-state-stale", "AdvisoryKindOutput"),
     ("standalone-in-workweave", "CloneTopologyKind"),
     ("dangling-primary", "MarkerDefect"),
-    ("dangling-parent", "WorkweaveTreeIntegrityKind"),
     ("stale-registry-entry", "WorkweaveTreeIntegrityKind"),
     ("unreadable-marker", "WorkweaveTreeIntegrityKind"),
     ("unregistered-workweave", "WorkweaveTreeIntegrityKind"),

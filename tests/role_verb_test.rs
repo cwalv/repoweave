@@ -19,6 +19,8 @@ use repoweave::manifest::{Manifest, Role};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 fn run(args: &[&str], dir: &Path) -> std::process::Output {
     common::rwv().args(args).current_dir(dir).output().unwrap()
 }
@@ -460,43 +462,32 @@ fn an_unknown_role_or_repo_is_rejected() {
     assert_routes_to(&stderr, "repo-not-in-manifest");
 }
 
+/// A role change is a change to the target's entry, which a landing makes
+/// only where it is named; until it can be named, the landing refuses it
+/// before anything moves.
 #[test]
-fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
+fn a_landing_refuses_a_role_change_to_the_targets_entry() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
     let seat = weave.create("seat");
-    let other = weave.create("other");
 
     succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
-    succeed(&["land"], &seat);
-
-    assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Reference);
-    assert_read_only(&weave.ws.join(&weave.beta), "the target, on landing");
-
-    assert_writable(
-        &other.join(&weave.beta),
-        "another workweave, before its sync",
-    );
-    succeed(&["sync"], &other);
-    assert_read_only(
-        &other.join(&weave.beta),
-        "another workweave, on its next sync",
-    );
+    let out = common::cli::run(&["land"], &seat);
+    let stderr = common::cli::refused(&out, State::TargetMemberChanges);
+    assert!(stderr.contains("role: owned → reference"), "{stderr}");
+    assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Owned);
+    assert_writable(&weave.ws.join(&weave.beta), "the target, refused");
 }
 
 #[test]
 fn a_sync_sets_aside_an_uncommitted_version_of_a_file_rwv_generates_and_regenerates_it() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
-    let seat = weave.create("seat");
     let other = weave.create("other");
 
-    succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
-    succeed(&["update"], &seat);
-    succeed(&["lock", "--commit"], &seat);
-    succeed(&["land"], &seat);
+    succeed(&["member", "set-role", &weave.beta, "reference"], &weave.ws);
 
     let generated = weave.project_dir(&other).join("Cargo.toml");
     let mut text = std::fs::read_to_string(&generated).unwrap();
