@@ -4079,6 +4079,29 @@ mod tests {
     }
 
     #[test]
+    fn more_leases_refused_on_a_workspace_another_op_holds_take_back_every_lease_they_wrote() {
+        let tmp = crate::tempdir().unwrap();
+        let [owner_dir, target_dir, third, fourth, other_owner] =
+            ["owner", "target", "third", "fourth", "other"].map(|name| tmp.path().join(name));
+        for dir in [&owner_dir, &target_dir, &third, &fourth, &other_owner] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let record = make_land_record(&OpId::new_now(), &owner_dir, &target_dir);
+        let mut acquired = acquire_op(&land_touched(&owner_dir, &target_dir), &record).unwrap();
+        let other = make_sync_record(&OpId::new_now(), &other_owner, &fourth);
+        write_owner(&other_owner, &other).unwrap();
+        acquire_lease(&fourth, &other_owner, &other.id).unwrap();
+
+        assert!(acquire_more_leases(&mut acquired, &[third.clone(), fourth], &record).is_err());
+
+        assert!(
+            read_lease(&third).unwrap().is_none(),
+            "the lease written before the refused one is taken back"
+        );
+        assert!(read_lease(&target_dir).unwrap().is_some());
+    }
+
+    #[test]
     fn acquire_op_writes_owner_only_for_plain_sync() {
         // Plain `sync` has no lease workspaces — only the owner record is
         // written. This is the minimal-acquisition case.

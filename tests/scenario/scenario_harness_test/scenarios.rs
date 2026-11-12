@@ -13250,6 +13250,8 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                 Step::rwv(&a(), &["status"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("in progress")),
+                Step::rwv(&a(), &["lock", "--commit"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpInProgress)),
                 Step::release("again").expect(Exit::Succeeds),
                 Step::rwv(&a(), &["status"])
                     .expect(Exit::Succeeds)
