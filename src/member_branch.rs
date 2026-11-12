@@ -309,12 +309,12 @@ pub(crate) fn judge_entry(
         project_vcs().as_ref(),
         tracking.local_counterpart().as_str(),
     ) {
-        let mut features = crate::branch::other_projects_with_feature(
+        let mut features = crate::names::other_projects_with_feature(
             ctx.primary_path(),
             &loaded.project,
             &name,
             member,
-        );
+        )?;
         let pvcs = project_vcs();
         if let Ok(store) = crate::records::Store::open(pvcs.as_ref(), &loaded.project_dir) {
             if let Ok(view) = store.view() {

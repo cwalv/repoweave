@@ -812,9 +812,8 @@ impl State {
                         member's branch, the member and the declaring branches listed: the \
                         member's branch of that name is the declared branch, and a feature's \
                         own member branch cannot be it",
-                refused_by: "`rwv branch rename`, for a feature; `rwv branch create`, for a \
-                             feature",
-                offers: &[Form::C10],
+                refused_by: "the verbs that write, open, align or publish a feature",
+                offers: &[Form::C10, Form::C12Declared],
                 verb_offers: &[("branch create", Form::AnotherName)],
             },
             Self::NameFeature => &StateRow {
@@ -823,10 +822,9 @@ impl State {
                 means: "a feature would take a name that another project's feature of that \
                         name already uses for a member both list, the project and the member \
                         named: one member branch would serve two features",
-                refused_by: "`rwv branch rename`, for a feature; `rwv branch create`, for a \
-                             feature; `rwv member set-branch`, for a branch a feature of that \
-                             name uses",
-                offers: &[Form::C10],
+                refused_by: "the verbs that write, open, align or publish a feature; `rwv member \
+                             set-branch`, for a branch a feature of that name uses",
+                offers: &[Form::C10, Form::C12Declared],
                 verb_offers: &[
                     ("member set-branch", Form::C11SetBranch),
                     ("branch create", Form::AnotherName),

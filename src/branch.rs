@@ -7,9 +7,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::add_remove::find_project;
-use crate::alignment::Accounting;
 use crate::diagnosis::{Judged, Judging, Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
+use crate::names::{judge_feature_names, require_feature_names, NameScan};
 use crate::parallel::OutputMode;
 use crate::path_spelling::CanonicalPath;
 use crate::records::{
@@ -207,6 +207,32 @@ pub fn require_recorded(ctx: &WorkspaceContext) -> anyhow::Result<()> {
         return Ok(());
     };
     let branch = named(vcs.as_ref(), &project, &dir, &text)?;
+    let record = recorded_value(vcs.as_ref(), &project, &dir, &branch)?;
+    let Ok(manifest) = Manifest::from_path(&dir.join(Manifest::FILE_NAME)) else {
+        return Ok(());
+    };
+    require_feature_names(
+        ctx.active_path(),
+        &NameScan::of(ctx.primary_path(), &project),
+        &branch,
+        &record,
+        &manifest,
+        None,
+    )
+}
+
+/// [`require_recorded`] without the Names rule, for a verb that records pins
+/// and neither aligns nor publishes.
+pub fn require_record(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    if !vcs.is_repo(&dir) {
+        return Ok(());
+    }
+    let Some(text) = checked_out(vcs.as_ref(), &dir)? else {
+        return Ok(());
+    };
+    let branch = named(vcs.as_ref(), &project, &dir, &text)?;
     recorded_value(vcs.as_ref(), &project, &dir, &branch).map(|_| ())
 }
 
@@ -361,13 +387,34 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
         .map(|t| named(vcs.as_ref(), &project, &dir, t))
         .transpose()?;
     let known = vcs.named_branches(&dir)?;
-    if !known.iter().any(|b| b.name == branch.as_str()) {
+    let Some(known) = known.iter().find(|b| b.name == branch.as_str()) else {
         return Err(State::NameNoSuchBranch
             .of(label(&project))
             .project_repo()
             .subject(&branch)
             .judge(vcs.as_ref())
             .refused());
+    };
+    if request.mode == Mode::Feature {
+        let tip = ResolvedRevisionId::from(known.tip.clone());
+        let manifest = match vcs.read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME)) {
+            Ok(text) => Manifest::from_toml_str(&text).ok(),
+            Err(crate::vcs::VcsError::RevisionNotFound { .. }) => None,
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(manifest) = manifest {
+            let mut report = Report::default();
+            for judged in judge_feature_names(
+                ctx.active_path(),
+                &NameScan::of(ctx.primary_path(), &project),
+                &branch,
+                &manifest,
+                Some("branch set-mode"),
+            )? {
+                report.add(judged);
+            }
+            report.into_result()?;
+        }
     }
     let store = Store::open(vcs.as_ref(), &dir)?;
     let before = view_of(&store)?;
@@ -491,83 +538,6 @@ fn other_checkouts(repo: &Moving, old: &RawRefName) -> anyhow::Result<Vec<PathBu
         .collect())
 }
 
-pub(crate) fn other_projects_with_feature(
-    primary: &Path,
-    project: &ProjectName,
-    new: &BranchName,
-    member: &RepoPath,
-) -> Vec<String> {
-    let vcs = project_vcs();
-    let mut found = Vec::new();
-    for other in crate::workspace::discover_projects(primary) {
-        if &other == project {
-            continue;
-        }
-        let dir = crate::workspace::project_dir(primary, &other);
-        if !vcs.is_repo(&dir) {
-            continue;
-        }
-        let Ok(store) = Store::open(vcs.as_ref(), &dir) else {
-            continue;
-        };
-        let Ok(view) = store.view() else { continue };
-        if !matches!(view.lookup(new), Lookup::Value(Record::Feature { .. })) {
-            continue;
-        }
-        let Ok(branches) = vcs.named_branches(&dir) else {
-            continue;
-        };
-        let Some(branch) = branches.iter().find(|b| b.name == new.as_str()) else {
-            continue;
-        };
-        let tip = ResolvedRevisionId::from(branch.tip.clone());
-        let lists = vcs
-            .read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
-            .ok()
-            .and_then(|text| Manifest::from_toml_str(&text).ok())
-            .is_some_and(|manifest| manifest.get_entry(member).is_some());
-        if lists {
-            found.push(label(&other));
-        }
-    }
-    found
-}
-
-/// A member branch a feature named `name` would take: refused where a live
-/// weave branch declares it for the member (`name` declared) or another
-/// project's feature of that name lists the member (`name` feature).
-pub(crate) fn judge_feature_name(
-    repo: &Moving,
-    name: &BranchName,
-    scan: &NameScan<'_>,
-    verb: &'static str,
-    report: &mut Report,
-) {
-    let Some(path) = &repo.member else {
-        return;
-    };
-    let declarers = scan.accounting.declarers(path, name.as_str());
-    if !declarers.is_empty() {
-        report.add(
-            repo.judging(State::NameDeclared)
-                .subject(name)
-                .listing(declarers)
-                .by_verb(verb)
-                .judge(repo.vcs.as_ref()),
-        );
-    }
-    let elsewhere = other_projects_with_feature(scan.primary, scan.project, name, path);
-    if !elsewhere.is_empty() {
-        report.add(
-            repo.judging(State::NameFeature)
-                .subject(name)
-                .listing(elsewhere)
-                .by_verb(verb)
-                .judge(repo.vcs.as_ref()),
-        );
-    }
-}
-
 /// `name` taken in the repo: a local branch, or one a remote has as last
 /// fetched unless `remote_is_free`. Reported as `name` exists; whether it was
 /// is returned.
@@ -636,7 +606,6 @@ fn judge_rename_of(
             );
         }
     }
-    judge_feature_name(repo, new, scan, "branch rename", report);
     if judge_name_taken(repo, new, request.adopt, "branch rename", report)? {
         return Ok(());
     }
@@ -682,12 +651,6 @@ fn judge_rename_of(
         branch: new_raw,
     });
     Ok(())
-}
-
-pub(crate) struct NameScan<'a> {
-    pub(crate) primary: &'a Path,
-    pub(crate) project: &'a ProjectName,
-    pub(crate) accounting: Accounting,
 }
 
 fn rename_in(repo: &Moving, old: &RawRefName, new: &RawRefName) -> anyhow::Result<()> {
@@ -801,11 +764,19 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
         record.mode() == Mode::Feature,
         &old_raw,
     )?;
-    let scan = NameScan {
-        primary: ctx.primary_path(),
-        project: &project,
-        accounting: Accounting::scan(ctx.primary_path()),
-    };
+    let scan = NameScan::of(ctx.primary_path(), &project);
+    if record.mode() == Mode::Feature {
+        let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+        for judged in judge_feature_names(
+            ctx.active_path(),
+            &scan,
+            &new,
+            &manifest,
+            Some("branch rename"),
+        )? {
+            report.add(judged);
+        }
+    }
     for repo in &mut repos {
         judge_rename_of(repo, &request, &old, &new, &scan, &mut report)?;
     }

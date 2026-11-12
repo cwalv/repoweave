@@ -874,3 +874,54 @@ fn a_lock_that_does_not_read_at_the_destination_refuses_before_the_project_repo_
 
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
 }
+
+fn declare_lib_on_rel(ws: &Path, branch: &str) {
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "rel", "--declared"], ws);
+    let toml = std::fs::read_to_string(project.join("rwv.toml")).unwrap();
+    std::fs::write(
+        project.join("rwv.toml"),
+        toml.replace("branch = \"main\"", &format!("branch = \"{branch}\"")),
+    )
+    .unwrap();
+    git_ok(&project, &["commit", "-qam", "declare lib's branch"]);
+    succeed(&["switch", "main"], ws);
+}
+
+#[test]
+fn opening_or_recording_a_feature_whose_name_a_live_branch_declares_is_refused() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    declare_lib_on_rel(ws, "feat-d");
+    git_ok(&project, &["branch", "feat-d", "main"]);
+
+    let opened = refuse(&["switch", "feat-d", "--target", "main"], ws);
+    assert!(opened.contains("name declared"), "{opened}");
+    assert_eq!(head_branch(&project).as_deref(), Some("main"));
+    assert!(record_of(ws, "feat-d").is_none());
+
+    let recorded = refuse(
+        &["branch", "set-mode", "feat-d", "feature", "--target", "main"],
+        ws,
+    );
+    assert!(recorded.contains("name declared"), "{recorded}");
+    assert!(record_of(ws, "feat-d").is_none());
+}
+
+#[test]
+fn a_name_collision_seen_later_refuses_the_verbs_that_align_or_publish_the_feature() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "feat-d"], ws);
+    succeed(&["switch", "main"], ws);
+    declare_lib_on_rel(ws, "feat-d");
+    git_ok(&project, &["switch", "-q", "feat-d"]);
+
+    for verb in [&["update"][..], &["push"][..]] {
+        let out = refuse(verb, ws);
+        assert!(out.contains("name declared"), "{out}");
+        assert!(out.contains("rwv branch set-mode feat-d declared"), "{out}");
+    }
+}

@@ -426,6 +426,14 @@ fn resolve(
             .and_then(|text| LockFile::from_json_str(&text).ok());
         (manifest, lock)
     };
+    crate::names::require_feature_names(
+        ctx.active_path(),
+        &crate::names::NameScan::of(ctx.primary_path(), &project),
+        &branch,
+        &record,
+        &manifest,
+        Some("push"),
+    )?;
     Ok(Pushed {
         project,
         project_dir: dir,

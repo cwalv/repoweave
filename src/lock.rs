@@ -396,7 +396,7 @@ pub fn lock(
     dirty: bool,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
-    crate::branch::require_recorded(ctx)?;
+    crate::branch::require_record(ctx)?;
     let relocking = Relocking {
         verb: "lock",
         acting,
