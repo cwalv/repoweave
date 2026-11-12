@@ -15916,6 +15916,61 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     }
 }
 
+/// A `merge` project with `linear` `app` and `lib`: `w1` commits in both,
+/// `w2` onto `w1` only in `app`, and `main` moves both. `w1`'s sync merges
+/// its project branch and rebases both members; `w2`'s project branch,
+/// carried, holds `w1`'s new project tip and pins the rebased `lib` it
+/// inherits, not the commit the rebase replaced.
+pub fn a_dependent_carried_onto_a_merged_project_pins_what_it_inherits() -> Scenario {
+    let linear = |repo: &'static str| {
+        Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", repo]).expect(Exit::Succeeds)
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        linear("local/remotes/app"),
+        linear("local/remotes/lib"),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w1"), Repo::Lib, "w1-lib"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::commit(&a(), Repo::Lib, "main-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::Lib,
+                subject: "w1-lib",
+                reached_from: "w2",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "w2",
+            }),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
+    ];
+    steps.push(Step::rwv(&ww("w1"), &["status"]).expect(Exit::Succeeds));
+    scenario(
+        "stack: a dependent carried onto a merged project pins what it inherits",
+        steps,
+    )
+}
+
 /// How a refused abort of a carried stack someone built on is cleared.
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltOnChoice {

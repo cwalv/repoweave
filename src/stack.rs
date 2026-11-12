@@ -498,9 +498,10 @@ impl Carrier<'_> {
     }
 
     /// Where a dependent's project branch is replayed when its target's is
-    /// not rewritten, so its pins can follow its carried members: onto the
-    /// target's tip, where it holds it, else onto their merge base, its own
-    /// commits replayed in place.
+    /// not rewritten, so its pins can follow its carried members: its own
+    /// commits, those beyond the target's tip where it holds it, else beyond
+    /// their merge base, onto the target's tip, whose lock pins what the
+    /// members' rewrites made.
     fn in_place(
         &self,
         repo: &RepoKey,
@@ -524,7 +525,7 @@ impl Carrier<'_> {
                 None => return Ok(None),
             }
         };
-        Ok(Some((base.clone(), base)))
+        Ok(Some((base, tip.id().clone())))
     }
 
     fn compose(

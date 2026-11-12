@@ -748,6 +748,7 @@ every_scenario!(
     stack_carry_conflict(scenarios::AfterHandContinue::Continue),
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::SyncRelocked),
+    a_dependent_carried_onto_a_merged_project_pins_what_it_inherits,
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Abandon),
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOut),
@@ -5184,6 +5185,12 @@ fn an_abort_after_a_carry_finished_by_hand_reads_its_tip_as_its_own() {
         scenarios::BeforeTheCarry::FinishedByHand,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependent_carried_onto_a_merged_project_pins_what_it_inherits() {
+    runner::run(scenarios::a_dependent_carried_onto_a_merged_project_pins_what_it_inherits())
+        .assert_fully_decided_green();
 }
 
 #[test]
