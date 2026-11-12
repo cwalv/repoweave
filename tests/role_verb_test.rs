@@ -485,3 +485,26 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
         "another workweave, on its next sync",
     );
 }
+
+#[test]
+fn a_sync_sets_aside_an_uncommitted_version_of_a_file_rwv_generates_and_regenerates_it() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let seat = weave.create("seat");
+    let other = weave.create("other");
+
+    succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
+    succeed(&["update"], &seat);
+    succeed(&["lock", "--commit"], &seat);
+    succeed(&["sync-to", &weave.ws.to_string_lossy()], &seat);
+
+    let generated = weave.project_dir(&other).join("Cargo.toml");
+    let mut text = std::fs::read_to_string(&generated).unwrap();
+    text.push_str("\n# left by an earlier regeneration\n");
+    std::fs::write(&generated, &text).unwrap();
+    succeed(&["sync"], &other);
+    assert!(!std::fs::read_to_string(&generated)
+        .unwrap()
+        .contains("left by an earlier regeneration"));
+    assert_read_only(&other.join(&weave.beta), "another workweave, on its sync");
+}

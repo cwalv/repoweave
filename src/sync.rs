@@ -2586,7 +2586,7 @@ fn judge_rebase_protection(
     project: &Project,
     workspace: &Path,
     source_lock: &crate::manifest::ResolvedLockFile,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Report> {
     let accounting = crate::alignment::Accounting::scan(ctx.primary_path())?;
     let mut report = Report::default();
     for (path, entry) in project.manifest.iter_entries() {
@@ -2619,11 +2619,11 @@ fn judge_rebase_protection(
                 .subject(&branch)
                 .listing(declarers)
                 .bind("<m>", path)
-                .by_verb("sync")
+                .by_verb("sync-to")
                 .judge(vcs.as_ref()),
         );
     }
-    report.into_result()
+    Ok(report)
 }
 
 // ---------------------------------------------------------------------------
@@ -3025,14 +3025,6 @@ fn run_preconditions_after_acquire(
     let cwd_project = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
-    if strategy == SyncStrategy::Rebase {
-        judge_rebase_protection(
-            cwd_ctx,
-            &cwd_project,
-            cwd_workspace_dir,
-            &snapshot.source_lock,
-        )?;
-    }
 
     // === Benign-staleness classification ===
     //
@@ -3177,6 +3169,17 @@ fn run_preconditions_after_acquire(
     } else {
         None
     };
+
+    let mut protection = Report::default();
+    if strategy == SyncStrategy::Rebase {
+        protection = judge_rebase_protection(
+            cwd_ctx,
+            &cwd_project,
+            cwd_workspace_dir,
+            &snapshot.source_lock,
+        )?;
+    }
+    protection.into_result()?;
 
     Ok(PreconditionOutcome {
         snapshot,

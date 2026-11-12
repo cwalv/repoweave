@@ -705,13 +705,13 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         }
     };
     if project_act != Act::Nothing {
-        report.extend(crate::diagnosis::judge_edits(
-            vcs,
-            &label,
-            dir,
-            vcs.tracked_dirty_file_names(dir)?,
-            None,
-        ));
+        let authored = crate::activate::owned_paths(sync.ctx.active_path(), &sync.project, &ours);
+        let dirty: Vec<String> = vcs
+            .tracked_dirty_file_names(dir)?
+            .into_iter()
+            .filter(|path| !authored.contains(path))
+            .collect();
+        report.extend(crate::diagnosis::judge_edits(vcs, &label, dir, dirty, None));
     }
     if !resets_project && !sync.merging() {
         let receiving = [source.clone()];
@@ -1329,6 +1329,7 @@ fn act(
             relock(sync, &pre_head, &source, &moved, false)?;
         }
     } else {
+        set_aside_authored(sync, &pre_manifest)?;
         take_project(sync, &head, &source, resets_project, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project)?;
     }
@@ -1649,6 +1650,23 @@ impl Reach for MemberReach<'_> {
             .is_ancestor(&self.root.join(member.as_path()), &rev(ancestor), &rev(of))
             .ok()
     }
+}
+
+/// Discard the uncommitted versions of the files the integrations author in
+/// the project repo: the project branch is about to move under them, and
+/// settling regenerates each from the members it leaves.
+fn set_aside_authored(sync: &Sync<'_>, manifest: &Manifest) -> anyhow::Result<()> {
+    let vcs = sync.vcs.as_ref();
+    let authored = crate::activate::owned_paths(sync.ctx.active_path(), &sync.project, manifest);
+    for path in vcs.tracked_dirty_file_names(&sync.dir)? {
+        if !authored.contains(&path) {
+            continue;
+        }
+        let file = sync.dir.join(&path);
+        let captured = std::fs::read(&file).unwrap_or_default();
+        vcs.discard_captured_change(&sync.dir, Path::new(&path), &captured)?;
+    }
+    Ok(())
 }
 
 /// The lock a sync leaves: the three-way merge of pins against the merge
