@@ -1539,7 +1539,9 @@ impl State {
                         whose entries match the feature's is listed as a `--target` candidate",
                 refused_by: "`rwv land`, before anything moves, unless `--allow-member-change` \
                              names the repo: the member's path, or `projects/<p>` for the \
-                             top-level `history`",
+                             top-level `history`; and `rwv land --continue`, judging `rwv.toml` \
+                             as the stop's resolution leaves it, unless the landing's start or \
+                             the `--continue` names the repo",
                 offers: &[
                     Form::C12Feature,
                     Form::C11SetBranch,
@@ -1553,6 +1555,8 @@ impl State {
                     Form::C11MemberAdd,
                     Form::C25,
                     Form::C31,
+                    Form::C31Continue,
+                    Form::LostRace,
                 ],
                 verb_offers: &[],
             },
@@ -2099,6 +2103,7 @@ pub enum Form {
     C30Switch,
     C30BranchCreate,
     C31,
+    C31Continue,
     C32,
     C33,
     C34,
@@ -2133,7 +2138,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 83] = [
+    pub const ALL: [Form; 84] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2194,6 +2199,7 @@ impl Form {
         Self::C30Switch,
         Self::C30BranchCreate,
         Self::C31,
+        Self::C31Continue,
         Self::C32,
         Self::C33,
         Self::C34,
@@ -2591,6 +2597,12 @@ impl Form {
             Self::C31 => &FormRow {
                 choice: C::C31,
                 steps: &[Rwv("rwv land --allow-member-change <m>")],
+                at: W::WithFeature,
+                shipped: true,
+            },
+            Self::C31Continue => &FormRow {
+                choice: C::C31,
+                steps: &[Rwv("rwv land --continue --allow-member-change <m>")],
                 at: W::WithFeature,
                 shipped: true,
             },

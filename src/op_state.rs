@@ -564,6 +564,22 @@ pub enum LandingReport {
         was: CommitId,
         now: CommitId,
     },
+    /// A field of the target's entry for `repo`, or of its top-level
+    /// settings, changed by name from `was` to `now`.
+    EntryChanged {
+        repo: RepoKey,
+        field: String,
+        was: String,
+        now: String,
+    },
+    /// The target's entry for `repo` removed by name.
+    EntryRemoved { repo: RepoKey },
+}
+
+impl LandingReport {
+    pub fn is_entry_change(&self) -> bool {
+        matches!(self, Self::EntryChanged { .. } | Self::EntryRemoved { .. })
+    }
 }
 
 /// The commits a declared-branch change leaves on the old branch.

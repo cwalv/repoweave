@@ -1465,6 +1465,7 @@ pub fn run() -> anyhow::Result<()> {
                 sync::SyncRequest::Continue {
                     op: Box::new(crate::op_state::resume(ctx.active_path())?),
                     project_override,
+                    allow_member_change,
                 }
             } else {
                 crate::branch::require_recorded(&ctx)?;

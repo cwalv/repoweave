@@ -6474,6 +6474,100 @@ pub fn dc06_member_set_from_merge() -> Scenario {
     )
 }
 
+/// `main` adds `docs` while the feature removes `lib`; the landing, `lib`
+/// named, stops on `rwv.toml`, and the resolution keeps the feature's file,
+/// which drops `docs` too.
+fn stop_resolved_to_the_features_manifest() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        create("w"),
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
+             [\"notes.txt\"]\n",
+        ),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: removed (the target's entry, named by \
+                 --allow-member-change)",
+            )),
+        Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"]),
+        Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
+            .claim(Claim::OutputContains("removed"))
+            .claim(Claim::OutputInOrder(&[
+                "rwv land --continue --allow-member-change local/remotes/docs",
+                "rwv abort",
+            ]))
+            .claim(Claim::LocalStateUnchanged(a())),
+    ]
+}
+
+/// A `--continue` judges `rwv.toml` as the stop's resolution leaves it: a
+/// change the landing's start did not name refuses, and the consent the
+/// refusal prints, given to `--continue`, lands it and reports it.
+pub fn continue_rejudges_the_resolved_manifest() -> Scenario {
+    let mut steps = stop_resolved_to_the_features_manifest();
+    steps.extend([
+        Step::rwv(
+            &ww("w"),
+            &[
+                "land",
+                "--continue",
+                "--allow-member-change",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+        .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &ww("w"),
+            &["land", "--continue", "--allow-member-change", DOCS],
+        )
+        .expect(Exit::Succeeds)
+        .may_strand(&[Repo::Proj])
+        .claim(Claim::OutputContains(
+            "local/remotes/docs: removed (the target's entry, named by \
+             --allow-member-change)",
+        ))
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "main",
+            mark: "w-app",
+        }),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .claim(Claim::OutputLacks(LIB))
+            .claim(Claim::OutputLacks(DOCS)),
+    ]);
+    scenario("continue rejudges the resolved manifest", steps)
+}
+
+/// The other choice a `--continue` refused on its resolution prints: `rwv
+/// abort` puts the target back, and a fresh `rwv land` judges the entries
+/// again.
+pub fn continue_refused_on_its_resolution_aborts() -> Scenario {
+    let mut steps = stop_resolved_to_the_features_manifest();
+    steps.extend([
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+            .claim(Claim::LocalStateUnchanged(a())),
+    ]);
+    scenario("continue refused on its resolution aborts", steps)
+}
+
 /// `raw-merge-member-change`: a raw merge of `stable` into a feature onto
 /// `main` changes `docs`'s declared branch. Landing it refuses until `docs`
 /// is named; once landed, `status` in `main`'s workspace reports the change,

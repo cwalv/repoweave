@@ -23,7 +23,7 @@ fn the_harness_can_build_both_requests_without_consent() {
             }
         }
         pub fn resume(op: Box<ResolvedOwner>) -> SyncRequest {
-            SyncRequest::Continue { op, project_override: None }
+            SyncRequest::Continue { op, project_override: None, allow_member_change: Vec::new() }
         }
         "#,
     );
@@ -42,6 +42,7 @@ fn a_resume_cannot_ask_for_a_retire() {
             SyncRequest::Continue {
                 op,
                 project_override: None,
+                allow_member_change: Vec::new(),
                 retire: true,
             }
         }

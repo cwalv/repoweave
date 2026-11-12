@@ -586,6 +586,7 @@ fn resume_request(invocation: &WorkspaceContext) -> SyncRequest {
                 .expect("the stranded op is recorded"),
         ),
         project_override: None,
+        allow_member_change: Vec::new(),
     }
 }
 

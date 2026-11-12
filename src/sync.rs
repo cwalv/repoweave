@@ -711,6 +711,18 @@ pub enum LandingReportOutput {
         was: CommitId,
         now: CommitId,
     },
+    /// A field of the target's entry for `path`, or of its top-level
+    /// settings, changed from `was` to `now`, named by
+    /// `--allow-member-change`.
+    EntryChanged {
+        path: String,
+        field: String,
+        was: String,
+        now: String,
+    },
+    /// The target's entry for `path` removed, named by
+    /// `--allow-member-change`.
+    EntryRemoved { path: String },
 }
 
 impl LandingReportOutput {
@@ -736,6 +748,20 @@ impl LandingReportOutput {
                 path: repo.to_string(),
                 was: was.clone(),
                 now: now.clone(),
+            },
+            op_state::LandingReport::EntryChanged {
+                repo,
+                field,
+                was,
+                now,
+            } => Self::EntryChanged {
+                path: repo.to_string(),
+                field: field.clone(),
+                was: was.clone(),
+                now: now.clone(),
+            },
+            op_state::LandingReport::EntryRemoved { repo } => Self::EntryRemoved {
+                path: repo.to_string(),
             },
         }
     }
@@ -768,6 +794,20 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     was.short(),
                     now.short()
                 );
+            }
+            op_state::LandingReport::EntryChanged {
+                repo,
+                field,
+                was,
+                now,
+            } => {
+                eprintln!(
+                    "  {repo}: {field}: {was} → {now} (the target's entry, named by \
+                     --allow-member-change)"
+                );
+            }
+            op_state::LandingReport::EntryRemoved { repo } => {
+                eprintln!("  {repo}: removed (the target's entry, named by --allow-member-change)");
             }
         }
     }
@@ -2359,6 +2399,9 @@ pub enum SyncRequest {
         op: Box<op_state::ResolvedOwner>,
         /// Asserts the recorded project; a different one refuses.
         project_override: Option<ProjectName>,
+        /// The repos `--allow-member-change` names, added to the consent the
+        /// op recorded at its start.
+        allow_member_change: Vec<RepoOperand>,
     },
 }
 
@@ -2402,7 +2445,14 @@ fn run_machine(
         SyncRequest::Continue {
             op,
             project_override,
-        } => load_continuing_context(cwd_ctx, *op, project_override, handler)?,
+            allow_member_change,
+        } => load_continuing_context(
+            cwd_ctx,
+            *op,
+            project_override,
+            &allow_member_change,
+            handler,
+        )?,
     };
 
     // Reported before the first phase, so a run that fails partway still
@@ -3228,6 +3278,10 @@ fn guard_and_mark<'a>(
     }
     take_in.left_behind = plan.left_behind.clone();
     report_left_behind(handler, &take_in.left_behind);
+    for change in &plan.landed_changes {
+        emit_landing_report(handler, change);
+    }
+    take_in.reports.extend(plan.landed_changes.iter().cloned());
     let mut record = op_state::read_owner(&owner_workspace_dir)?
         .context("the op record vanished as the landing began")?;
     record.take_in = Some(take_in.clone());
@@ -3268,6 +3322,7 @@ fn load_continuing_context<'a>(
     invocation_ctx: &'a WorkspaceContext,
     op: op_state::ResolvedOwner,
     project_override: Option<ProjectName>,
+    allow_member_change: &[RepoOperand],
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
     let emit_text = handler.emit_text();
@@ -3303,7 +3358,7 @@ fn load_continuing_context<'a>(
             );
         }
     }
-    let take_in = record
+    let mut take_in = record
         .take_in
         .clone()
         .filter(|take_in| take_in.receiving.contains_key(&RepoKey::Project))
@@ -3349,6 +3404,13 @@ fn load_continuing_context<'a>(
             return Err(moved.refused());
         }
     }
+
+    rejudge_entries(
+        &record,
+        &mut take_in,
+        &owner_workspace_dir,
+        allow_member_change,
+    )?;
 
     handler.record_resumed(record.phase.clone());
     let entry_phase = resume_entry_phase(&record.phase);
@@ -3435,6 +3497,83 @@ fn load_continuing_context<'a>(
         op_id,
         snapshot,
     })
+}
+
+/// Judge the source's `rwv.toml`, as the stop's resolution leaves it, against
+/// `T`'s tip under the consent the op recorded and the one this `--continue`
+/// adds; record the added consent once it is judged. A landing that already
+/// moved `T` has nothing left to judge, and a consent named then names
+/// nothing.
+fn rejudge_entries(
+    record: &op_state::OwnerRecord,
+    take_in: &mut op_state::TakeInRecord,
+    owner_workspace_dir: &Path,
+    added: &[RepoOperand],
+) -> anyhow::Result<()> {
+    let target_branch = match &take_in.sync_from {
+        Some(op_state::SyncFrom::Target(name)) => name.clone(),
+        _ => take_in
+            .receiving
+            .get(&RepoKey::Project)
+            .map(|r| r.branch.clone())
+            .unwrap_or_default(),
+    };
+    let target = target_branch.as_str();
+    if matches!(record.phase, op_state::OpPhase::Retire) {
+        if let Some(named) = added.first() {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "`--allow-member-change {named}` names no change this landing makes to \
+                 '{target}''s entries: it has already landed into '{target}'"
+            );
+        }
+        return Ok(());
+    }
+    let Some(target_tip) = take_in
+        .receiving
+        .get(&RepoKey::Project)
+        .map(|r| r.tip.clone())
+    else {
+        return Ok(());
+    };
+    let recorded: Vec<RepoOperand> = take_in
+        .allow_member_change
+        .iter()
+        .map(|named| named.parse())
+        .collect::<Result<_, _>>()?;
+    let resumed = crate::land::Resumed {
+        project: &record.project,
+        target,
+        target_tip: &target_tip,
+        recorded: &recorded,
+        added,
+    };
+    match crate::land::rejudge_resolved(&resumed, owner_workspace_dir)? {
+        crate::land::Rejudged::Unresolved => return Ok(()),
+        crate::land::Rejudged::Refused(mut report) => {
+            report.note(parked_note(record.verb));
+            report.into_result()?;
+        }
+        crate::land::Rejudged::Lands(changes) => {
+            take_in.reports.retain(|r| !r.is_entry_change());
+            take_in.reports.extend(changes);
+        }
+    }
+    take_in.allow_member_change.extend(
+        added
+            .iter()
+            .filter(|named| !recorded.contains(named))
+            .map(ToString::to_string),
+    );
+    let mut owner = op_state::read_owner(owner_workspace_dir)?
+        .context("the op record vanished as the landing resumed")?;
+    if let Some(recorded) = owner.take_in.as_mut() {
+        recorded.allow_member_change = take_in.allow_member_change.clone();
+        recorded.reports = take_in.reports.clone();
+    }
+    op_state::write_owner(owner_workspace_dir, &owner)
+        .context("failed to record the consent `--continue` added")?;
+    Ok(())
 }
 
 /// The `target` moved mid-operation line, when a checkout the landing

@@ -77,6 +77,17 @@ fn dc06_a_landing_leaves_the_merged_member_set_pinned_with_the_relock_last() {
 }
 
 #[test]
+fn a_continue_judges_the_resolved_manifest_and_takes_added_consent() {
+    runner::run(scenarios::continue_rejudges_the_resolved_manifest()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_continue_refused_on_its_resolution_offers_an_abort_that_runs() {
+    runner::run(scenarios::continue_refused_on_its_resolution_aborts())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_raw_merged_entry_change_is_reported_until_published_and_named_to_land() {
     runner::run(scenarios::raw_merge_member_change()).assert_fully_decided_green();
 }
@@ -551,6 +562,8 @@ every_scenario!(
     member_change_choice_order,
     removal_is_member_change,
     dc06_member_set_from_merge,
+    continue_rejudges_the_resolved_manifest,
+    continue_refused_on_its_resolution_aborts,
     raw_merge_member_change,
     roles_in_feature,
     update_remote_repins_dependency_and_reference_in_a_feature,
