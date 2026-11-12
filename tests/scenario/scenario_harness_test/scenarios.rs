@@ -13147,6 +13147,15 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
         })
         .claim(Claim::WorkweaveGone(ww("w")))
     };
+    let left_clean = || {
+        [
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+            Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/pre-op/"])
+                .claim(Claim::OutputLacks("-in-place")),
+        ]
+    };
     let from = match end {
         InPlaceEnd::Dirty => {
             steps.extend([
@@ -13158,6 +13167,7 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                 Step::hand_edit(&a(), Repo::App, "README", "edited", "app"),
                 land(),
             ]);
+            steps.extend(left_clean());
             return scenario("in-place fast-forward: dirty", steps);
         }
         InPlaceEnd::Drifted => {
@@ -13196,6 +13206,7 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                     .claim(Claim::OutputLacks("-in-place")),
                 land(),
             ]);
+            steps.extend(left_clean());
             return scenario("in-place fast-forward: killed before the plan", steps);
         }
         InPlaceEnd::Rewound => {
@@ -13220,6 +13231,7 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                     .claim(Claim::OutputLacks("a-app")),
                 land(),
             ]);
+            steps.extend(left_clean());
             return scenario("in-place fast-forward: rewound after the lease", steps);
         }
         InPlaceEnd::ContinuedAfterRelease => {
@@ -13280,6 +13292,7 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
             .claim(Claim::OutputLacks("in progress")),
         land(),
     ]);
+    steps.extend(left_clean());
     scenario("in-place fast-forward: aborted", steps)
 }
 
