@@ -197,9 +197,13 @@ impl GitVcs {
                 ],
                 &repo,
             )?;
-            if holders
-                .lines()
-                .all(|holder| dropped.iter().any(|d| d == holder.trim()))
+            let mut holders = holders.lines().map(str::trim).filter(|h| !h.is_empty());
+            let first = holders.next();
+            if first.is_some()
+                && first
+                    .into_iter()
+                    .chain(holders)
+                    .all(|holder| dropped.iter().any(|d| d == holder))
             {
                 unreached.push(commit.clone());
             }

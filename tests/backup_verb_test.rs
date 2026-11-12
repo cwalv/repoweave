@@ -620,3 +620,28 @@ fn drop_takes_a_repo_as_list_names_it() {
     let stderr = refused(&["backup", "drop", "github/not/here"], &weave.ws);
     assert!(stderr.contains("no repo in this weave"), "{stderr}");
 }
+
+/// A pin no branch, remote-tracking branch or backup reaches (a tag holds
+/// it here) is not one a drop can leave unreached, so it refuses neither
+/// `drop` nor `prune`.
+#[test]
+fn a_pin_nothing_the_drop_removes_reaches_does_not_refuse_it() {
+    let weave = Weave::new();
+    let (_, _) = weave.workweave_with_a_commit("anon");
+    weave.give_up("anon");
+    let name = weave.backups_of(ALPHA).remove(0).0;
+    let alpha = weave.alpha();
+    let tagged = common::git_in(
+        &alpha,
+        &["commit-tree", "main^{tree}", "-p", "main", "-m", "tagged"],
+    );
+    common::git_in(&alpha, &["tag", "only-a-tag", &tagged]);
+    pin_in_another_project(&weave, &tagged);
+
+    succeed(&["backup", "prune", "--project", "demo"], &weave.ws);
+    succeed(
+        &["backup", "drop", ALPHA, &name, "--project", "demo"],
+        &weave.ws,
+    );
+    assert_eq!(weave.backups_of(ALPHA), vec![]);
+}

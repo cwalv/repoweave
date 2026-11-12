@@ -4259,9 +4259,9 @@ pub trait Vcs: Send + Sync {
     /// Drop the backup `name`. The pin rule is the caller's to apply first.
     fn drop_backup(&self, repo: &Path, name: &BackupName) -> Result<(), VcsError>;
 
-    /// Of `commits`, those that no branch, remote-tracking branch or backup
-    /// other than `dropping` reaches. A commit `repo` does not have is not
-    /// one: dropping a backup cannot unreach it.
+    /// Of `commits`, those some backup in `dropping` reaches and no branch,
+    /// remote-tracking branch or other backup does. A commit nothing reaches,
+    /// or `repo` does not have, is not one: dropping cannot unreach it.
     fn left_unreached_by_dropping(
         &self,
         repo: &Path,
