@@ -226,6 +226,7 @@ fn judge_members(
             continue;
         }
         let plan = aligner.plan(&member, lock)?;
+        aligner.refuse_claimed(&member, &plan)?;
         for judged in aligner.blocked(&member, &plan, path)? {
             report.add(judged);
         }

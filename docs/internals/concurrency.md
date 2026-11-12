@@ -102,9 +102,9 @@ the refusal names the holder's own continue command, read from its record.
 
 Other rwv verbs respect a live claim (`refuse_moving_claimed` in
 `src/landing_claim.rs`): `rwv switch` (the branch it leaves and the one it
-opens), alignment wherever it would switch a member onto a branch
-(`Aligner::blocked` in `src/alignment.rs`, which `rwv switch`, `rwv member
-set-branch` and `rwv member pin` judge through), `rwv branch delete` and `rwv workweave delete` (through
+opens, and each member branch its alignment would switch a member onto:
+`Aligner::refuse_claimed` in `src/alignment.rs`, which a verb judging a move
+it has not begun calls; an op's own alignment under its claim does not), `rwv branch delete` and `rwv workweave delete` (through
 `deletion::Rule::open`), `rwv branch rename` (both names), `rwv branch
 set-mode`, `rwv member set-branch` (the project branch it commits to and the
 member branch it re-points), `rwv push` (each branch it publishes) and the

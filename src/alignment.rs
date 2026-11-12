@@ -1181,6 +1181,28 @@ impl Aligner {
         })
     }
 
+    /// Refuse a plan that would switch the member onto a branch a live
+    /// landing claim of another op names. A verb judging a move it has not
+    /// begun calls this; an op's own alignment under its claim does not.
+    pub fn refuse_claimed(&self, m: &Member<'_>, plan: &Plan) -> anyhow::Result<()> {
+        let Target::Branch { name, .. } = &plan.target else {
+            return Ok(());
+        };
+        if self.is_aligned(m, plan)? {
+            return Ok(());
+        }
+        crate::landing_claim::refuse_moving_claimed(
+            crate::vcs::project_vcs().as_ref(),
+            &self.project_dir,
+            &self.project,
+            &[(
+                crate::manifest::RepoKey::Member(m.path.clone()),
+                name.as_str().to_owned(),
+            )],
+            None,
+        )
+    }
+
     /// The lines that say why a member cannot move to where its plan puts it:
     /// none where it is there already, or may leave where it is; only the
     /// operation in progress where it is stopped in one.
@@ -1192,18 +1214,6 @@ impl Aligner {
     ) -> anyhow::Result<Vec<Judged>> {
         if self.is_aligned(m, plan)? {
             return Ok(Vec::new());
-        }
-        if let Target::Branch { name, .. } = &plan.target {
-            crate::landing_claim::refuse_moving_claimed(
-                crate::vcs::project_vcs().as_ref(),
-                &self.project_dir,
-                &self.project,
-                &[(
-                    crate::manifest::RepoKey::Member(m.path.clone()),
-                    name.as_str().to_owned(),
-                )],
-                None,
-            )?;
         }
         let facts: Vec<Fact> = match &plan.target {
             Target::Detached { why, .. } => why.fact().into_iter().collect(),

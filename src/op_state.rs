@@ -3705,7 +3705,7 @@ mod tests {
             format!(
                 "land in progress (started {elapsed} ago, mid `replay`) at {dir}.\n\
                  Rerun with `rwv land --continue` from that workspace after \
-                 resolving, or `rwv abort` to discard.",
+                 resolving; or {ABORT_ROLLS_BACK}.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = dir.display(),
             )
@@ -3750,7 +3750,7 @@ mod tests {
                 "land in progress (started {elapsed} ago, mid `replay`); this \
                  workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
                  Rerun with `rwv land --continue` from the owner workspace after \
-                 resolving, or `rwv abort` to discard.",
+                 resolving; or {ABORT_ROLLS_BACK}.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = lease_dir.display(),
                 owner = owner_dir.display(),
