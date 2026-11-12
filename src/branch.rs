@@ -460,6 +460,9 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
         }
     }
     report_dependents(&before, &written.view, &branch);
+    if checked_out(vcs.as_ref(), &dir)?.as_deref() == Some(branch.as_str()) {
+        crate::update::align_after_switch(ctx, "branch set-mode")?;
+    }
     Ok(())
 }
 

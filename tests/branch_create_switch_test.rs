@@ -991,3 +991,15 @@ fn a_feature_member_with_no_pin_and_no_branch_of_its_name_is_reported_unaligned(
 
     assert!(status.contains("alignment unaligned"), "{status}");
 }
+
+#[test]
+fn set_mode_of_the_checked_out_branch_realigns_this_workspace() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["branch", "create", "f"], ws);
+    assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("f"));
+
+    succeed(&["branch", "set-mode", "f", "declared"], ws);
+
+    assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("main"));
+}
