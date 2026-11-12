@@ -629,15 +629,6 @@ impl Vcs for FakeVcs {
         unsupported("drop_backup")
     }
 
-    fn left_unreached_by_dropping(
-        &self,
-        _repo: &Path,
-        _commits: &[CommitId],
-        _dropping: &[BackupName],
-    ) -> Result<Vec<CommitId>, VcsError> {
-        unsupported("left_unreached_by_dropping")
-    }
-
     fn reached_by_no_branch(
         &self,
         _repo: &Path,

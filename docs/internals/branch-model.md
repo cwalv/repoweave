@@ -1486,10 +1486,11 @@ The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
   it holds that no branch reaches (`held`); a backup with none is *redundant*.
   `RemoteTracking::Ignored` judges on local branches alone, which `backup prune`
   uses for a repo with a remote its pruning fetch could not complete.
-- `Vcs::left_unreached_by_dropping` answers the pin rule's question for a set of
-  backups to drop: which of the given commits would be reached by no branch,
-  remote-tracking branch or backup once they are gone. Core collects the live
-  pins (`src/backup.rs`) and the seam answers per repo.
+- The pin rule is one function in core, `pins::stranded`, reached through
+  `pins::stranded_by` for a ref change and `pins::stranded_by_dropping` for a
+  set of backups to drop: a live pin the change reaches that no branch,
+  remote-tracking branch or remaining backup reaches. The seam answers only
+  ancestry and listing questions.
 - `Vcs::backup_edits` snapshots a checkout's working tree (untracked files
   included, ignored ones not) into a commit on HEAD without touching the
   checkout's index, then backs it up; `Vcs::backup_unpreserved_head` backs up a

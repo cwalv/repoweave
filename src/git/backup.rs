@@ -171,46 +171,6 @@ impl GitVcs {
             .collect()
     }
 
-    pub(super) fn unreached_without(
-        &self,
-        repo: &Path,
-        commits: &[CommitId],
-        dropping: &[BackupName],
-    ) -> Result<Vec<CommitId>, VcsError> {
-        let repo = Self::work_dir_for_store(repo);
-        let dropped: Vec<String> = dropping.iter().map(backup_ref).collect();
-        let backups = format!("{BACKUP_NAMESPACE}/");
-        let mut unreached = Vec::new();
-        for commit in commits {
-            if !crate::vcs::Vcs::commit_object_exists(self, &repo, commit)? {
-                continue;
-            }
-            let holders = Self::run_trimmed(
-                [
-                    "for-each-ref",
-                    "--format=%(refname)",
-                    "--contains",
-                    commit.as_str(),
-                    "refs/heads/",
-                    "refs/remotes/",
-                    &backups,
-                ],
-                &repo,
-            )?;
-            let mut holders = holders.lines().map(str::trim).filter(|h| !h.is_empty());
-            let first = holders.next();
-            if first.is_some()
-                && first
-                    .into_iter()
-                    .chain(holders)
-                    .all(|holder| dropped.iter().any(|d| d == holder))
-            {
-                unreached.push(commit.clone());
-            }
-        }
-        Ok(unreached)
-    }
-
     pub(super) fn drop_backup_ref(repo: &Path, name: &BackupName) -> Result<(), VcsError> {
         let repo = Self::work_dir_for_store(repo);
         Self::run(["update-ref", "-d", &backup_ref(name)], &repo).map(|_| ())
@@ -620,55 +580,6 @@ mod tests {
             vec![b]
         );
         assert_eq!(head(p.path()), two, "no branch was touched");
-    }
-
-    #[test]
-    fn a_commit_is_left_unreached_only_when_every_holder_is_being_dropped() {
-        let p = repo();
-        git(p.path(), &["checkout", "--detach"]);
-        let pinned = commit(p.path(), "pinned");
-        git(p.path(), &["checkout", "-q", "main"]);
-        let a = GitVcs
-            .write_backup(p.path(), &feature("a"), &pinned, None)
-            .unwrap();
-        let b = GitVcs
-            .write_backup(
-                p.path(),
-                &feature("b"),
-                &pinned,
-                Some(BackupMark::Abandoned),
-            )
-            .unwrap();
-        let pins = [pinned.id().clone()];
-        let stray = CommitId::parse(&"1".repeat(40)).unwrap();
-
-        let left = |dropping: &[BackupName]| {
-            GitVcs
-                .left_unreached_by_dropping(p.path(), &pins, dropping)
-                .unwrap()
-        };
-
-        assert!(
-            left(std::slice::from_ref(&a.name)).is_empty(),
-            "the other backup reaches it"
-        );
-        assert_eq!(
-            left(&[a.name.clone(), b.name.clone()]),
-            pins.to_vec(),
-            "dropped together, nothing reaches it"
-        );
-        git(p.path(), &["branch", "keeper", pinned.id().as_str()]);
-        assert!(
-            left(&[a.name, b.name]).is_empty(),
-            "a branch reaches it, whatever is dropped"
-        );
-        assert!(
-            GitVcs
-                .left_unreached_by_dropping(p.path(), &[stray], &[])
-                .unwrap()
-                .is_empty(),
-            "a commit this repo lacks is not one dropping can unreach"
-        );
     }
 
     #[test]

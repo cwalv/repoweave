@@ -19,8 +19,7 @@ use crate::manifest::{Manifest, ProjectName, RepoOperand, RepoPath};
 use crate::parallel::OutputMode;
 use crate::pins::{live_pins, LivePin};
 use crate::vcs::{
-    project_vcs, vcs_for, Backup, BackupMark, BackupName, CommitId, ListedBackup, RemoteTracking,
-    Vcs, VcsError,
+    project_vcs, vcs_for, Backup, BackupMark, CommitId, ListedBackup, RemoteTracking, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, WorkspaceContext};
 
@@ -267,27 +266,14 @@ fn apply_pin_rule(
     let Some(live) = pins.get(member) else {
         return Ok(None);
     };
-    let mut commits: Vec<CommitId> = live.iter().map(|p| p.commit.clone()).collect();
-    commits.sort();
-    commits.dedup();
-    let names: Vec<BackupName> = dropping.iter().map(|b| b.name.clone()).collect();
-    let stranded = repo
-        .vcs
-        .left_unreached_by_dropping(&repo.dir, &commits, &names)
+    let stranded = crate::pins::stranded_by_dropping(repo.vcs.as_ref(), &repo.dir, live, dropping)
         .with_context(|| format!("{}: could not judge the pin rule", repo.operand))?;
     if stranded.is_empty() {
         return Ok(None);
     }
     let listing: Vec<String> = stranded
         .iter()
-        .map(|commit| {
-            let locks: Vec<&str> = live
-                .iter()
-                .filter(|p| p.commit == *commit)
-                .map(|p| p.held_by.as_str())
-                .collect();
-            format!("{} is pinned by {}", commit.short(), locks.join(", "))
-        })
+        .map(|s| format!("{} is pinned by {}", s.commit.short(), s.held_by.join(", ")))
         .collect();
     Ok(Some(
         State::PinWouldBeUnreachable

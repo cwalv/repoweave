@@ -3604,15 +3604,6 @@ impl Vcs for GitVcs {
         Self::drop_backup_ref(repo, name)
     }
 
-    fn left_unreached_by_dropping(
-        &self,
-        repo: &Path,
-        commits: &[CommitId],
-        dropping: &[BackupName],
-    ) -> Result<Vec<CommitId>, VcsError> {
-        self.unreached_without(repo, commits, dropping)
-    }
-
     fn reached_by_no_branch(
         &self,
         repo: &Path,

@@ -413,38 +413,106 @@ pub(crate) fn stranded_by(
     if change.was_backed_up {
         backups.push(change.was.clone());
     }
+    let left = Left {
+        refs: remaining,
+        backups,
+        remote_change: change.branch.is_remote(),
+    };
+    stranded(
+        vcs,
+        dir,
+        live,
+        std::slice::from_ref(change.was),
+        &left,
+        exempt,
+    )
+}
 
+/// The pin rule for dropping the backups `dropping` from the clone at `dir`:
+/// each live pin one of them reaches that no branch, remote-tracking branch
+/// or other backup does.
+pub(crate) fn stranded_by_dropping(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    live: &[LivePin],
+    dropping: &[&crate::vcs::Backup],
+) -> anyhow::Result<Vec<Stranded>> {
+    let refs: Vec<(bool, ResolvedRevisionId)> = vcs
+        .branch_tips(dir)?
+        .into_iter()
+        .map(|tip| (tip.branch.is_remote(), tip.tip))
+        .collect();
+    let backups: Vec<ResolvedRevisionId> = vcs
+        .list_backups(dir, crate::vcs::RemoteTracking::Counted)?
+        .into_iter()
+        .filter(|listed| !dropping.iter().any(|d| d.name == listed.backup.name))
+        .map(|listed| listed.backup.tip)
+        .collect();
+    let was: Vec<ResolvedRevisionId> = dropping.iter().map(|d| d.tip.clone()).collect();
+    let left = Left {
+        refs,
+        backups,
+        remote_change: false,
+    };
+    stranded(vcs, dir, live, &was, &left, |_| false)
+}
+
+/// What still reaches commits once a change is made.
+struct Left {
+    /// Each branch's tip, and whether it is remote-tracking.
+    refs: Vec<(bool, ResolvedRevisionId)>,
+    backups: Vec<ResolvedRevisionId>,
+    /// The change is to a remote-tracking branch.
+    remote_change: bool,
+}
+
+fn stranded(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    live: &[LivePin],
+    was: &[ResolvedRevisionId],
+    left: &Left,
+    exempt: impl Fn(&LivePin) -> bool,
+) -> anyhow::Result<Vec<Stranded>> {
     let mut by_commit: BTreeMap<&CommitId, Vec<&LivePin>> = BTreeMap::new();
     for pin in live.iter().filter(|pin| !exempt(pin)) {
         by_commit.entry(&pin.commit).or_default().push(pin);
     }
     let mut stranded = Vec::new();
     for (commit, holders) in by_commit {
-        let Ok(pinned) = vcs.resolve_revision(dir, commit.as_str()) else {
-            continue;
+        let pinned = match vcs.resolve_revision(dir, commit.as_str()) {
+            Ok(pinned) => pinned,
+            Err(VcsError::RevisionNotFound { .. }) => continue,
+            Err(e) => return Err(e.into()),
         };
         let reaches = |tip: &ResolvedRevisionId| vcs.is_ancestor(dir, &pinned, tip);
-        if !reaches(change.was)? {
+        let mut reached_by_change = false;
+        for tip in was {
+            if reaches(tip)? {
+                reached_by_change = true;
+                break;
+            }
+        }
+        if !reached_by_change {
             continue;
         }
         let mut by_any = false;
         let mut by_remote = false;
-        for (remote, tip) in &remaining {
+        for (remote, tip) in &left.refs {
             if reaches(tip)? {
                 by_any = true;
                 by_remote |= *remote;
             }
         }
         if !by_any {
-            for tip in &backups {
+            for tip in &left.backups {
                 if reaches(tip)? {
                     by_any = true;
                     break;
                 }
             }
         }
-        let remote_clause =
-            change.branch.is_remote() && holders.iter().any(|pin| pin.branch.is_remote());
+        let remote_clause = left.remote_change && holders.iter().any(|pin| pin.branch.is_remote());
         if !by_any || (remote_clause && !by_remote) {
             let mut held_by: Vec<String> = holders.iter().map(|pin| pin.held_by.clone()).collect();
             held_by.sort();
