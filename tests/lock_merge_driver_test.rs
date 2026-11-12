@@ -523,13 +523,7 @@ fn init_sets_the_driver_up_and_a_linked_worktree_needs_nothing_more() {
     let linked = tmp.path().join("linked");
     common::git_in(
         &project,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "other",
-            linked.to_str().unwrap(),
-        ],
+        &["worktree", "add", "-b", "other", linked.to_str().unwrap()],
     );
     assert_eq!(
         common::git_in(&linked, &["config", "--get", "merge.rwv-lock.driver"]),
