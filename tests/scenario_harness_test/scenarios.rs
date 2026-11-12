@@ -1,11 +1,13 @@
 use crate::invariants::{LockSite, Mode, Record};
 use crate::runner::{
-    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
+    Claim, Defect, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
 };
 use crate::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
 };
+use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
+use repoweave::refusal::RefusalKind;
 
 fn a() -> Place {
     Place::Primary(Machine::A)
@@ -58,7 +60,7 @@ pub fn solo_workweave() -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds)
                 .claim(Claim::RemoteContains {
-                    repo: Repo::App,
+                    remote: Remote::origin(Repo::App),
                     branch: "main",
                     mark: "solo-app",
                 })
@@ -111,12 +113,12 @@ pub fn cross_repo_pr() -> Scenario {
     steps.extend([push_feat_x_everywhere(Step::rwv(&a(), &["push"]))
         .expect(Exit::Succeeds)
         .claim(Claim::RemoteContains {
-            repo: Repo::App,
+            remote: Remote::origin(Repo::App),
             branch: "feat-x",
             mark: "pr-app",
         })
         .claim(Claim::RemoteContains {
-            repo: Repo::Lib,
+            remote: Remote::origin(Repo::Lib),
             branch: "feat-x",
             mark: "pr-lib",
         })
@@ -127,19 +129,11 @@ pub fn cross_repo_pr() -> Scenario {
     steps.extend(amend_both());
     steps.extend([
         Step::rwv(&a(), &["push"])
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains(
-                "local/remotes/app: push-branch diverged",
-            ))
-            .claim(Claim::OutputContains(
-                "local/remotes/lib: push-branch diverged",
-            ))
+            .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+            .claim(Claim::Judged(Repo::Lib, State::PushBranchDiverged))
             .claim(Claim::OutputLacks("--overwrite")),
         Step::rwv(&a(), &["push", "--overwrite", "local/remotes/app"])
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains(
-                "local/remotes/lib: push-branch diverged",
-            ))
+            .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
             .claim(Claim::OutputLacks(
                 "local/remotes/app: push-branch diverged",
             )),
@@ -294,7 +288,7 @@ pub fn workweave_without_b_then_pr() -> Scenario {
             create("anon"),
             Step::commit(&ww("anon"), Repo::App, "anon-app"),
             Step::rwv(&ww("anon"), &["push"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Proj, State::NameMinted))
                 .claim(Claim::OutputContains("rwv branch rename <new>")),
             Step::rwv(&ww("anon"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("anon"), &["branch", "rename", "fix-anon"])
@@ -319,7 +313,7 @@ pub fn workweave_without_b_then_pr() -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), "fix-anon")
                 .expect(Exit::Succeeds)
                 .claim(Claim::RemoteContains {
-                    repo: Repo::App,
+                    remote: Remote::origin(Repo::App),
                     branch: "fix-anon",
                     mark: "anon-app",
                 })
@@ -395,7 +389,8 @@ pub fn dc10_store_destroy() -> Scenario {
                 &a(),
                 &["member", "remove", &app, "--delete", "--project", "proj"],
             )
-            .expect(Exit::Fails)
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains("rwv backup list"))
             .claim(Claim::BackedUp {
                 repo: Repo::App,
                 mark: "anon-app",
@@ -404,6 +399,12 @@ pub fn dc10_store_destroy() -> Scenario {
             Step::rwv(&a(), &["backup", "drop", &app, "--project", "proj"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App]),
+            Step::rwv(
+                &a(),
+                &["member", "remove", &app, "--delete", "--project", "proj"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
         ],
     )
 }
@@ -422,17 +423,29 @@ pub fn tombstone_to_backup() -> Scenario {
                 &["update-ref", "refs/rwv/pre-op/1779769917405921588", "HEAD"],
             ),
             Step::git(&a(), Repo::Proj, &["reset", "--hard", "HEAD~1"]).may_rewrite(&[Repo::Proj]),
-            Step::rwv(&a(), &["doctor", "--fix"]).claim(Claim::BackedUp {
-                repo: Repo::Proj,
-                mark: "tombstoned",
-                marked: None,
-            }),
+            Step::rwv(&a(), &["doctor", "--fix"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "orphaned-savepoint for projects/proj: kept as a backup",
+                ))
+                .claim(Claim::BackedUp {
+                    repo: Repo::Proj,
+                    mark: "tombstoned",
+                    marked: None,
+                }),
+            Step::rwv(&a(), &["backup", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("projects/proj"))
+                .claim(Claim::OutputContains(" tombstoned")),
             Step::rwv(
                 &a(),
                 &["backup", "drop", "projects/proj", "--project", "proj"],
             )
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj]),
+            Step::rwv(&a(), &["backup", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("no backups")),
         ],
     )
 }
@@ -448,7 +461,7 @@ pub fn workweave_without_b_given_up_after_publishing() -> Scenario {
             create("anon"),
             Step::commit(&ww("anon"), Repo::App, "anon-app"),
             Step::rwv(&ww("anon"), &["push"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Proj, State::NameMinted))
                 .claim(Claim::OutputContains(
                     "projects/proj: name minted (proj--anon)",
                 ))
@@ -495,14 +508,35 @@ pub fn workweave_without_b_given_up_after_publishing() -> Scenario {
     )
 }
 
+/// `stable` created declared, holding `lib` one commit behind `main`'s pin.
+fn stable_holding_lib_behind() -> Vec<Step> {
+    vec![
+        Step::commit(&a(), Repo::Lib, "lib-on-main"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "create", "stable", "--declared"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Proj,
+                branch: "stable",
+            }),
+        Step::rwv(
+            &a(),
+            &["member", "pin", "local/remotes/lib", "HEAD~1", "--commit"],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::Lib])
+        .claim(Claim::Judged(Repo::Lib, State::PinAhead)),
+    ]
+}
+
 pub fn feature_off_stable() -> Scenario {
-    scenario(
-        "feature off stable",
-        vec![Step::pending(
-            "create stable holding lib behind",
-            MissingVerb::Declare,
-        )],
-    )
+    let mut steps = stable_holding_lib_behind();
+    steps.push(Step::pending(
+        "a feature off stable, landed into it",
+        MissingVerb::Land,
+    ));
+    scenario("feature off stable", steps)
 }
 
 pub fn permanent_seat() -> Scenario {
@@ -540,9 +574,17 @@ pub fn permanent_seat() -> Scenario {
                     rev: "HEAD",
                     mark: "elsewhere-1",
                 }),
+            Step::rwv(
+                &ww("seat"),
+                &["member", "set-branch", "local/remotes/lib", "dev"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: branch main -> dev",
+            )),
             Step::pending(
-                "land a declaration change from the seat",
-                MissingVerb::Declare,
+                "land the declaration change with --allow-member-change lib",
+                MissingVerb::Land,
             ),
         ],
     )
@@ -563,13 +605,12 @@ pub fn review_colleague_fix() -> Scenario {
 }
 
 pub fn stable_end_to_end() -> Scenario {
-    scenario(
-        "stable end to end",
-        vec![Step::pending(
-            "create stable holding lib behind",
-            MissingVerb::Declare,
-        )],
-    )
+    let mut steps = stable_holding_lib_behind();
+    steps.push(Step::pending(
+        "a hotfix landed into stable, then a bump",
+        MissingVerb::Land,
+    ));
+    scenario("stable end to end", steps)
 }
 
 pub fn main_change_into_stable() -> Scenario {
@@ -584,18 +625,47 @@ pub fn main_change_into_stable() -> Scenario {
 
 fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
+    let activate_proj2 = Step::rwv(&a(), &["activate", "proj2"]);
+    let activate_proj2 = if branch == "main" {
+        activate_proj2
+            .expect(Exit::Succeeds)
+            .claim(Claim::Presents {
+                at: a(),
+                project: Repo::Proj2,
+            })
+    } else {
+        activate_proj2
+            .expect(Exit::refuses(
+                Repo::Lib,
+                State::AlignmentOnBranchWithStrayCommits,
+            ))
+            .claim(Claim::OutputContains("rwv activate proj2 --update"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::Presents {
+                at: a(),
+                project: Repo::Proj,
+            })
+    };
     Scenario {
         name,
         seed: Seed::default().second_project(SecondProject { branch }),
         steps: vec![
-            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Undecided),
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Lib, "lib-pending"),
-            Step::rwv(&a(), &["activate", "proj2"]),
-            Step::rwv(&a(), &["activate", "proj"]),
+            activate_proj2,
+            Step::rwv(&a(), &["activate", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj,
+                }),
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
                 .expect(Exit::Succeeds),
             Step::commit(&side, Repo::Lib, "side-lib"),
-            Step::rwv(&side, &["sync-to", "--retire"]),
+            Step::pending(
+                "land side into proj2's lib while proj is active",
+                MissingVerb::Land,
+            ),
         ],
     }
 }
@@ -717,13 +787,13 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
     steps.extend([
         Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "feat-x"]),
         Step::git(&a(), Repo::App, &["merge", "--no-edit", "feat-x"]),
-        Step::rwv(&a(), &["lock", "--commit"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         publishes_records(Step::rwv(&a(), &["push"]))
             .pushes(Remote::origin(Repo::App), "main")
             .pushes(Remote::origin(Repo::Proj), "main")
             .expect(Exit::Succeeds)
             .claim(Claim::RemoteContains {
-                repo: Repo::App,
+                remote: Remote::origin(Repo::App),
                 branch: "main",
                 mark: "feat-app",
             })
@@ -760,7 +830,9 @@ pub fn detached_head_in_workweave() -> Scenario {
             Step::git(&ww("det"), Repo::App, &["switch", "--detach"]),
             Step::commit(&ww("det"), Repo::App, "det-1"),
             Step::commit(&ww("det"), Repo::App, "det-2"),
-            Step::rwv(&ww("det"), &["sync-to"]),
+            Step::rwv(&ww("det"), &["lock"])
+                .expect(Exit::refuses(Repo::App, State::AlignmentDetachedUnpushed)),
+            Step::pending("land the workweave", MissingVerb::Land),
         ],
     )
 }
@@ -772,9 +844,12 @@ pub fn switch_c_wip_in_workweave() -> Scenario {
             create("wip"),
             Step::git(&ww("wip"), Repo::App, &["switch", "-c", "wip"]),
             Step::commit(&ww("wip"), Repo::App, "wip-1"),
-            Step::rwv(&ww("wip"), &["lock"]),
-            Step::rwv(&ww("wip"), &["push"]).expect(Exit::Fails),
-            Step::rwv(&ww("wip"), &["sync-to"]),
+            Step::rwv(&ww("wip"), &["lock"]).expect(Exit::refuses(
+                Repo::App,
+                State::AlignmentOnBranchWithStrayCommits,
+            )),
+            Step::rwv(&ww("wip"), &["push"]).expect(Exit::refuses(Repo::Proj, State::NameMinted)),
+            Step::pending("land the workweave", MissingVerb::Land),
         ],
     )
 }
@@ -785,7 +860,14 @@ pub fn raw_switch_in_primary_project() -> Scenario {
         Step::git(&a(), Repo::App, &["switch", "main"]),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
         Step::git(&a(), Repo::Proj, &["switch", "feat-x"]),
-        Step::rwv(&a(), &["status"]),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Judged(Repo::App, State::AlignmentOnBranch))
+            .claim(Claim::OutputContains(
+                "local/remotes/app: alignment on branch (main)",
+            ))
+            .claim(Claim::OutputContains("rwv update\n"))
+            .claim(Claim::OutputLacks("projects/proj: alignment")),
     ]);
     scenario("raw git switch feat-x in the primary's project repo", steps)
 }
@@ -806,7 +888,12 @@ pub fn project_pr_merged_before_members() -> Scenario {
             branch: "feat-x",
             how: MergeHow::Squash,
         }),
-        Step::rwv(&Place::Primary(Machine::C), &["update", "--remote"]),
+        Step::rwv(&Place::Primary(Machine::C), &["update", "--remote"])
+            .expect(Exit::refuses(Repo::App, State::PinBackwards))
+            .claim(Claim::OutputContains(
+                "rwv lock --repo local/remotes/app --commit",
+            ))
+            .claim(Claim::LocalStateUnchanged(Place::Primary(Machine::C))),
     ]);
     scenario("project PR merged before its member PRs", steps)
 }
@@ -822,7 +909,16 @@ pub fn hand_edit_declaration_to_existing_branch() -> Scenario {
                 &declared_branch_text(Repo::Lib, "main"),
                 &declared_branch_text(Repo::Lib, "dev"),
             ),
-            Step::rwv(&a(), &["update", "--remote"]),
+            Step::rwv(&a(), &["update", "--remote"])
+                .expect(Exit::refuses(Repo::Lib, State::PinBackwards))
+                .claim(Claim::OutputContains(
+                    "rwv lock --repo local/remotes/lib --commit",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::Defect(Defect::LockCommitRepinsBackwardUnnamed))
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::OutputContains("member-changed branch: main -> dev")),
         ],
     )
 }
@@ -838,7 +934,16 @@ pub fn hand_edit_declaration_to_missing_branch() -> Scenario {
                 &declared_branch_text(Repo::Lib, "main"),
                 &declared_branch_text(Repo::Lib, "nowhere"),
             ),
-            Step::rwv(&a(), &["update", "--remote"]),
+            Step::rwv(&a(), &["update", "--remote"])
+                .expect(Exit::Defect(Defect::NoSuchDeclaredBranchUnjudged))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::refuses(Repo::Lib, State::NameNoSuchBranch))
+                .claim(Claim::OutputContains("rwv fetch"))
+                .claim(Claim::OutputContains(
+                    "rwv member set-branch local/remotes/lib nowhere --new",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
         ],
     )
 }
@@ -859,7 +964,7 @@ pub fn worktree_add_force_on_weave_branch() -> Scenario {
                 Repo::App,
                 &["-C", stray, "commit", "--allow-empty", "-m", "stray-1"],
             ),
-            Step::rwv(&ww("wt"), &["sync-to", "--retire"]),
+            Step::pending("land and retire the workweave", MissingVerb::Land),
         ],
     )
 }
@@ -1134,7 +1239,9 @@ pub fn records_foreign_remote() -> Scenario {
             ),
             Step::rwv(&a(), &["branch", "list"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("conflict")),
+                .claim(Claim::OutputContains(
+                    "conflict: declared | feature onto elsewhere (as declared)",
+                )),
             Step::git(&a(), Repo::Proj, &["branch", "other"]),
             Step::rwv(&a(), &["branch", "set-mode", "other", "declared"])
                 .expect(Exit::Succeeds)
@@ -1237,7 +1344,7 @@ pub fn records_unreadable_entry() -> Scenario {
                 )],
             ),
             Step::rwv(&ww("w"), &["lock"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Proj, State::TargetUnreadable))
                 .claim(Claim::OutputContains("target unreadable (proj--w)"))
                 .claim(Claim::OutputContains("rwv branch set-mode proj--w"))
                 .claim(Claim::OutputContains("its commit names no rwv release")),
@@ -1312,8 +1419,8 @@ pub fn status_operator_branches() -> Scenario {
 }
 
 pub fn activate_no_checkout() -> Scenario {
-    let refused_with = |step: Step| {
-        step.expect(Exit::Fails)
+    let refused_with = |step: Step, state: State| {
+        step.expect(Exit::refuses(Repo::Lib, state))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::Presents {
                 at: a(),
@@ -1325,27 +1432,31 @@ pub fn activate_no_checkout() -> Scenario {
         seed: Seed::default().second_project(SecondProject { branch: "dev" }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
-            refused_with(Step::rwv(&a(), &["activate", "proj2"]))
-                .claim(Claim::OutputContains(
-                    "local/remotes/lib: alignment on branch (main)",
-                ))
-                .claim(Claim::OutputContains("rwv activate proj2 --update"))
-                .claim(Claim::OutputLacks("rwv update"))
-                .claim(Claim::OnBranch {
-                    at: a(),
-                    repo: Repo::Lib,
-                    branch: "main",
-                }),
+            refused_with(
+                Step::rwv(&a(), &["activate", "proj2"]),
+                State::AlignmentOnBranch,
+            )
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: alignment on branch (main)",
+            ))
+            .claim(Claim::OutputContains("rwv activate proj2 --update"))
+            .claim(Claim::OutputLacks("rwv update"))
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            }),
             Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib edited\n"),
-            refused_with(Step::rwv(&a(), &["activate", "proj2"]))
-                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
+            refused_with(Step::rwv(&a(), &["activate", "proj2"]), State::EditsDirty)
                 .claim(Claim::OutputContains("README"))
                 .claim(Claim::OutputContains("stash push"))
                 .claim(Claim::OutputLacks("--update"))
                 .claim(Claim::OutputLacks("alignment")),
-            refused_with(Step::rwv(&a(), &["activate", "proj2", "--update"]))
-                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
-                .claim(Claim::OutputLacks("alignment")),
+            refused_with(
+                Step::rwv(&a(), &["activate", "proj2", "--update"]),
+                State::EditsDirty,
+            )
+            .claim(Claim::OutputLacks("alignment")),
             Step::git(&a(), Repo::Lib, &["checkout", "--", "README"]),
             Step::rwv(&a(), &["activate", "proj2", "--update"])
                 .expect(Exit::Succeeds)
@@ -1383,7 +1494,10 @@ pub fn activate_leaves_what_the_outgoing_project_holds() -> Scenario {
             Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
             hand_declared("wip", "main"),
             Step::rwv(&a(), &["activate", "proj2"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(
+                    Repo::Lib,
+                    State::AlignmentOnBranchWithStrayCommits,
+                ))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::OutputContains(
                     "local/remotes/lib: alignment on branch with stray commits (wip)",
@@ -1432,9 +1546,9 @@ pub fn activate_over_aligned_shared_member() -> Scenario {
 }
 
 pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
-    let refused = |args: &[&str]| {
+    let refused = |args: &[&str], state: State| {
         Step::rwv(&a(), args)
-            .expect(Exit::Fails)
+            .expect(Exit::refuses(Repo::Lib, state))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::Presents {
                 at: a(),
@@ -1446,25 +1560,27 @@ pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
         seed: Seed::default().second_project(SecondProject { branch: "dev" }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
-            refused(&["update", "--project", "proj2"])
+            refused(&["update", "--project", "proj2"], State::AlignmentOnBranch)
                 .claim(Claim::OutputContains(
                     "local/remotes/lib: alignment on branch (main)",
                 ))
                 .claim(Claim::OutputContains("rwv activate proj2 --update"))
                 .claim(Claim::OutputLacks("\n    rwv update\n")),
-            refused(&["update", "--remote", "--project", "proj2"])
-                .claim(Claim::OutputContains(
-                    "local/remotes/lib: alignment on branch (main)",
-                ))
-                .claim(Claim::OutputContains("rwv activate proj2 --update")),
-            refused(&["pull", "--project", "proj2"])
+            refused(
+                &["update", "--remote", "--project", "proj2"],
+                State::AlignmentOnBranch,
+            )
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: alignment on branch (main)",
+            ))
+            .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            refused(&["pull", "--project", "proj2"], State::AlignmentOnBranch)
                 .claim(Claim::OutputContains(
                     "local/remotes/lib: alignment on branch (main)",
                 ))
                 .claim(Claim::OutputContains("rwv activate proj2 --update")),
             Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib edited\n"),
-            refused(&["update", "--project", "proj2"])
-                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
+            refused(&["update", "--project", "proj2"], State::EditsDirty)
                 .claim(Claim::OutputLacks("--update")),
         ],
     }
@@ -1553,10 +1669,7 @@ pub fn dc03_roles_bound_push() -> Scenario {
             Step::commit(&a(), Repo::Docs, "docs-dep"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["push"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains(
-                    "local/remotes/docs: publish withheld",
-                ))
+                .expect(Exit::refuses(Repo::Docs, State::PublishWithheld))
                 .claim(Claim::OutputContains(
                     "reached by no remote-tracking branch",
                 ))
@@ -1569,7 +1682,7 @@ pub fn dc03_roles_bound_push() -> Scenario {
                 .pushes(Remote::origin(Repo::Docs), "main")
                 .expect(Exit::Succeeds)
                 .claim(Claim::RemoteContains {
-                    repo: Repo::Docs,
+                    remote: Remote::origin(Repo::Docs),
                     branch: "main",
                     mark: "docs-dep",
                 }),
@@ -1593,8 +1706,7 @@ pub fn dc13_push_no_lock() -> Scenario {
         vec![
             Step::commit(&a(), Repo::App, "unpinned"),
             Step::rwv(&a(), &["push"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("local/remotes/app: pin unpinned"))
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
                 .claim(Claim::OutputContains("rwv lock --commit"))
                 .claim(Claim::LocalStateUnchanged(a())),
         ],
@@ -1606,16 +1718,19 @@ pub fn dc13_push_no_lock() -> Scenario {
 /// naming `update`, which moves them with their commits kept.
 pub fn dc22_raw_project_switch() -> Scenario {
     let per_member = |step: Step| {
-        step.expect(Exit::Fails)
-            .claim(Claim::OutputContains(
-                "local/remotes/app: alignment on branch with stray commits (feat-x)",
-            ))
-            .claim(Claim::OutputContains(
-                "local/remotes/lib: alignment on branch (feat-x)",
-            ))
-            .claim(Claim::OutputContains("rwv update"))
-            .claim(Claim::OutputLacks("projects/proj: alignment"))
-            .claim(Claim::LocalStateUnchanged(a()))
+        step.expect(Exit::refuses(
+            Repo::App,
+            State::AlignmentOnBranchWithStrayCommits,
+        ))
+        .claim(Claim::OutputContains(
+            "local/remotes/app: alignment on branch with stray commits (feat-x)",
+        ))
+        .claim(Claim::OutputContains(
+            "local/remotes/lib: alignment on branch (feat-x)",
+        ))
+        .claim(Claim::OutputContains("rwv update"))
+        .claim(Claim::OutputLacks("projects/proj: alignment"))
+        .claim(Claim::LocalStateUnchanged(a()))
     };
     let mut steps = feature_branch_in_primary();
     steps.extend([
@@ -1708,14 +1823,11 @@ pub fn records_rejected() -> Scenario {
     steps.extend([
         Step::rwv(&a(), &["push"])
             .pushes(Remote::origin(Repo::App), "feat-x")
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains(
-                "projects/proj: publish records rejected",
-            ))
+            .expect(Exit::refuses(Repo::Proj, State::PublishRecordsRejected))
             .claim(Claim::OutputContains("projects/proj feat-x was not pushed"))
             .claim(Claim::OutputContains("choose where it pushes"))
             .claim(Claim::RemoteContains {
-                repo: Repo::App,
+                remote: Remote::origin(Repo::App),
                 branch: "feat-x",
                 mark: "feat-app",
             })
@@ -1884,8 +1996,7 @@ pub fn records_offline_write() -> Scenario {
                     record: Some(Record::Declared),
                 }),
             Step::rwv(&a(), &["push", "--branch", "feat-z"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("push-branch unconfirmed"))
+                .expect(Exit::refuses(Repo::Proj, State::PushBranchUnconfirmed))
                 .claim(Claim::OutputContains("rwv fetch")),
             Step::reachable(origin_records()),
             Step::rwv(&a(), &["push", "--branch", "feat-z"])
@@ -1949,10 +2060,10 @@ pub fn records_unpushed_stay_local() -> Scenario {
             nothing_unpushed_is_held(Step::rwv(&b(), &["push"])),
             Step::rwv(&b(), &["branch", "list"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("conflict")),
+                .claim(Claim::OutputLacks("conflict:")),
             Step::rwv(&a(), &["branch", "list"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("conflict")),
+                .claim(Claim::OutputLacks("conflict:")),
         ],
     )
 }
@@ -1974,8 +2085,7 @@ pub fn waiver_per_merge() -> Scenario {
             .pushes(Remote::origin(Repo::App), "main")
             .expect(Exit::Succeeds),
         Step::rwv(&a(), &["push"])
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains("local/remotes/app: pin unmerged"))
+            .expect(Exit::refuses(Repo::App, State::PinUnmerged))
             .claim(Claim::OutputContains("merge --no-ff"))
             .claim(Claim::OutputLacks("pin waived"))
             .claim(Claim::RemoteLacks {
@@ -2058,10 +2168,10 @@ pub fn overwrite_lease_refuses_a_moved_remote() -> Vec<Step> {
         Step::release("replacing")
             .overwrites(Remote::origin(Repo::Lib), "feat-x")
             .may_leave_unresolved(&[Repo::Lib])
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains("rejected"))
+            .expect(Exit::refuses(Repo::App, State::PublishWithheld))
+            .claim(Claim::OutputContains("(stale info)"))
             .claim(Claim::RemoteContains {
-                repo: Repo::App,
+                remote: Remote::origin(Repo::App),
                 branch: "feat-x",
                 mark: "colleague-app",
             }),
@@ -2083,7 +2193,12 @@ pub fn dc20_state_location() -> Scenario {
             Step::git(&a(), Repo::Proj, &["clean", "-xfd"]),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("w"))
+                .claim(Claim::OutputLine("w"))
+                .claim(Claim::IndexLists {
+                    machine: Machine::A,
+                    name: "w",
+                    parent: a(),
+                })
                 .claim(Claim::IndexFile {
                     machine: Machine::A,
                     at: IndexAt::Common,
@@ -2123,7 +2238,7 @@ pub fn dc20_state_location() -> Scenario {
 
 pub fn dc21_marker_disagreement() -> Scenario {
     let refused_naming_the_repair = |step: Step| {
-        step.expect(Exit::Fails)
+        step.expect(Exit::refuses_kind(RefusalKind::StaleRegistryEntry))
             .claim(Claim::OutputContains("rwv doctor --fix"))
     };
     scenario(
@@ -2248,19 +2363,21 @@ pub fn index_parent() -> Scenario {
 
 pub fn index_old_path() -> Scenario {
     let refused_as_old_path = |step: Step| {
-        step.expect(Exit::Fails)
-            .claim(Claim::OutputContains("legacy-workweave-index"))
-            .claim(Claim::OutputContains("rwv doctor --fix"))
-            .claim(Claim::IndexFile {
-                machine: Machine::A,
-                at: IndexAt::Old,
-                present: true,
-            })
-            .claim(Claim::IndexFile {
-                machine: Machine::A,
-                at: IndexAt::Common,
-                present: false,
-            })
+        step.expect(Exit::refuses(
+            Repo::Proj,
+            State::LegacyWorkweaveIndexOldPath,
+        ))
+        .claim(Claim::OutputContains("rwv doctor --fix"))
+        .claim(Claim::IndexFile {
+            machine: Machine::A,
+            at: IndexAt::Old,
+            present: true,
+        })
+        .claim(Claim::IndexFile {
+            machine: Machine::A,
+            at: IndexAt::Common,
+            present: false,
+        })
     };
     scenario(
         "an index at the old path refuses its readers until doctor converts it",
@@ -2325,8 +2442,8 @@ pub fn index_old_path() -> Scenario {
                 }),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("w1"))
-                .claim(Claim::OutputContains("far")),
+                .claim(Claim::OutputLine("w1"))
+                .claim(Claim::OutputLine("far")),
         ],
     )
 }
@@ -2351,12 +2468,12 @@ pub fn raw_rename_published_feature() -> Scenario {
                 branch: "feat-x",
             })
             .claim(Claim::RemoteContains {
-                repo: Repo::App,
+                remote: Remote::origin(Repo::App),
                 branch: "feat-x",
                 mark: "pr-app",
             })
             .claim(Claim::RemoteContains {
-                repo: Repo::Lib,
+                remote: Remote::origin(Repo::Lib),
                 branch: "feat-x",
                 mark: "pr-lib",
             })
@@ -2503,8 +2620,8 @@ pub fn basedir_default() -> Scenario {
                 .claim(Claim::DirStands(Machine::A, "chosen/proj--ww2")),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("ww2"))
-                .claim(Claim::OutputContains("ww")),
+                .claim(Claim::OutputLine("ww2"))
+                .claim(Claim::OutputLine("ww")),
         ],
     )
 }
@@ -2593,7 +2710,7 @@ pub fn declared_mode_rename_retire() -> Scenario {
                 record: Some(Record::Declared),
             }),
         Step::rwv(&a(), &["push", "--overwrite", "projects/proj"])
-            .expect(Exit::Fails)
+            .expect(Exit::refuses(Repo::Proj, State::ProtectedDeclaredMode))
             .claim(Claim::OutputContains("protected declared mode (release)")),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
         Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
@@ -2610,7 +2727,7 @@ pub fn declared_mode_rename_retire() -> Scenario {
                 "projects/proj",
             ],
         )
-        .expect(Exit::Fails)
+        .expect(Exit::refuses(Repo::Proj, State::ProtectedDeclaredMode))
         .claim(Claim::OutputContains("protected declared mode (release)")),
         Step::rwv(
             &a(),
@@ -2637,6 +2754,7 @@ pub fn declared_mode_rename_retire() -> Scenario {
         Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
         publishes_records(Step::rwv(&a(), &["push"]))
             .pushes(Remote::origin(Repo::App), "main")
+            .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("push-branch gone"))
             .claim(Claim::OutputContains("rwv branch rename <new> --adopt")),
         Step::rwv(&a(), &["branch", "rename", "trunk", "--adopt"])
@@ -2673,6 +2791,11 @@ pub fn dc25_url_provenance() -> Scenario {
             )
             .expect(Exit::Succeeds),
             Step::rwv(&a(), &["doctor", "--all"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: origin URL mismatch",
+                ))
+                .claim(Claim::OutputContains("mirror-keeping/lib.git"))
                 .claim(Claim::OutputLacks("placement-disagreement")),
         ],
     }
@@ -2703,45 +2826,72 @@ pub fn url_change_raw_merge() -> Scenario {
                 Repo::Proj,
                 &["merge", "-q", "--no-ff", "-m", "merge", "mirror-url"],
             ),
+            Step::rwv(&a(), &["fetch"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: mirror-keeping/main created",
+                )),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed url:"))
+                .claim(Claim::UpstreamOn {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                    remote: Remote::keeping_mirror(Repo::Lib),
+                }),
             Step::rwv(&a(), &["update"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("member-changed url:")),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
             Step::rwv(&a(), &["update"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("member-changed url:")),
+                .claim(Claim::OutputLacks("member-changed url:")),
         ],
     }
 }
 
 pub fn set_branch_new() -> Scenario {
+    let lib = "local/remotes/lib";
     scenario(
         "set-branch: a typo and an unfetched branch refuse, --new creates and pins",
         vec![
-            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "dve"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("name no-such-branch"))
+            Step::rwv(&a(), &["member", "set-branch", lib, "dve"])
+                .expect(Exit::refuses(Repo::Lib, State::NameNoSuchBranch))
+                .claim(Claim::OutputContains("rwv fetch"))
                 .claim(Claim::OutputContains("--new"))
                 .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(
-                &a(),
-                &["member", "set-branch", "local/remotes/lib", "hold", "--new"],
-            )
-            .expect(Exit::Succeeds)
-            .claim(Claim::OnBranch {
-                at: a(),
+            Step::forge(Forge::Commit {
                 repo: Repo::Lib,
-                branch: "hold",
+                branch: "next",
+                mark: "next-unfetched",
             }),
-            Step::rwv(
-                &a(),
-                &["member", "set-branch", "local/remotes/lib", "main", "--new"],
-            )
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains("name exists")),
+            Step::rwv(&a(), &["member", "set-branch", lib, "next"])
+                .expect(Exit::refuses(Repo::Lib, State::NameNoSuchBranch))
+                .claim(Claim::OutputContains("rwv fetch"))
+                .claim(Claim::OutputContains("--new"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["member", "set-branch", lib, "hold", "--new"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("created hold at"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "hold",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::OutputContains("Committed rwv.toml, rwv.lock")),
         ],
     )
 }
 
+/// `lib-three` is unpushed, so the branch `keeps-lib-three` locks it: the tip
+/// beyond the held pin is then pinned elsewhere, `pin` ahead, not unpinned.
 pub fn member_pin_behind() -> Scenario {
     scenario(
         "member pin behind: reported until the next lock records the tip forward",
@@ -2750,16 +2900,60 @@ pub fn member_pin_behind() -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Lib, "lib-three"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::git(&a(), Repo::Proj, &["branch", "other"]),
-            Step::rwv(&a(), &["branch", "set-mode", "other", "declared"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "keeps-lib-three"]),
+            Step::rwv(&a(), &["branch", "set-mode", "keeps-lib-three", "declared"])
+                .expect(Exit::Succeeds),
             Step::rwv(
                 &a(),
                 &["member", "pin", "local/remotes/lib", "HEAD~1", "--commit"],
             )
             .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::Lib]),
-            Step::rwv(&a(), &["status"]).claim(Claim::OutputContains("pin ahead")),
-            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::Judged(Repo::Lib, State::PinAhead))
+            .claim(Claim::OutputContains("pinned-by: proj keeps-lib-three"))
+            .claim(Claim::OutputContains("rwv lock --commit"))
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::Lib,
+                mark: "lib-two",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "lib-three",
+            }),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Defect(Defect::PinAheadNamesNoHold))
+                .claim(Claim::Judged(Repo::Lib, State::PinAhead))
+                .claim(Claim::OutputContains("pinned-by: proj keeps-lib-three")),
+            Step::rwv(&a(), &["switch", "--detach", "HEAD"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::OutputContains("every repo is at its pin")),
+            Step::rwv(&a(), &["switch", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "lib-three",
+                }),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-three",
+                }),
         ],
     )
 }
@@ -2769,8 +2963,7 @@ pub fn member_pin_behind() -> Scenario {
 pub fn records_reserved_name() -> Scenario {
     let refused = |name: &str| {
         Step::rwv(&a(), &["branch", "create", name, "--declared"])
-            .expect(Exit::Fails)
-            .claim(Claim::OutputContains("name reserved"))
+            .expect(Exit::refuses(Repo::Proj, State::NameReserved))
             .claim(Claim::LocalStateUnchanged(a()))
     };
     scenario(
@@ -2779,8 +2972,7 @@ pub fn records_reserved_name() -> Scenario {
             refused("rwv-records"),
             refused("rwv-records/x"),
             Step::rwv(&a(), &["branch", "create", "rwv-records"])
-                .expect(Exit::Fails)
-                .claim(Claim::OutputContains("name reserved"))
+                .expect(Exit::refuses(Repo::Proj, State::NameReserved))
                 .claim(Claim::LocalStateUnchanged(a())),
         ],
     )
@@ -2808,7 +3000,7 @@ pub fn update_remote_writes_lock() -> Scenario {
                     mark: "upstream-app",
                 }),
             Step::rwv(&a(), &["switch", "feat-z"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses(Repo::Proj, State::EditsLockFilesUncommitted))
                 .claim(Claim::OutputContains("rwv lock --commit"))
                 .claim(Claim::OutputLacks("rwv branch create"))
                 .claim(Claim::LocalStateUnchanged(a())),
@@ -2846,7 +3038,7 @@ pub fn detached_create_start() -> Scenario {
                 &format!("{declared} # edited while detached"),
             ),
             Step::rwv(&a(), &["branch", "create", "w"])
-                .expect(Exit::Fails)
+                .expect(Exit::refuses_kind(RefusalKind::HeadNotOnBranch))
                 .claim(Claim::OutputContains("--declared")),
             Step::rwv(&a(), &["branch", "create", "w", "--declared"])
                 .expect(Exit::Succeeds)

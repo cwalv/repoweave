@@ -28,8 +28,10 @@ use invariants::{
     ChangeKind, Declaration, Invariant, LockSite, Mode, Record, RefChange, RemoteWrite, Snapshot,
     Violation,
 };
+use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
-use runner::{Claim, Exit, Forge, MissingVerb, Report, Scenario, Step};
+use repoweave::refusal::RefusalKind;
+use runner::{Claim, Defect, Exit, Forge, MissingVerb, Outcome, Report, Scenario, Step};
 use sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Store};
 
 fn fired(report: &Report) -> Vec<(&str, Invariant)> {
@@ -99,6 +101,159 @@ fn a_step_that_exits_with_another_status_than_declared_is_unmet() {
     );
 }
 
+fn refused_by_rwv(code: i32, output: &str) -> Outcome<'_> {
+    Outcome {
+        by_rwv: true,
+        succeeded: code == 0,
+        code: Some(code),
+        output,
+    }
+}
+
+#[test]
+fn a_refusal_is_status_one_printing_its_line_and_ending_in_its_route() {
+    let pin_unpinned = Exit::refuses(Repo::App, State::PinUnpinned);
+    let printed = "rwv push: local/remotes/app: pin unpinned (1 commit)\n\
+                   choices:\n  record it\n    rwv lock --commit\n\n\
+                   rwv explain edits\nrwv explain pin\n";
+    assert_eq!(refused_by_rwv(1, printed).meets(pin_unpinned), Ok(()));
+    for status in [0, 2, 101] {
+        assert!(
+            refused_by_rwv(status, printed).meets(pin_unpinned).is_err(),
+            "status {status} read as a refusal"
+        );
+    }
+    for (why, output) in [
+        (
+            "another state",
+            "rwv push: local/remotes/app: pin none\n\nrwv explain pin\n",
+        ),
+        (
+            "another repo",
+            "rwv push: local/remotes/lib: pin unpinned\n\nrwv explain pin\n",
+        ),
+        (
+            "no route",
+            "rwv push: local/remotes/app: pin unpinned\n\nrwv explain name\n",
+        ),
+        (
+            "the route not last",
+            "rwv push: local/remotes/app: pin unpinned\n\nrwv explain pin\ndone\n",
+        ),
+    ] {
+        assert!(
+            refused_by_rwv(1, output).meets(pin_unpinned).is_err(),
+            "{why} met the refusal:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn a_judged_line_matches_its_state_whole_and_not_a_longer_one() {
+    let on_branch = Exit::refuses(Repo::Lib, State::AlignmentOnBranch);
+    let longer = "rwv lock: local/remotes/lib: alignment on branch with stray commits (wip)\n\n\
+                  rwv explain alignment\n";
+    assert!(refused_by_rwv(1, longer).meets(on_branch).is_err());
+    let named = "rwv lock: local/remotes/lib: alignment on branch (wip)\n\nrwv explain alignment\n";
+    assert_eq!(refused_by_rwv(1, named).meets(on_branch), Ok(()));
+    let elsewhere = "rwv lock: local/remotes/lib in /w/seat: alignment on branch\n\n\
+                     rwv explain alignment\n";
+    assert_eq!(refused_by_rwv(1, elsewhere).meets(on_branch), Ok(()));
+}
+
+#[test]
+fn a_refusal_naming_a_kind_ends_in_that_kinds_route() {
+    let kind = Exit::refuses_kind(RefusalKind::HeadNotOnBranch);
+    let printed = "Error: rwv branch create: the project repo is on a detached HEAD\n\n\
+                   rwv explain head-not-on-branch\n";
+    assert_eq!(refused_by_rwv(1, printed).meets(kind), Ok(()));
+    let other = "Error: rwv branch create: no\n\nrwv explain invalid-ref-name\n";
+    assert!(refused_by_rwv(1, other).meets(kind).is_err());
+}
+
+#[test]
+fn rwv_status_one_is_only_ever_a_named_refusal() {
+    assert!(refused_by_rwv(1, "").meets(Exit::Code(1)).is_err());
+    let git = Outcome {
+        by_rwv: false,
+        succeeded: false,
+        code: Some(1),
+        output: "",
+    };
+    assert_eq!(git.meets(Exit::Code(1)), Ok(()));
+    assert!(git
+        .meets(Exit::refuses(Repo::App, State::PinUnpinned))
+        .is_err());
+}
+
+#[test]
+fn a_step_with_claims_and_no_exit_is_undecided() {
+    let step = Step::rwv(&a(), &["status"]).claim(Claim::OutputContains("ok"));
+    assert!(!step.expect.is_decided());
+    assert!(step.expect(Exit::Succeeds).expect.is_decided());
+}
+
+#[test]
+fn a_refusal_of_another_state_or_by_the_argument_parser_is_unmet() {
+    let report = bad_steps(
+        "refusals that are not the one expected",
+        vec![
+            Step::commit(&a(), Repo::App, "unpinned"),
+            Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::App, State::PinNone)),
+            Step::rwv(&a(), &["push", "--no-such-flag"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned)),
+        ],
+    );
+    let why: Vec<&str> = report.unmet.iter().map(|(_, why)| why.as_str()).collect();
+    assert_eq!(why.len(), 2, "{report}");
+    assert!(
+        why[0].contains("no line judges local/remotes/app: pin none"),
+        "{report}"
+    );
+    assert!(why[1].contains("got Some(2)"), "{report}");
+}
+
+#[test]
+fn an_output_line_claim_is_the_whole_line() {
+    let report = bad_steps(
+        "a list holding ww2 alone",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww2"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("ww2"))
+                .claim(Claim::OutputLine("ww")),
+        ],
+    );
+    let why: Vec<&str> = report.unmet.iter().map(|(_, why)| why.as_str()).collect();
+    assert_eq!(why.len(), 1, "{report}");
+    assert!(
+        why[0].starts_with("no line of the output is \"ww\""),
+        "{report}"
+    );
+}
+
+/// Run by [`an_undecided_step_is_announced_by_a_green_run`] as a subprocess,
+/// whose stderr it reads.
+#[test]
+fn a_green_run_through_an_undecided_step() {
+    bad_steps("one undecided step", vec![Step::rwv(&a(), &["status"])]).assert_green();
+}
+
+#[test]
+fn an_undecided_step_is_announced_by_a_green_run() {
+    let out = common::rerun_one_test("a_green_run_through_an_undecided_step");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "SKIP: scenario one undecided step: `rwv status` ran with no decided outcome"
+        ),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn a_claim_that_local_state_is_unchanged_reports_a_step_that_moves_it() {
     let report = bad_steps(
@@ -144,68 +299,43 @@ fn a_pin_left_unresolved_is_reported_unless_the_step_names_its_member() {
 }
 
 #[test]
-fn permanent_seat_lands_twice_then_needs_a_declaration_verb() {
-    runner::run(scenarios::permanent_seat()).assert_pending_on(MissingVerb::Declare);
+fn permanent_seat_lands_twice_then_needs_the_landing_verb() {
+    runner::run(scenarios::permanent_seat()).assert_pending_on(MissingVerb::Land);
 }
 
 #[test]
 fn nested_workweaves_sync_both_ways_and_land() {
-    runner::run(scenarios::nested_workweaves_without_naming()).assert_green();
+    runner::run(scenarios::nested_workweaves_without_naming()).assert_fully_decided_green();
 }
 
 #[test]
 fn raw_merge_real() {
-    runner::run(scenarios::raw_merge_real()).assert_green();
+    runner::run(scenarios::raw_merge_real()).assert_fully_decided_green();
 }
 
 #[test]
 fn raw_merge_fast_forward() {
-    runner::run(scenarios::raw_merge_fast_forward()).assert_green();
-}
-
-#[test]
-fn detached_head_in_workweave() {
-    runner::run(scenarios::detached_head_in_workweave()).assert_green();
-}
-
-#[test]
-fn switch_c_wip_in_workweave() {
-    runner::run(scenarios::switch_c_wip_in_workweave()).assert_green();
+    runner::run(scenarios::raw_merge_fast_forward()).assert_fully_decided_green();
 }
 
 #[test]
 fn raw_switch_in_primary_project() {
-    runner::run(scenarios::raw_switch_in_primary_project()).assert_green();
+    runner::run(scenarios::raw_switch_in_primary_project()).assert_fully_decided_green();
 }
 
 #[test]
 fn project_pr_merged_before_members() {
-    runner::run(scenarios::project_pr_merged_before_members()).assert_green();
+    runner::run(scenarios::project_pr_merged_before_members()).assert_fully_decided_green();
 }
 
 #[test]
 fn hand_edit_declaration_to_existing_branch() {
-    runner::run(scenarios::hand_edit_declaration_to_existing_branch()).assert_green();
+    runner::run(scenarios::hand_edit_declaration_to_existing_branch()).assert_fully_decided_green();
 }
 
 #[test]
 fn hand_edit_declaration_to_missing_branch() {
-    runner::run(scenarios::hand_edit_declaration_to_missing_branch()).assert_green();
-}
-
-#[test]
-fn worktree_add_force_on_weave_branch() {
-    runner::run(scenarios::worktree_add_force_on_weave_branch()).assert_green();
-}
-
-#[test]
-fn shared_member_declared_dev() {
-    runner::run(scenarios::shared_member_declared_dev()).assert_green();
-}
-
-#[test]
-fn shared_member_pinned_behind() {
-    runner::run(scenarios::shared_member_pinned_behind()).assert_green();
+    runner::run(scenarios::hand_edit_declaration_to_missing_branch()).assert_fully_decided_green();
 }
 
 /// `workweave delete --discard-unlanded` consents to losing the
@@ -299,6 +429,149 @@ fn a_create_from_a_detached_workspace_starts_at_its_head_and_carries_the_manifes
     runner::run(scenarios::detached_create_start()).assert_fully_decided_green();
 }
 
+/// The steps of each scenario `scenarios.rs` defines, read without running.
+trait IntoSteps {
+    fn into_steps(self) -> Vec<Step>;
+}
+
+impl IntoSteps for Scenario {
+    fn into_steps(self) -> Vec<Step> {
+        self.steps
+    }
+}
+
+impl IntoSteps for Vec<Step> {
+    fn into_steps(self) -> Vec<Step> {
+        self
+    }
+}
+
+macro_rules! every_scenario {
+    ($($name:ident),* $(,)?) => {
+        fn every_scenario() -> Vec<(&'static str, Vec<Step>)> {
+            vec![$((stringify!($name), scenarios::$name().into_steps())),*]
+        }
+    };
+}
+
+every_scenario!(
+    solo_workweave,
+    cross_repo_pr,
+    cross_repo_pr_fork,
+    resume_on_machine_b,
+    feature_in_primary_while_main_moves,
+    workweave_without_b_then_pr,
+    workweave_without_b_given_up_before_publishing,
+    dc10_store_destroy,
+    tombstone_to_backup,
+    workweave_without_b_given_up_after_publishing,
+    feature_off_stable,
+    permanent_seat,
+    review_colleague_fix,
+    stable_end_to_end,
+    main_change_into_stable,
+    shared_member_declared_dev,
+    shared_member_pinned_behind,
+    nested_workweaves,
+    nested_workweaves_without_naming,
+    raw_merge_real,
+    raw_merge_fast_forward,
+    detached_head_in_workweave,
+    switch_c_wip_in_workweave,
+    raw_switch_in_primary_project,
+    project_pr_merged_before_members,
+    hand_edit_declaration_to_existing_branch,
+    hand_edit_declaration_to_missing_branch,
+    worktree_add_force_on_weave_branch,
+    cherry_pick_onto_stable,
+    pr_closed_unmerged,
+    feature_whose_target_moved,
+    feature_branches_in_some_members,
+    fetch_moves_nothing,
+    clone_exit_status,
+    fresh_take_at_pin,
+    clone_with_a_complete_lock,
+    records_foreign_remote,
+    records_hand_commit,
+    records_unreadable_entry,
+    workspace_state_corrupt,
+    status_operator_branches,
+    activate_no_checkout,
+    activate_leaves_what_the_outgoing_project_holds,
+    activate_over_aligned_shared_member,
+    inactive_project_moves_no_shared_checkout,
+    proj2_relock_over_pending,
+    fork_remote_missing,
+    dc03_roles_bound_push,
+    dc13_push_no_lock,
+    dc22_raw_project_switch,
+    records_conflict,
+    records_rejected,
+    records_first_push,
+    records_drop_per_machine,
+    records_offline_write,
+    records_unpushed_stay_local,
+    waiver_per_merge,
+    records_push_race,
+    overwrite_lease_refuses_a_moved_remote,
+    dc20_state_location,
+    dc21_marker_disagreement,
+    index_parent,
+    index_old_path,
+    raw_rename_published_feature,
+    records_rename_adopt,
+    basedir_default,
+    no_superseded_on_prune,
+    declared_mode_rename_retire,
+    dc25_url_provenance,
+    url_change_raw_merge,
+    set_branch_new,
+    member_pin_behind,
+    records_reserved_name,
+    update_remote_writes_lock,
+    detached_create_start,
+);
+
+/// The `pub fn` constructors of `scenarios.rs`, read from its source.
+fn scenario_constructors() -> std::collections::BTreeSet<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scenario_harness_test/scenarios.rs");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub fn "))
+        .map(|rest| rest.split('(').next().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn every_scenario_constructor_is_walked() {
+    let walked: std::collections::BTreeSet<String> = every_scenario()
+        .into_iter()
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    assert!(walked.contains("dc13_push_no_lock"), "{walked:?}");
+    assert_eq!(walked, scenario_constructors());
+}
+
+/// A refusal names what refused, and a claim about a step needs an exit
+/// expectation to be read against.
+#[test]
+fn every_refusal_step_names_its_state_and_every_claim_has_an_exit() {
+    let mut bad = Vec::new();
+    for (name, steps) in every_scenario() {
+        for step in steps {
+            if step.action.runs_rwv() && step.expect.exit == Exit::Code(1) {
+                bad.push(format!("{name}: `{}` takes status 1 as a code", step.label));
+            }
+            if step.expect.exit == Exit::Undecided && !step.expect.claims.is_empty() {
+                bad.push(format!("{name}: `{}` has claims and no exit", step.label));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
 macro_rules! pending_on {
     ($($name:ident => $verb:ident),* $(,)?) => {
         $(
@@ -313,9 +586,14 @@ macro_rules! pending_on {
 pending_on!(
     resume_on_machine_b => Land,
     feature_in_primary_while_main_moves => Land,
-    feature_off_stable => Declare,
+    feature_off_stable => Land,
     review_colleague_fix => Review,
-    stable_end_to_end => Declare,
+    stable_end_to_end => Land,
+    detached_head_in_workweave => Land,
+    switch_c_wip_in_workweave => Land,
+    worktree_add_force_on_weave_branch => Land,
+    shared_member_declared_dev => Land,
+    shared_member_pinned_behind => Land,
     main_change_into_stable => Land,
     nested_workweaves => WeaveBranch,
     cherry_pick_onto_stable => CherryPick,
@@ -506,10 +784,10 @@ fn snapshot_reads_every_lock_site_and_ref_store() {
         Scenario {
             name: "one workweave",
             seed: Seed::default(),
-            steps: vec![Step::rwv(
-                &a(),
-                &["workweave", "create", "--project", "proj", "x"],
-            )],
+            steps: vec![
+                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "x"])
+                    .expect(Exit::Succeeds),
+            ],
         },
     );
     report.assert_green();
@@ -728,13 +1006,14 @@ fn pin_check_reads_a_lock_on_a_branch_nothing_has_checked_out() {
 fn rewind_steps(at: &Place, may_rewind: &[Repo]) -> Vec<Step> {
     vec![
         Step::commit(at, Repo::App, "ahead"),
-        Step::rwv(at, &["lock", "--commit"]),
+        Step::rwv(at, &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::git(at, Repo::App, &["branch", "keep"]),
         Step::git(at, Repo::App, &["reset", "--hard", "HEAD~1"]).may_rewrite(&[Repo::App]),
         Step::rwv(
             at,
             &["member", "pin", &Repo::App.rel_path(), "HEAD", "--commit"],
         )
+        .expect(Exit::Succeeds)
         .may_rewind(may_rewind),
     ]
 }
@@ -1493,9 +1772,9 @@ fn a_refusing_remote_refuses_the_records_branch_and_takes_the_rest_of_the_push()
                 )
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
-                .expect(Exit::Fails)
+                .expect(Exit::Code(1))
                 .claim(Claim::RemoteContains {
-                    repo: Repo::Proj,
+                    remote: Remote::origin(Repo::Proj),
                     branch: "main",
                     mark: "proj-change",
                 }),
@@ -1530,7 +1809,7 @@ fn an_unreachable_remote_refuses_fetches_until_it_is_reachable_again() {
         "app's origin goes away and comes back",
         vec![
             Step::unreachable(app),
-            Step::git(&a(), Repo::App, &["fetch", "origin"]).expect(Exit::Fails),
+            Step::git(&a(), Repo::App, &["fetch", "origin"]).expect(Exit::Code(128)),
             Step::reachable(app),
             Step::git(&a(), Repo::App, &["fetch", "origin"]),
         ],
@@ -1667,7 +1946,7 @@ holding_rwv! {
             Step::rwv_paused(&ww("held"), &["sync-to"], ADVANCE_TARGET, "landing"),
             Step::commit(&a(), Repo::App, "raced"),
             Step::release("landing")
-                .expect(Exit::Fails)
+                .expect(Exit::Defect(Defect::UnroutedLandingStop))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::App,
@@ -1710,7 +1989,7 @@ holding_rwv! {
         let mut steps = landing_from("held");
         steps.push(
             Step::rwv_paused(&ww("held"), &["sync-to"], "no-such-point", "landing")
-                .expect(Exit::Fails)
+                .expect(Exit::Undecided)
                 .claim(landed()),
         );
         let report = bad_steps("armed for another point", steps);
@@ -2195,20 +2474,20 @@ fn a_declared_mode_branch_is_renamed_and_retired_and_protected_only_against_rewr
 
 #[test]
 fn dc25_url_provenance() {
-    runner::run(scenarios::dc25_url_provenance()).assert_green();
+    runner::run(scenarios::dc25_url_provenance()).assert_fully_decided_green();
 }
 
 #[test]
 fn url_change_raw_merge() {
-    runner::run(scenarios::url_change_raw_merge()).assert_green();
+    runner::run(scenarios::url_change_raw_merge()).assert_fully_decided_green();
 }
 
 #[test]
 fn set_branch_new() {
-    runner::run(scenarios::set_branch_new()).assert_green();
+    runner::run(scenarios::set_branch_new()).assert_fully_decided_green();
 }
 
 #[test]
 fn member_pin_behind() {
-    runner::run(scenarios::member_pin_behind()).assert_green();
+    runner::run(scenarios::member_pin_behind()).assert_fully_decided_green();
 }

@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use repoweave::diagnosis::State;
+use repoweave::refusal::RefusalKind;
+
 use crate::common::pause::Paused;
 use crate::invariants::{self, Allowance, LockSite, Record, RemoteWrite, Snapshot, Violation};
 use crate::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Unreachable};
@@ -13,8 +16,6 @@ pub enum MissingVerb {
     /// Name a branch when creating or opening a workweave, rather than take
     /// the one it mints.
     WeaveBranch,
-    /// Change the branch `rwv.toml` declares for a member.
-    Declare,
     /// Materialize a branch someone else pushed, in a workweave of its own.
     Review,
     /// Take a target's work into a feature, or land a feature into its
@@ -28,10 +29,47 @@ impl MissingVerb {
     pub fn describe(self) -> &'static str {
         match self {
             MissingVerb::WeaveBranch => "name a branch when creating or opening a workweave",
-            MissingVerb::Declare => "change a member's declared branch",
             MissingVerb::Review => "materialize someone else's pushed branch",
             MissingVerb::Land => "take in or land a feature by its record",
             MissingVerb::CherryPick => "port a project commit into a feature or a line",
+        }
+    }
+}
+
+/// A product defect a step runs into: the outcome the adopted design decides
+/// is not the one rwv has. The step still runs and its claims are held; its
+/// exit is not, and every green run that passes through it says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Defect {
+    /// `sync-to` stopped by a target that moved exits 1 naming no refusal.
+    UnroutedLandingStop,
+    /// `update --remote` meets a declared branch that exists nowhere and
+    /// exits 1 naming no refusal, where `name` no-such-branch is decided.
+    NoSuchDeclaredBranchUnjudged,
+    /// A plain `lock --commit` over a hand-declared branch moves the pin
+    /// backward to that branch's tip, a re-pin nothing named.
+    LockCommitRepinsBackwardUnnamed,
+    /// `pin` ahead's report names neither a hold nor a detached workspace,
+    /// the two ways to build at the older pin.
+    PinAheadNamesNoHold,
+}
+
+impl Defect {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Defect::UnroutedLandingStop => {
+                "a sync-to stopped by a moved target exits 1 with no route line"
+            }
+            Defect::LockCommitRepinsBackwardUnnamed => {
+                "a plain lock --commit re-pins a hand-declared branch backward, unnamed"
+            }
+            Defect::PinAheadNamesNoHold => {
+                "pin ahead's report names neither a hold nor a detached workspace"
+            }
+            Defect::NoSuchDeclaredBranchUnjudged => {
+                "update --remote over a declared branch that exists nowhere is not refused \
+                 `name` no-such-branch"
+            }
         }
     }
 }
@@ -180,6 +218,20 @@ pub enum Action {
     Pending(MissingVerb),
 }
 
+impl Action {
+    /// Whether the step's outcome is an rwv process's exit.
+    pub fn runs_rwv(&self) -> bool {
+        matches!(
+            self,
+            Action::Rwv { .. }
+                | Action::RwvPaused { .. }
+                | Action::Release(_)
+                | Action::NewMachine(_)
+                | Action::CloneProject(..)
+        )
+    }
+}
+
 /// What a scenario does to a record rwv keeps.
 #[derive(Debug, Clone)]
 pub enum Tamper {
@@ -221,10 +273,86 @@ pub enum IndexAt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     Succeeds,
-    Fails,
-    /// The process ended with exactly this status.
+    /// rwv refused: status 1, the refusal's line printed, and the output
+    /// ending in the route lines, this refusal's among them.
+    Refuses(Refusal),
+    /// The process ended with exactly this status. For rwv it is never 1:
+    /// rwv's status 1 is a refusal, and names what refused.
     Code(i32),
+    /// The step meets a known defect; see [`Defect`].
+    Defect(Defect),
     Undecided,
+}
+
+impl Exit {
+    pub fn refuses(repo: Repo, state: State) -> Exit {
+        Exit::Refuses(Refusal::Judged(repo, state))
+    }
+
+    pub fn refuses_kind(kind: RefusalKind) -> Exit {
+        Exit::Refuses(Refusal::Kind(kind))
+    }
+}
+
+/// What a refusal names: a repo judged in a state of the axis table, or a
+/// condition no repo state spells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    Judged(Repo, State),
+    Kind(RefusalKind),
+}
+
+impl Refusal {
+    fn route(self) -> String {
+        match self {
+            Refusal::Judged(_, state) => format!("rwv explain {}", state.axis().token()),
+            Refusal::Kind(kind) => format!("rwv explain {}", kind.token()),
+        }
+    }
+
+    /// The refusal in `output`: its own line where it judged a repo, and its
+    /// route among the route lines that end the output.
+    fn printed_in(self, output: &str) -> Result<(), String> {
+        if let Refusal::Judged(repo, state) = self {
+            judged_line(output, repo, state)?;
+        }
+        let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+        let routes: Vec<&str> = lines
+            .iter()
+            .rev()
+            .take_while(|l| l.starts_with("rwv explain "))
+            .copied()
+            .collect();
+        let route = self.route();
+        if routes.contains(&route.as_str()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the output does not end in the route `{route}`:\n{output}"
+            ))
+        }
+    }
+}
+
+/// The line a refusal or a report prints for `repo` judged in `state`:
+/// `<repo>: <axis> <state>`, then nothing or the thing it names in
+/// parentheses, with the repo optionally placed `in <workspace>`.
+fn judged_line(output: &str, repo: Repo, state: State) -> Result<(), String> {
+    let state_line = format!(": {} {}", state.axis().token(), state.name());
+    let path = repo.rel_path();
+    let found = output.lines().any(|line| {
+        line.match_indices(&state_line).any(|(at, _)| {
+            let head = &line[..at];
+            let rest = &line[at + state_line.len()..];
+            (rest.is_empty() || rest.starts_with(" ("))
+                && (head.ends_with(&path) || head.contains(&format!("{path} in ")))
+        })
+    });
+    if found {
+        Ok(())
+    } else {
+        Err(format!("no line judges {path}{state_line}:\n{output}"))
+    }
 }
 
 /// A fact about the state after a step. Marks name commits recorded by
@@ -238,7 +366,7 @@ pub enum Claim {
         mark: &'static str,
     },
     RemoteContains {
-        repo: Repo,
+        remote: Remote,
         branch: &'static str,
         mark: &'static str,
     },
@@ -255,10 +383,23 @@ pub enum Claim {
         mark: &'static str,
         marked: Option<&'static str>,
     },
+    /// What the step printed judges `repo` in `state`, as a refusal's or a
+    /// report's line does.
+    Judged(Repo, State),
     /// What the step printed holds this text.
     OutputContains(&'static str),
     /// What the step printed does not hold this text.
     OutputLacks(&'static str),
+    /// One line of what the step printed is exactly this text.
+    OutputLine(&'static str),
+    /// The checkout of `repo` at `at` has `branch` take in from `remote`'s
+    /// same-named branch.
+    UpstreamOn {
+        at: Place,
+        repo: Repo,
+        branch: &'static str,
+        remote: Remote,
+    },
     /// Machine `machine`'s records branch holds exactly this entry for
     /// `branch`: none when it holds none.
     RecordIs {
@@ -331,6 +472,8 @@ pub enum Claim {
     MarkerIs(Place, MarkerState),
     /// `rel`, under machine `machine`'s directory, is a directory.
     DirStands(Machine, &'static str),
+    /// Nothing is at `rel` under machine `machine`'s directory.
+    DirGone(Machine, &'static str),
 }
 
 /// What is left at a marker's path after a tamper.
@@ -366,7 +509,7 @@ impl Expect {
     }
 
     pub fn is_decided(&self) -> bool {
-        self.exit != Exit::Undecided || !self.claims.is_empty()
+        self.exit != Exit::Undecided
     }
 }
 
@@ -693,6 +836,7 @@ pub struct StepRecord {
     pub label: String,
     pub succeeded: bool,
     pub decided: bool,
+    pub defect: Option<Defect>,
     pub output: String,
 }
 
@@ -736,27 +880,52 @@ impl fmt::Display for Report {
 }
 
 impl Report {
+    /// Every invariant and every decided outcome held. A step that ran with
+    /// no decided outcome is announced as a skip: what it did is unchecked.
     pub fn assert_green(&self) {
         assert!(
             self.violations.is_empty() && self.unmet.is_empty() && self.pending.is_none(),
             "expected a green run:\n{self}"
         );
         assert!(!self.ran.is_empty(), "a green run ran no steps:\n{self}");
+        self.announce_unchecked();
+    }
+
+    fn announce_unchecked(&self) {
+        for label in self.undecided() {
+            crate::common::report_skip(&format!(
+                "scenario {}: `{label}` ran with no decided outcome",
+                self.name
+            ));
+        }
+        for record in &self.ran {
+            if let Some(defect) = record.defect {
+                crate::common::report_skip(&format!(
+                    "scenario {}: `{}` meets a known defect: {}",
+                    self.name,
+                    record.label,
+                    defect.describe()
+                ));
+            }
+        }
     }
 
     /// [`Report::assert_green`], and every step carried a decided outcome.
     pub fn assert_fully_decided_green(&self) {
         self.assert_green();
-        let undecided: Vec<&str> = self
-            .ran
-            .iter()
-            .filter(|r| !r.decided)
-            .map(|r| r.label.as_str())
-            .collect();
+        let undecided = self.undecided();
         assert!(
             undecided.is_empty(),
             "undecided steps {undecided:?}:\n{self}"
         );
+    }
+
+    fn undecided(&self) -> Vec<&str> {
+        self.ran
+            .iter()
+            .filter(|r| !r.decided)
+            .map(|r| r.label.as_str())
+            .collect()
     }
 
     pub fn assert_pending_on(&self, verb: MissingVerb) {
@@ -769,6 +938,7 @@ impl Report {
             Some(verb),
             "expected to stop on a missing verb:\n{self}"
         );
+        self.announce_unchecked();
         crate::common::report_skip(&format!(
             "scenario {} stops at `{}`: no verb to {}",
             self.name,
@@ -830,22 +1000,14 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         for violation in invariants::check(sandbox, &before, &after, &step.allow) {
             report.violations.push((step.label.clone(), violation));
         }
-        match (step.expect.exit, succeeded) {
-            (Exit::Succeeds, false) => report
-                .unmet
-                .push((step.label.clone(), format!("expected success:\n{output}"))),
-            (Exit::Fails, true) => report.unmet.push((
-                step.label.clone(),
-                "expected a refusal; it succeeded".to_owned(),
-            )),
-            (Exit::Code(want), _) if run.last_code != Some(want) => report.unmet.push((
-                step.label.clone(),
-                format!(
-                    "expected exit status {want}; got {:?}:\n{output}",
-                    run.last_code
-                ),
-            )),
-            _ => {}
+        let outcome = Outcome {
+            by_rwv: step.action.runs_rwv(),
+            succeeded,
+            code: run.last_code,
+            output: &output,
+        };
+        if let Err(why) = outcome.meets(step.expect.exit) {
+            report.unmet.push((step.label.clone(), why));
         }
         for claim in &step.expect.claims {
             if let Err(why) = run.holds(claim, &after, &output, &unmoved) {
@@ -856,6 +1018,10 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             label: step.label,
             succeeded,
             decided: step.expect.is_decided(),
+            defect: match step.expect.exit {
+                Exit::Defect(defect) => Some(defect),
+                _ => None,
+            },
             output,
         });
         before = after;
@@ -868,6 +1034,44 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     }
     report.marks = std::mem::take(&mut run.marks);
     report
+}
+
+/// How a step ended, as its expected [`Exit`] reads it.
+pub struct Outcome<'a> {
+    pub by_rwv: bool,
+    pub succeeded: bool,
+    pub code: Option<i32>,
+    pub output: &'a str,
+}
+
+impl Outcome<'_> {
+    pub fn meets(&self, exit: Exit) -> Result<(), String> {
+        let output = self.output;
+        match exit {
+            Exit::Succeeds if !self.succeeded => Err(format!("expected success:\n{output}")),
+            Exit::Refuses(refusal) if !self.by_rwv => Err(format!(
+                "expected a refusal ({refusal:?}) of a step that runs no rwv"
+            )),
+            Exit::Refuses(refusal) => {
+                if self.code != Some(1) {
+                    return Err(format!(
+                        "expected a refusal ({refusal:?}), exit status 1; got {:?}:\n{output}",
+                        self.code
+                    ));
+                }
+                refusal.printed_in(output)
+            }
+            Exit::Code(1) if self.by_rwv => Err(
+                "rwv's exit status 1 is a refusal: expect Exit::Refuses naming what refused"
+                    .to_owned(),
+            ),
+            Exit::Code(want) if self.code != Some(want) => Err(format!(
+                "expected exit status {want}; got {:?}:\n{output}",
+                self.code
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 fn rendered(out: &std::process::Output) -> String {
@@ -888,6 +1092,7 @@ impl Run<'_> {
                 }
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 let out = sb.git(&sb.checkout(at, *repo), &args);
+                self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
             }
             Action::AddRemote {
@@ -1039,6 +1244,7 @@ impl Run<'_> {
             Action::Release(handle) => match self.held.remove(handle) {
                 Some(held) => {
                     let out = held.release();
+                    self.last_code = out.status.code();
                     (out.status.success(), rendered(&out))
                 }
                 None => (false, format!("nothing is held as {handle}")),
@@ -1322,11 +1528,43 @@ impl Run<'_> {
     ) -> Result<(), String> {
         let sb = self.sandbox;
         match claim {
+            Claim::Judged(repo, state) => judged_line(output, *repo, *state),
             Claim::OutputContains(text) => {
                 if output.contains(text) {
                     Ok(())
                 } else {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
+                }
+            }
+            Claim::OutputLine(text) => {
+                if output.lines().any(|line| line == *text) {
+                    Ok(())
+                } else {
+                    Err(format!("no line of the output is {text:?}:\n{output}"))
+                }
+            }
+            Claim::UpstreamOn {
+                at,
+                repo,
+                branch,
+                remote,
+            } => {
+                let dir = sb.checkout(at, *repo);
+                let config = |key: String| {
+                    let out = sb.git(&dir, &["config", "--get", &key]);
+                    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+                };
+                let name = config(format!("branch.{branch}.remote"));
+                let merge = config(format!("branch.{branch}.merge"));
+                let url = config(format!("remote.{name}.url"));
+                let want = sb.remote_url(*remote);
+                if url == want && merge == format!("refs/heads/{branch}") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} {branch} takes in {merge:?} from {name:?} at {url:?}, not {branch} at {want}",
+                        repo.name()
+                    ))
                 }
             }
             Claim::OutputLacks(text) => {
@@ -1452,6 +1690,14 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("{} is not a directory", dir.display()))
+                }
+            }
+            Claim::DirGone(machine, rel) => {
+                let path = sb.machine_dir(*machine).join(rel);
+                if path.symlink_metadata().is_err() {
+                    Ok(())
+                } else {
+                    Err(format!("{} is still there", path.display()))
                 }
             }
             Claim::WorkspaceStateKept(at) => {
@@ -1585,8 +1831,12 @@ impl Run<'_> {
                 rev,
                 mark,
             } => self.contains(&sb.checkout(at, *repo), rev, mark),
-            Claim::RemoteContains { repo, branch, mark } => self.contains(
-                &sb.remote_store(Remote::origin(*repo)),
+            Claim::RemoteContains {
+                remote,
+                branch,
+                mark,
+            } => self.contains(
+                &sb.remote_store(*remote),
                 &format!("refs/heads/{branch}"),
                 mark,
             ),
