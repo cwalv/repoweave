@@ -9382,7 +9382,7 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop() -> Scenario {
         vec![
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], "landed", "landing"),
             Step::kill("landing"),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLine("w-app")),
@@ -9418,7 +9418,7 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() -> Scenario {
     let mut steps = vec![
         create("w"),
         Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], "landed", "landing"),
         Step::kill("landing"),
     ];
     steps.extend(own_merge_at_the_savepoint(&a(), Repo::App));

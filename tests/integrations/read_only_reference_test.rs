@@ -556,8 +556,8 @@ fn abort_restoring_an_older_manifest_resettles_the_target() {
         OWNED_PATH,
     ])
     .current_dir(&seat);
-    let held = common::pause::Paused::spawn(land, "retire", &tmp.path().join("pause"))
-        .expect("the landing reaches its retire step");
+    let held = common::pause::Paused::spawn(land, "landed", &tmp.path().join("pause"))
+        .expect("the landing reaches the end of its fast-forwards");
     drop(held);
     assert!(
         seat.join(".rwv-op").exists(),
