@@ -6,10 +6,9 @@
 //! abbreviation another commit already holds takes a longer one.
 
 use super::{git_command, Argv, GitVcs, BACKUP_NAMESPACE, LOCAL_BRANCH_NAMESPACE};
-use crate::branch_ref::BranchRef;
 use crate::vcs::{
     Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ListedBackup,
-    RawRefName, RemoteHandle, RemoteTracking, ResolvedRevisionId, VcsError,
+    RemoteTracking, ResolvedRevisionId, VcsError,
 };
 use std::path::Path;
 
@@ -296,8 +295,7 @@ impl GitVcs {
             ],
             &repo,
         )?;
-        let mut remotes = Self::remote_names(&repo)?;
-        remotes.sort_by_key(|name| std::cmp::Reverse(name.len()));
+        let remotes = Self::remote_names(&repo)?;
         let mut tips = Vec::new();
         for line in out.lines().map(str::trim).filter(|l| !l.is_empty()) {
             let mut parts = line.splitn(3, ' ');
@@ -313,27 +311,7 @@ impl GitVcs {
             if !symref.is_empty() {
                 continue;
             }
-            let branch = if let Some(local) = refname.strip_prefix(LOCAL_BRANCH_NAMESPACE) {
-                BranchRef::Local(RawRefName::new(local))
-            } else {
-                let tracked = refname
-                    .strip_prefix(REMOTE_TRACKING_ROOT)
-                    .unwrap_or(refname);
-                let (remote, name) = remotes
-                    .iter()
-                    .find_map(|r| {
-                        tracked
-                            .strip_prefix(r.as_str())
-                            .and_then(|rest| rest.strip_prefix('/'))
-                            .map(|name| (r.as_str(), name))
-                    })
-                    .or_else(|| tracked.split_once('/'))
-                    .unwrap_or(("", tracked));
-                BranchRef::Remote {
-                    remote: RemoteHandle::new(remote),
-                    name: RawRefName::new(name),
-                }
-            };
+            let branch = Self::branch_ref_of(refname, &remotes);
             let tip = ResolvedRevisionId::from_rev_parse_output(oid)
                 .ok_or_else(|| failed(&["for-each-ref"], &repo, format!("not a commit: {oid}")))?;
             tips.push(BranchTip {

@@ -165,8 +165,8 @@ src/pull.rs	(untokened:owed)	-	1
 src/pull.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/pull.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
 src/pull.rs	push-branch diverged	-	1
-src/push.rs	(untokened:environment-passthrough)	-	3
-src/push.rs	(untokened:internal-invariant)	-	1
+src/push.rs	(bare)	-	1
+src/push.rs	(untokened:environment-passthrough)	-	2
 src/push.rs	(untokened:tally)	-	1
 src/push.rs	edits dirty	tests/scenario_harness_test/scenarios.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	-	1
@@ -184,7 +184,8 @@ src/push.rs	protected declared	-	1
 src/push.rs	protected declared mode	-	1
 src/push.rs	publish no pin	-	1
 src/push.rs	publish records rejected	-	1
-src/push.rs	publish withheld	-	2
+src/push.rs	publish withheld	-	3
+src/push.rs	push-branch diverged	-	1
 src/push.rs	push-branch unconfirmed	-	1
 src/push_branch.rs	push-branch ahead	-	1
 src/push_branch.rs	push-branch behind	-	1

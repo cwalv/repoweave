@@ -1817,7 +1817,7 @@ fn publish(
             &judged,
             &project_plan.replace,
         )
-        .map_err(|e| anyhow::anyhow!("{e}"))
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
         .and_then(|()| {
             give_upstream(pvcs, &pushed.project_dir, &pushed.raw, &project_plan.target)
                 .map_err(anyhow::Error::from)
@@ -2017,7 +2017,7 @@ fn push_one(
                 )),
             }
         }
-        Err(e) => PushOutcome::Failed(format!("{}: {e}", item.repo_path.as_str())),
+        Err(e) => PushOutcome::Failed(format!("{}: {e:#}", item.repo_path.as_str())),
     }
 }
 

@@ -992,6 +992,32 @@ impl GitVcs {
     }
 
     /// The names of `repo`'s remotes.
+    /// A full local or remote-tracking ref name as the branch it is.
+    /// `remotes` are tried longest first, since a remote's name may hold `/`.
+    fn branch_ref_of(refname: &str, remotes: &[String]) -> crate::branch_ref::BranchRef {
+        use crate::branch_ref::BranchRef;
+        if let Some(local) = refname.strip_prefix(LOCAL_BRANCH_NAMESPACE) {
+            return BranchRef::Local(RawRefName::new(local));
+        }
+        let tracked = refname.strip_prefix("refs/remotes/").unwrap_or(refname);
+        let mut longest_first: Vec<&String> = remotes.iter().collect();
+        longest_first.sort_by_key(|name| std::cmp::Reverse(name.len()));
+        let (remote, name) = longest_first
+            .iter()
+            .find_map(|r| {
+                tracked
+                    .strip_prefix(r.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .map(|name| (r.as_str(), name))
+            })
+            .or_else(|| tracked.split_once('/'))
+            .unwrap_or(("", tracked));
+        BranchRef::Remote {
+            remote: RemoteHandle::new(remote),
+            name: RawRefName::new(name),
+        }
+    }
+
     fn remote_names(repo: &Path) -> Result<Vec<String>, VcsError> {
         Ok(Self::run_trimmed(["remote"], repo)?
             .lines()
