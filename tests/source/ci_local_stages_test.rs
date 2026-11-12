@@ -131,6 +131,9 @@ fn run_script(
     // inherited, it would read as the script setting it for a stage that
     // does not.
     cmd.env_remove("GIT_CONFIG_SYSTEM");
+    // The gate exports its thread count to the suite running this test;
+    // inherited, it would stand in for the count the script derives.
+    cmd.env_remove("RUST_TEST_THREADS");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -149,7 +152,7 @@ const AMBIENT_AUTOCRLF_HEADER: &str =
     "==> cargo test --release --no-fail-fast --features test-pause \
      (ambient core.autocrlf=true, as Git for Windows installs it)";
 
-const NO_TEST_PAUSE_HEADER: &str = "==> cargo test --no-fail-fast --test test_pause_build_test \
+const NO_TEST_PAUSE_HEADER: &str = "==> cargo test --no-fail-fast --test test_pause_build \
      -- --include-ignored (built as releases build it: without test-pause)";
 
 const HEADERS_IN_ORDER: &[&str] = &[
@@ -1311,4 +1314,67 @@ fn tier_and_stages_together_are_refused_naming_both() {
             stdout_of(&out)
         );
     }
+}
+
+const STUB_CARGO_RECORDING_THREADS: &str = "#!/bin/sh\n\
+printf '%s\\t%s\\n' \"$*\" \"${RUST_TEST_THREADS:-unset}\" >> \"$CI_LOCAL_TEST_THREADS_LOG\"\n\
+exit 0\n";
+
+/// The `RUST_TEST_THREADS` each `cargo test` the script runs was handed, on a
+/// host reporting `cores` online, with `caller` as the caller's own setting.
+fn test_threads_handed(cores: &str, caller: Option<&str>) -> Vec<String> {
+    let fixture = common::tempdir().expect("tempdir");
+    let stub = stub_bin_dir();
+    common::write_executable(&stub.path().join("cargo"), STUB_CARGO_RECORDING_THREADS);
+    common::write_executable(
+        &stub.path().join("getconf"),
+        format!("#!/bin/sh\necho {cores}\n"),
+    );
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("seen");
+    let mut env = vec![("CI_LOCAL_TEST_THREADS_LOG", log.to_str().unwrap())];
+    if let Some(threads) = caller {
+        env.push(("RUST_TEST_THREADS", threads));
+    }
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=test,test-ambient-autocrlf,no-test-pause"],
+        &env,
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let seen: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.starts_with("test "))
+        .map(|line| line.split('\t').nth(1).unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        seen.len(),
+        3,
+        "every test stage ran cargo test once: {seen:?}"
+    );
+    seen
+}
+
+#[test]
+fn the_test_stages_run_on_half_the_cores_and_never_fewer_than_four() {
+    for (cores, threads) in [
+        ("32", "16"),
+        ("10", "5"),
+        ("6", "4"),
+        ("4", "4"),
+        ("2", "2"),
+    ] {
+        assert_eq!(
+            test_threads_handed(cores, None),
+            vec![threads; 3],
+            "on {cores} cores"
+        );
+    }
+}
+
+#[test]
+fn a_callers_test_thread_count_is_the_one_the_test_stages_use() {
+    assert_eq!(test_threads_handed("32", Some("3")), vec!["3"; 3]);
 }

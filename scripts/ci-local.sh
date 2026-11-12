@@ -48,6 +48,13 @@
 # .gitattributes keeps them LF under any config, and
 # tests/source/repo_line_endings_test.rs holds that.
 #
+# Every stage that runs the suite runs each test binary's tests on
+# RUST_TEST_THREADS threads of one process, half the host's cores and never
+# fewer than four (or every core, on a host with fewer). On a 32-core host the
+# suite measured no faster at 32 threads than at 16 and spent more system
+# time, while 8 cost half again: half the cores is as fast for one gate and
+# leaves room for another beside it. A caller's own RUST_TEST_THREADS wins.
+#
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
 # and lint truth authoritatively, so a contributor without the target
@@ -55,6 +62,15 @@
 # regardless.
 
 set -euo pipefail
+
+if [ -z "${RUST_TEST_THREADS:-}" ]; then
+    cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)"
+    RUST_TEST_THREADS=$((cores / 2))
+    if [ "$RUST_TEST_THREADS" -lt 4 ]; then
+        RUST_TEST_THREADS=$((cores < 4 ? cores : 4))
+    fi
+fi
+export RUST_TEST_THREADS
 
 ALL_STAGES=(check windows test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
 OPT_IN_STAGES=(windows-wine git-floor)
@@ -149,9 +165,10 @@ with_symlinked_tmpdir() {
     gate_tmp="$(mktemp -d "${base%/}/rwv-gate-tmp.XXXXXX")"
     mkdir "$gate_tmp/real"
     if ln -s "$gate_tmp/real" "$gate_tmp/link" 2>/dev/null && [ -L "$gate_tmp/link" ]; then
-        printf 'TMPDIR=%s (a symlink to %s)\n' "$gate_tmp/link" "$gate_tmp/real"
+        printf 'TMPDIR=%s (a symlink to %s), RUST_TEST_THREADS=%s\n' "$gate_tmp/link" "$gate_tmp/real" "$RUST_TEST_THREADS"
         TMPDIR="$gate_tmp/link" "$@" || status=$?
     else
+        printf 'RUST_TEST_THREADS=%s\n' "$RUST_TEST_THREADS"
         printf 'NOTICE: this host made no symlink, so TMPDIR is not behind one: a test comparing a path rwv resolved with one spelled from the raw temp root is unchecked here\n' >&2
         "$@" || status=$?
     fi
@@ -202,12 +219,12 @@ if run_stage test-ambient-autocrlf; then
 fi
 
 if run_stage no-test-pause; then
-    header "cargo test --no-fail-fast --test test_pause_build_test -- --include-ignored (built as releases build it: without test-pause)"
+    header "cargo test --no-fail-fast --test test_pause_build -- --include-ignored (built as releases build it: without test-pause)"
     # No feature flags, as releases build. Debug, not the test stages' release
     # profile: whether the pause is compiled in turns on the features, never
     # on the profile, and the debug library is one drift's generator build
     # compiles anyway.
-    with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build_test -- --include-ignored
+    with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build -- --include-ignored
 fi
 
 if run_stage clippy; then
