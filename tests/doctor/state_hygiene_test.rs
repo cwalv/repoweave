@@ -894,6 +894,46 @@ fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
     );
 }
 
+/// A record another release wrote, in a schema this one refuses, still owns
+/// the savepoints that release would abort with: doctor reports the record
+/// and `--fix` keeps them.
+#[test]
+fn a_record_of_another_schema_keeps_its_savepoints_under_fix() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    init_git_repo(&repo_abs);
+    let saved = add_empty_commit(&repo_abs, "saved");
+    let out = common::git()
+        .args(["reset", "-q", "--hard", "HEAD~1"])
+        .current_dir(&repo_abs)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    let op_id = "777777777777777777";
+    write_op_state(&root, op_id);
+    let record = root.join(".rwv-op");
+    let older = std::fs::read_to_string(&record)
+        .unwrap()
+        .replace("\"schema\": 5", "\"schema\": 3");
+    std::fs::write(&record, older).unwrap();
+    add_savepoint(&repo_abs, op_id, &saved);
+
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("stale-op-state"), "{stdout}");
+    assert!(savepoint_exists(&repo_abs, op_id), "{stdout}");
+}
+
 /// A parked `land`: its owner record, and the savepoints it filed per repo
 /// on both sides (`<op-id>`, and `<op-id>-target` for the target's).
 fn parked_sync_to(root: &Path) -> (PathBuf, String, String) {

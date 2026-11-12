@@ -77,9 +77,19 @@ impl Op {
         let id = OpId::new_now();
         let record = OwnerRecord::new_take_in(&id, verb, project.clone(), workspace, take_in);
         let touched = TouchedWorkspaces::of(verb, workspace, Some(workspace));
-        let _held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
-        for (dir, vcs) in repos {
-            let _ = vcs.create_savepoint(dir, &SavepointKey::Op(id.clone()));
+        let held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
+        let key = SavepointKey::Op(id.clone());
+        for (filed, (dir, vcs)) in repos.iter().enumerate() {
+            if let Err(e) = vcs.create_savepoint(dir, &key) {
+                for (dir, vcs) in &repos[..filed] {
+                    vcs.drop_savepoint(dir, &key);
+                }
+                op_state::release_acquired(&held);
+                return Err(anyhow::Error::from(e).context(format!(
+                    "could not file a savepoint in {}, so the operation did not start",
+                    dir.display()
+                )));
+            }
             crate::test_pause::point("op-savepoint-taken");
         }
         Ok(Self {

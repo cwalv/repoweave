@@ -4390,12 +4390,20 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RawRefName,
     ) -> Result<Vec<PathBuf>, VcsError> {
-        Ok(Self::worktree_records(repo)?
-            .into_iter()
-            .filter(|record| !record.prunable)
-            .filter(|record| record.branch.as_ref() == Some(branch))
-            .map(|record| record.path)
-            .collect())
+        let mut held = Vec::new();
+        for record in Self::worktree_records(repo)? {
+            if record.prunable {
+                continue;
+            }
+            let on_it = match &record.branch {
+                Some(on) => on == branch,
+                None => Self::rebasing(&record.path)?.as_ref() == Some(branch),
+            };
+            if on_it {
+                held.push(record.path);
+            }
+        }
+        Ok(held)
     }
 
     fn upstream_of(&self, repo: &Path, branch: &RawRefName) -> Result<Option<Upstream>, VcsError> {
@@ -4867,6 +4875,24 @@ impl GitVcs {
             kept.push(KeptWork::Commits(commits));
         }
         Ok(())
+    }
+
+    /// The branch a rebase stopped in `checkout` will move when it finishes:
+    /// git lists such a worktree as detached.
+    fn rebasing(checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
+        for state in ["rebase-merge/head-name", "rebase-apply/head-name"] {
+            let path = Self::run_trimmed(
+                ["rev-parse", "--path-format=absolute", "--git-path", state],
+                checkout,
+            )?;
+            if let Ok(name) = std::fs::read_to_string(path) {
+                return Ok(name
+                    .trim()
+                    .strip_prefix(LOCAL_BRANCH_NAMESPACE)
+                    .map(RawRefName::new));
+            }
+        }
+        Ok(None)
     }
 
     /// Keep `repo`'s uncommitted edits as a backup, once per restore, then
@@ -6384,6 +6410,40 @@ mod branch_model_tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A worktree stopped in a rebase of a branch, which git lists as
+    /// detached, still holds that branch: the rebase's finish moves it.
+    #[test]
+    fn a_worktree_stopped_rebasing_a_branch_holds_it() {
+        let p = repo();
+        git(p.path(), &["branch", "topic"]);
+        git(p.path(), &["switch", "-q", "-c", "side"]);
+        std::fs::write(p.path().join("f"), "side").unwrap();
+        git(p.path(), &["commit", "-qam", "side"]);
+        git(p.path(), &["switch", "-q", "main"]);
+        let wt = crate::tempdir().unwrap();
+        let wt = wt.path().join("wt");
+        git(
+            p.path(),
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "topic"],
+        );
+        std::fs::write(wt.join("f"), "topic").unwrap();
+        git(&wt, &["commit", "-qam", "topic"]);
+        let out = git_command()
+            .args(["rebase", "side"])
+            .current_dir(&wt)
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "the rebase must stop on its conflict"
+        );
+        let held = GitVcs
+            .checkouts_of_branch(p.path(), &RawRefName::new("topic"))
+            .unwrap();
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert!(same_location(&held[0], &wt), "{held:?}");
     }
 
     /// A repo on `main` with one commit.

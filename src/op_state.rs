@@ -1357,6 +1357,14 @@ pub fn read_owner_header(workspace_dir: &Path) -> anyhow::Result<Option<OwnerHea
     Ok(read_owner_for_abort(workspace_dir)?.map(|reading| reading.header()))
 }
 
+/// The header of the `.rwv-op` file in `workspace_dir` as it reads, whatever
+/// the record's schema: a record another release wrote still owns the
+/// savepoints that release would abort with.
+pub fn read_owner_header_of_any_schema(workspace_dir: &Path) -> Option<OwnerHeader> {
+    let json = OwnerRecord::path_in(workspace_dir).read_to_string().ok()?;
+    serde_json::from_str::<OwnerHeader>(&json).ok()
+}
+
 /// Record `new_phase` as the phase in progress in the owner record at
 /// `workspace_dir`.
 ///

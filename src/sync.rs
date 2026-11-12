@@ -3752,60 +3752,77 @@ fn guard_and_mark<'a>(
     // fast-forward, and `rwv abort` restores either. The target's are filed
     // under a key of their own, since the two sides may share a ref store.
     let savepoint_key = SavepointKey::Op(op_id.clone());
-    create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &savepoint_key)?;
-    let mut project_anchors: Vec<(PathBuf, SavepointKey)> =
-        vec![(cwd_project_dir.clone(), savepoint_key.clone())];
+    let tsp_id = SavepointKey::LandTarget(op_id.clone());
+    let mut project_anchors: Vec<(PathBuf, SavepointKey)> = Vec::new();
     let mut member_anchors: Vec<(Box<dyn Vcs>, PathBuf, SavepointKey)> = Vec::new();
-    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
-        let abs = cwd_workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
-            let vcs = vcs_for(entry.vcs_type);
-            if create_savepoint(vcs.as_ref(), &abs, &savepoint_key).is_ok() {
+    let filed = (|| -> anyhow::Result<()> {
+        create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &savepoint_key)?;
+        project_anchors.push((cwd_project_dir.clone(), savepoint_key.clone()));
+        for (repo_path, entry) in cwd_project.manifest.iter_entries() {
+            let abs = cwd_workspace_dir.join(repo_path.as_path());
+            if abs.exists() {
+                let vcs = vcs_for(entry.vcs_type);
+                create_savepoint(vcs.as_ref(), &abs, &savepoint_key)?;
                 member_anchors.push((vcs, abs, savepoint_key.clone()));
             }
         }
-    }
-    let tsp_id = SavepointKey::LandTarget(op_id.clone());
-    if let (Some(dest_project_dir), Some(dest_workspace_dir)) =
-        (&dest_project_dir, &dest_workspace_dir)
-    {
-        if create_savepoint(project_vcs.as_ref(), dest_project_dir, &tsp_id).is_ok() {
-            project_anchors.push((dest_project_dir.clone(), tsp_id.clone()));
-        }
-        if let Ok(tp) =
-            crate::manifest::Project::from_dir_skip_lock(dest_project_dir, cwd_project_name.clone())
+        if let (Some(dest_project_dir), Some(dest_workspace_dir)) =
+            (&dest_project_dir, &dest_workspace_dir)
         {
-            for (repo_path, entry) in tp.manifest.iter_entries() {
-                let abs = dest_workspace_dir.join(repo_path.as_path());
-                if abs.exists() {
-                    let vcs = vcs_for(entry.vcs_type);
-                    if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
+            create_savepoint(project_vcs.as_ref(), dest_project_dir, &tsp_id)?;
+            project_anchors.push((dest_project_dir.clone(), tsp_id.clone()));
+            if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(
+                dest_project_dir,
+                cwd_project_name.clone(),
+            ) {
+                for (repo_path, entry) in tp.manifest.iter_entries() {
+                    let abs = dest_workspace_dir.join(repo_path.as_path());
+                    if abs.exists() {
+                        let vcs = vcs_for(entry.vcs_type);
+                        create_savepoint(vcs.as_ref(), &abs, &tsp_id)?;
                         member_anchors.push((vcs, abs, tsp_id.clone()));
                     }
                 }
             }
+        } else {
+            let target_ref = crate::vcs::RawRefName::new(landing.target.as_str());
+            if let Some(read) =
+                project_vcs.resolve_local_branch_tip(&cwd_project_dir, &target_ref)?
+            {
+                project_vcs.create_ref_savepoint(
+                    &cwd_project_dir,
+                    &tsp_id,
+                    &target_ref,
+                    read.id(),
+                )?;
+                project_anchors.push((cwd_project_dir.clone(), tsp_id.clone()));
+            }
         }
-    } else {
-        let target_ref = crate::vcs::RawRefName::new(landing.target.as_str());
-        if let Some(read) = project_vcs.resolve_local_branch_tip(&cwd_project_dir, &target_ref)? {
-            project_vcs.create_ref_savepoint(&cwd_project_dir, &tsp_id, &target_ref, read.id())?;
-            project_anchors.push((cwd_project_dir.clone(), tsp_id.clone()));
+        for (path, receiving) in &plan.receiving {
+            if receiving.moves != (op_state::Moves::AsRef { create: false }) {
+                continue;
+            }
+            let Some(entry) = cwd_project.manifest.get_entry(path) else {
+                continue;
+            };
+            let vcs = vcs_for(entry.vcs_type);
+            let dir = cwd_workspace_dir.join(path.as_path());
+            if let Some(read) = vcs.resolve_local_branch_tip(&dir, &receiving.branch)? {
+                vcs.create_ref_savepoint(&dir, &tsp_id, &receiving.branch, read.id())?;
+                member_anchors.push((vcs, dir, tsp_id.clone()));
+            }
         }
-    }
-
-    for (path, receiving) in &plan.receiving {
-        if receiving.moves != (op_state::Moves::AsRef { create: false }) {
-            continue;
+        Ok(())
+    })();
+    if let Err(e) = filed {
+        for (dir, id) in &project_anchors {
+            delete_savepoint(project_vcs.as_ref(), dir, id);
         }
-        let Some(entry) = cwd_project.manifest.get_entry(path) else {
-            continue;
-        };
-        let vcs = vcs_for(entry.vcs_type);
-        let dir = cwd_workspace_dir.join(path.as_path());
-        if let Some(read) = vcs.resolve_local_branch_tip(&dir, &receiving.branch)? {
-            vcs.create_ref_savepoint(&dir, &tsp_id, &receiving.branch, read.id())?;
-            member_anchors.push((vcs, dir, tsp_id.clone()));
+        for (vcs, dir, id) in &member_anchors {
+            delete_savepoint(vcs.as_ref(), dir, id);
         }
+        op_state::release_acquired(&acquired);
+        return Err(e.context("the landing could not file its savepoints, so it did not start"));
     }
 
     // The source relocks forward before composing, after the savepoints so
@@ -6702,8 +6719,9 @@ fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed
 }
 
 /// Take `key` back off the journal of repos the landing moves in `T`'s
-/// workspace when its fast-forward stopped before it moved: the repo is not
-/// at `landing_at`, the tip the landing moves it to.
+/// workspace when its fast-forward stopped before it moved: the repo holds
+/// no `landing_at`, the tip the landing moves it to. One that holds it was
+/// moved by the landing, an earlier run of it included, whatever came after.
 fn unjournal_unless_at(
     ctx: &OpContext<'_>,
     key: &RepoKey,
@@ -6711,9 +6729,10 @@ fn unjournal_unless_at(
     dir: &Path,
     landing_at: &CommitId,
 ) -> anyhow::Result<()> {
+    let landing_at = ResolvedRevisionId::from(landing_at.clone());
     if vcs
         .head_revision(dir)
-        .is_ok_and(|head| head.id() == landing_at)
+        .is_ok_and(|head| vcs.is_ancestor(dir, &landing_at, &head).unwrap_or(true))
     {
         return Ok(());
     }

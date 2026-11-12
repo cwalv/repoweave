@@ -5569,7 +5569,11 @@ pub fn scan_state_hygiene(
         // A record whose header parses still owns its savepoints, since
         // `rwv abort` restores from them; one whose header does not is
         // surfaced by the verbs that read it, with its own advice.
-        if let Ok(Some(state)) = crate::op_state::read_owner_header(&target.workspace_dir) {
+        let header = match crate::op_state::read_owner_header(&target.workspace_dir) {
+            Ok(header) => header,
+            Err(_) => crate::op_state::read_owner_header_of_any_schema(&target.workspace_dir),
+        };
+        if let Some(state) = header {
             violations.push(CheckViolation::StaleOpState {
                 workspace_dir: target.workspace_dir.clone(),
                 verb: state.verb,
