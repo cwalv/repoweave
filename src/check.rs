@@ -7144,9 +7144,15 @@ impl DriftReading {
 ///
 /// A path is drift only where both are shown: the branch moved under the
 /// checkout, and the path still holds what the moved-from tip held. Without
-/// that every difference is an edit.
+/// that every difference is an edit, as it is in a checkout stopped in an
+/// operation.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
-    let left = vcs.left_behind_at(repo)?;
+    // Refreshing an index entry ends a merge, cherry-pick or revert in
+    // progress, so a checkout stopped in one has no drift to refresh.
+    let left = match vcs.mid_operation(repo) {
+        Some(_) => None,
+        None => vcs.left_behind_at(repo)?,
+    };
     let paths = vcs
         .path_standings(repo, left.as_ref())?
         .into_iter()

@@ -6,16 +6,17 @@ use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
-    ContentIdentity, Copied, Holds, PathStanding, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
+    ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
     DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
-    ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
-    NamedBranch, PatchEquivalents, PinOutcome, PruningFetch, PublishRef, RangeCommit, RangeListing,
-    RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish,
-    RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
-    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
-    Replace, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth,
-    SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
-    Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    Holds, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
+    NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch, PublishRef, RangeCommit,
+    RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
+    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies,
+    RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip,
+    RemoteTracking, Replace, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
+    SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges,
+    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
+    WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

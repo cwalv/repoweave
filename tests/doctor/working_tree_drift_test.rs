@@ -550,6 +550,56 @@ fn doctor_fix_leaves_edits_that_hold_committed_content() {
     assert!(!ws.server_ww.join("added.txt").exists());
 }
 
+/// A drifted checkout stopped in a revert is left as it stands: refreshing
+/// an index entry would end the revert.
+#[test]
+fn doctor_fix_leaves_drift_in_a_checkout_stopped_in_a_revert() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+    make_commit(&ws.server_ww, "added.txt", "added\n", "ww: add");
+    common::git_in(&ws.server_ww, &["revert", "--no-commit", "HEAD"]);
+    let ww_tip = common::git_in(&ws.server_ww, &["rev-parse", "HEAD"]);
+    let moved = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
+    let moved = common::git_in(
+        &ws.server_primary,
+        &[
+            "commit-tree",
+            &format!("{moved}^{{tree}}"),
+            "-p",
+            &ww_tip,
+            "-m",
+            "moved",
+        ],
+    );
+    advance_ww_branch(&ws.server_primary, "ww/main", &moved);
+    let before = common::git_in(&ws.server_ww, &["status", "--porcelain"]);
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("drift in"),
+        "nothing is refreshed: {stdout}"
+    );
+    assert!(
+        common::git()
+            .args(["rev-parse", "-q", "--verify", "REVERT_HEAD"])
+            .current_dir(&ws.server_ww)
+            .status()
+            .unwrap()
+            .success(),
+        "the revert is still in progress"
+    );
+    assert_eq!(
+        common::git_in(&ws.server_ww, &["status", "--porcelain"]),
+        before
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 7: Composition with index fix (the real 2026-04-23 production case)
 // ---------------------------------------------------------------------------

@@ -4080,9 +4080,9 @@ fn judge_edits_beside_drift(
     report: &mut Report,
     drifted: Option<&mut Vec<DriftedCheckout>>,
 ) {
-    let reading = match (&drifted, vcs.mid_operation(&at.dir)) {
-        (Some(_), None) => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
-        _ => crate::check::DriftReading::default(),
+    let reading = match &drifted {
+        Some(_) => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
+        None => crate::check::DriftReading::default(),
     };
     let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir))
         .into_iter()
