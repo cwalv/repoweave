@@ -1474,6 +1474,7 @@ pub fn run() -> anyhow::Result<()> {
                         &ctx,
                         target.as_deref(),
                         allow_member_change,
+                        retire,
                     )?),
                     history,
                     retire,

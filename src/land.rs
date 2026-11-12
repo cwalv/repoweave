@@ -106,23 +106,26 @@ pub fn resolve(
     ctx: &WorkspaceContext,
     target_flag: Option<&str>,
     allow_member_change: Vec<RepoOperand>,
+    retire: bool,
 ) -> anyhow::Result<Landing> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
     let label = project_rel_path(&project);
+    let mut judged = Report::default();
     let Some(checked_out) = crate::branch::checked_out(vcs, &dir)? else {
-        return Err(State::AlignmentProjectDetached
-            .of(&label)
-            .project_repo()
-            .checkout(&dir)
-            .judge(vcs)
-            .refused());
+        judged.add(
+            State::AlignmentProjectDetached
+                .of(&label)
+                .project_repo()
+                .checkout(&dir)
+                .judge(vcs),
+        );
+        return Err(refused_before_target(ctx, None, None, retire, judged));
     };
     let feature = crate::branch::named(vcs, &project, &dir, &checked_out)?;
     let record = crate::branch::recorded_value(vcs, &project, &dir, &feature)?;
-    let mut judged = Report::default();
     judged.extend(crate::alignment::unseen_record_change(
         vcs, &project, &dir, &feature, &record, "land",
     )?);
@@ -138,14 +141,44 @@ pub fn resolve(
                     .by_verb("land")
                     .judge(vcs),
             );
-            return Err(refused_before_target(ctx, &feature, None, judged));
+            return Err(refused_before_target(
+                ctx,
+                Some(&feature),
+                None,
+                retire,
+                judged,
+            ));
         }
         (Record::Feature { .. }, Some(flag)) => {
-            (crate::branch::named(vcs, &project, &dir, flag)?, None)
+            match crate::branch::named(vcs, &project, &dir, flag) {
+                Ok(target) => (target, None),
+                Err(e) => {
+                    judged.absorb(Err(e))?;
+                    return Err(refused_before_target(
+                        ctx,
+                        Some(&feature),
+                        None,
+                        retire,
+                        judged,
+                    ));
+                }
+            }
         }
         (Record::Feature { target, as_mode }, None) => (target.clone(), Some(*as_mode)),
     };
-    let target_record = crate::branch::recorded_value(vcs, &project, &dir, &target)?;
+    let target_record = match crate::branch::recorded_value(vcs, &project, &dir, &target) {
+        Ok(record) => record,
+        Err(e) => {
+            judged.absorb(Err(e))?;
+            return Err(refused_before_target(
+                ctx,
+                Some(&feature),
+                Some(&target),
+                retire,
+                judged,
+            ));
+        }
+    };
     if let Some(recorded_as) = as_mode {
         let now = target_record.mode();
         if now != recorded_as {
@@ -175,7 +208,13 @@ pub fn resolve(
     if target_flag.is_none() {
         if let Some(gone) = judge_unrelated_target(vcs, &project, &dir, &feature, &target)? {
             judged.add(gone);
-            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
+            return Err(refused_before_target(
+                ctx,
+                Some(&feature),
+                Some(&target),
+                retire,
+                judged,
+            ));
         }
     }
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
@@ -193,7 +232,13 @@ pub fn resolve(
                     .by_verb("land")
                     .judge(vcs),
             );
-            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
+            return Err(refused_before_target(
+                ctx,
+                Some(&feature),
+                Some(&target),
+                retire,
+                judged,
+            ));
         }
         Newer::Diverged {
             local,
@@ -221,7 +266,13 @@ pub fn resolve(
         Ok(workspace) => workspace,
         Err(refused) => {
             judged.add(refused);
-            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
+            return Err(refused_before_target(
+                ctx,
+                Some(&feature),
+                Some(&target),
+                retire,
+                judged,
+            ));
         }
     };
     Ok(Landing {
@@ -240,46 +291,55 @@ pub fn resolve(
 /// beside it every refusal the source owes on its own.
 fn refused_before_target(
     ctx: &WorkspaceContext,
-    feature: &BranchName,
+    feature: Option<&BranchName>,
     target: Option<&BranchName>,
+    retire: bool,
     mut judged: Report,
 ) -> anyhow::Error {
-    if let Err(e) = judge_source(ctx, feature, target, &mut judged) {
+    if let Err(e) = judge_source(ctx, feature, target, retire, &mut judged) {
         judged.note(format!("{e:#}"));
     }
     refusal(judged)
 }
 
 /// The refusals the source owes whatever it lands into: its edits, where its
-/// checkouts stand to its lock and to the branch they are aligned for, and
-/// the weave branches landing into `feature`.
+/// checkouts stand to its lock and to the branch they are aligned for, the
+/// weave branches landing into `feature`, and what retiring it refuses.
 fn judge_source(
     ctx: &WorkspaceContext,
-    feature: &BranchName,
+    feature: Option<&BranchName>,
     target: Option<&BranchName>,
+    retire: bool,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     crate::sync::judge_landing_source(ctx, report)?;
     let project = ctx.require_bound_project()?;
-    judge_source_members(ctx.active_path(), project, feature, target, report)?;
+    let landing_into = feature.zip(target);
+    judge_source_members(ctx.active_path(), project, landing_into, report)?;
+    if retire {
+        let manifest = Manifest::from_path(
+            &project_dir(ctx.active_path(), project).join(Manifest::FILE_NAME),
+        )?;
+        crate::sync::judge_retiring_checkouts(project_vcs().as_ref(), ctx, &manifest, &[], report);
+    }
     Ok(())
 }
 
 /// The members of the source refused for their alignment, each judged into
-/// `report`, after the weave branches that land into `feature` where it lands
-/// into `target`: a branch with no target lands nothing, so carries nothing.
+/// `report`, after the weave branches that land into the feature where it
+/// lands into a target: a branch with no target lands nothing, so carries
+/// nothing.
 fn judge_source_members(
     source_root: &Path,
     project: &ProjectName,
-    feature: &BranchName,
-    target: Option<&BranchName>,
+    landing_into: Option<(&BranchName, &BranchName)>,
     report: &mut Report,
 ) -> anyhow::Result<BTreeSet<RepoPath>> {
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
     let dir = project_dir(source_root, project);
     let label = project_rel_path(project);
-    if let Some(target) = target {
+    if let Some((feature, target)) = landing_into {
         for dependent in crate::merge_upstream::dependents_of(vcs, &dir, feature.as_str())? {
             report.add(
                 State::TargetDependents
@@ -642,8 +702,7 @@ pub fn judge(
     let off_alignment = judge_source_members(
         source_root,
         &landing.project,
-        &landing.feature,
-        Some(&landing.target),
+        Some((&landing.feature, &landing.target)),
         report,
     )?;
     let target_aligner = crate::alignment::Aligner::open(

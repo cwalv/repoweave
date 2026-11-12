@@ -5269,7 +5269,8 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
 /// A landing that would run into nothing moves nothing: the target checked out
 /// in no workspace refuses until the landing as refs exists, naming the
 /// workweave that opens it, and the source's own refusals come in the same
-/// report.
+/// report: what retiring it refuses under `--retire`, and beside a target
+/// with no record or a project repo on no branch too.
 pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
     scenario(
         "land into a target checked out nowhere",
@@ -5284,6 +5285,25 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
                 .claim(Claim::OutputContains(
                     "rwv workweave create <ww> --branch main",
                 ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["checkout-index", "--prefix=copy-", "README"],
+            ),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
+                .claim(Claim::Judged(Repo::App, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(&ww("w"), &["land", "--target", "nosuch"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetUnrecorded))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::git(&ww("w"), Repo::Proj, &["switch", "--detach"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::AlignmentProjectDetached))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
     )

@@ -3216,27 +3216,13 @@ fn run_preconditions_after_acquire(
         Some(&mut *drifted),
     );
     if retire {
-        if let Checkout::Workweave { dir, project, .. } = &cwd_ctx.checkout {
-            let dirty = crate::workweave::judge_dirty_checkouts(
-                project_vcs,
-                dir.as_path(),
-                project,
-                &cwd_project.manifest,
-                None,
-            );
-            let project_repo = project_rel_path(project);
-            for line in dirty.lines() {
-                let judged = report.lines().iter().any(|l| l.repo() == line.repo());
-                let drift_alone = drifted.iter().any(|d| {
-                    d.at.elsewhere.is_none()
-                        && d.at.repo == line.repo()
-                        && line.listed().iter().all(|f| d.reading.refreshes(f))
-                });
-                if !judged && !drift_alone && line.repo() != project_repo {
-                    report.add(line.clone());
-                }
-            }
-        }
+        judge_retiring_checkouts(
+            project_vcs,
+            cwd_ctx,
+            &cwd_project.manifest,
+            drifted,
+            &mut report,
+        );
     }
     let snapshot = pin_source_snapshot(
         project_vcs,
@@ -4126,6 +4112,40 @@ fn target_moved_line(
 // ---------------------------------------------------------------------------
 // Pre-loop helpers (precondition checks used by guard_and_mark)
 // ---------------------------------------------------------------------------
+
+/// What retiring the source workweave refuses beyond its edits: untracked
+/// files and commits no branch holds, in every checkout `report` has not
+/// judged already.
+pub(crate) fn judge_retiring_checkouts(
+    project_vcs: &dyn Vcs,
+    cwd_ctx: &WorkspaceContext,
+    manifest: &Manifest,
+    drifted: &[DriftedCheckout],
+    report: &mut Report,
+) {
+    let Checkout::Workweave { dir, project, .. } = &cwd_ctx.checkout else {
+        return;
+    };
+    let dirty = crate::workweave::judge_dirty_checkouts(
+        project_vcs,
+        dir.as_path(),
+        project,
+        manifest,
+        None,
+    );
+    let project_repo = project_rel_path(project);
+    for line in dirty.lines() {
+        let judged = report.lines().iter().any(|l| l.repo() == line.repo());
+        let drift_alone = drifted.iter().any(|d| {
+            d.at.elsewhere.is_none()
+                && d.at.repo == line.repo()
+                && line.listed().iter().all(|f| d.reading.refreshes(f))
+        });
+        if !judged && !drift_alone && line.repo() != project_repo {
+            report.add(line.clone());
+        }
+    }
+}
 
 /// land dirty-target preflight: refuse if a repo of the target workspace that
 /// advance-target fast-forwards, the project repo and each `moving` member,
