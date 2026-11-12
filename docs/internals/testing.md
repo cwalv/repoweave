@@ -372,13 +372,38 @@ to do, read only by the invariants:
   its member, or a clone of one). Each is the seam for an operation the step
   names, never a blanket pass: a check that is spared still runs for every
   repo the step does not name.
-- Its outcome is an `Exit`: success, refusal, or an exact status (`Exit::Code`,
-  for a verb whose distinct status is the thing under test), and any number of
-  claims about the state afterward: marks reachable from a ref, a pin
-  containing a mark, a workweave gone, the step's output holding a text, a
-  checkout on a branch, the project a weave root presents (`Presents`), a machine's entry on the records branch (`RecordIs`), and `LocalStateUnchanged`, which compares every
-  checkout at a place — HEAD, branches, uncommitted changes and the project's
-  lock — before and after the step.
+- Its outcome is an `Exit`. `Exit::Succeeds`; `Exit::Refuses`, rwv's
+  refusal, which holds only for status 1, the `<repo>: <axis> <state>` line
+  of the state named (or, for a refusal that names a condition rather than
+  a repo state, its kind), and that axis's or kind's route among the
+  `rwv explain` lines that end the output; `Exit::Code`, an exact status,
+  for anything else whose status is the thing under test (rwv's status 1 is
+  never one: it is a refusal and names what refused); `Exit::Defect`, for
+  a step that meets a known product defect, named in `runner.rs`'s `Defect`:
+  its claims still hold, its exit is not checked, and every green run
+  through it announces it as a skip; and `Exit::Undecided`, a step whose
+  outcome the design has not decided yet. Only an exit expectation decides
+  a step: claims alone do not. `assert_green` announces each undecided step
+  it ran through as a skip; `assert_fully_decided_green` refuses one.
+  `every_refusal_step_names_its_state_and_every_claim_has_an_exit` walks
+  every constructor in `scenarios.rs`, a population read from the file
+  itself, and fails on an rwv step expecting status 1 as a code and on a
+  step with claims and no exit; a new constructor goes in that test's list,
+  which `every_scenario_constructor_is_walked` holds to the file.
+- Its claims are facts about the state afterward: marks reachable from a
+  ref, on a remote it names (`RemoteContains`, any remote, a fork or a
+  mirror included), a pin containing a mark, a workweave gone, a line
+  judging a repo in a state (`Judged`), the step's output holding a text,
+  or one of its lines being exactly a text (`OutputLine`, for a listing,
+  where a substring would match its neighbours), a checkout on a branch, a
+  branch's upstream on a remote (`UpstreamOn`), the project a weave root
+  presents (`Presents`), a machine's entry on the records branch
+  (`RecordIs`), and `LocalStateUnchanged`, which compares every checkout at
+  a place — HEAD, branches, uncommitted changes and the project's lock —
+  before and after the step.
+- A step that needs a verb rwv does not have is `Step::pending`, naming the
+  `MissingVerb`; the scenario stops there and its test asserts that it
+  does.
 - Its remote writes say which refs of which remotes the step may change, and
   how: a push creates a branch or moves it forward, an overwrite may move it
   anywhere, a delete removes it, and the forge's sync of a mirror may change

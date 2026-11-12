@@ -3,9 +3,10 @@
 //!
 //! A scenario is a sequence of plain git commands, rwv verbs, and what a forge
 //! or colleague does to a remote. Each step carries its expected outcome as
-//! data; a step whose outcome a branching design decides stays undecided, and
-//! only its invariants are held. A step that needs a verb rwv does not have is
-//! recorded as pending and ends the scenario there, announced on stderr.
+//! data; a step left undecided has only its invariants held, and a green run
+//! announces it on stderr, as it does a step meeting a known defect. A step
+//! that needs a verb rwv does not have is recorded as pending and ends the
+//! scenario there, announced on stderr.
 //!
 //! The invariants and what they cannot see are stated in
 //! `tests/scenario_harness_test/invariants.rs`; the sandbox's fixed shape in
