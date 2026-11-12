@@ -1,13 +1,13 @@
 //! E2E coverage for two-workweave `rwv sync` / `rwv sync-to` scenarios: n-way
 //! convergence of manifest and project repos, conflict surfacing,
-//! materialize/prune, retire, and the CLI's bare-source refusals.
+//! materialize/prune, retire, and bare-sync refusals.
 //!
 //! Scenario shape (the n-way tests): a primary workspace ("main") with two
 //! sibling workweaves `ww1` and `ww2`. Both workweaves make commits in the
 //! same manifest repo and (in some tests) in the project repo. Goal: `rwv
-//! sync ww1` followed by `rwv sync primary --strategy rebase` from ww2
-//! followed by `rwv sync ww2` lands both workweaves' contributions in main
-//! without manual git surgery.
+//! sync-to` from ww1, then `rwv sync --strategy rebase` from ww2, then `rwv
+//! sync-to` from ww2 lands both workweaves' contributions in main without
+//! manual git surgery.
 //!
 //! "Main" here is the primary workspace for setup convenience; sync semantics
 //! are CWD-driven so the assertions don't depend on which side is primary.
@@ -158,7 +158,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 
 /// Both workweaves edit independent files in the manifest repo. The only
 /// change to each workweave's project repo is the lock commit. Sync ww1 → main
-/// (ff), then ww2 syncs main with rebase, then sync ww2 → main (ff).
+/// (ff), then ww2 syncs main with rebase, then sync-to ww2 → main (ff).
 #[test]
 fn sync_two_workweaves_lock_only_changes() {
     let tmp = common::tempdir().unwrap();
@@ -177,11 +177,11 @@ fn sync_two_workweaves_lock_only_changes() {
     let ww2_lib_sha = commit_file(&ww2.manifest_repo, "bar.txt", "ww2 bar\n", "ww2: add bar");
     rwv_lock_commit(&ww2.root);
 
-    // From main: sync ww1. Default ff strategy. Main now has ww1's lib commit
+    // From ww1: sync-to main. Default ff strategy. Main now has ww1's lib commit
     // and an updated lock.
     rwv()
-        .args(["sync", &ww1.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww1.root)
         .assert()
         .success();
 
@@ -197,7 +197,7 @@ fn sync_two_workweaves_lock_only_changes() {
     // lock commit, so this is a no-op patch). Phase 3 regenerates ww2's lock
     // to reflect the rebased lib SHA.
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -213,10 +213,10 @@ fn sync_two_workweaves_lock_only_changes() {
         "ww2 lib should still have bar.txt after rebase"
     );
 
-    // From main: sync ww2. ff. Main now has both files.
+    // From ww2: sync-to main. ff. Main now has both files.
     rwv()
-        .args(["sync", &ww2.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww2.root)
         .assert()
         .success();
 
@@ -256,7 +256,7 @@ fn sync_two_workweaves_lock_only_changes() {
 
 /// Both workweaves change manifest repo content AND project doc content
 /// (independent files). Sync ww1 → main (ff), ww2 syncs main with rebase
-/// (Phase 1' replays ww2's project doc commit onto main's tip), sync ww2 →
+/// (the project rebase replays ww2's project doc commit onto main's tip), sync ww2 →
 /// main (ff). All four contributions land.
 #[test]
 fn sync_two_workweaves_with_project_doc_changes() {
@@ -288,10 +288,10 @@ fn sync_two_workweaves_with_project_doc_changes() {
     );
     rwv_lock_commit(&ww2.root);
 
-    // From main: sync ww1.
+    // From ww1: sync-to main.
     rwv()
-        .args(["sync", &ww1.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww1.root)
         .assert()
         .success();
     assert!(main.project_dir.join("notes/feat-a.md").exists());
@@ -302,7 +302,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
     // different path → no conflict). Lock commit's diff is empty after
     // exclusion, so it's skipped. Phase 3 produces a fresh lock commit.
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww2.root)
         .assert()
         .success();
@@ -315,10 +315,10 @@ fn sync_two_workweaves_with_project_doc_changes() {
         "ww2 project should still contain its own feat-b notes"
     );
 
-    // From main: sync ww2.
+    // From ww2: sync-to main.
     rwv()
-        .args(["sync", &ww2.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww2.root)
         .assert()
         .success();
 
@@ -387,10 +387,10 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
     commit_file(&ww2.manifest_repo, "bar.txt", "ww2 bar\n", "ww2: add bar");
     rwv_lock_commit(&ww2.root);
 
-    // From main: sync ww1 — clean ff.
+    // From ww1: sync-to main — clean ff.
     rwv()
-        .args(["sync", &ww1.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww1.root)
         .assert()
         .success();
 
@@ -399,7 +399,7 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
     // ww1's version of notes/shared.md. Real conflict on a non-lock path
     // → sync should fail with a clear error.
     let assert = rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww2.root)
         .assert()
         .failure();
@@ -415,7 +415,7 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
 // ---------------------------------------------------------------------------
 
 /// When primary adds a new repo to its manifest + lock, an existing
-/// workweave running `rwv sync primary` should materialize the new repo
+/// workweave running `rwv sync` should materialize the new repo
 /// as a worktree (not silently advance the lock and leave a dangling
 /// reference).
 #[test]
@@ -459,10 +459,10 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         "primary lock should list {new_repo_path}; got:\n{primary_lock}"
     );
 
-    // From ww1: sync primary. Phase 3 should materialize the new repo as a
+    // From ww1: sync. Phase 3 should materialize the new repo as a
     // worktree of the canonical clone at primary.
     rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -544,18 +544,18 @@ fn sync_phase3_materialize_failure_is_fatal() {
     // against primary's path can't succeed.
     std::fs::remove_dir_all(&new_repo_abs).unwrap();
 
-    // From ww1: sync primary should FAIL — materialize can't proceed and
+    // From ww1: sync should FAIL — materialize can't proceed and
     // the workweave is missing the new repo. Sync must report this rather
     // than silently skip and exit 0.
     let assert = rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&ww1.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("materialize failed") || stderr.contains("sync completed with failures"),
-        "expected materialize/sync failure signal in stderr, got: {stderr}"
+        stderr.contains("failed to materialize"),
+        "expected a failed-to-materialize signal in stderr, got: {stderr}"
     );
 
     let ww1_new_repo = ww1.root.join(new_repo_path);
@@ -566,14 +566,13 @@ fn sync_phase3_materialize_failure_is_fatal() {
 }
 
 // ---------------------------------------------------------------------------
-// `rwv sync primary` (explicit source) + bare `rwv sync-to` + `--retire` cleanup
+// `rwv sync` (the record's target) + bare `rwv sync-to` + `--retire` cleanup
 // ---------------------------------------------------------------------------
 
-/// Happy path: a workweave forked from primary syncs from primary using
-/// an explicit source. `rwv sync <source>` always requires an explicit source
-/// now; bare `rwv sync` was removed (use `rwv sync-to` to land work upward).
+/// Happy path: a workweave forked from primary takes in primary's tip with
+/// bare `rwv sync`; `rwv sync-to` lands work upward.
 #[test]
-fn sync_with_explicit_primary_source_advances_workweave() {
+fn sync_takes_the_targets_tip_into_the_workweave() {
     let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -594,9 +593,9 @@ fn sync_with_explicit_primary_source_advances_workweave() {
     );
     rwv_lock_commit(&main.root);
 
-    // `rwv sync primary` from inside ww1 brings ww1 forward.
+    // `rwv sync` from inside ww1 brings ww1 forward.
     rwv()
-        .args(["sync", "primary"])
+        .args(["sync"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -604,11 +603,11 @@ fn sync_with_explicit_primary_source_advances_workweave() {
     let ww1_lib_head = common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         ww1_lib_head, primary_sha,
-        "after sync primary, ww1's lib HEAD must be at primary's tip"
+        "after sync, ww1's lib HEAD must be at primary's tip"
     );
     assert!(
         ww1.manifest_repo.join("primary.txt").exists(),
-        "after sync primary, ww1 must have primary's new file"
+        "after sync, ww1 must have primary's new file"
     );
 }
 
@@ -672,135 +671,23 @@ fn bare_sync_to_from_primary_errors_with_no_parent_message() {
     );
 }
 
-/// `rwv sync --retire` must error with a did-you-mean hint pointing at
-/// `rwv sync-to --retire`. The --retire flag was removed from sync.
+/// `rwv sync` on a declared branch has no target to take in and must refuse.
 #[test]
-fn sync_retire_flag_gives_did_you_mean_hint() {
+fn bare_sync_on_a_declared_branch_refuses_for_want_of_a_target() {
     let tmp = common::tempdir().unwrap();
 
     let main = make_main_workspace(tmp.path());
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let assert = rwv()
-        .args(["sync", "--retire", "primary"])
+        .args(["sync"])
         .current_dir(&main.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("sync-to") || stderr.contains("--retire"),
-        "expected did-you-mean hint mentioning sync-to --retire; got: {stderr}"
-    );
-}
-
-/// `rwv sync` with no source must fail (source is now required).
-#[test]
-fn bare_sync_no_source_fails() {
-    let tmp = common::tempdir().unwrap();
-
-    let main = make_main_workspace(tmp.path());
-    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-
-    rwv()
-        .args(["sync"])
-        .current_dir(&main.root)
-        .assert()
-        .failure();
-}
-
-/// Bare `rwv sync` is refused by argument parsing, from inside a workweave —
-/// the one place a "sync toward the recorded parent" default would work, and
-/// so the only place its absence is worth pinning.
-///
-/// Both halves carry weight. The exit code and clap's own wording pin *where*
-/// the refusal happens: a refusal raised inside the sync machine is also a
-/// non-zero exit naming a source, so `bare_sync_no_source_fails` above and
-/// `workweave_test.rs`'s `bare_sync_outside_workweave_errors_clearly` — which
-/// both run from the primary weave and assert only that — stay green when the
-/// argument requirement is dropped. The tip assertion pins the outcome:
-/// primary is ahead and relocked, so a bare sync that reached the machine and
-/// resolved the parent would move ww1.
-#[test]
-fn bare_sync_inside_a_workweave_is_refused_at_argument_parsing() {
-    let tmp = common::tempdir().unwrap();
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    let main = make_main_workspace(tmp.path());
-    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    let ww1 = create_workweave(&main, &weaveroot, "ww1");
-    let ww1_head_before = common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]);
-
-    let primary_sha = commit_file(
-        &main.manifest_repo,
-        "primary.txt",
-        "from primary\n",
-        "primary: add primary.txt",
-    );
-    rwv_lock_commit(&main.root);
-    assert_ne!(
-        ww1_head_before, primary_sha,
-        "setup: ww1 must be behind primary, or the tip assertion below proves nothing"
-    );
-
-    let assert = rwv()
-        .args(["sync"])
-        .current_dir(&ww1.root)
-        .assert()
-        .failure();
-    let out = assert.get_output();
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "bare `rwv sync` must fail clap's usage check (exit 2), not reach rwv; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("required arguments were not provided") && stderr.contains("<SOURCE>"),
-        "expected clap's missing-required-argument error naming <SOURCE>; got: {stderr}"
-    );
-
-    assert_eq!(
-        common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]),
-        ww1_head_before,
-        "bare `rwv sync` must not pull from the recorded parent"
-    );
-}
-
-/// Sibling-sync warning: when CWD is one workweave and an explicit
-/// source is another (non-parent) workweave, sync should emit a warning
-/// that names both paths and then proceed — the warning is informational,
-/// not a refusal.
-#[test]
-fn sibling_sync_emits_warning_and_proceeds() {
-    let tmp = common::tempdir().unwrap();
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    let main = make_main_workspace(tmp.path());
-    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    let ww1 = create_workweave(&main, &weaveroot, "ww1");
-    let ww2 = create_workweave(&main, &weaveroot, "ww2");
-
-    // Both are forked from primary, so each has primary as `parent`. Syncing
-    // ww1 → ww2 crosses sibling branches.
-    let output = rwv()
-        .args(["sync", &ww2.root.to_string_lossy()])
-        .current_dir(&ww1.root)
-        .output()
-        .expect("rwv sync should run");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("siblings") || stderr.contains("skips the recorded parent"),
-        "stderr should contain sibling-sync warning, got: {stderr}"
-    );
-    // The warning is non-fatal: the command should still attempt the sync and
-    // succeed (there are no divergent commits to merge — both forks are at
-    // the same primary tip).
-    assert!(
-        output.status.success(),
-        "sibling sync should succeed despite warning, stderr: {stderr}"
+        stderr.contains("no target"),
+        "expected the refusal to name the missing target; got: {stderr}"
     );
 }
 
@@ -935,14 +822,14 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
 
     // main absorbs ww1's commit cleanly.
     rwv()
-        .args(["sync", &ww1.root.to_string_lossy()])
-        .current_dir(&main.root)
+        .args(["sync-to", "--strategy", "ff"])
+        .current_dir(&ww1.root)
         .assert()
         .success();
 
     // ww2 → main rebase: expected to conflict on notes/shared.md.
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase"])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww2.root)
         .assert()
         .failure();
