@@ -54,6 +54,7 @@ fn fixture() -> Fixture {
     init_repo(&primary_lib);
     commit_file(&primary_lib, "README.md", "init\n", "init");
     commit_file(&primary_lib, "notes.txt", "one\n", "one");
+    commit_file(&primary_lib, "spare.txt", "two\n", "spare");
     let two = commit_file(&primary_lib, "notes.txt", "two\n", "two");
 
     let primary_project = primary.join("projects").join(PROJECT);
@@ -138,6 +139,36 @@ impl Fixture {
             ],
         );
         let moved = commit_file(&elsewhere, file, content, "moved elsewhere");
+        common::git_in(
+            &elsewhere,
+            &["update-ref", &format!("refs/heads/{branch}"), &moved],
+        );
+        common::git_in(
+            &self.primary_lib,
+            &["worktree", "remove", elsewhere.to_str().unwrap()],
+        );
+        moved
+    }
+
+    /// Moves `branch` forward by one commit that `change` makes in a checkout
+    /// of its own, as [`Fixture::move_from_elsewhere`] does.
+    fn move_with(&self, branch: &str, change: impl FnOnce(&Path)) -> String {
+        let elsewhere = self.scratch.join(branch.replace('/', "-"));
+        common::git_in(
+            &self.primary_lib,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                elsewhere.to_str().unwrap(),
+                branch,
+            ],
+        );
+        change(&elsewhere);
+        common::git_in(&elsewhere, &["add", "-A"]);
+        common::git_in(&elsewhere, &["commit", "-q", "-m", "moved elsewhere"]);
+        let moved = common::git_in(&elsewhere, &["rev-parse", "HEAD"]);
         common::git_in(
             &elsewhere,
             &["update-ref", &format!("refs/heads/{branch}"), &moved],
@@ -519,4 +550,338 @@ fn json_carries_what_was_refreshed() {
     assert_eq!(entry["moved_to"], moved.as_str(), "{json:#}");
     assert_eq!(entry["files"], serde_json::json!(["notes.txt"]), "{json:#}");
     assert_eq!(entry["index_entries"], serde_json::json!([]), "{json:#}");
+}
+
+// ---------------------------------------------------------------------------
+// Edits in a checkout whose branch really moved under it
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Source,
+    Target,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// The branch moved under the checkout and nothing has refreshed it.
+    Drifted,
+    /// As `Drifted`, then a refused landing refreshed the checkout.
+    Refreshed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Staging {
+    Staged,
+    Unstaged,
+}
+
+/// An edit on the one path a move under the checkout changed. After a
+/// refresh each returns that path to what the moved-from tip held, which is
+/// exactly what a stale path holds, so only the evidence that the checkout
+/// already took the move tells it from drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MovedShape {
+    /// The file deleted: after a refresh, the file the move added.
+    Deleted,
+    /// The file given an earlier commit's content: after a refresh, the
+    /// moved-from tip's.
+    Reverted,
+    /// A commit's change undone: after a refresh, the move's, by `git revert
+    /// --no-commit` ended with `--quit` (staged) or a reversed patch (unstaged).
+    Revert,
+    /// Another tracked file copied over it: after a refresh, one holding the
+    /// moved-from tip's content.
+    Copied,
+    /// Its mode changed: after a refresh, back to the moved-from tip's.
+    #[cfg(unix)]
+    ModeChanged,
+}
+
+#[cfg(unix)]
+fn set_exec(path: &Path, exec: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    let mode = if exec {
+        perms.mode() | 0o111
+    } else {
+        perms.mode() & !0o111
+    };
+    perms.set_mode(mode);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
+/// Applies the reverse of `commit`'s change to `repo`, to the index as well
+/// when `staging` says so.
+fn apply_reversed(repo: &Path, scratch: &Path, commit: &str, staging: Staging) {
+    std::fs::create_dir_all(scratch).unwrap();
+    let patch = scratch.join("reverse.patch");
+    let diff = common::git()
+        .args(["show", "--format=", "--binary", commit])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(diff.status.success());
+    std::fs::write(&patch, &diff.stdout).unwrap();
+    let patch = patch.to_str().unwrap();
+    match staging {
+        Staging::Staged => common::git_in(repo, &["apply", "-R", "--index", patch]),
+        Staging::Unstaged => common::git_in(repo, &["apply", "-R", patch]),
+    };
+}
+
+impl MovedShape {
+    /// The move made from elsewhere, and the path it changes.
+    fn make_move(self, phase: Phase, elsewhere: &Path) -> &'static str {
+        match (self, phase) {
+            (MovedShape::Deleted, Phase::Refreshed) => {
+                std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+                "new.txt"
+            }
+            #[cfg(unix)]
+            (MovedShape::ModeChanged, Phase::Refreshed) => {
+                set_exec(&elsewhere.join("notes.txt"), true);
+                "notes.txt"
+            }
+            _ => {
+                std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+                "notes.txt"
+            }
+        }
+    }
+
+    /// Makes the edit in `repo`, returning every path it touches.
+    fn apply(
+        self,
+        phase: Phase,
+        staging: Staging,
+        repo: &Path,
+        scratch: &Path,
+    ) -> Vec<&'static str> {
+        let stage = |path: &str| {
+            if staging == Staging::Staged {
+                common::git_in(repo, &["add", "-A", "--", path]);
+            }
+        };
+        let touched = match (self, phase) {
+            (MovedShape::Deleted, phase) => {
+                let path = match phase {
+                    Phase::Refreshed => "new.txt",
+                    Phase::Drifted => "notes.txt",
+                };
+                std::fs::remove_file(repo.join(path)).unwrap();
+                stage(path);
+                vec![path]
+            }
+            (MovedShape::Reverted, phase) => {
+                let content = match phase {
+                    Phase::Refreshed => "two\n",
+                    Phase::Drifted => "one\n",
+                };
+                std::fs::write(repo.join("notes.txt"), content).unwrap();
+                stage("notes.txt");
+                vec!["notes.txt"]
+            }
+            (MovedShape::Revert, Phase::Refreshed) => {
+                match staging {
+                    Staging::Staged => {
+                        common::git_in(repo, &["revert", "--no-commit", "HEAD"]);
+                        common::git_in(repo, &["revert", "--quit"]);
+                    }
+                    Staging::Unstaged => apply_reversed(repo, scratch, "HEAD", staging),
+                }
+                vec!["notes.txt"]
+            }
+            (MovedShape::Revert, Phase::Drifted) => {
+                let root = common::git_in(repo, &["rev-list", "--max-parents=0", "HEAD"]);
+                apply_reversed(repo, scratch, &root, staging);
+                vec!["README.md"]
+            }
+            (MovedShape::Copied, phase) => {
+                let from = match phase {
+                    Phase::Refreshed => "spare.txt",
+                    Phase::Drifted => "README.md",
+                };
+                std::fs::copy(repo.join(from), repo.join("notes.txt")).unwrap();
+                stage("notes.txt");
+                vec!["notes.txt"]
+            }
+            #[cfg(unix)]
+            (MovedShape::ModeChanged, phase) => {
+                set_exec(&repo.join("notes.txt"), phase == Phase::Drifted);
+                stage("notes.txt");
+                vec!["notes.txt"]
+            }
+        };
+        if staging == Staging::Staged {
+            assert!(
+                !common::git_in(repo, &["diff", "--cached", "--name-only"]).is_empty(),
+                "{self:?} staged nothing in {}",
+                repo.display()
+            );
+        }
+        assert!(
+            common::git()
+                .args(["rev-parse", "-q", "--verify", "REVERT_HEAD"])
+                .current_dir(repo)
+                .output()
+                .unwrap()
+                .stdout
+                .is_empty(),
+            "{self:?} must not leave an operation in progress, or the mid-operation guard \
+             answers before the moved-from tip is read"
+        );
+        touched
+    }
+}
+
+/// What a path holds in a checkout: its index entry, its file's bytes and,
+/// on unix, the file's exec bits.
+fn path_state(repo: &Path, paths: &[&str]) -> String {
+    let mut out = String::new();
+    for path in paths {
+        out.push_str(&common::git_in(repo, &["ls-files", "-s", "--", path]));
+        out.push_str(&format!(
+            "\n{path}: {:?}",
+            std::fs::read(repo.join(path)).ok()
+        ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(repo.join(path)).map(|m| m.permissions().mode() & 0o111);
+            out.push_str(&format!(" exec {:?}", mode.ok()));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The paths an `edits dirty` refusal lists.
+fn edits_listing(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .skip_while(|l| !l.ends_with("edits dirty"))
+        .skip(1)
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim().to_owned())
+        .collect()
+}
+
+/// `checkout`'s branch moves under it from elsewhere; with `Phase::Refreshed`
+/// a landing refused on an unrelated edit then refreshes it. The edit made
+/// next is refused as `edits dirty` and left exactly as it stands.
+fn moved_edit_is_kept(shape: MovedShape, staging: Staging, phase: Phase, side: Side) {
+    let f = fixture();
+    let (checkout, branch) = match side {
+        Side::Source => (f.ww_lib.clone(), "ww/project"),
+        Side::Target => (f.primary_lib.clone(), "main"),
+    };
+    let mut moved_path = "";
+    let moved = f.move_with(branch, |elsewhere| {
+        moved_path = shape.make_move(phase, elsewhere)
+    });
+    if side == Side::Target {
+        f.pin_primary(&moved);
+    }
+    assert!(
+        common::git_in(&checkout, &["diff", "--cached", "--name-only"])
+            .lines()
+            .any(|l| l == moved_path),
+        "the move left {moved_path} stale, so the checkout really drifted"
+    );
+    if phase == Phase::Refreshed {
+        std::fs::write(checkout.join("README.md"), "edited\n").unwrap();
+        let out = common::cli::run(&["land"], &f.ww);
+        let stderr = common::cli::refused(&out, State::EditsDirty);
+        assert!(
+            stderr.contains("refreshed drift") && stderr.contains(moved_path),
+            "the first landing refreshes the drift:\n{stderr}"
+        );
+        std::fs::write(checkout.join("README.md"), "init\n").unwrap();
+        assert_eq!(
+            common::git_in(&checkout, &["status", "--porcelain"]),
+            "",
+            "after the refresh the checkout stands at its HEAD"
+        );
+    }
+    let touched = shape.apply(phase, staging, &checkout, &f.scratch);
+    let before = path_state(&checkout, &touched);
+    let primary_head = common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]);
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let listing = edits_listing(&stderr);
+    for path in &touched {
+        assert!(
+            listing.iter().any(|l| l == path),
+            "{shape:?} {staging:?} {phase:?} {side:?}: {path} is listed as an edit: \
+             {listing:?}\n{stderr}"
+        );
+    }
+    assert_eq!(
+        path_state(&checkout, &touched),
+        before,
+        "{shape:?} {staging:?} {phase:?} {side:?}: the refused landing replaced the edit:\n{stderr}"
+    );
+    assert_eq!(
+        common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]),
+        primary_head
+    );
+}
+
+macro_rules! moved_edits {
+    ($($name:ident: $shape:expr, $staging:expr, $phase:expr, $side:expr;)*) => {$(
+        #[test]
+        fn $name() {
+            moved_edit_is_kept($shape, $staging, $phase, $side);
+        }
+    )*};
+}
+
+moved_edits! {
+    moved_deletion_staged_drifted_source: MovedShape::Deleted, Staging::Staged, Phase::Drifted, Side::Source;
+    moved_deletion_staged_drifted_target: MovedShape::Deleted, Staging::Staged, Phase::Drifted, Side::Target;
+    moved_deletion_staged_refreshed_source: MovedShape::Deleted, Staging::Staged, Phase::Refreshed, Side::Source;
+    moved_deletion_staged_refreshed_target: MovedShape::Deleted, Staging::Staged, Phase::Refreshed, Side::Target;
+    moved_deletion_unstaged_drifted_source: MovedShape::Deleted, Staging::Unstaged, Phase::Drifted, Side::Source;
+    moved_deletion_unstaged_drifted_target: MovedShape::Deleted, Staging::Unstaged, Phase::Drifted, Side::Target;
+    moved_deletion_unstaged_refreshed_source: MovedShape::Deleted, Staging::Unstaged, Phase::Refreshed, Side::Source;
+    moved_deletion_unstaged_refreshed_target: MovedShape::Deleted, Staging::Unstaged, Phase::Refreshed, Side::Target;
+    moved_earlier_version_staged_drifted_source: MovedShape::Reverted, Staging::Staged, Phase::Drifted, Side::Source;
+    moved_earlier_version_staged_drifted_target: MovedShape::Reverted, Staging::Staged, Phase::Drifted, Side::Target;
+    moved_earlier_version_staged_refreshed_source: MovedShape::Reverted, Staging::Staged, Phase::Refreshed, Side::Source;
+    moved_earlier_version_staged_refreshed_target: MovedShape::Reverted, Staging::Staged, Phase::Refreshed, Side::Target;
+    moved_earlier_version_unstaged_drifted_source: MovedShape::Reverted, Staging::Unstaged, Phase::Drifted, Side::Source;
+    moved_earlier_version_unstaged_drifted_target: MovedShape::Reverted, Staging::Unstaged, Phase::Drifted, Side::Target;
+    moved_earlier_version_unstaged_refreshed_source: MovedShape::Reverted, Staging::Unstaged, Phase::Refreshed, Side::Source;
+    moved_earlier_version_unstaged_refreshed_target: MovedShape::Reverted, Staging::Unstaged, Phase::Refreshed, Side::Target;
+    moved_revert_staged_drifted_source: MovedShape::Revert, Staging::Staged, Phase::Drifted, Side::Source;
+    moved_revert_staged_drifted_target: MovedShape::Revert, Staging::Staged, Phase::Drifted, Side::Target;
+    moved_revert_staged_refreshed_source: MovedShape::Revert, Staging::Staged, Phase::Refreshed, Side::Source;
+    moved_revert_staged_refreshed_target: MovedShape::Revert, Staging::Staged, Phase::Refreshed, Side::Target;
+    moved_revert_unstaged_drifted_source: MovedShape::Revert, Staging::Unstaged, Phase::Drifted, Side::Source;
+    moved_revert_unstaged_drifted_target: MovedShape::Revert, Staging::Unstaged, Phase::Drifted, Side::Target;
+    moved_revert_unstaged_refreshed_source: MovedShape::Revert, Staging::Unstaged, Phase::Refreshed, Side::Source;
+    moved_revert_unstaged_refreshed_target: MovedShape::Revert, Staging::Unstaged, Phase::Refreshed, Side::Target;
+    moved_copy_staged_drifted_source: MovedShape::Copied, Staging::Staged, Phase::Drifted, Side::Source;
+    moved_copy_staged_drifted_target: MovedShape::Copied, Staging::Staged, Phase::Drifted, Side::Target;
+    moved_copy_staged_refreshed_source: MovedShape::Copied, Staging::Staged, Phase::Refreshed, Side::Source;
+    moved_copy_staged_refreshed_target: MovedShape::Copied, Staging::Staged, Phase::Refreshed, Side::Target;
+    moved_copy_unstaged_drifted_source: MovedShape::Copied, Staging::Unstaged, Phase::Drifted, Side::Source;
+    moved_copy_unstaged_drifted_target: MovedShape::Copied, Staging::Unstaged, Phase::Drifted, Side::Target;
+    moved_copy_unstaged_refreshed_source: MovedShape::Copied, Staging::Unstaged, Phase::Refreshed, Side::Source;
+    moved_copy_unstaged_refreshed_target: MovedShape::Copied, Staging::Unstaged, Phase::Refreshed, Side::Target;
+}
+
+#[cfg(unix)]
+moved_edits! {
+    moved_mode_staged_drifted_source: MovedShape::ModeChanged, Staging::Staged, Phase::Drifted, Side::Source;
+    moved_mode_staged_drifted_target: MovedShape::ModeChanged, Staging::Staged, Phase::Drifted, Side::Target;
+    moved_mode_staged_refreshed_source: MovedShape::ModeChanged, Staging::Staged, Phase::Refreshed, Side::Source;
+    moved_mode_staged_refreshed_target: MovedShape::ModeChanged, Staging::Staged, Phase::Refreshed, Side::Target;
+    moved_mode_unstaged_drifted_source: MovedShape::ModeChanged, Staging::Unstaged, Phase::Drifted, Side::Source;
+    moved_mode_unstaged_drifted_target: MovedShape::ModeChanged, Staging::Unstaged, Phase::Drifted, Side::Target;
+    moved_mode_unstaged_refreshed_source: MovedShape::ModeChanged, Staging::Unstaged, Phase::Refreshed, Side::Source;
+    moved_mode_unstaged_refreshed_target: MovedShape::ModeChanged, Staging::Unstaged, Phase::Refreshed, Side::Target;
 }
