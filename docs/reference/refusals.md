@@ -883,8 +883,7 @@ stopping rather than quietly doing something else.
 reconcile the repos by hand first. Where the commits a rebase would replay hold
 a merge, `rwv sync` names `rwv sync --from <target>` instead, which takes the
 target in by a merge rather than flattening it. A landing whose target moved
-after it composed stops as [`target`](./doctor-findings.md#target) `moved
-mid-operation` instead.
+after it composed stops as `target` `moved mid-operation` instead.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 

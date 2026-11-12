@@ -562,9 +562,10 @@ fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
     assert_eq!(out.status.code(), Some(3), "{stderr}");
     assert!(!a.root.exists(), "a retired");
     assert!(
-        stderr.contains(&format!(
-            "left: {MANIFEST_REPO_PATH} {PROJECT}--a: unlanded"
-        )),
+        stderr.contains(&format!("{PROJECT}--a: unlanded"))
+            && stderr.contains(&format!(
+                "{PROJECT}--p1's corresponding branch does not reach"
+            )),
         "{stderr}"
     );
 }

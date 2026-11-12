@@ -8709,19 +8709,19 @@ mod tests {
         let page = concat!(
             "# page\n",
             "\n",
-            "`stale-lock`, `tool-missing`, `head-not-on-branch`, `rebase-failed`,\n",
+            "`not-fast-forwardable`, `tool-missing`, `head-not-on-branch`, `rebase-failed`,\n",
             "[`alignment`](#x) (`detached`), `missing-lock-merge-driver` (`attribute-absent`,\n",
             "`attribute-legacy`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",
             "`rwv -w myproj--hotfix land`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
-            "`rwv --help`, `rwv explain stale-lock`, `rwv explain land`,\n",
+            "`rwv --help`, `rwv explain not-fast-forwardable`, `rwv explain land`,\n",
             "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
             // rwv-advice: not-an-invocation
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv land`.\n",
-            "`land`, `set-default-create-basedir`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
-            "`rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n",
+            "`land`, `set-default-create-basedir`, `discard-unlanded`, `cargo-config`, `up-to-date`, `web-app`,\n",
+            "`rwv-lint`, `owner/repo`, `--discard-unlanded`, `project-rwv--agent-home`.\n",
             // rwv-advice: not-an-invocation
             "`rwv each --role fork -- git status` marks a repo `not-present`.\n",
             "\n",

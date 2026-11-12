@@ -1495,7 +1495,7 @@ fn sync_to_is_no_verb() {
     let out = common::rwv().args(["sync-to"]).output().unwrap();
     assert!(!out.status.success(), "{}", common::cli::describe(&out));
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("external command"),
+        String::from_utf8_lossy(&out.stderr).contains("unknown verb `sync-to`"),
         "{}",
         common::cli::describe(&out)
     );
