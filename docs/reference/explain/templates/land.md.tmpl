@@ -67,7 +67,14 @@ nothing could be landed into. Then, under an op record:
    presents, fast-forwards in place in that checkout, which must be clean
    (`edits`); the landing leases that workspace until it releases the target,
    and `rwv abort`, from any of the three, puts that checkout back. A
-   receiving branch checked out anywhere else refuses (`checkout`). Where the
+   receiving branch checked out anywhere else refuses (`checkout`). For a
+   project the target's workspace does not present, a member the presented
+   project shares is that project's checkout there: the landing judges
+   neither its pin nor its alignment, fast-forwards it only where it is on
+   the receiving branch, and otherwise moves the receiving branch as a ref
+   or in place; the alignment that follows names `rwv activate <p>
+   --update` for a shared member it may not move, and each `rwv` choice it
+   prints for the target carries `--project <p>`. Where the
    target is checked out nowhere, it and
    each receiving branch move as refs instead, each by compare-and-swap
    against the tip the landing read; one another verb moved since stops the
