@@ -166,8 +166,10 @@ holds for it (`target` moved mid-operation): the plan no longer describes
 the landing. Advance-target judges the same, per repo, at the moment it
 moves each one, and again when the move itself fails, so a branch moved
 between that judgment and the move is the same state. Each repo of `T`'s
-workspace it moves is added to `take_in.fast_forwarded` once its branch
-has moved.
+workspace it moves, by its fast-forward, by moving a receiving branch as a
+ref, or by aligning `T`'s workspace after it, is added to
+`take_in.moved_in_target` before it moves, and taken back off where the
+move stopped first.
 
 ## mark
 
