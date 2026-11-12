@@ -4259,8 +4259,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// Provided: this body is the only place a [`SavepointRef`] is
     /// constructed, so the type cannot be minted for a savepoint that was
-    /// only planned. [`DiscardWarrant::new`] takes one, which is what makes
-    /// a rewind without a savepoint unrepresentable.
+    /// only planned.
     fn create_savepoint_ref(
         &self,
         repo: &Path,

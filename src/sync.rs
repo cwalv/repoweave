@@ -2087,8 +2087,7 @@ struct SourceSnapshot {
     /// its target from here; nothing re-resolves the raw lock in another
     /// context. An entry neither could resolve is absent, never guessed at.
     source_lock: crate::manifest::ResolvedLockFile,
-    /// The source's member checkouts classified at T0, `None` under
-    /// [`ClassifySource::Skip`].
+    /// The source's member checkouts classified at T0.
     source_class: Option<LockClassification>,
     /// Committed member tips of EVERY source checkout, read at T0 — the
     /// disclosure the already-ahead line measures against replay's target.
