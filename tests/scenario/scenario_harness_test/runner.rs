@@ -262,17 +262,27 @@ pub enum Exit {
 /// gives the step the exit the design decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Defect {
-    /// A landing into a target another landing holds is refused
-    /// `dead-op-lease`, naming `rwv doctor --fix`, which would release the
-    /// live op's lease; the design has it wait on a landing claim instead.
-    LiveLandingReadsAsDead,
+    /// A landing into a target another landing holds is refused on that
+    /// landing's lease, by a token that depends on the phase the other has
+    /// reached (`dead-op-lease`, naming `rwv doctor --fix`, which would
+    /// release a live op's lease, or `op-in-progress`); the design has it
+    /// wait on a landing claim and then land.
+    LandingRefusedOnAnotherLandingsLease,
+    /// A landing into a branch recording `history = "merge"` composes the
+    /// project branch by rebase, so the published project branch holds a
+    /// commit the target does not reach and the retire leaves it (`left`),
+    /// where a landing by merge commit would complete the deletion.
+    MergeHistoryNotRead,
 }
 
 impl Defect {
     fn describe(self) -> &'static str {
         match self {
-            Defect::LiveLandingReadsAsDead => {
-                "a landing into a target another landing holds reads its lease as dead"
+            Defect::LandingRefusedOnAnotherLandingsLease => {
+                "a landing into a target another landing holds is refused rather than waiting"
+            }
+            Defect::MergeHistoryNotRead => {
+                "a landing into a merge-history branch composes by rebase and leaves the published branch"
             }
         }
     }

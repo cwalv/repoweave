@@ -3817,6 +3817,11 @@ fn judge_edits_target_preflight<'m>(
 /// its edits are judged, so that drift is neither refused as edits nor
 /// committed back by the choice that commits edits. Reported per file.
 fn refresh_drift(vcs: &dyn Vcs, repo: impl std::fmt::Display, dir: &Path) {
+    // Refreshing the index ends a merge, cherry-pick or revert in progress;
+    // a checkout stopped in one is judged as it stands.
+    if vcs.mid_operation(dir).is_some() {
+        return;
+    }
     let Ok(before) = vcs.tracked_dirty_file_names(dir) else {
         return;
     };

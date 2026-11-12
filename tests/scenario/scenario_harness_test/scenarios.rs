@@ -5962,10 +5962,11 @@ fn seat_recorded(seat: &str, recorded: bool) -> Claim {
 
 /// A seat's `land --retire` while another landing into the same target is
 /// held: the design has it wait on the landing claim and then land; it is
-/// refused instead, and nothing of the seat or the target moves.
+/// refused on the other's lease instead, and nothing of the seat or the
+/// target moves.
 fn landing_into_a_held_target(seat: &str) -> Step {
     Step::rwv(&ww(seat), &["land", "--retire"])
-        .expect(Exit::Defect(Defect::LiveLandingReadsAsDead))
+        .expect(Exit::Defect(Defect::LandingRefusedOnAnotherLandingsLease))
         .claim(Claim::LocalStateUnchanged(ww(seat)))
         .claim(Claim::LocalStateUnchanged(a()))
 }
@@ -6115,9 +6116,9 @@ pub fn records_drop_races_create() -> Scenario {
 /// waits for it rather than failing on a ref lock, and each retire's
 /// deletion completes. A second landing into the same target while one runs
 /// meets a known defect in place of the landing claim. The later seats each
-/// land and retire; `main` records `merge`, so the shape of the history each
-/// leaves on `main` is the history setting's, which this scenario does not
-/// claim.
+/// land their work on `main`, as copies, and retire; `main` records `merge`,
+/// which the landing does not read yet, so each leaves its published project
+/// branch.
 pub fn parallel_retire_fetch() -> Scenario {
     let seats = [
         ("s1", "feat-1", "f1-app"),
@@ -6174,11 +6175,13 @@ pub fn parallel_retire_fetch() -> Scenario {
         Step::release("fetch-s2").expect(Exit::Succeeds),
     ]);
     for (seat, _, mark) in &seats[1..] {
-        steps.push(retired(
-            Step::rwv(&ww(seat), &["land", "--retire"]),
-            seat,
-            mark,
-        ));
+        let landed: &'static str = Box::leak(format!("main:{mark}.txt").into_boxed_str());
+        steps.extend([
+            Step::rwv(&ww(seat), &["land", "--retire"])
+                .expect(Exit::Defect(Defect::MergeHistoryNotRead))
+                .claim(Claim::WorkweaveGone(ww(seat))),
+            Step::git(&a(), Repo::App, &["cat-file", "-e", landed]),
+        ]);
     }
     scenario("parallel retire fetch", steps)
 }
