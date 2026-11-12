@@ -4071,7 +4071,7 @@ pub(crate) struct JudgedCheckout {
 /// in an operation, or one whose reading fails, is judged on all its dirt.
 /// `keep` narrows the dirt judged, as the source's project repo does for its
 /// lock. Without `drifted` no drift is read, and every difference is judged
-/// an edit: a judgement that can only end in a refusal reports drift as the
+/// an edit: a judgment that can only end in a refusal reports drift as the
 /// dirt it looks like rather than set up a refresh it may not make.
 fn judge_edits_beside_drift(
     vcs: Box<dyn Vcs>,
