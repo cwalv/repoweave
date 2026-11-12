@@ -97,14 +97,34 @@ impl Outcome {
         !self.survivors.is_empty()
     }
 
+    /// Each branch deleted after a backup, once: a local branch and its push
+    /// branch deleted together share one backup.
+    pub fn backed_up(&self) -> Vec<&Deleted> {
+        let mut seen: Vec<(&str, &str, &str)> = Vec::new();
+        self.deleted
+            .iter()
+            .filter(|d| {
+                let Some(backup) = &d.backup else {
+                    return false;
+                };
+                let key = (d.path.as_str(), d.branch.as_str(), backup.as_str());
+                let first = !seen.contains(&key);
+                seen.push(key);
+                first
+            })
+            .collect()
+    }
+
     pub fn print(&self) {
-        for deleted in &self.deleted {
+        for deleted in self.backed_up() {
             if let Some(backup) = &deleted.backup {
                 eprintln!(
                     "backup: {}: {} kept as {backup} (`rwv backup list`)",
                     deleted.path, deleted.branch
                 );
             }
+        }
+        for deleted in &self.deleted {
             outln!(
                 "deleted {} {} ({}): {}",
                 deleted.path,

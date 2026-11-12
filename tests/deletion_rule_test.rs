@@ -939,3 +939,32 @@ fn delete_remote_reads_only_the_targets_upstream() {
         describe(&out)
     );
 }
+
+/// A branch deleted locally and on its remote after one backup is reported
+/// as discarded once.
+#[test]
+fn a_branch_deleted_here_and_on_its_remote_is_reported_discarded_once() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "feat");
+    let branch = minted("feat");
+    commit_in(&ww.join(LIB), "lib.txt");
+    common::git_in(ww.join(LIB), &["push", "-q", "origin", &branch]);
+
+    let out = run(
+        &[
+            "workweave",
+            "delete",
+            "feat",
+            "--discard-unlanded",
+            "--delete-remote-unlanded",
+            LIB,
+        ],
+        &w.workspace,
+    );
+
+    assert!(out.status.success(), "{}", describe(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let discarded = format!("discarded unlanded branch: {LIB} {branch}");
+    assert_eq!(stderr.matches(&discarded).count(), 1, "{stderr}");
+    assert!(!bare_has(bare_of(&w, LIB), &branch));
+}

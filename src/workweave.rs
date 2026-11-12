@@ -3545,8 +3545,7 @@ impl WorkweaveDeletion {
     pub fn unlanded_branches(&self) -> Vec<&crate::deletion::Deleted> {
         self.rule
             .iter()
-            .flat_map(|r| &r.deleted)
-            .filter(|d| d.backup.is_some())
+            .flat_map(crate::deletion::Outcome::backed_up)
             .collect()
     }
 
