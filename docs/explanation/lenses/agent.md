@@ -99,7 +99,7 @@ Three properties make this pattern work:
 
 The pattern generalizes to a *semi-persistent* agent workweave: a workspace that lives across many agent sessions, acting as the gravity well where agent work consolidates before the human decides to bring it all the way home to primary.
 
-The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv land` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
+The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv land` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync` from inside the agent workweave to absorb upstream changes the human has made.
 
 This recommended pattern composes from existing primitives — there is no special "agent weave" type. A workweave created from the agent workweave records it as its target, so `rwv land` from a feature workweave lands into the agent workweave's branch, which is the flow direction you want.
 

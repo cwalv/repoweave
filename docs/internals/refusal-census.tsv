@@ -118,7 +118,6 @@ src/feature_sync.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/feature_sync.rs	checkout in another workspace	-	1
 src/feature_sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/feature_sync.rs	name no-such-branch	-	1
-src/feature_sync.rs	not-fast-forwardable	-	1
 src/feature_sync.rs	op-parked	-	1
 src/feature_sync.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
 src/feature_sync.rs	pin not on declared branch	-	1
@@ -153,6 +152,7 @@ src/land.rs	(untokened:internal-invariant)	-	1
 src/land.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/land.rs	alignment unaligned	-	1
 src/land.rs	checkout in another workspace	-	2
+src/land.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/land.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/land.rs	pin not on declared branch	-	3
 src/land.rs	pin off lineage	-	1
@@ -255,6 +255,8 @@ src/push_branch.rs	push-branch gone	-	1
 src/push_branch.rs	push-branch no push target	-	1
 src/registry.rs	unresolvable-repo-source	tests/docs/doc_claims_clone_test.rs	1
 src/set_history.rs	(untokened:owed)	-	1
+src/set_history.rs	history contradicted	-	1
+src/set_history.rs	history unset	-	1
 src/set_history.rs	repo-not-in-manifest	tests/weave/branch_set_history_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/status.rs	alignment project moved	-	1
@@ -280,7 +282,6 @@ src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
-src/sync.rs	not-fast-forwardable	-	3
 src/sync.rs	op-parked	-	6
 src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
 src/sync.rs	pin none	tests/doctor/benign_staleness_test.rs	1

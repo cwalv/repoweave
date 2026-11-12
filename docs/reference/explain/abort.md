@@ -187,7 +187,7 @@ non-zero.
 Roll back a sync that left repos in a bad state:
 
 ```
-rwv sync primary --strategy rebase
+rwv sync
 # ... rebase conflict that cannot be resolved ...
 rwv abort
 ```

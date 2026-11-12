@@ -18,7 +18,7 @@ For `rwv land`, the initiating workweave holds the owner record and the target w
 
 If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv land --continue` from the weave root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
 
-`--continue` loads all parameters (source or target, the landing's plan, `--strategy`, `--retire`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
+`--continue` loads all parameters (source or target, the landing's plan, `--history`, `--retire`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
 
 ## Roll back with `rwv abort`
 

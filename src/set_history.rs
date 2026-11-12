@@ -181,7 +181,7 @@ pub(crate) fn governing(
     member: bool,
     scoped: impl Fn(crate::diagnosis::State) -> crate::diagnosis::Judging,
     vcs: &dyn crate::vcs::Vcs,
-) -> Result<History, crate::diagnosis::Judged> {
+) -> Result<History, Box<crate::diagnosis::Judged>> {
     use crate::diagnosis::{Form, State};
     let set = if member {
         Form::C23SetHistoryRepo
@@ -189,20 +189,22 @@ pub(crate) fn governing(
         Form::C23SetHistory
     };
     match (recorded, one_run) {
-        (Some(recorded), Some(one_run)) if recorded != one_run => {
-            Err(scoped(State::HistoryContradicted)
+        (Some(recorded), Some(one_run)) if recorded != one_run => Err(Box::new(
+            scoped(State::HistoryContradicted)
                 .subject(format!(
                     "`--history {one_run}` for one run, where the target records {recorded}"
                 ))
                 .only_forms(&[set, Form::KeepRecordedHistory])
-                .judge(vcs))
-        }
+                .judge(vcs),
+        )),
         (Some(recorded), _) => Ok(recorded),
         (None, Some(one_run)) => Ok(one_run),
-        (None, None) => Err(scoped(State::HistoryUnset)
-            .subject("the target records no history for it")
-            .only_forms(&[set, Form::C23Rerun])
-            .judge(vcs)),
+        (None, None) => Err(Box::new(
+            scoped(State::HistoryUnset)
+                .subject("the target records no history for it")
+                .only_forms(&[set, Form::C23Rerun])
+                .judge(vcs),
+        )),
     }
 }
 

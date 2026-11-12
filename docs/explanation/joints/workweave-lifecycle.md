@@ -127,12 +127,12 @@ workweave was created (another workweave landed, or work was committed
 directly in primary), use `rwv sync` before landing:
 
 ```bash
-rwv sync --strategy rebase
+rwv sync
 ```
 
 `rwv sync` takes the target's new work into the feature. Each member takes in
 the branch it lands on, and the workweave's unique commits are rebased on top
-of it; then the project branch takes in the target's tip and `rwv.lock` is
+of it or merged with it, as the target's `history` setting says; then the project branch takes in the target's tip and `rwv.lock` is
 recorded again. See [sync-semantics](./sync-semantics.md) for the full
 direction-pair contract.
 

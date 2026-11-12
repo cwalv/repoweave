@@ -635,12 +635,12 @@ fn a_placeholder_argument_is_not_a_value_claim() {
 /// the section. The cli.md check read zero claims and passed a seeded
 /// `--strategy squash`.
 #[test]
-fn both_surfaces_actually_yield_a_strategy_claim() {
+fn both_surfaces_actually_yield_a_history_claim() {
     let cli_md = read_cli_md();
     let cli_claims = extract_flag_value_claims(section_text(&cli_md, "### `rwv sync"));
     assert!(
-        cli_claims.iter().any(|(flag, _)| flag == "--strategy"),
-        "cli.md's `rwv sync` section must yield a --strategy value claim; \
+        cli_claims.iter().any(|(flag, _)| flag == "--history"),
+        "cli.md's `rwv sync` section must yield a --history value claim; \
          a check that reads nothing passes everything. Got: {cli_claims:?}"
     );
 
@@ -651,8 +651,8 @@ fn both_surfaces_actually_yield_a_strategy_claim() {
         .flat_map(extract_flag_value_claims)
         .collect();
     assert!(
-        readme_claims.iter().any(|(flag, _)| flag == "--strategy"),
-        "README's `rwv sync` row must yield a --strategy value claim. \
+        readme_claims.iter().any(|(flag, _)| flag == "--history"),
+        "README's `rwv sync` row must yield a --history value claim. \
          Got: {readme_claims:?}"
     );
 }
@@ -665,9 +665,16 @@ fn both_surfaces_actually_yield_a_strategy_claim() {
 fn possible_values_are_found_for_the_enum_valued_flag() {
     let accepted = possible_values_by_flag(&help_text(&["sync"]));
     assert_eq!(
-        accepted.get("--strategy").map(Vec::as_slice),
-        Some(["ff".to_owned(), "rebase".to_owned()].as_slice()),
-        "clap's `Possible values:` block for --strategy must parse; got: {accepted:?}"
+        accepted.get("--history").map(Vec::as_slice),
+        Some(
+            [
+                "linear".to_owned(),
+                "merge".to_owned(),
+                "ff-only".to_owned()
+            ]
+            .as_slice()
+        ),
+        "clap's `Possible values:` block for --history must parse; got: {accepted:?}"
     );
 }
 

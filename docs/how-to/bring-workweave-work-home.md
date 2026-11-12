@@ -74,22 +74,29 @@ rwv land --retire
 
 # 2. Optionally take the target's new work into ww2 to test against it, then land and retire ww2
 cd ../web-app--ww2
-rwv sync --strategy rebase
+rwv sync
 rwv land --retire
 ```
 
-`rwv land` composes ww2's work onto the target's new tip by itself, so the `rwv sync` step is only for building and testing ww2 against ww1's landed work before it lands. It takes in the branch ww2's record lands into. Plain `rwv sync` uses `--strategy ff`, which refuses when ww2 and its target have both moved, as they have here; `--strategy rebase` rebases ww2's work onto the target's tip instead.
+`rwv land` composes ww2's work onto the target's new tip by itself, so the `rwv sync` step is only for building and testing ww2 against ww1's landed work before it lands. It takes in the branch ww2's record lands into, by the target's `history` setting: under `linear` ww2's work is rebased onto the target's tip, under `merge` the target's work is merged in.
 
 `rwv.lock` is recomputed rather than merged; see [Sync semantics](../explanation/joints/sync-semantics.md) for how `rwv.lock` is excluded during replay.
 
-## Choosing a strategy
+## Saying how the target accepts landings
 
-`rwv land` defaults to `--strategy rebase` when the target has moved since the workweave was created:
+How a landing composes ww2's work onto a target that moved is the target's `history` setting, recorded in its own `rwv.toml`. Record it once, in a workspace on the target:
 
-| Strategy | Step 1 behavior |
+```bash
+rwv branch set-history linear
+```
+
+| Setting | Step 1 behavior |
 |---|---|
-| `rebase` (default) | Replay CWD's unique commits onto the target's tip, producing linear history |
-| `ff` | Refuse if CWD and the target have diverged; succeeds only when CWD is strictly ahead |
+| `linear` | Replay CWD's unique commits onto the target's tip, producing linear history |
+| `merge` | A merge commit whose first parent is the target's tip |
+| `ff-only` | Refuse unless the target's tip is already in the feature; `rwv sync` rebases it there first |
+
+A target that records nothing refuses a landing that needs more than a fast-forward (`history` `unset`); `rwv land --history linear` lands once without recording a setting.
 
 ## If `land` hits a conflict
 

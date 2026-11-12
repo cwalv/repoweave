@@ -37,7 +37,7 @@ to which page holds it, so the split costs a reader nothing.
 
 - `rwv sync --json` / `rwv land --json`, under a failed repo outcome, as
   `failure.kind` — always present — and as `failure.cause.kind`. An
-  `ff-impossible` or `rebase-failed` failure always carries `cause`. A
+  `merge-failed` or `rebase-failed` failure always carries `cause`. A
   `head-unreadable` failure may not; its `cause` is then omitted rather than
   null.
 - The published schemas under `docs/reference/schemas/`, where the same set
@@ -65,23 +65,6 @@ context.
 condition. A failure that gains a specific kind in a later release stops
 arriving as `command-failed`, and that is the intended direction of change:
 this set grows at `command-failed`'s expense.
-
-### `ff-impossible`
-
-**Condition.** A sync failure kind. `--strategy ff` could not advance a repo to
-the target, because the target is not ahead of where that repo's HEAD already
-is.
-
-**What it means.** `ff` is the strategy that will not rewrite history: it moves
-a branch pointer forward or it stops. A repo that has diverged — local commits
-the target does not contain — has nothing to fast-forward to, so the strategy
-has run out of moves rather than hit an error. This kind never carries a
-`cause`: nothing underneath failed.
-
-**Exits.** Re-run with `--strategy rebase` to replay the local commits on top of
-the target. That is the deliberate choice `ff` exists to make you make, because
-rebase rewrites the repo's history and fast-forward does not. If the local
-commits are not wanted, move the branch yourself and re-run unchanged.
 
 ### `hook-rejected`
 
@@ -122,6 +105,21 @@ git missing from `PATH`, a permission denied on the repo or its parent, a full
 or read-only filesystem, or a path that another process removed while the
 operation was running. Fix the underlying condition and re-run — rwv wrote
 nothing on this path, so there is nothing to undo.
+
+### `merge-failed`
+
+**Condition.** A sync failure kind. A merge commit the target's `history`
+setting asked for could not be composed in a repo. Says that the merge did not
+finish, not why.
+
+**What it means.** The why is in `cause`. A conflict arrives as
+`rebase-conflict` (its `op` says a merge stopped) and leaves the repo with the
+merge in progress for the operator to resolve and stage; anything else is a
+VCS failure that changed nothing.
+
+**Exits.** Branch on `cause.kind` and follow that entry. After a conflict,
+resolve and stage it, then `rwv land --continue`, which commits the merge with
+the receiving tip as its first parent, or `rwv abort`.
 
 ### `mid-operation`
 
@@ -177,8 +175,8 @@ started from.
 
 ### `rebase-failed`
 
-**Condition.** A sync failure kind. `--strategy rebase` did not land a repo on
-the target. Says that the replay did not finish, not why.
+**Condition.** A sync failure kind. A rebase the target's `history` setting
+asked for did not land a repo on the target. Says that the replay did not finish, not why.
 
 **What it means.** The why is in `cause`, and reading it is the whole point of
 the split: a conflict needing a person and a repo git could not read are the

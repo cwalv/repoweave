@@ -122,7 +122,7 @@ project repo's upstream and has the members follow the lock it brings.
 Reusing either name for a local-to-local operation would be a vocabulary
 collision, not a symmetry.
 
-**The deeper reason: strategy choice.** No VCS `push` command accepts a
+**The deeper reason: how the work is integrated.** No VCS `push` command accepts a
 `--rebase` option. The reason is structural: the remote is not yours to
 rewrite. `git push --force` exists but it replaces the remote's tip
 wholesale; there is no "rebase my local commits onto the remote and then
@@ -131,12 +131,14 @@ you cannot mutate mid-operation.
 
 `rwv sync` and `rwv land` have no such constraint. Both sides are
 local — each workspace is owned by the operator running the command.
-That ownership is what makes `--strategy rebase` meaningful: in both
-verbs, CWD's commits are replayed onto what they will land on. That
-replay rewrites CWD's history — which is safe only because CWD is yours
-to rewrite. A `push`/`pull` vocabulary would imply the VCS-remote
-contract (remote is authoritative; local rewrites are dangerous) and
-obscure the local-ownership property that makes `--strategy` sensible.
+That ownership is what lets the target's `history` setting choose a
+rebase: under `linear`, in both verbs, CWD's commits are replayed onto what
+they will land on, rewriting CWD's history — which is safe only because CWD
+is yours to rewrite; under `merge`, a merge commit is composed in CWD
+instead, and the target still only fast-forwards. A `push`/`pull` vocabulary
+would imply the VCS-remote contract (remote is authoritative; local rewrites
+are dangerous) and obscure the local-ownership property that makes either
+choice a local one.
 
 The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
 <branch> && git merge --ff-only`: strategy is available, just without a

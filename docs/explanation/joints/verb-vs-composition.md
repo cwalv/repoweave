@@ -185,7 +185,7 @@ Phase 1' (project repo, lock-excluded), Phase 2 (member repos), Phase 3
 See [sync-semantics](./sync-semantics.md).
 
 - *Per-repo policy from role?* Yes — member repos and project repo
-  follow different strategies for the same `--strategy` choice (the
+  follow different treatment under the same `history` setting (the
   project repo excludes the lock from the merge; member repos
   don't).
 - *Cross-repo ordering?* Yes — every member must have taken in before

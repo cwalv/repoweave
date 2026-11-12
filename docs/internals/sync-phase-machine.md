@@ -12,7 +12,7 @@ The per-phase contract behind `rwv land`, for someone changing
 last section below. For `land`: what each phase does, what it persists, and the
 re-entry rule that makes `--continue` safe. The operator contract — the
 direction pair, what the phases mean to an operator, abort's guarantees and
-the strategy choice — is
+the history setting — is
 [`../explanation/joints/sync-semantics.md`](../explanation/joints/sync-semantics.md).
 The schemas of the `.rwv-op` owner record and the `.rwv-op-lease` pointer are
 in [`op-state.md`](./op-state.md).
@@ -108,10 +108,12 @@ moved rather than publishing it.
 
 Runs all preconditions before any mutation. Covers: no-op-in-progress
 check on every workspace the op will touch, the lock merge driver's setup
-(dispatch judges the workspace; under `--strategy=rebase` the guard judges
+(dispatch judges the workspace; the guard judges
 the source's project checkout, whose committed `.gitattributes` governs the
 replay), lock freshness,
-Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
+the history setting of each repo `land::judge` plans (unset,
+contradicted, not fast-forward under `ff-only`, and which repos compose by a
+merge commit, recorded in the plan's `merged`), and the dirty-target
 preflight (`rwv land`). Refusals here leave no trace.
 
 **Acquisition atomicity.** The no-op-in-progress check is not
@@ -203,15 +205,18 @@ restore both sides independently.
 Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the project-repo step is called *Phase 1'* because it runs ahead of Phase 2 so the replayed `rwv.toml` determines which member checkouts exist before Phase 2 advances them and Phase 3 (`relock`) snapshots their tips:
 
 - **Phase 1' — project repo, lock-excluded**: replay CWD's unique
-  project commits onto the named workspace's project tip using
-  `--strategy`, with `rwv.lock` excluded from each commit's effective
-  diff. With `--strategy=rebase`, lock-only commits become empty patches
-  and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
-  branch pointer advances without replaying anything.
+  project commits onto the named workspace's project tip, as the plan
+  records: rebased, with `rwv.lock` excluded from each commit's effective
+  diff, so lock-only commits become empty patches git's `--empty=drop`
+  drops; or, for a repo in the plan's `merged`, joined by a merge commit
+  whose first parent is the target's tip (`sync::compose_merge`), the lock
+  merge driver held so the source's lock survives for relock. A tip that
+  already holds the target's on its first-parent chain moves nothing.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
-  branches to the named workspace's lock target, using the chosen
-  `--strategy`. Exception: a plain `sync` from a workweave source whose
+  branches to the named workspace's lock target, rebased or merged as the
+  plan records, a `rebased` backup kept first for each branch a rebase
+  rewrites. Exception: a plain `sync` from a workweave source whose
   lock is behind its committed HEAD targets that source's committed tips
   instead (tips-as-truth — a note names the lag, and the source's lock
   is left alone for its own next op to heal). `land` gets no such
@@ -221,7 +226,7 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   lock would leave the target's unlocked commits out of CWD's tip and
   advance-target could not fast-forward onto it. Repos already at the
   target SHA are no-ops. Repos behind
-  the target are advanced via the strategy (ff / rebase). Repos
+  the target are fast-forwarded. Repos
   ahead of the target surface as `already-ahead` — the engine does not
   silently rewind CWD's working state. That outcome names two relations
   against the same baseline: CWD's, and the source checkout's own. A repo
@@ -257,19 +262,19 @@ to start over a condition the op's own last phase establishes. The
 relation is announced per repo rather than accepted silently. Every
 other non-`ok` destination relation still refuses.
 
-Two narrower alternatives were rejected. Naming `--strategy rebase` in
+Two narrower alternatives were rejected. Naming a rebase in
 the freshness refusal *without* relaxing leaves the operator three
 commands deep on the single most routine operation in the tool, and the
 refusal's own prescribed remedy (`rwv lock --commit`) lands a
 destination-only project commit that the ancestry gate then refuses —
 the two preconditions were mutually unsatisfiable for the bare form.
 Teaching the ancestry gate to ignore a destination-only lock-only
-commit does not work under `ff` at all: there is no replay to exclude
+commit does not work for a fast-forward at all: there is no replay to exclude
 `rwv.lock` from, the destination is no longer an ancestor of the
 source, and honoring it would mean resetting past a commit the
 operator made. The
 `rwv.lock`-excluded property the remedy relies on belongs to replay,
-and `ff` has no replay.
+and a fast-forward has no replay.
 
 The relaxation is not scoped to workweave destinations the
 way tips-as-truth is scoped to workweave sources. That scoping answers
@@ -281,17 +286,17 @@ kept two tests green and left the trap in place.
 
 Unlike `land`'s CWD there is no op-start relock on a pull: the
 destination's project repo is itself a replay target, and a relock
-commit made before Phase 1' would leave `--strategy=ff` a project repo
-it can no longer fast-forward.
+commit made before Phase 1' would leave a project repo it can no longer
+fast-forward.
 
 Re-entry rule: per-repo state is derived from the VCS itself. A repo
 at its savepoint is redone; a repo mid-conflict resumes via the
 VCS-native continue; a repo already at the converged target is a no-op.
 No resume flags.
 
-`--strategy=ff` with `rwv land`: replay is a no-op (CWD must be
-strictly ahead of target per the guard's ff precondition); the
-advance-target phase does all the work.
+A repo that needs no composing (its tip holds the target's on its
+first-parent chain) replays as a no-op; the advance-target phase moves
+it.
 
 ## relock
 
@@ -307,8 +312,7 @@ by advance-target and by abort's HEAD-verified restore.
 
 Re-entry rule: regenerating a lock that is already current is a no-op.
 
-Relock runs under every verb and strategy. `--strategy=ff` makes replay a
-no-op, not this phase: whatever last moved CWD's member repos — an
+Relock runs whatever replay composed, or composed nothing: whatever last moved CWD's member repos — an
 operator's fix between a stranded op and its resume, most of all — leaves
 a lock that no longer pins them, and advance-target publishes that lock.
 
@@ -316,8 +320,8 @@ a lock that no longer pins them, and advance-target publishes that lock.
 
 FF-advance every member repo and the project repo in the target
 workspace to CWD's converged tips (written during relock). This step is
-always fast-forward regardless of `--strategy` — all rewriting happened
-in CWD during replay.
+always fast-forward whatever the history setting — every rebase and merge
+happened in CWD during replay.
 
 Re-entry rule: ff to an already-reached tip is a no-op.
 
@@ -548,8 +552,8 @@ judge-then-act, and it runs under the same op record as `pull
    `feature`, else the branch the merged entries declare), its merge source
    (`U`'s tip; the target's pin where `U` exists nowhere), and an act:
    nothing (the work already contains the source), fast-forward or follow (no
-   new work: `lineage::new_work` is empty), rebase (under `--strategy
-   rebase`), merge (`--from`), or reset (`--reset-to-target`). Members with new
+   new work: `lineage::new_work` is empty), rebase (under a `linear` or `ff-only` target), merge (`--from`, a
+   `merge` target, or a range holding a merge), or reset (`--reset-to-target`). Members with new
    work, and following members while the branch has dependents, are judged by
    `lineage::judge`. A target pin this clone lacks is `pin` unreachable.
    Then the project branch's act, `push-branch` for every branch that would

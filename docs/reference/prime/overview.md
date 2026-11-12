@@ -85,7 +85,7 @@ primary weave  <── rwv land [--retire] ──  workweave (.workweaves/<proje
                ─── rwv sync ───────────────>
 ```
 
-- `rwv sync` — take the new work of the branch this feature lands into (its target) into the feature: members first, then the project branch, then the relock. `--strategy rebase` rebases members holding new work; `--from <branch>` merges another weave branch's history in instead.
+- `rwv sync` — take the new work of the branch this feature lands into (its target) into the feature: members first, then the project branch, then the relock. members holding new work are rebased or merged as the target's `history` setting says (`--history <h>` for one run where it records none); `--from <branch>` merges another weave branch's history in instead.
 - `rwv land [target]` — land CWD's state into `target` (rebases CWD onto `target`, auto-relocks, then fast-forwards `target`; `target` defaults to the recorded `parent` inside a workweave). Pass `--retire` to delete the workweave once the landing succeeds.
 - `rwv abort` — roll every repo the op touched, in both workspaces, back to its pre-operation savepoint if a `sync` or `land` stops on a conflict or a refusal. Run it from either workspace.
 

@@ -1826,7 +1826,7 @@ impl Composing<'_> {
         let history = match crate::set_history::governing(recorded, one_run, member, &scoped, vcs) {
             Ok(history) => history,
             Err(judged) => {
-                report.add(judged);
+                report.add(*judged);
                 return Ok(Composed::FastForward);
             }
         };

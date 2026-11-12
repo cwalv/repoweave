@@ -28,11 +28,13 @@ a member current with commits the target's lock has not recorded yet; the
 sync lists those commits, since the landing will pin them.
 
 A member with no new work follows its merge source, never backward. One with
-new work is integrated by `--strategy`: `ff` fast-forwards or refuses, and
-`rebase` replays the work onto the merge source after a backup. A range
+new work is integrated as the target's `history` setting says: `linear` and
+`ff-only` replay the work onto the merge source after a backup, and `merge`
+merges the merge source in, the feature's branch as first parent. A range
 holding a merge commit is never rebased, since the rebase would flatten the
-second parent through which another lineage's work entered; `--from` merges
-instead. Then the project branch takes in the target's tip the same way, and
+second parent through which another lineage's work entered: a rebasing
+setting integrates it by a merge commit instead, reported `merged`. Then the
+project branch takes in the target's tip the same way, and
 the lock is recorded once: each member's pin merged three ways against the
 merge base's lock, with every member the sync moved at its new tip.
 
@@ -45,7 +47,7 @@ The sync refuses such a member as `pin` `off lineage` before anything moves.
 The rule reads commits only, so every machine computes the same answer.
 
 **`--from <branch>`** merges another weave branch's history in, whatever the
-strategy, and always as a merge commit: work moving between published branches
+setting, and always as a merge commit: work moving between published branches
 moves by merge, never by rebase.
 
 Every refusal is judged before anything moves and reported together. Then the
@@ -154,21 +156,39 @@ new T₀ is pinned, so a resumed op converges on the target as it is then. A
 `sync` records the tips it takes in in its op record, and `--continue` takes in
 those same tips.
 
-## Strategy choice
+## The history setting
 
-`rwv sync` defaults to `ff` and `rwv land` to `rebase`. In `land` both
-repo classes — the project repo (Phase 1') and member repos (Phase 2) — run
-under the same `--strategy`:
+How a target accepts work is its own `history` setting, a key in its
+`rwv.toml`: at the top level for the project branch and every member without
+its own, and in a member's entry for that member. `rwv branch set-history`
+writes it. Nothing is the default: a repo that needs more than a fast-forward,
+where the target records nothing, refuses as `history` `unset`, naming the
+setter and `--history <h>`, which supplies a value for one run only where the
+target records none. The same setting governs both directions, so a feature
+takes its target in the way the target will take the feature:
 
-| Strategy | Project repo treatment | Member repo treatment |
+| Setting | `rwv sync` | `rwv land` |
 |---|---|---|
-| `ff` | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
-| `rebase` (default) | Replay CWD's unique commits onto the target's tip; lock excluded | Advance CWD's repos to the target's lock targets |
+| `linear` | fast-forward; else rebase the feature's branch onto the merge source | fast-forward; else rebase the feature's branch onto the receiving branch, then fast-forward it |
+| `merge` | fast-forward; else merge the merge source in, the feature's branch first | fast-forward where the receiving tip is on the feature's first-parent chain; else a merge commit, the receiving tip first |
+| `ff-only` | as `linear` | fast-forward; else refused as `history` `not fast-forward`, naming `rwv sync` |
+
+`ff-only` differs from `linear` only at landing: the rebase happens at `sync`,
+where the result can be built and tested, and the landing then only
+fast-forwards. Under every setting the target's own move is a fast-forward:
+whatever is rebased or merged is composed in the source first.
+
+Work moving between published branches moves by merge: `--from` always
+merges, and a range holding a merge commit is integrated by a merge commit
+under a rebasing setting rather than flattened. A feature that took its
+target in by a merge holds the receiving tip only through that merge's second
+parent; landing it under `linear` or `merge` makes a merge commit whose first
+parent is the receiving tip, so the target keeps its own first-parent chain.
 
 A rebase replays each commit as a three-way merge; rwv holds the lock merge
 driver for the replay, so a lock-only commit replays as an empty patch rather
-than a conflict, and Phase 3 relocks. The replay reads the attribute line the
-tree it replays onto commits: `rwv land --strategy=rebase` refuses
+than a conflict, and the relock records the result. The replay reads the
+attribute line the tree it replays onto commits: `rwv land` refuses
 `missing-lock-merge-driver` for the source's project checkout as well as for
 the workspace it writes, and `rwv doctor --fix`, run where the refusal names,
 migrates it. Where that tree assigns `rwv.lock` no driver, rwv's own replay
@@ -176,26 +196,14 @@ merges the lock as text and stops on a conflict there, never taking a side. A ba
 `git rebase --continue` runs the clone's lock merge driver instead, which
 merges pins three-way; [vcs-as-seam](./vcs-as-seam.md) covers the mechanism.
 
-### Why no `merge` strategy
-
-`--strategy` accepts only `ff` and `rebase`. A merge strategy earns its place
-only when rebase would rewrite commits that are already published, and in
-repoweave it does not:
-
-- **A workweave's minted branch is unpublished by policy.** `rwv push` refuses
-  the name `rwv workweave create` gives a workweave made without a branch of
-  its own (`name` `minted`). That is policy, not physics: no hook or doctor
-  check stops a plain `git push`, but while nobody bypasses rwv that way,
-  rebasing that branch rewrites nothing anyone else can have seen. Naming the
-  branch (`rwv branch rename <new>`) is what makes it publishable.
-- **Landing rebases only the unpublished side.** `land` rebases CWD (the
-  workweave) against the target, then fast-forwards the target.
-- **Divergence that arrives through a remote** is `update --remote`'s and git's to
-  handle, not a sync strategy's.
-
-For two workspaces that share no origin and both carry published history,
-reconcile each repo by hand with `git merge`, then run `rwv lock` to pin the
-merged tips.
+**Backups.** Before a rebase rewrites a branch, rwv keeps its tip as a
+`rebased` backup. One of a branch that was not published goes when the
+operation completes: the rebased commits hold its work. One of a published
+branch stays until it is republished: that branch's push then shows it
+diverged, and `rwv push` prints `rwv push --overwrite <repo>`, leased to the
+tip the backup holds, as the way to republish it; once that push lands, the
+backup goes. A machine that did not make the rebase sees only the ordinary
+choices for a diverged branch.
 
 ## Named overrides
 
@@ -208,21 +216,6 @@ own override, named for what it gives up:
 `--continue` resumes with the plan the op recorded. The naming rule
 behind these flags, and why `push --overwrite` is named for the repo it replaces, is stated once
 in [destructive-operations](../destructive-operations.md#2-named-overrides-are-narrow-and-informed).
-
-## The Phase 1' ancestor precondition
-
-Before Phase 1', `land` checks the ancestor relationship between CWD's
-project tip and the target's project tip:
-
-| Relation | `ff` | `rebase` |
-|---|---|---|
-| Equal tips | No-op, allowed | No-op, allowed |
-| CWD is ancestor of the target | Allowed — fast-forward | Allowed |
-| The target is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
-| Diverged (neither ancestor) | Refused | Handled by strategy |
-
-The `ff` refusal names `--strategy rebase`, which composes CWD's project
-commits onto the target's tip.
 
 ## Parallel landing (`-j N`)
 

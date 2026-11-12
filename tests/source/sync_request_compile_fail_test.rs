@@ -11,13 +11,13 @@ fn the_harness_can_build_both_requests_without_consent() {
     // Control: the request the probe below breaks, spelled legally.
     let (compiled, stderr) = compile(
         r#"
-        use repoweave::op_state::{ResolvedOwner, SyncStrategy};
+        use repoweave::op_state::ResolvedOwner;
         use repoweave::land::Landing;
         use repoweave::sync::SyncRequest;
         pub fn fresh(landing: Box<Landing>) -> SyncRequest {
             SyncRequest::Fresh {
                 landing,
-                strategy: SyncStrategy::Ff,
+                history: None,
                 retire: false,
                 jobs: 1,
             }

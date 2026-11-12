@@ -152,6 +152,7 @@ The others follow.
 | `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
+| `diverged`, for `rwv push` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
@@ -344,7 +345,11 @@ The others follow.
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `unset` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+| `unset` | C23: say how `<T>` accepts landings | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
+| `unset` | C23: say how `<T>` accepts landings | rerun with `--history <h>` | here | records only |
 | `contradicted` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+| `contradicted` | C23: say how `<T>` accepts landings | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
+| `contradicted` | integrate by the setting the branch records | rerun without `--history` | here | nothing changes |
 | `not fast-forward` | C36: take the target's new work in first | `rwv sync` | the workspace with that feature | by the target's setting; `rwv abort` undoes it |
 
 **Where this sits.** [Formats](./formats.md) states the `history` keys; [Sync semantics](../explanation/joints/sync-semantics.md).
@@ -914,23 +919,6 @@ checkout.
 
 **Exits.** Move it aside and re-run the command the message names. Nothing
 was written.
-
-### `not-fast-forwardable`
-
-**Condition.** The tips are not in the fast-forward relation `--strategy=ff`
-requires.
-
-**Why.** `ff` is the strategy that promises to add nothing and rewrite
-nothing. Where a fast-forward is impossible, honoring that promise means
-stopping rather than quietly doing something else.
-
-**Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
-reconcile the repos by hand first. Where the commits a rebase would replay hold
-a merge, `rwv sync` and `rwv land` name `rwv sync --from <target>` instead,
-which takes the target in by a merge rather than flattening it. A landing whose target moved
-after it composed stops as `target` `moved mid-operation` instead.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
 ### `occupied-bootstrap-dir`
 

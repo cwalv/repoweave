@@ -772,7 +772,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                 }
             }
             Err(judged) => {
-                report.add(judged);
+                report.add(*judged);
                 Act::Nothing
             }
         }
@@ -1189,7 +1189,7 @@ fn plan_member(
                 }
             }
             Err(judged) => {
-                report.add(judged);
+                report.add(*judged);
                 Act::Nothing
             }
         }

@@ -21,14 +21,19 @@ together. Then, under an op record:
    - A member with no new work **follows** its merge source: by fast-forward,
      or, where the merge source lacks the member's tip, by moving to it after a
      backup.
-   - A member holding new work — commits its merge source lacks — cannot
-     fast-forward: `--strategy ff`, the default, refuses it
-     (`not-fast-forwardable`, naming `--strategy rebase`), and
-     `--strategy rebase` rebases its work onto the merge source after a
-     `rebased` backup. A range holding a merge commit
-     is never rebased, since the rebase would flatten it; the refusal names
-     `rwv sync --from <target>`.
-2. **The project branch** takes in the target's tip the same way.
+   - A member holding new work — commits its merge source lacks — is
+     integrated as the target's `history` setting says, read from the
+     target's own `rwv.toml`: the member's entry, else the top level. Under
+     `linear` and `ff-only` its work is rebased onto the merge source after a
+     `rebased` backup; under `merge` the merge source is merged in, the
+     member's branch as first parent. A range holding a merge commit is never
+     rebased, since the rebase would flatten it: under `linear` or `ff-only`
+     it is integrated by a merge commit instead, reported `merged`. Where the
+     target records no setting for the member, the sync refuses as `history`
+     `unset` unless `--history` gives one for this run; a `--history` that
+     differs from a recorded setting refuses as `history` `contradicted`.
+2. **The project branch** takes in the target's tip the same way, by the
+   target's top-level `history`.
 3. **The lock** is recorded and committed: each member's pin merged three ways
    against the merge base's lock, with every member the sync moved at its new
    tip.
@@ -45,7 +50,7 @@ on that branch carry the same changes. A pin this clone lacks, where the rule
 must read it, is `pin` `unreachable`.
 
 **`--from <branch>`** merges the branch's history in for one run, whatever the
-strategy: each member that lacks the branch's pin merges it as a merge commit
+setting: each member that lacks the branch's pin merges it as a merge commit
 with this branch's tip as first parent (a `--from` of the record's own target
 may fast-forward instead), then the project branch takes the branch in, with the
 relock. On a
@@ -84,6 +89,8 @@ regenerating from their source of record.
 | `target` | `record changed` | the branch's record changed since this workspace last saw it |
 | `target` | `dependents` | another weave branch lands into this one, and the sync would rewrite a branch it is built on |
 | `name` | `no-such-branch` | `--from` names a branch that exists nowhere |
+| `history` | `unset` | a repo needs more than a fast-forward and the target records no `history` for it, and no `--history` gives one |
+| `history` | `contradicted` | `--history` differs from the setting the target records for a repo |
 | `pin` | `off lineage` | a member's base is not on the branch it lands on |
 | `pin` | `unreachable` | the target pins a commit this clone lacks |
 | `pin` | `not on declared branch` | `--from` on a declared branch, for a member the named branch declares elsewhere |
@@ -100,7 +107,6 @@ as landed, and the sync goes on. It refuses when a superseded tip of the
 upstream is all that reaches those commits (the fact `rewritten`: the upstream
 was rewritten), and when it holds commits never pushed.
 
-`not-fast-forwardable` refuses a take-in `--strategy ff` cannot do;
 `inapplicable-flag` refuses `--target` with `--from`, and a `--reset-to-target`
 naming a repo the sync takes nothing into; `partial-run-aborted` refuses when
 the fetch could not complete. A conflict stops the sync with its op record kept
@@ -111,7 +117,7 @@ the fetch could not complete. A conflict stops the sync with its op record kept
 
 ```
 rwv sync [--from <branch>] [--target <T>] [--reset-to-target <repo>]...
-         [--strategy <ff|rebase>] [--json] [-j <N>] [--project <name>]
+         [--history <linear|merge|ff-only>] [--json] [-j <N>] [--project <name>]
 rwv sync --continue
 ```
 
@@ -120,8 +126,9 @@ rwv sync --continue
   The record is unchanged.
 - `--reset-to-target <repo>` — move this repo's branch to its merge source
   after a backup; repeat per repo. `projects/<name>` names the project branch.
-- `--strategy` — how a branch holding new work takes in: `ff` (the default)
-  or `rebase`.
+- `--history` — how a repo holding new work takes in, for this run, where the
+  target records no `history` for it: `linear`, `merge` or `ff-only`. A value
+  differing from a recorded one is refused.
 - `--json` — emit machine-readable output (see Output below).
 - `-j <N>` — run up to `N` per-repo fetches in parallel. Default `1`.
 - `--project <name>` — operate on this project instead of the active project.
@@ -133,7 +140,8 @@ Run `rwv sync --help` for the full clap surface.
 ## Output
 
 Text output is one line per repo that moved (`fast-forwarded`, `follows`,
-`rebased onto`, `merged`, `reset`), the commits beyond the target's pin each
+`rebased onto`, `merged`, `reset`), a `merged:` line for each range holding a
+merge that a rebasing setting integrated by a merge commit, the commits beyond the target's pin each
 member's landing branch holds, a line per member file placement, the
 `rwv materialize` line when a materialized input changed, and a closing
 `rwv sync: took in <branch>`. With nothing to take in it prints
@@ -184,10 +192,16 @@ Schema:
 
 ## Examples
 
-Take the target's new work in, rebasing members that hold new work:
+Take the target's new work in, as the target's `history` setting says:
 
 ```
-rwv sync --strategy rebase
+rwv sync
+```
+
+Take it in by rebasing where the target records no setting:
+
+```
+rwv sync --history linear
 ```
 
 Merge a release branch's history into this one:

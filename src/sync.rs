@@ -4684,7 +4684,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             )
         });
         sync_tasks.push(SyncTask {
-            how: ctx.integration(&key),
+            how: ctx.integration(key),
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, &ctx.savepoint_key()),
             abs,
@@ -5144,8 +5144,7 @@ fn read_member_tips(
 // content hasn't changed). The per-repo HEAD reads that populate
 // `converged_tips` are pure reads.
 //
-// Runs for every verb and strategy. `--strategy=ff` makes replay a no-op, not
-// this phase: whatever last moved CWD's manifest repos — an operator's fix
+// Runs whatever the replay composed, or composed nothing: whatever last moved CWD's manifest repos — an operator's fix
 // between a stranded op and its resume, most of all — leaves a lock that no
 // longer pins them, and advance-target publishes that lock to the target.
 

@@ -401,8 +401,8 @@ impl Axis {
 }
 
 const LOCK_DRIVER_REFUSED_BY: &str = "every verb that writes the project repo or its lock, \
-before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (under `--strategy rebase`, for \
-the project checkout replayed onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
+before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it \
+composes onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
 verbs, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and \
 `delete`; `rwv doctor` reports it instead";
 
@@ -1434,8 +1434,8 @@ impl State {
                              renamed name; `rwv push --overwrite`, for a member; `rwv branch \
                              delete` and `rwv workweave delete` with `--delete-remote` or \
                              `--delete-remote-unlanded`, for a member branch of the deleted \
-                             name; `rwv sync` with `--strategy rebase`, for a member on the \
-                             branch that has commits to replay",
+                             name; `rwv sync` where the target's `history` rebases a member \
+                             on the branch that has commits to replay",
                 offers: &[Form::C2UpdateRemote],
                 verb_offers: &[],
             },
