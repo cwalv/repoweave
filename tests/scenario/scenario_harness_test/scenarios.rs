@@ -7844,6 +7844,77 @@ pub fn a_followed_receiving_branch_that_exists_nowhere_is_created() -> Scenario 
     )
 }
 
+/// `member-change-race-listing`, its other half: the copy the listing
+/// prints, run as printed in the target's workspace and recorded, ports the
+/// fix onto `dev`, and `status` stops listing it.
+pub fn member_change_race_listing_until_ported() -> Scenario {
+    scenario(
+        "member change race listing until ported",
+        vec![
+            create("fix"),
+            create("feat"),
+            Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
+            Step::rwv(&ww("fix"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("feat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::commit(&ww("feat"), Repo::App, "feat-app"),
+            Step::rwv(&ww("feat"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("lib-fix"))
+                .claim(Claim::OutputContains("copy these commits onto `dev`")),
+            Step::rwv_printed(&a(), "git -C ")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                }),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("lib-fix")),
+        ],
+    )
+}
+
+/// `raw-merge-member-change` as its line in the scenario index runs it: a
+/// raw merge of `stable` into `main` in `main`'s own workspace changes
+/// `docs`'s declared branch; `status` reports it, the pin on the new branch
+/// (C25) before the restore (C11), until the push branch carries it.
+pub fn raw_merge_member_change_into_main() -> Scenario {
+    scenario(
+        "raw merge member change into main",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "create",
+                    "stable",
+                    "--declared",
+                    "--set-new-branch",
+                    "local/remotes/docs=docs-stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "stable"]),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed"))
+                .claim(Claim::OutputInOrder(&[
+                    "rwv member pin local/remotes/docs",
+                    "rwv member set-branch local/remotes/docs main",
+                ])),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed")),
+        ],
+    )
+}
+
 /// A `dependency` checkout moved off its pin in a feature's workspace is
 /// refused by alignment before its pin is judged, so the op-start relock
 /// never records a carried pin the guard did not see.

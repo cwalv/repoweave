@@ -153,6 +153,8 @@ fn member_dir(ctx: &WorkspaceContext, path: &RepoPath) -> std::path::PathBuf {
         .to_path_buf()
 }
 
+/// The commits unpushed on the branch a declared-branch change leaves, less
+/// those whose change the new branch already carries.
 fn unpushed_on_old_branch(
     ctx: &WorkspaceContext,
     change: &MemberChange,
@@ -161,9 +163,24 @@ fn unpushed_on_old_branch(
         return Vec::new();
     }
     let vcs = crate::vcs::vcs_for(change.was.vcs_type);
+    let dir = member_dir(ctx, &change.path);
     let old = RawRefName::new(change.was.branch.local_counterpart().as_str());
-    vcs.unpushed_commits(&member_dir(ctx, &change.path), &old)
-        .unwrap_or_default()
+    let unpushed = vcs.unpushed_commits(&dir, &old).unwrap_or_default();
+    let new = RawRefName::new(change.now.branch.local_counterpart().as_str());
+    let tips = (
+        vcs.resolve_local_branch_tip(&dir, &old).ok().flatten(),
+        vcs.resolve_local_branch_tip(&dir, &new).ok().flatten(),
+    );
+    let (Some(old_tip), Some(new_tip)) = tips else {
+        return unpushed;
+    };
+    let Some(found) = vcs.patch_equivalents(&dir, old_tip.id(), new_tip.id()) else {
+        return unpushed;
+    };
+    unpushed
+        .into_iter()
+        .filter(|commit| !found.matched.iter().any(|(ours, _)| *ours == commit.id))
+        .collect()
 }
 
 /// The report of `standing`, one block per changed member, for `verb`.
@@ -228,13 +245,15 @@ pub(crate) fn render(
             "<b>",
             change.now.branch.local_counterpart().as_str().to_owned(),
         );
-        let mut forms: Vec<Form> = Vec::new();
+        let mut onto_new: Vec<Form> = Vec::new();
         if change.changed("branch") {
-            forms.push(Form::C25);
+            onto_new.push(Form::C25);
         }
         if !unpushed.is_empty() {
-            forms.push(Form::C15);
+            onto_new.push(Form::C15);
         }
+        let onto_new_text = crate::diagnosis::choices_text(vcs.as_ref(), &onto_new, &bindings);
+        let mut forms: Vec<Form> = Vec::new();
         let mut restores = String::new();
         for field in &change.fields {
             let (form, key) = match field.name {
@@ -250,11 +269,15 @@ pub(crate) fn render(
             restores.push_str(&format!("{key}={}\n", field.was));
         }
         let _ = restores;
-        out.push_str(&crate::diagnosis::choices_text(
-            vcs.as_ref(),
-            &forms,
-            &bindings,
-        ));
+        let restore_text = crate::diagnosis::choices_text(vcs.as_ref(), &forms, &bindings);
+        out.push_str(&onto_new_text);
+        match (
+            onto_new_text.is_empty(),
+            restore_text.strip_prefix("choices:\n"),
+        ) {
+            (false, Some(rest)) => out.push_str(rest),
+            _ => out.push_str(&restore_text),
+        }
     }
     out
 }

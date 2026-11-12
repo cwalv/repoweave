@@ -192,6 +192,16 @@ fn an_owned_member_the_landing_cannot_plan_is_refused_before_it_is_planned() {
 }
 
 #[test]
+fn the_copy_a_left_behind_listing_prints_ports_the_fix_and_status_stops_listing_it() {
+    runner::run(scenarios::member_change_race_listing_until_ported()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_merge_into_main_changing_an_entry_is_reported_pin_before_restore() {
+    runner::run(scenarios::raw_merge_member_change_into_main()).assert_fully_decided_green();
+}
+
+#[test]
 fn a_carried_dependency_pin_must_be_on_its_receiving_branch_and_merge_with_the_target() {
     runner::run(scenarios::carried_pin_judged_against_the_receiving_branch())
         .assert_fully_decided_green();
@@ -653,6 +663,8 @@ every_scenario!(
     a_followed_receiving_branch_that_exists_nowhere_is_created,
     a_dependency_moved_off_its_pin_is_refused_before_the_relock,
     an_unplannable_member_is_refused_before_it_is_planned,
+    member_change_race_listing_until_ported,
+    raw_merge_member_change_into_main,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,

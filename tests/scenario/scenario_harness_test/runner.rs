@@ -142,7 +142,8 @@ pub enum Action {
         args: Vec<String>,
     },
     /// The choice line the last rwv step printed that begins `prefix`, run
-    /// at `at` word for word as the terminal shows it.
+    /// at `at` word for word as the terminal shows it: by rwv, or by git
+    /// for a VCS action.
     RwvPrinted {
         at: Place,
         prefix: &'static str,
@@ -1283,8 +1284,13 @@ impl Run<'_> {
                     );
                 };
                 let line = line.to_owned();
-                let args: Vec<&str> = line.split_whitespace().skip(1).collect();
-                let out = sb.rwv(&sb.place_root(at), &args);
+                let mut words = line.split_whitespace();
+                let program = words.next();
+                let args: Vec<&str> = words.collect();
+                let out = match program {
+                    Some("git") => sb.git(&sb.place_root(at), &args),
+                    _ => sb.rwv(&sb.place_root(at), &args),
+                };
                 self.last_code = out.status.code();
                 (
                     out.status.success(),
