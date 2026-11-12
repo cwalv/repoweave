@@ -9138,6 +9138,291 @@ pub fn cherry_pick_abort_leaves_an_untouched_members_merge() -> Scenario {
     )
 }
 
+/// The operator commits `own-x` on the branch checked out in `repo` at `at`,
+/// then starts a merge of their own there that stops on a conflict.
+fn own_merge_on_a_commit(at: &Place, repo: Repo) -> Vec<Step> {
+    vec![
+        Step::git(at, repo, &["branch", "own-side"]),
+        Step::commit(at, repo, "own-x"),
+        Step::hand_commit(at, repo, "own-side", &[("own-x.txt", "own side\n")]),
+        Step::git(at, repo, &["merge", "--no-edit", "own-side"]).expect(Exit::Code(1)),
+    ]
+}
+
+/// `rwv abort` over the merge [`own_merge_on_a_commit`] started in `repo`,
+/// whose operand is `operand`: refused, the merge and its commit left as
+/// they are; the printed abandon keeps the merge's edits and the commit as
+/// backups, then puts the repo back, and the op is gone.
+fn abort_refuses_then_abandons_the_operators_merge(
+    at: &Place,
+    repo: Repo,
+    operand: &'static str,
+    may_strand: &[Repo],
+) -> Vec<Step> {
+    vec![
+        Step::rwv(at, &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(may_strand)
+            .claim(Claim::OutputContains("stopped in a merge begun at"))
+            .claim(Claim::OutputContains(operand)),
+        Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+        Step::git(at, repo, &["log", "-1", "--format=%s"]).claim(Claim::OutputLine("own-x")),
+        Step::rwv_printed(at, "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_strand(may_strand)
+            .may_restore(&[repo])
+            .claim(Claim::OutputContains(
+                "its uncommitted edits are kept as backup",
+            ))
+            .claim(Claim::OutputContains("abandoned foreign tip")),
+        Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).expect(Exit::Code(1)),
+        Step::git(
+            at,
+            repo,
+            &["log", "--all", "--format=%s", "--", "own-x.txt"],
+        )
+        .claim(Claim::OutputLine("own-x")),
+        Step::rwv(at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]
+}
+
+/// `pull --merge-upstream` stopped on its conflict in `app`; the operator
+/// gives up that merge, commits, and starts a merge of their own there. The
+/// pull integrates `app`, but abort cancels only its own merge: the
+/// operator's is refused, and their commit stays on its branch.
+pub fn pull_abort_refuses_a_merge_begun_on_the_operators_commit() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.push(Step::git(&b(), Repo::App, &["merge", "--abort"]));
+    steps.extend(own_merge_on_a_commit(&b(), Repo::App));
+    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+        &b(),
+        Repo::App,
+        "local/remotes/app: stopped in a merge",
+        &[],
+    ));
+    scenario(
+        "pull abort refuses a merge begun on the operator's commit",
+        steps,
+    )
+}
+
+/// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
+/// the operator commits on the copy in `app` and starts a merge of their
+/// own there: abort refuses it, keeping their commit.
+pub fn cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend(own_merge_on_a_commit(&ww("p"), Repo::App));
+    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+        &ww("p"),
+        Repo::App,
+        "local/remotes/app: stopped in a merge",
+        &[Repo::App],
+    ));
+    scenario(
+        "cherry-pick abort refuses a merge begun on the operator's commit",
+        steps,
+    )
+}
+
+/// `pull --merge-upstream` stopped on its conflict in `app`; in `docs`,
+/// which the pull never merges, the operator commits and starts a merge of
+/// their own: abort leaves it and the commit, and restores the rest.
+pub fn pull_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.extend(own_merge_on_a_commit(&b(), Repo::Docs));
+    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+        &b(),
+        Repo::Docs,
+        "local/remotes/docs: stopped in a merge",
+        &[],
+    ));
+    steps.push(
+        Step::git(
+            &b(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+    );
+    scenario(
+        "pull abort refuses a merge in a member it never merges",
+        steps,
+    )
+}
+
+/// The operator starts a merge of their own in `repo` at `at`, on the tip
+/// the op savepointed, and leaves it uncommitted.
+fn own_merge_at_the_savepoint(at: &Place, repo: Repo) -> Vec<Step> {
+    vec![
+        Step::git(at, repo, &["branch", "own-side"]),
+        Step::hand_commit(at, repo, "own-side", &[("own-side.txt", "own side\n")]),
+        Step::git(at, repo, &["merge", "--no-ff", "--no-commit", "own-side"]),
+    ]
+}
+
+/// `rwv abort` leaves the merge [`own_merge_at_the_savepoint`] started in
+/// `repo`, a repo the op never merges, as it is, and ends the op.
+fn abort_leaves_the_operators_merge(at: &Place, repo: Repo) -> Vec<Step> {
+    vec![
+        Step::rwv(at, &["abort"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("left stopped in a merge")),
+        Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+        Step::git(at, repo, &["diff", "--cached", "--name-only"])
+            .claim(Claim::OutputLine("own-side.txt")),
+        Step::git(
+            at,
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+    ]
+}
+
+/// `pull --merge-upstream` stopped on its conflict in `app`; in `docs`,
+/// which the pull never merges, the operator has a merge of their own in
+/// progress, begun where the pull found it: abort leaves that merge.
+pub fn pull_abort_leaves_a_merge_in_a_member_it_never_merges() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.extend(own_merge_at_the_savepoint(&b(), Repo::Docs));
+    steps.extend(abort_leaves_the_operators_merge(&b(), Repo::Docs));
+    scenario(
+        "pull abort leaves a merge in a member it never merges",
+        steps,
+    )
+}
+
+/// The steps that stop `update --remote --merge-upstream` on a conflict in
+/// `app` on machine A.
+fn update_remote_stopped_on_a_conflict() -> Vec<Step> {
+    vec![
+        Step::new_machine(Machine::B),
+        Step::hand_edit(&b(), Repo::App, "README", "app", "beta"),
+        Step::git(&b(), Repo::App, &["commit", "-qam", "beta"]),
+        Step::git(&b(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["update", "--remote", "--merge-upstream"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv update --remote --continue")),
+    ]
+}
+
+/// `update --remote --merge-upstream` stopped on its conflict in `app`; in
+/// `docs`, which it never merges, the operator has a merge of their own in
+/// progress, begun where the update found it: abort leaves that merge.
+pub fn update_remote_abort_leaves_a_merge_in_a_member_it_never_merges() -> Scenario {
+    let mut steps = update_remote_stopped_on_a_conflict();
+    steps.extend(own_merge_at_the_savepoint(&a(), Repo::Docs));
+    steps.extend(abort_leaves_the_operators_merge(&a(), Repo::Docs));
+    scenario(
+        "update --remote abort leaves a merge in a member it never merges",
+        steps,
+    )
+}
+
+/// `update --remote --merge-upstream` stopped on its conflict in `app`; in
+/// `docs`, which it never merges, the operator commits and starts a merge
+/// of their own: abort leaves it and the commit.
+pub fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scenario {
+    let mut steps = update_remote_stopped_on_a_conflict();
+    steps.extend(own_merge_on_a_commit(&a(), Repo::Docs));
+    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+        &a(),
+        Repo::Docs,
+        "local/remotes/docs: stopped in a merge",
+        &[],
+    ));
+    steps.push(
+        Step::git(
+            &a(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+    );
+    scenario(
+        "update --remote abort refuses a merge in a member it never merges",
+        steps,
+    )
+}
+
+/// A landing fast-forwarded `app` in the target's workspace, then was
+/// killed; someone edits `app` there before `rwv abort`, run from the
+/// source, resets it: the edits are kept as a backup first.
+pub fn abort_keeps_edits_made_in_the_target_after_the_stop() -> Scenario {
+    scenario(
+        "abort keeps edits made in the target after the stop",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+            Step::kill("landing"),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+                .claim(Claim::OutputLine("w-app")),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "edited in the target"),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: its uncommitted edits are kept as backup",
+                )),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+                .claim(Claim::OutputLacks("w-app")),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["log", "--all", "--format=kept %s", "-Sedited in the target"],
+            )
+            .claim(Claim::OutputContains("kept ")),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w"))),
+        ],
+    )
+}
+
+/// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
+/// the operator edits the copied file in `app`: abort resets `app` to its
+/// savepoint, keeping the edit as a backup first.
+pub fn cherry_pick_abort_keeps_edits_made_after_the_stop() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::hand_edit(
+            &ww("p"),
+            Repo::App,
+            "main-app.txt",
+            "main-app",
+            "edited after the stop",
+        ),
+        Step::rwv(&ww("p"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its uncommitted edits are kept as backup",
+            ))
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            }),
+        Step::git(
+            &ww("p"),
+            Repo::App,
+            &[
+                "log",
+                "--all",
+                "--format=kept %s",
+                "-Sedited after the stop",
+            ],
+        )
+        .claim(Claim::OutputContains("kept ")),
+    ]);
+    scenario("cherry-pick abort keeps edits made after the stop", steps)
+}
+
 /// `cherry-pick-refusals`: outside a feature, a merge commit without `-m`
 /// and an `-m` on a commit that is no merge, a backward pin, and a member
 /// range holding a merge are each refused before anything moves, naming the

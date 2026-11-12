@@ -690,6 +690,14 @@ every_scenario!(
         scenarios::AbortFrom::Target
     ),
     cherry_pick_abort_leaves_an_untouched_members_merge,
+    pull_abort_refuses_a_merge_begun_on_the_operators_commit,
+    cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit,
+    pull_abort_refuses_a_merge_in_a_member_it_never_merges,
+    update_remote_abort_refuses_a_merge_in_a_member_it_never_merges,
+    pull_abort_leaves_a_merge_in_a_member_it_never_merges,
+    update_remote_abort_leaves_a_merge_in_a_member_it_never_merges,
+    abort_keeps_edits_made_in_the_target_after_the_stop,
+    cherry_pick_abort_keeps_edits_made_after_the_stop,
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Rewound),
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::CheckedOut),
@@ -2372,6 +2380,15 @@ holding_rwv! {
 }
 
 holding_rwv! {
+    /// A landing killed after it fast-forwarded the target's checkout: edits
+    /// made there before `rwv abort` resets it are kept as a backup first.
+    fn abort_keeps_edits_made_in_the_target_after_the_stop() {
+        runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop())
+            .assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
     /// After the target's workspace aligned onto a followed receiving
     /// branch, `rwv abort` from either workspace switches it back and leaves
     /// that branch's own work on it.
@@ -2421,6 +2438,48 @@ holding_rwv! {
 #[test]
 fn a_cherry_pick_abort_leaves_a_merge_in_a_member_it_never_touches() {
     runner::run(scenarios::cherry_pick_abort_leaves_an_untouched_members_merge())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn pull_abort_refuses_a_merge_begun_on_the_operators_commit() {
+    runner::run(scenarios::pull_abort_refuses_a_merge_begun_on_the_operators_commit())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit() {
+    runner::run(scenarios::cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn pull_abort_refuses_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::pull_abort_refuses_a_merge_in_a_member_it_never_merges())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn pull_abort_leaves_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::pull_abort_leaves_a_merge_in_a_member_it_never_merges())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_abort_leaves_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::update_remote_abort_leaves_a_merge_in_a_member_it_never_merges())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::update_remote_abort_refuses_a_merge_in_a_member_it_never_merges())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_abort_keeps_edits_made_after_the_stop() {
+    runner::run(scenarios::cherry_pick_abort_keeps_edits_made_after_the_stop())
         .assert_fully_decided_green();
 }
 

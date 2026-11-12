@@ -265,7 +265,7 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
         transcript(&out)
     );
     assert!(
-        stderr.contains("`rwv abort --abandon-foreign-tip projects/app`"),
+        stderr.contains("\trwv abort --abandon-foreign-tip projects/app\n"),
         "the refusal must name the flag that settles it:\n{}",
         transcript(&out)
     );

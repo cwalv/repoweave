@@ -3054,7 +3054,12 @@ impl Vcs for GitVcs {
     fn cancel_returns_to(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
         let started_at = |state_file: &str| -> Result<Option<ResolvedRevisionId>, VcsError> {
             let path = Self::run_trimmed(
-                ["rev-parse", "--path-format=absolute", "--git-path", state_file],
+                [
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    state_file,
+                ],
                 repo,
             )?;
             match std::fs::read_to_string(path) {
@@ -3068,10 +3073,12 @@ impl Vcs for GitVcs {
                 Some(tip) => Some(tip),
                 None => started_at("rebase-apply/orig-head")?,
             },
-            Some(ConflictOp::CherryPick | ConflictOp::Revert) => match started_at("sequencer/head")? {
-                Some(tip) => Some(tip),
-                None => Some(self.head_revision(repo)?),
-            },
+            Some(ConflictOp::CherryPick | ConflictOp::Revert) => {
+                match started_at("sequencer/head")? {
+                    Some(tip) => Some(tip),
+                    None => Some(self.head_revision(repo)?),
+                }
+            }
             Some(ConflictOp::Merge) => Some(self.head_revision(repo)?),
         })
     }
@@ -4645,10 +4652,11 @@ impl GitVcs {
         if untracked.is_empty() {
             return Ok(false);
         }
-        let tracked = Self::run(["ls-tree", "-r", "-z", "--name-only", to.id().as_str()], repo)?;
-        Ok(tracked
-            .split('\0')
-            .any(|path| untracked.contains(path)))
+        let tracked = Self::run(
+            ["ls-tree", "-r", "-z", "--name-only", to.id().as_str()],
+            repo,
+        )?;
+        Ok(tracked.split('\0').any(|path| untracked.contains(path)))
     }
 
     fn restore_checkout_savepoint(

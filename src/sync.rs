@@ -21,9 +21,9 @@ use crate::set_history::Integration;
 use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    project_vcs, vcs_for, AttachedRef, CommitId, ConflictOp, DerivedContentPolicy,
-    Attribution, ForeignTipPolicy, HeadAttachment, Integrates, RemoteTracking, ResolvedRevisionId,
-    Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    project_vcs, vcs_for, AttachedRef, Attribution, CommitId, ConflictOp, DerivedContentPolicy,
+    ForeignTipPolicy, HeadAttachment, Integrates, RemoteTracking, ResolvedRevisionId, Vcs,
+    VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::wire_token::wire_token;
 use crate::workspace::{
@@ -7096,9 +7096,7 @@ fn restore_abort_workspace(
                 let source = vcs
                     .head_backup_source(&abs)
                     .unwrap_or(crate::vcs::BackupSource::DetachedHead);
-                if let Err(e) =
-                    keep_unreached(vcs.as_ref(), &abs, &source, saved.id(), &named)
-                {
+                if let Err(e) = keep_unreached(vcs.as_ref(), &abs, &source, saved.id(), &named) {
                     eprintln!("  {label}{named}: {e:#}");
                     tally.any_failure = true;
                     continue;
@@ -7561,16 +7559,19 @@ fn print_abort_recovery_options(tally: &AbortTally) {
     let mut lines = Vec::new();
     for (named, stopped, status) in &tally.stopped {
         lines.push(format!(
-            "\t- {named}: finish or abandon the {stopped} in progress first (`{status}` names \
-             how), then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip {named}`, which \
-             keeps its edits and its commits as backups, then cancels it"
+            "  {named}: finish or abandon the {stopped} in progress first, as this shows:\n\
+             \t{status}\n\
+             then rerun:\n\
+             \trwv abort\n\
+             or give it up, its uncommitted edits and its commits kept as backups first:\n\
+             \trwv abort --abandon-foreign-tip {named}"
         ));
     }
     for named in &tally.abandonable {
         lines.push(format!(
-            "\t- {named}: `rwv abort --abandon-foreign-tip {named}` returns it to the savepoint, \
-             keeping the abandoned commits as an `abandoned` backup that `rwv backup list` shows \
-             and `rwv backup drop` drops"
+            "  {named}: return it to the savepoint, the abandoned commits kept as an `abandoned` \
+             backup that `rwv backup list` shows and `rwv backup drop` drops:\n\
+             \trwv abort --abandon-foreign-tip {named}"
         ));
     }
     if lines.is_empty() {

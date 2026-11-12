@@ -813,7 +813,6 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     let op_id = owner.id.clone();
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
-
     // Manufacture a mid-rebase state: create a diverging commit on a temp
     // branch, then start a rebase that will conflict.
     //

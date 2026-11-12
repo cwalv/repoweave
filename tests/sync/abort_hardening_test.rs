@@ -1206,7 +1206,7 @@ fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains(&format!("`rwv abort --abandon-foreign-tip {SERVER_PATH}`")),
+        stderr.contains(&format!("\trwv abort --abandon-foreign-tip {SERVER_PATH}\n")),
         "the recovery options must name the verb that does this, for the repo refused.\nstderr:\n{stderr}"
     );
     assert!(
