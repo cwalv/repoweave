@@ -110,10 +110,19 @@ removes the claim, and only after re-reading the bytes it judged dead. While
 the claim reads those bytes nothing can replace it (no create succeeds on an
 occupied path, and its dead op releases nothing), so the re-read and the
 removal are one step to every other taker; a taker that judged an older
-claim dead finds the live one and leaves it. A lock whose holder is dead is
-passed over for one named after that holder as well, so no lock is removed
-but by its holder, and `rwv abort` of an op removes the locks it holds.
-The claim path is never emptied while it holds a live claim. No process id, host or clock is consulted, so a
+claim dead finds the live one and leaves it. A lock is removed the same way
+(`remove_dead`): a lock whose holder is dead is removed under its own lock,
+`<lock>.takeover.<its holder>`, re-read there, so no live lock is removed
+either. A lock whose holder is a standing op (a landing killed in its
+takeover, its record kept) is waited on as a claim is, and the refusal names
+that op, whose `rwv abort` removes the locks it holds. A landing that has just
+taken a claim removes every lock beside it whose holder is dead
+(`sweep_dead_takeovers`), so a lock left by a taker whose op ended without
+removing it does not stay; it never blocked anything, since it guards only
+the removal of a claim reading the dead op's bytes, and that op never claims
+again. The claim path is never emptied while it holds a live claim
+(`tests/process/landing_claim_contention_test.rs` drives this with takers in
+separate processes). No process id, host or clock is consulted, so a
 claim whose op is recorded is never taken from it. A claim whose bytes this
 rwv does not read is never judged dead. Taking it is a hard-link publish of a
 fully written temp (`durable_file::create_new`), which fails on an occupied
