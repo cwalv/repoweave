@@ -10086,3 +10086,232 @@ mod name_reading_tests {
             .all(|s| (s.index, s.file) == (Holds::Head, Holds::Head)));
     }
 }
+
+#[cfg(test)]
+mod drift_tests {
+    //! The drift probes against a worktree whose branch another worktree of
+    //! the same store moves. Text is compared after line endings are
+    //! normalized, so an ambient `core.autocrlf` changes nothing here.
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = git_command_in_test()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    fn text(path: &Path) -> Option<String> {
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|t| t.replace("\r\n", "\n"))
+    }
+
+    fn id(repo: &Path, rev: &str) -> CommitId {
+        CommitId::parse(&git(repo, &["rev-parse", rev])).unwrap()
+    }
+
+    /// A store on `main` holding `a.txt`, and a worktree on `feat` at the
+    /// same commit.
+    struct Drift {
+        _tmp: tempfile::TempDir,
+        store: PathBuf,
+        worktree: PathBuf,
+    }
+
+    impl Drift {
+        fn new() -> Self {
+            let tmp = crate::tempdir().unwrap();
+            let store = tmp.path().join("store");
+            std::fs::create_dir_all(&store).unwrap();
+            git(&store, &["init", "-q", "-b", "main"]);
+            git(&store, &["config", "user.email", "t@t"]);
+            git(&store, &["config", "user.name", "T"]);
+            std::fs::write(store.join("a.txt"), "a1\n").unwrap();
+            git(&store, &["add", "a.txt"]);
+            git(&store, &["commit", "-q", "-m", "a1"]);
+            let worktree = tmp.path().join("wt");
+            git(
+                &store,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    "feat",
+                    worktree.to_str().unwrap(),
+                ],
+            );
+            Drift {
+                _tmp: tmp,
+                store,
+                worktree,
+            }
+        }
+
+        /// Moves `feat` forward from the store's checkout, writing `a.txt`.
+        fn move_from_outside(&self, content: &str) -> CommitId {
+            git(&self.store, &["checkout", "-q", "--detach", "feat"]);
+            std::fs::write(self.store.join("a.txt"), content).unwrap();
+            git(&self.store, &["commit", "-q", "-am", "moved"]);
+            let moved = git(&self.store, &["rev-parse", "HEAD"]);
+            git(&self.store, &["update-ref", "refs/heads/feat", &moved]);
+            git(&self.store, &["checkout", "-q", "main"]);
+            CommitId::parse(&moved).unwrap()
+        }
+    }
+
+    #[test]
+    fn a_move_from_another_worktree_is_read_as_one_under_the_checkout() {
+        let d = Drift::new();
+        let before = id(&d.worktree, "HEAD");
+        d.move_from_outside("a2\n");
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), Some(before));
+    }
+
+    #[test]
+    fn the_checkouts_own_commit_is_no_move_under_it() {
+        let d = Drift::new();
+        std::fs::write(d.worktree.join("a.txt"), "own\n").unwrap();
+        git(&d.worktree, &["commit", "-q", "-am", "own"]);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+    }
+
+    #[test]
+    fn the_checkouts_own_reset_is_no_move_under_it() {
+        let d = Drift::new();
+        std::fs::write(d.worktree.join("a.txt"), "own\n").unwrap();
+        git(&d.worktree, &["commit", "-q", "-am", "own"]);
+        git(&d.worktree, &["reset", "-q", "--soft", "HEAD~1"]);
+        git(&d.worktree, &["reset", "-q", "HEAD@{1}"]);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+    }
+
+    #[test]
+    fn a_detached_checkout_has_no_branch_to_move_under_it() {
+        let d = Drift::new();
+        git(&d.worktree, &["checkout", "-q", "--detach"]);
+        d.move_from_outside("a2\n");
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+    }
+
+    #[test]
+    fn a_backward_move_is_not_read_as_one_under_the_checkout() {
+        let d = Drift::new();
+        let start = id(&d.worktree, "HEAD");
+        std::fs::write(d.worktree.join("a.txt"), "own\n").unwrap();
+        git(&d.worktree, &["commit", "-q", "-am", "own"]);
+        git(&d.store, &["update-ref", "refs/heads/feat", start.as_str()]);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+    }
+
+    #[test]
+    fn a_recorded_refresh_ends_the_move_under_the_checkout() {
+        let d = Drift::new();
+        d.move_from_outside("a2\n");
+        record_checkout_at_head(&d.worktree).unwrap();
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(
+            git(&d.store, &["rev-parse", "feat"]),
+            git(&d.worktree, &["rev-parse", "HEAD"])
+        );
+    }
+
+    #[test]
+    fn a_file_edited_after_it_was_read_stale_is_not_written_over() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        let head = d.move_from_outside("a2\n");
+        let standings = path_standings(&d.worktree, Some(&left)).unwrap();
+        assert!(standings
+            .iter()
+            .any(|s| s.path == "a.txt" && (s.index, s.file) == (Holds::LeftTip, Holds::LeftTip)));
+        std::fs::write(d.worktree.join("a.txt"), "saved meanwhile\n").unwrap();
+
+        let written = refresh_paths_if_left(
+            &d.worktree,
+            &left,
+            &head,
+            &["a.txt".to_owned()],
+            RefreshScope::IndexAndFiles,
+        )
+        .unwrap();
+
+        assert!(!written);
+        assert_eq!(
+            text(&d.worktree.join("a.txt")).as_deref(),
+            Some("saved meanwhile\n")
+        );
+    }
+
+    #[test]
+    fn an_index_entry_staged_after_it_was_read_stale_is_not_written_over() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        let head = d.move_from_outside("a2\n");
+        std::fs::write(d.worktree.join("a.txt"), "staged meanwhile\n").unwrap();
+        git(&d.worktree, &["add", "a.txt"]);
+        let staged = git(&d.worktree, &["ls-files", "-s", "a.txt"]);
+        std::fs::write(d.worktree.join("a.txt"), "a2\n").unwrap();
+
+        let written = refresh_paths_if_left(
+            &d.worktree,
+            &left,
+            &head,
+            &["a.txt".to_owned()],
+            RefreshScope::IndexOnly,
+        )
+        .unwrap();
+
+        assert!(!written);
+        assert_eq!(git(&d.worktree, &["ls-files", "-s", "a.txt"]), staged);
+    }
+
+    #[test]
+    fn a_file_holding_heads_content_beside_an_old_index_entry_is_found_under_crlf() {
+        let d = Drift::new();
+        git(&d.worktree, &["config", "core.autocrlf", "true"]);
+        let left = id(&d.worktree, "HEAD");
+        d.move_from_outside("a2\n");
+        std::fs::write(d.worktree.join("a.txt"), "a2\r\n").unwrap();
+
+        let standings = path_standings(&d.worktree, Some(&left)).unwrap();
+
+        assert_eq!(
+            standings,
+            vec![PathStanding {
+                path: "a.txt".to_owned(),
+                moved: true,
+                index: Holds::LeftTip,
+                file: Holds::Head,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_file_where_a_moved_paths_directory_would_go_is_occupied() {
+        let d = Drift::new();
+        let left = id(&d.worktree, "HEAD");
+        std::fs::write(d.worktree.join("notes"), "never committed\n").unwrap();
+        git(&d.store, &["checkout", "-q", "--detach", "feat"]);
+        std::fs::create_dir_all(d.store.join("notes")).unwrap();
+        std::fs::write(d.store.join("notes/x.txt"), "x\n").unwrap();
+        git(&d.store, &["add", "notes/x.txt"]);
+        git(&d.store, &["commit", "-q", "-m", "dir"]);
+        let moved = git(&d.store, &["rev-parse", "HEAD"]);
+        git(&d.store, &["update-ref", "refs/heads/feat", &moved]);
+        git(&d.store, &["checkout", "-q", "main"]);
+
+        let standings = path_standings(&d.worktree, Some(&left)).unwrap();
+
+        let x = standings.iter().find(|s| s.path == "notes/x.txt").unwrap();
+        assert_eq!((x.index, x.file), (Holds::LeftTip, Holds::Other));
+    }
+}
