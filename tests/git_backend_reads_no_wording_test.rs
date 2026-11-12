@@ -458,25 +458,11 @@ fn compared(code: &[u8], at: usize, end: usize) -> bool {
         || String::from_utf8_lossy(&code[..before]).ends_with("match")
 }
 
-/// The backend's files that are test modules, declared `#[cfg(test)] mod
-/// <name>;` in `src/git.rs`.
-fn test_modules() -> BTreeSet<String> {
-    let root = std::fs::read_to_string(common::src_scan::src_dir().join("git.rs")).unwrap();
-    let lines: Vec<&str> = root.lines().map(str::trim).collect();
-    lines
-        .windows(2)
-        .filter(|pair| pair[0] == "#[cfg(test)]")
-        .filter_map(|pair| pair[1].strip_prefix("mod ")?.strip_suffix(';'))
-        .map(|name| format!("git/{name}.rs"))
-        .collect()
-}
-
 fn sources_of(lines: &[SourceLine]) -> Vec<Source> {
-    let tests = test_modules();
     let files: BTreeSet<&str> = lines
         .iter()
         .map(|l| l.file.as_str())
-        .filter(|f| backend(f) && !tests.contains(*f))
+        .filter(|f| backend(f))
         .collect();
     files
         .into_iter()
