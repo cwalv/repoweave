@@ -1129,6 +1129,7 @@ fn ci_runs_the_git_floor_stage() {
         workflow.contains("run: ./scripts/ci-local.sh --stages=git-floor"),
         "ci-checks.yml runs no git-floor stage"
     );
+}
 
 /// The stage headers a run printed, in order. Two stages can run the same
 /// cargo argv, so a header, not an invocation, says which stage ran.
