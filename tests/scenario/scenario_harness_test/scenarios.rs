@@ -7587,11 +7587,13 @@ pub fn a_dependency_declared_differently_lands_and_lists_what_it_leaves() -> Sce
 }
 
 /// Where the merge base's `rwv.toml` does not read under the schema, a
-/// removal is still a change the landing names: the safe side.
+/// removal, and a top-level history the feature unset, are still changes
+/// the landing names: the safe side.
 pub fn a_removal_over_an_unreadable_merge_base_is_named() -> Scenario {
     scenario(
         "a removal over an unreadable merge base is named",
         vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
             create("w"),
             Step::hand_edit(
                 &a(),
@@ -7617,8 +7619,10 @@ pub fn a_removal_over_an_unreadable_merge_base_is_named() -> Scenario {
                 &["commit", "-qam", "readable again here"],
             ),
             Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "set-history", "--unset"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::Judged(Repo::Proj, State::TargetMemberChanges))
                 .claim(Claim::OutputContains("removed"))
                 .claim(Claim::LocalStateUnchanged(a())),
         ],
