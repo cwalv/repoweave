@@ -12,14 +12,14 @@
 //! `Warning`, `safe_to_fix` is always `true`, `integration` is always
 //! `"go-work"`. The one [`CheckViolation::StaleOpState`] sample carries
 //! `OpVerb::Land` — no other verb is sampled here.
-//! `tests/schema_conformance_test.rs`'s `doctor_corpus_supplement` produces
+//! `tests/docs/schema_conformance_test.rs`'s `doctor_corpus_supplement` produces
 //! the values this corpus never does — `Severity::Error`, `safe_to_fix:
 //! false`, `OpVerb::Sync` — for that file's schema conformance only; nothing
 //! here inherits them.
 //!
 //! [`case_token`] is verb-free, so a second `StaleOpState` sample would
 //! silently overwrite the first wherever a consumer keys on it —
-//! `tests/doctor_fix_authority_test.rs`'s `register()` collects samples into
+//! `tests/doctor/doctor_fix_authority_test.rs`'s `register()` collects samples into
 //! a `BTreeMap<String, _>`.
 
 use repoweave::check::{

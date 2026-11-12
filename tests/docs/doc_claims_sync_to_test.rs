@@ -15,7 +15,7 @@
 //!   - A successful land leaves no pre-op savepoint on either side.
 //!
 //! Pinned elsewhere, and deliberately not duplicated here: the envelope under
-//! `-j N` with `N > 1` is driven in `tests/schema_conformance_wire_test.rs`,
+//! `-j N` with `N > 1` is driven in `tests/docs/schema_conformance_wire_test.rs`,
 //! which validates it against the published schema rather than merely
 //! parsing it.
 //!
@@ -24,7 +24,7 @@
 //! `project_repo_advance`, and a per-outcome `step3_advance` — so a test
 //! written from "the shapes are identical" would be pinning something untrue.
 //!
-//! This test mirrors `tests/doc_claims_sync_test.rs` for the land verb.
+//! This test mirrors `tests/docs/doc_claims_sync_test.rs` for the land verb.
 
 use assert_cmd::Command;
 use serde_json::Value;
