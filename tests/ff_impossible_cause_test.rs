@@ -124,17 +124,40 @@ fn advance_primary_with_arriving_file(primary: &Workspace) -> String {
     new_sha
 }
 
-/// `rwv sync <primary>` run from `ww`, in `--json` mode, as one parsed
-/// envelope's sole outcome.
+/// Bring the workweave's project onto the primary's lock commit and leave it
+/// one commit ahead that pins the workweave's own server HEAD, so a landing is
+/// a fast-forward of the primary while the workweave's server repo still has to
+/// catch up to the primary's pin.
+fn put_workweave_project_ahead(primary: &Workspace, ww: &Workspace) {
+    let main = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(&ww.project_dir, &["merge", "--ff-only", &main]);
+    let own = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &own)]);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: workweave pin"]);
+}
+
+/// `rwv sync-to <primary>` run from `ww`, in `--json` mode, as one parsed
+/// envelope's sole outcome. The landing first replays `ww` onto the primary's
+/// committed lock, which is where the fast-forward under test happens.
 fn run_sync_json_single_outcome(primary: &Workspace, ww: &Workspace) -> Value {
     let output = common::rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--json"])
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--strategy=ff",
+            "--json",
+        ])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("envelope must parse ({e}):\n{stdout}"));
+    let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "envelope must parse ({e}):\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
     let outcomes = parsed["outcomes"]
         .as_array()
         .unwrap_or_else(|| panic!("envelope must carry outcomes:\n{stdout}"));
@@ -163,6 +186,7 @@ fn ff_impossible_untracked_collision_carries_its_cause() {
     let (primary, ww) = make_shared(tmp.path());
 
     advance_primary_with_arriving_file(&primary);
+    put_workweave_project_ahead(&primary, &ww);
 
     // The workweave's own working tree has an untracked file sitting exactly
     // where the incoming fast-forward would write one.
@@ -232,11 +256,13 @@ fn ff_impossible_command_failed_also_carries_its_cause() {
     std::fs::write(ww.server_dir.join("ww-only.txt"), "ww\n").unwrap();
     common::git_in(&ww.server_dir, &["add", "ww-only.txt"]);
     common::git_in(&ww.server_dir, &["commit", "-m", "ww diverges"]);
+    put_workweave_project_ahead(&primary, &ww);
 
     let outcome = common::rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
+            "--strategy=ff",
             "--json",
             "--discard-local-commits",
         ])
@@ -244,8 +270,12 @@ fn ff_impossible_command_failed_also_carries_its_cause() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&outcome.stdout).into_owned();
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("envelope must parse ({e}):\n{stdout}"));
+    let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "envelope must parse ({e}):\n{stdout}\n{}",
+            String::from_utf8_lossy(&outcome.stderr)
+        )
+    });
     let failed = &parsed["outcomes"][0];
     assert_eq!(failed["kind"], Value::from("failed"), "\n{stdout}");
 
