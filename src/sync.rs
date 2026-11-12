@@ -3454,7 +3454,7 @@ fn judge_unreachable_target_pins(
 /// landing aligns `T`'s workspace once it lands, and reports what it leaves.
 fn judge_target_pins(
     class: &LockClassification,
-    project: &ProjectName,
+    others: &[RepoPath],
     root: &Path,
     manifest: &Manifest,
     primary: &Path,
@@ -3462,7 +3462,6 @@ fn judge_target_pins(
 ) -> anyhow::Result<()> {
     let live = crate::pins::live_pins(primary)?;
     judge_unreachable_target_pins(class, root, manifest, report);
-    let others = crate::shared_members::held_by_presented(root, project);
     for r in class
         .relations
         .iter()
@@ -3601,32 +3600,26 @@ fn run_preconditions_after_acquire(
         &cwd_project.manifest,
         &mut report,
     );
-    if let Some((dest_project_dir, dest_workspace_dir)) = dest {
-        let checked_out_target = pin_source_snapshot(
-            project_vcs,
-            dest_project_dir,
-            dest_workspace_dir,
-            primary,
-            None,
-            ClassifySource::Relations,
-        )?;
-        if let Some(target_class) = checked_out_target.source_class.as_ref() {
-            if let Ok(target_manifest) = manifest_at_revision(
+    let checked_out_target = match dest {
+        Some((dest_project_dir, dest_workspace_dir)) => {
+            let checked_out = pin_source_snapshot(
                 project_vcs,
                 dest_project_dir,
-                &checked_out_target.source_project_tip,
-            ) {
-                judge_target_pins(
-                    target_class,
-                    &landing.project,
-                    dest_workspace_dir,
-                    &target_manifest,
-                    primary,
-                    &mut report,
-                )?;
-            }
+                dest_workspace_dir,
+                primary,
+                None,
+                ClassifySource::Relations,
+            )?;
+            let manifest = manifest_at_revision(
+                project_vcs,
+                dest_project_dir,
+                &checked_out.source_project_tip,
+            )
+            .ok();
+            Some((checked_out, manifest))
         }
-    }
+        None => None,
+    };
     let cwd_lock_behind: Vec<RepoRelation> = cwd_class
         .relations
         .into_iter()
@@ -3654,6 +3647,36 @@ fn run_preconditions_after_acquire(
             crate::land::Plan::default()
         }
     };
+    if let (Some((_, dest_workspace_dir)), Some((checked_out, Some(manifest)))) =
+        (dest, checked_out_target.as_ref())
+    {
+        if let Some(target_class) = checked_out.source_class.as_ref() {
+            let held =
+                crate::shared_members::held_by_presented(dest_workspace_dir, &landing.project);
+            let others: Vec<RepoPath> = held
+                .into_iter()
+                .filter(|path| {
+                    !plan.receiving.get(path).is_some_and(|r| {
+                        matches!(
+                            r.moves,
+                            op_state::Moves::InCheckout | op_state::Moves::InPlace { .. }
+                        )
+                    })
+                })
+                .collect();
+            hold(
+                judge_target_pins(
+                    target_class,
+                    &others,
+                    dest_workspace_dir,
+                    manifest,
+                    primary,
+                    &mut report,
+                ),
+                &mut report,
+            );
+        }
+    }
     match dest {
         Some((dest_project_dir, dest_workspace_dir)) => judge_edits_target_preflight(
             &cwd_project,

@@ -137,6 +137,12 @@ fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on
 }
 
 #[test]
+fn a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards() {
+    runner::run(scenarios::a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists() {
     runner::run(
         scenarios::an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists(
@@ -1026,6 +1032,7 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::Dirty),
     in_place_fast_forward(scenarios::InPlaceEnd::Drifted),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlan),
+    a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards,
     in_place_fast_forward(scenarios::InPlaceEnd::Rewound),
     in_place_fast_forward(scenarios::InPlaceEnd::ContinuedAfterRelease),
     removal_is_member_change,

@@ -700,6 +700,23 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
                 project: Repo::Proj,
             })
     };
+    let landing = Step::rwv(&side, &["land", "--history", "linear", "--retire"]);
+    let landing = if branch == "main" {
+        landing
+            .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
+            .claim(Claim::LocalStateUnchanged(a()))
+    } else {
+        landing
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Lib])
+            .claim(Claim::OutputContains(
+                "rwv push --branch main --project proj2",
+            ))
+            .claim(Claim::Presents {
+                at: a(),
+                project: Repo::Proj,
+            })
+    };
     Scenario {
         name,
         seed: Seed::default().second_project(SecondProject { branch, also: &[] }),
@@ -716,19 +733,14 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
                 .expect(Exit::Succeeds),
             Step::commit(&side, Repo::Lib, "side-lib"),
-            Step::rwv(&side, &["land", "--history", "linear", "--retire"])
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::Lib])
-                .claim(Claim::OutputContains(
-                    "rwv push --branch main --project proj2",
-                ))
-                .claim(Claim::Presents {
-                    at: a(),
-                    project: Repo::Proj,
-                }),
+            landing,
+        ]
+        .into_iter()
+        .chain((branch != "main").then(|| {
             Step::git(&a(), Repo::Lib, &["log", "--format=%s", branch])
-                .claim(Claim::OutputLine("side-lib")),
-        ],
+                .claim(Claim::OutputLine("side-lib"))
+        }))
+        .collect(),
     }
 }
 
@@ -851,6 +863,32 @@ pub fn inactive_landing_refusal_spelled_for_its_project() -> Scenario {
                     rev: "dev",
                     mark: "side-lib",
                 }),
+        ],
+    }
+}
+
+/// `proj2`, inactive, lists `docs`, which `proj` lists too, on `main`; the
+/// primary's `docs` holds a commit under `proj` that no lock records. A
+/// landing from `proj2`'s workweave that fast-forwards that checkout would pin
+/// the commit: it refuses `pin` `unpinned` before anything moves.
+pub fn a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards() -> Scenario {
+    let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
+    Scenario {
+        name: "a landing judges the pin of a shared member it fast-forwards",
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[Repo::Docs],
+        }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Docs, "docs-unrecorded"),
+            Step::commit(&side, Repo::Docs, "side-docs"),
+            Step::rwv(&side, &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Docs, State::PinUnpinned))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(side.clone())),
         ],
     }
 }
