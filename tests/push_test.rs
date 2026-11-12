@@ -1504,3 +1504,55 @@ fn a_project_overwrite_keeps_the_replaced_remote_tip_as_a_backup() {
         .collect();
     assert_eq!(tips, vec![replaced.as_str()], "{doc}");
 }
+
+/// A raw merge whose lock conflict was settled by hand, by either side, is
+/// `pin unmerged` at the push: a merge's own lock that keeps one parent's
+/// pin names nothing, so it waives nothing.
+fn merge_settled_by(side: &str) -> std::process::Output {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let member = ws.workspace.join("local/org/a");
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&member, &["branch", "side"]);
+    let ours = advance(&member, "ours.txt");
+    common::git_in(&member, &["switch", "-q", "side"]);
+    let theirs = advance(&member, "theirs.txt");
+    common::git_in(&member, &["switch", "-q", "main"]);
+
+    common::git_in(&project_dir, &["branch", "other"]);
+    relock(&ws, "local/org/a", &ours);
+    common::git_in(&project_dir, &["switch", "-q", "other"]);
+    relock(&ws, "local/org/a", &theirs);
+    common::git_in(&project_dir, &["switch", "-q", "main"]);
+    let merged = common::git()
+        .args(["merge", "--no-edit", "other"])
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "the two locks conflict");
+    common::git_in(&project_dir, &["checkout", side, "--", "rwv.lock"]);
+    common::git_in(&project_dir, &["add", "rwv.lock"]);
+    common::git_in(&project_dir, &["commit", "-q", "--no-edit"]);
+
+    rwv()
+        .args(["push", "--repo", "projects/alpha"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn a_raw_merge_settled_with_this_sides_lock_is_pin_unmerged() {
+    let out = merge_settled_by("--ours");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("local/org/a: pin unmerged"), "{stderr}");
+}
+
+#[test]
+fn a_raw_merge_settled_with_the_other_sides_lock_is_pin_unmerged() {
+    let out = merge_settled_by("--theirs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("local/org/a: pin unmerged"), "{stderr}");
+    assert!(!stderr.contains("pin waived"), "{stderr}");
+}

@@ -181,7 +181,9 @@ pub(crate) fn analyze(
 }
 
 /// The first lock at or after `range[index]` that re-pins the member
-/// backward, to a commit that reaches neither pin the merge left behind.
+/// backward, to a commit that reaches neither pin the merge left behind. The
+/// merge's own lock counts only when it pins neither parent's commit: keeping
+/// one side's pin is how a conflict is settled by hand, which names nothing.
 fn waiver(
     reader: &mut Reader<'_>,
     member: &Member<'_>,
@@ -213,6 +215,9 @@ fn waiver(
         let Some(to) = reader.held(&candidate.id).pins.get(member.path).cloned() else {
             continue;
         };
+        if candidate.id == merge.id && (to == pins.0 || to == pins.1) {
+            continue;
+        }
         let Some(from) = candidate
             .parents
             .first()
