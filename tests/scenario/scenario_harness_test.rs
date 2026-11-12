@@ -783,7 +783,8 @@ every_scenario!(
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::FinishedByHand),
     stack_at_the_tip_under_update_refs,
     stack_carry_stopped_under_update_refs,
-    a_landing_into_a_dependent_waits_on_its_stopped_carry,
+    a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Abort),
+    a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Continue),
     a_landing_killed_after_its_carry_continues,
     a_carry_stopped_in_the_project_continues,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
@@ -5302,8 +5303,22 @@ fn a_dependent_moved_as_its_carry_moves_aborts_then_syncs() {
 
 #[test]
 fn a_landing_into_a_dependent_waits_on_its_stopped_carry() {
-    runner::run(scenarios::a_landing_into_a_dependent_waits_on_its_stopped_carry())
-        .assert_fully_decided_green();
+    runner::run(
+        scenarios::a_landing_into_a_dependent_waits_on_its_stopped_carry(
+            scenarios::StoppedCarryEnds::Abort,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_into_a_dependent_lands_once_its_stopped_carry_continues() {
+    runner::run(
+        scenarios::a_landing_into_a_dependent_waits_on_its_stopped_carry(
+            scenarios::StoppedCarryEnds::Continue,
+        ),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]

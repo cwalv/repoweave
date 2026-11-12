@@ -16540,12 +16540,24 @@ pub fn a_dependent_moved_as_its_carry_moves(then: MovedAsCarried) -> Scenario {
     scenario("stack: a dependent moved as its carry moves it", steps)
 }
 
+/// How the carry a landing into its dependent waits on ends.
+#[derive(Debug, Clone, Copy)]
+pub enum StoppedCarryEnds {
+    /// The printed `rwv abort`.
+    Abort,
+    /// The conflict resolved by hand, then the printed `rwv sync --continue`.
+    Continue,
+}
+
 /// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
 /// third workweave meanwhile: the stopped carry holds `w2` as a landing
 /// would, so the landing refuses naming the carry's op, and once the
-/// printed `rwv abort` ends it the landing lands.
-pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
-    let steps = vec![
+/// printed choice ends it the landing lands. Where the carry continues, the
+/// third workweave lands into `w2` for one run, its record onto `main`: a
+/// record onto `w2` would make it a dependent the carry cannot move while
+/// it is checked out.
+pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry(ends: StoppedCarryEnds) -> Scenario {
+    let mut steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
         create("w1"),
         Step::commit(&ww("w1"), Repo::App, "w1-app"),
@@ -16563,20 +16575,43 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
             .claim(Claim::OutputContains(
                 "carrying 'w2' along in local/remotes/app",
             )),
-        create("w3"),
-        dependent_of(&ww("w3"), "w3", "w2"),
+    ];
+    if let StoppedCarryEnds::Continue = ends {
+        steps.extend([
+            Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        ]);
+    }
+    let land: &[&str] = match ends {
+        StoppedCarryEnds::Abort => &["land"],
+        StoppedCarryEnds::Continue => &["land", "--target", "w2"],
+    };
+    steps.push(create("w3"));
+    if let StoppedCarryEnds::Abort = ends {
+        steps.push(dependent_of(&ww("w3"), "w3", "w2"));
+    }
+    steps.extend([
         Step::commit(&ww("w3"), Repo::Lib, "w3-lib"),
         Step::rwv(&ww("w3"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w3"), &["land"])
+        Step::rwv(&ww("w3"), land)
             .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
             .claim(Claim::OutputContains("rwv sync --continue"))
             .claim(Claim::OutputContains("rwv abort"))
             .claim(Claim::LocalStateUnchanged(ww("w3"))),
-        Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
+    ]);
+    steps.push(match ends {
+        StoppedCarryEnds::Abort => Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputLacks("foreign")),
-        Step::rwv(&ww("w3"), &["land"])
+        StoppedCarryEnds::Continue => Step::rwv_printed_exactly(&ww("w1"), "rwv sync --continue")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("carried 'w2' along")),
+    });
+    steps.push(
+        Step::rwv(&ww("w3"), land)
             .expect(Exit::Succeeds)
             .claim(Claim::Contains {
                 at: ww("w3"),
@@ -16584,7 +16619,17 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry() -> Scenario {
                 rev: "w2",
                 mark: "w3-lib",
             }),
-    ];
+    );
+    if let StoppedCarryEnds::Continue = ends {
+        steps.push(
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["merge-base", "--is-ancestor", "main", "w2"],
+            )
+            .expect(Exit::Succeeds),
+        );
+    }
     scenario(
         "stack: a landing into a dependent waits on its stopped carry",
         steps,
@@ -17146,5 +17191,8 @@ pub fn stack_remote_dependent_landed(published: RemoteDependentLanded) -> Scenar
             passes(),
         ]),
     }
-    scenario("stack: a dependent published from another machine and landed there", steps)
+    scenario(
+        "stack: a dependent published from another machine and landed there",
+        steps,
+    )
 }
