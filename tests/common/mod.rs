@@ -1305,18 +1305,6 @@ pub fn node_tool(name: &str) -> String {
     }
 }
 
-/// Flatten path spelling inside prose: separators to `/`, the verbatim
-/// prefix dropped. Compare both sides through this, never one.
-///
-/// Green whether or not the message it reads carries the spelling that message
-/// is owed, so it cannot be the pin for a surface rwv renders. It is for text
-/// this repository does not author: `git worktree list --porcelain` answers in
-/// git's spelling, which no decision here governs, and flattening is the only
-/// honest comparison available.
-pub fn flatten_path_spelling(s: &str) -> String {
-    s.replace('\\', "/").replace("//?/", "")
-}
-
 /// Assert the context display's `Weave:` line names `root`, as `Display`
 /// renders it.
 ///

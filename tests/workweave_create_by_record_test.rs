@@ -156,6 +156,8 @@ fn the_parent_does_not_switch_and_its_uncommitted_files_stay_where_they_are_repo
         format!("{committed_manifest}# edited in the parent\n"),
     )
     .unwrap();
+    // raw lock bytes: the committed lock plus a blank line, so the file is
+    // uncommitted without its pins changing; the builder writes only pins.
     std::fs::write(
         project.join("rwv.lock"),
         format!("{}\n\n", committed_lock.trim_end()),
