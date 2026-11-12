@@ -1415,9 +1415,11 @@ at least one path the move changed still has the old tip's index entry, with
 a file holding the old tip's content or already HEAD's.
 
 **What to do:** `rwv doctor --fix` gives those paths HEAD's index entries and
-files, and reports each one. Git writes them, and refuses where a path changed
-after doctor read it; such paths are named as left in place, the fix reports
-an error, and the next run reads them again.
+files, and reports each one. It reads the checkout again just before writing,
+and git refuses where a path changed after it was read; then nothing is
+written, the paths are named as drift left in place with the reason, and the
+fix reports an error. Running `rwv doctor --fix` again reads them afresh;
+where the reason is unresolved conflicts in the index, resolve those first.
 
 #### `live-staged`
 
@@ -1428,9 +1430,11 @@ It can also be drift rwv cannot show: an old commit's content in a checkout
 whose reflog records no move under it, or one that already took part of the
 move. `--fix` does not touch it.
 
-**What to do:** commit it if it is your change. If it is not, stash it
-(`git -C <checkout> stash push`): nothing is committed and nothing is lost.
-Committing drift records the move's reverse on the branch. Then re-run.
+**What to do:** commit it if it is your change. If it is not, run
+`rwv doctor --fix` first when the checkout also has `safe-to-fix` drift, then
+stash what is left (`git -C <checkout> stash push`): nothing is committed and
+nothing is lost. Committing drift records the move's reverse on the branch.
+Then re-run.
 
 ### `working-tree-drift`
 
@@ -1454,9 +1458,11 @@ its content (a deletion, a file returned to an earlier version, a copy, a mode
 change), or a file both the move and you changed. It can also be drift rwv
 cannot show, as for `live-staged`. `--fix` does not touch it.
 
-**What to do:** commit them if they are your changes. If they are not, stash
-them (`git -C <checkout> stash push`): nothing is committed and nothing is
-lost. Committing drift records the move's reverse on the branch. Then re-run.
+**What to do:** commit them if they are your changes. If they are not, run
+`rwv doctor --fix` first when the checkout also has `safe-to-fix` drift, then
+stash what is left (`git -C <checkout> stash push`): nothing is committed and
+nothing is lost. Committing drift records the move's reverse on the branch.
+Then re-run.
 
 ### `orphaned-savepoint`
 

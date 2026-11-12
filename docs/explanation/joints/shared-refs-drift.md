@@ -113,10 +113,10 @@ refreshes only what both answer:
   entry is a commit other than HEAD, and an ancestor of it, had its
   branch moved forward from that commit (the *moved-from tip*) by
   something else. Where the newest entry is HEAD, the branch moved
-  backward or sideways, HEAD is detached, no reflog exists, or the
-  checkout is stopped in a merge, rebase, cherry-pick, revert or bisect,
-  nothing is shown to have moved under the checkout and every difference
-  is an edit. A checkout left behind also holds the moved-from tip's index
+  backward or sideways, HEAD is detached, no reflog exists, the
+  index lists no path at all, or the checkout is stopped in a merge,
+  rebase, cherry-pick, revert or bisect, nothing is shown to have moved
+  under the checkout and every difference is an edit. A checkout left behind also holds the moved-from tip's index
   entry at every path the move changed and it did not edit; one whose index
   already holds HEAD's entry at such a path has taken the move, or part of
   it, in a way its reflog does not record (a hand repair, a lost entry), and
@@ -133,40 +133,83 @@ refreshes only what both answer:
   losing one.
 
 A file whose stat data changed but whose content did not reads as
-unchanged. A file git does not compare with its index entry
-(marked skip-worktree with a file on disk, or assume-unchanged) is an edit.
-Something on disk where the index lists nothing — at the path itself, or
-a file or link where one of its leading directories would go, ignored or
-not — is an edit and never overwritten.
+unchanged. A file git does not compare with its index entry (marked
+skip-worktree with a file on disk, or assume-unchanged) is compared by
+content instead: holding its entry's content it is read as any other file,
+and otherwise it is an edit. Something on disk where the index lists
+nothing — at the path itself, or a file or link where one of its leading
+directories would go, ignored or not — is an edit and never overwritten,
+unless it is a file the same move removes and that still holds the
+moved-from tip's content: a move that turns a file into a directory, or a
+directory into a file, is refreshed whole.
+
+A submodule is refreshed in the index alone: where the move changed the
+commit it records, its entry takes HEAD's, and its checkout stays at the
+commit it stood at, as git's own checkout and merge leave it; `git submodule
+update` brings it along. A populated submodule the move turns into a file or
+link is an edit while anything is in its directory: git's merge would delete
+that directory whole, files no commit holds included, as `git merge
+--ff-only` does in a single repository. rwv refuses that instead.
 
 **The write.** A refresh is git's own two-way merge from the moved-from tip
 to that tip with the stale paths taken from HEAD. Every other path is one both
 sides of the merge agree on, so git leaves its index entry and file as they
-are. Git checks each stale path as it writes it and refuses the whole merge,
-writing nothing, where a path no longer holds the moved-from tip's content or
-something untracked is in the way: a file saved, or an entry staged, between
-the reading and the write is never overwritten. The paths a refused merge
-covered are left as they stand and treated as edits. Once a refresh has
-written anything, rwv records in the checkout's own reflog that it now stands
-at HEAD, so the refreshed checkout no longer reads as moved under: a staged
-deletion, return to the old content or mode, or revert made after the refresh
-is an edit like any other. Each refreshed file and each reset index entry is
-reported.
+are. Immediately before writing, rwv reads the checkout again, and writes
+nothing unless both readings find the same stale paths and the branch has not
+moved again. Git then checks each stale path as it writes it and refuses the
+merge where a path's index entry or tracked file no longer holds the
+moved-from tip's content or something untracked is in the way. Two things git's
+merge does not refuse over, an ignored file or directory where the move adds a
+path and a tracked file deleted from disk, rwv checks itself just before git
+starts. Files and index entries are written in two merges; when the second is
+refused, the first is put back, so a checkout is refreshed whole or not at
+all. Only a refresh that leaves nothing stale is recorded in the checkout's
+own reflog as standing at HEAD, so the refreshed checkout no longer reads as
+moved under: a staged deletion, return to the old content or mode, or revert
+made after the refresh is an edit like any other. Each refreshed file and each
+reset index entry is reported.
+
+A write rwv does not make leaves the stale paths as they stood, still drift,
+with nothing recorded, and names them as *drift left in place* with the
+reason: a path changed after it was read or something on disk is in the way,
+the branch moved again, the index holds unresolved conflicts, or the write
+failed (with git's own account). Running the verb again reads the checkout
+afresh: a path you changed is then an edit, and the rest is refreshed. Where
+the index holds unresolved conflicts, resolve them first (`git status` lists
+them). Committing drift left in place would record the move's reverse.
+
+What no reading can see is a change made in the instant between rwv's last
+check and git's own write: an ignored file put where the move adds a path, a
+stale tracked file deleted, or the branch moved again. Git's merge has no
+option that refuses over an ignored file, and it reads a missing tracked file
+as up to date. A write that fails partway, on a full disk for one, can leave
+some files written while their index entries still hold the old tip's: those
+read as drift in the index alone, and the next run finishes them.
+
+Git's own rules apply to what the merge writes. In a sparse checkout a path
+outside its patterns is written to the index alone, and a file outside them
+that holds its index entry's content is removed, as any git checkout does;
+nothing is lost, since a commit holds that content. A refreshed index entry
+loses an assume-unchanged mark, and with `core.fileMode=false` an exec bit git
+does not record is set as the commit says: git reads neither as a change, and
+neither does rwv.
 
 `rwv doctor` reports the stale paths as `index-drift` and
 `working-tree-drift` `safe-to-fix`, and everything else as `live-staged`
 and `live-edits`; a checkout can carry both. `--fix` refreshes the
-stale paths and leaves the rest; stale paths whose write git refused are
-named as left in place, and the fix reports an error for them.
+stale paths and leaves the rest; drift left in place is named with its
+reason and the route, and the fix reports an error for it. The end of
+`rwv sync` warns the same way, naming `rwv doctor --fix`.
 
 `rwv land` judges each checkout's edits on what the refresh leaves, so
 drift is never refused as an edit and never listed under the choice that
-commits edits. A landing that goes ahead refreshes every such checkout; a
-stale path whose write git refused makes it refuse that checkout's edits,
-the path included. A landing that refuses changes nothing, except in a
-checkout whose own edits it refused: that checkout's drift is refreshed,
-so the commit or stash the refusal offers there cannot commit the old tip's
-content back over the move.
+commits edits. A landing that goes ahead refreshes every such checkout. A
+landing that refuses changes nothing, except in a checkout whose own edits it
+refused: that checkout's drift is refreshed, so the commit or stash the
+refusal offers there cannot commit the old tip's content back over the move.
+Drift left in place refuses the landing as `edits` `drift left in place`,
+whose one choice is to land again; that checkout's other edits are listed
+beside it with no choice of their own until the drift is refreshed.
 
 ### Drift rwv cannot show
 
@@ -177,17 +220,34 @@ rwv refreshes none of it: `rwv land` refuses it as `edits` `dirty`, and
 `rwv doctor` reports it `live-staged` and `live-edits`. If those differences
 are not your work, stash them (`git stash push` in the checkout, the second
 command the `edits` refusal prints): the checkout returns to HEAD, nothing is
-committed, and the stash keeps every difference, your own edits included, to
-take back or drop. Committing them instead records the move's reverse on the
+committed, and the stash keeps every difference, your own edits included.
+Taking it back with `git stash pop` brings the move's reverse back too, as
+unstaged changes beside your own; to keep only yours, take back just their
+files (`git checkout stash@{0} -- <file>`) and drop the stash. Stash only what
+rwv cannot show: drift `rwv doctor` reports `safe-to-fix` is refreshed by
+`rwv doctor --fix`, and a stash made over it turns it into drift rwv cannot
+show once popped. Committing them instead records the move's reverse on the
 branch.
+
+One case reads as drift although it is not. After a refresh by hand that
+writes no reflog entry (`git checkout HEAD -- .`, `git restore --staged
+--worktree .`, `git read-tree -m -u HEAD`), a staged return of every path the
+move changed (a `git rm` of the one file it added, `git checkout <old> --` the
+one file it changed, a staged revert of the move) leaves the index, files and
+reflog exactly as a checkout never refreshed. Today rwv refreshes it, writing
+HEAD's content back over the staged return; nothing is lost that a commit
+does not hold, and the refresh is reported. Whether rwv should instead keep
+it as an edit is not yet decided.
 
 ## The shared invariant
 
 > rwv replaces a path only where its branch is shown to have moved under the
-> checkout, and only through a write git itself refuses unless the path still
-> holds exactly what the moved-from tip held, a commit reachable from HEAD.
-> Where the evidence is not conclusive, every difference is an edit. No
-> uncommitted edit is ever replaced or deleted.
+> checkout, two readings agree that the path still holds exactly what the
+> moved-from tip held, a commit reachable from HEAD, and git's own write
+> refuses unless it still does. Where the evidence is not conclusive, every
+> difference is an edit. No uncommitted edit is replaced or deleted, save a
+> change made in the instant before git writes, and the staged return of a
+> whole move after a refresh by hand, which reads as drift (above).
 
 The classifier is one function that `rwv doctor --fix`, `rwv land` and
 `rwv sync` share. Each path makes its own decision; the stale ones are
