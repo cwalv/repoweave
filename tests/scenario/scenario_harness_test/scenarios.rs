@@ -12697,6 +12697,74 @@ pub fn history_published_rebase() -> Scenario {
     )
 }
 
+/// A colleague pushes the published feature between its rebase and the
+/// republish: once fetched, the divergence is no longer rwv's own, so the
+/// republish recovery is not printed, and the `rebased` backup of the tip the
+/// push branch held before stays.
+pub fn history_republish_after_a_colleague_pushed() -> Scenario {
+    let b_seat = Place::ww(Machine::B, "pb");
+    scenario(
+        "history: no republish recovery once a colleague pushed in between",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "p",
+                    "--new-branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("p"), Repo::App, "p-app"),
+            Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("p"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-p")
+                .pushes(Remote::origin(Repo::Proj), "feat-p")
+                .expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::rwv(
+                &b(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "pb",
+                    "--branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&b_seat, Repo::App, "b-app"),
+            Step::rwv(&b_seat, &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["sync"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&b_seat, &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-p")
+                .pushes(Remote::origin(Repo::Proj), "feat-p")
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputLacks("--overwrite"))
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "p-app",
+                    marked: Some("rebased"),
+                }),
+        ],
+    )
+}
+
 /// A target recording `history` that moved in `app` and `lib`, and a seat whose `app`
 /// edit conflicts with `main`'s: `sync` stops on `app`'s merge before `lib`,
 /// planned a fast-forward, is reached. The operator resolves `app` and

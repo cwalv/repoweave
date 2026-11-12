@@ -733,6 +733,7 @@ every_scenario!(
     history_member_override_lands,
     rebased_backup_lifetime,
     history_published_rebase,
+    history_republish_after_a_colleague_pushed,
     rebased_backup_after_abort_offers_no_republish,
     rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
@@ -4945,6 +4946,12 @@ fn rebased_backup_after_abort_offers_no_republish_scenario() {
 #[test]
 fn rebased_backup_of_another_branch_offers_no_republish_scenario() {
     runner::run(scenarios::rebased_backup_of_another_branch_offers_no_republish())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn history_republish_after_a_colleague_pushed_is_green() {
+    runner::run(scenarios::history_republish_after_a_colleague_pushed())
         .assert_fully_decided_green();
 }
 
