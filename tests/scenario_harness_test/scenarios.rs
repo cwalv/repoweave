@@ -844,10 +844,14 @@ pub fn switch_c_wip_in_workweave() -> Scenario {
             create("wip"),
             Step::git(&ww("wip"), Repo::App, &["switch", "-c", "wip"]),
             Step::commit(&ww("wip"), Repo::App, "wip-1"),
-            Step::rwv(&ww("wip"), &["lock"]).expect(Exit::refuses(
-                Repo::App,
-                State::AlignmentOnBranchWithStrayCommits,
-            )),
+            Step::rwv(&ww("wip"), &["lock"])
+                .expect(Exit::Defect(Defect::UnboundBranchPlaceholder))
+                .claim(Claim::Judged(
+                    Repo::App,
+                    State::AlignmentOnBranchWithStrayCommits,
+                ))
+                .claim(Claim::OutputContains("copy these commits onto `<b>`"))
+                .claim(Claim::OutputLine("rwv explain alignment")),
             Step::rwv(&ww("wip"), &["push"]).expect(Exit::refuses(Repo::Proj, State::NameMinted)),
             Step::pending("land the workweave", MissingVerb::Land),
         ],
@@ -916,9 +920,14 @@ pub fn hand_edit_declaration_to_existing_branch() -> Scenario {
                 ))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv(&a(), &["lock", "--commit"])
-                .expect(Exit::Defect(Defect::LockCommitRepinsBackwardUnnamed))
+                .expect(Exit::Defect(Defect::LockCommitRepinsBackwardUnreported))
                 .may_rewind(&[Repo::Lib])
-                .claim(Claim::OutputContains("member-changed branch: main -> dev")),
+                .claim(Claim::OutputContains("member-changed branch: main -> dev"))
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: branch main -> dev",
+                ))
+                .claim(Claim::OutputContains("local/remotes/lib: pinned at "))
+                .claim(Claim::OutputLacks("re-pinned")),
         ],
     )
 }
@@ -2826,6 +2835,16 @@ pub fn url_change_raw_merge() -> Scenario {
                 Repo::Proj,
                 &["merge", "-q", "--no-ff", "-m", "merge", "mirror-url"],
             ),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Defect(Defect::UrlChangeUnrelinkedSilently))
+                .claim(Claim::OutputContains("member-changed url:"))
+                .claim(Claim::UpstreamOn {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                    remote: Remote::origin(Repo::Lib),
+                })
+                .claim(Claim::OutputLacks("relink")),
             Step::rwv(&a(), &["fetch"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
@@ -2924,9 +2943,12 @@ pub fn member_pin_behind() -> Scenario {
                 mark: "lib-three",
             }),
             Step::rwv(&a(), &["status"])
-                .expect(Exit::Defect(Defect::PinAheadNamesNoHold))
+                .expect(Exit::Succeeds)
                 .claim(Claim::Judged(Repo::Lib, State::PinAhead))
-                .claim(Claim::OutputContains("pinned-by: proj keeps-lib-three")),
+                .claim(Claim::OutputContains("pinned-by: proj keeps-lib-three"))
+                .claim(Claim::OutputContains("record it: the lock"))
+                .claim(Claim::OutputLine("    rwv lock --commit"))
+                .claim(Claim::OutputLine("    rwv push --repo local/remotes/lib")),
             Step::rwv(&a(), &["switch", "--detach", "HEAD"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::AtPin {
