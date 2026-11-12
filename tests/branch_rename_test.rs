@@ -464,3 +464,20 @@ fn a_new_name_holding_the_same_record_is_taken_up_with_adopt() {
     assert!(has_branch(&project_dir(&ww), "held"));
     assert_eq!(record_of(&w.workspace, &minted("anon")), None);
 }
+
+#[test]
+fn a_rename_reports_a_workspace_state_that_reads_as_absent() {
+    let w = weave(&[LIB]);
+    let project = project_dir(&w.workspace);
+    let dir = common::git_in(&project, &["rev-parse", "--absolute-git-dir"]);
+    let state = Path::new(&dir).join("rwv-workspace-state");
+    std::fs::write(&state, "{ not json").unwrap();
+
+    let out = succeed(&["branch", "rename", "trunk"], &w.workspace);
+
+    let text = describe(&out);
+    assert!(
+        text.contains("workspace state of projects/p reads as absent"),
+        "{text}"
+    );
+}

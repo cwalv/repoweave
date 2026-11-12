@@ -368,7 +368,7 @@ pub(crate) fn judge_entry(
         _ => {}
     }
 
-    let was_pin = match crate::alignment::pin_of(vcs, dir, loaded.old.as_ref(), member) {
+    let was_pin = match crate::alignment::pin_of(vcs, dir, loaded.old.as_ref(), member)? {
         Pin::At(at) => Some(at),
         Pin::None | Pin::Unreachable => None,
     };

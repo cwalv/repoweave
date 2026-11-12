@@ -963,7 +963,7 @@ fn judge_member(
             .checkout(&member.dir)
             .bind("<m>", path.as_str())
     };
-    let pin = match crate::alignment::pin_of(vcs, &member.dir, pushed.lock.as_ref(), path) {
+    let pin = match crate::alignment::pin_of(vcs, &member.dir, pushed.lock.as_ref(), path)? {
         Pin::None => {
             refusals.add(judging(State::PinNone).judge(vcs));
             return Ok(());

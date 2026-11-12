@@ -829,7 +829,14 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
              publishes it"
         );
     }
-    crate::alignment::rename_branch(vcs.as_ref(), &dir, old.as_str(), new.as_str())?;
+    if let Some(why) =
+        crate::alignment::rename_branch(vcs.as_ref(), &dir, old.as_str(), new.as_str())?
+    {
+        eprintln!(
+            "rwv branch rename: the workspace state of {} reads as absent: {why}",
+            label(&project)
+        );
+    }
     if let Some(project_repo) = repos.iter().find(|repo| repo.member.is_none()) {
         rename_in(project_repo, &old_raw, &new_raw)?;
     }

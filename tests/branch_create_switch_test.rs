@@ -859,3 +859,18 @@ fn a_created_branch_reusing_a_deleted_ones_name_inherits_nothing_it_stored() {
     let status = succeed(&["status"], ws);
     assert!(!status.contains("member-changed"), "{status}");
 }
+
+#[test]
+fn a_lock_that_does_not_read_at_the_destination_refuses_before_the_project_repo_moves() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "bad", "--declared"], ws);
+    std::fs::write(project.join("rwv.lock"), "{ not a lock").unwrap();
+    git_ok(&project, &["commit", "-qam", "break the lock"]);
+    git_ok(&project, &["switch", "-q", "main"]);
+
+    refuse(&["switch", "bad"], ws);
+
+    assert_eq!(head_branch(&project).as_deref(), Some("main"));
+}

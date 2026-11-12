@@ -152,16 +152,17 @@ pub fn store_state(
 
 /// Carry what the workspace at `project_dir` holds for the branch `from` to
 /// the branch `to`: the branch it last aligned for, and the member entries it
-/// last aligned that branch by. Whether the state file changed is returned.
+/// last aligned that branch by. A state file that reads as absent is left as
+/// it is, and why it reads so is returned.
 pub fn rename_branch(
     vcs: &dyn Vcs,
     project_dir: &Path,
     from: &str,
     to: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<String>> {
     let StateReading { mut state, corrupt } = read_state(vcs, project_dir)?;
     if corrupt.is_some() {
-        return Ok(false);
+        return Ok(corrupt);
     }
     if state.aligned == Some(Aligned::Branch(from.to_owned())) {
         state.aligned = Some(Aligned::Branch(to.to_owned()));
@@ -169,7 +170,8 @@ pub fn rename_branch(
     if let Some(stored) = state.stored.remove(from) {
         state.stored.insert(to.to_owned(), stored);
     }
-    store_state(vcs, project_dir, &state)
+    store_state(vcs, project_dir, &state)?;
+    Ok(None)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,13 +304,19 @@ pub enum Pin {
     At(ResolvedRevisionId),
 }
 
-pub fn pin_of(vcs: &dyn Vcs, dir: &Path, lock: Option<&LockFile>, path: &RepoPath) -> Pin {
+pub fn pin_of(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    lock: Option<&LockFile>,
+    path: &RepoPath,
+) -> Result<Pin, crate::vcs::VcsError> {
     let Some(entry) = lock.and_then(|lock| lock.get_entry(path)) else {
-        return Pin::None;
+        return Ok(Pin::None);
     };
     match vcs.resolve_revision(dir, entry.version.as_str()) {
-        Ok(at) => Pin::At(at),
-        Err(_) => Pin::Unreachable,
+        Ok(at) => Ok(Pin::At(at)),
+        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => Ok(Pin::Unreachable),
+        Err(e) => Err(e),
     }
 }
 
@@ -459,8 +467,13 @@ pub struct Member<'a> {
     pub vcs: &'a dyn Vcs,
 }
 
-fn reaches(vcs: &dyn Vcs, dir: &Path, pin: &ResolvedRevisionId, tip: &ResolvedRevisionId) -> bool {
-    vcs.is_ancestor(dir, pin, tip).unwrap_or(false)
+fn reaches(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    pin: &ResolvedRevisionId,
+    tip: &ResolvedRevisionId,
+) -> anyhow::Result<bool> {
+    Ok(vcs.is_ancestor(dir, pin, tip)?)
 }
 
 fn checked_out_elsewhere(m: &Member<'_>, branch: &RawRefName) -> anyhow::Result<Vec<PathBuf>> {
@@ -674,7 +687,7 @@ impl Aligner {
 
     /// Usability: the member's expected state against its pin.
     pub fn plan(&self, m: &Member<'_>, lock: Option<&LockFile>) -> anyhow::Result<Plan> {
-        let pin = pin_of(m.vcs, m.dir, lock, m.path);
+        let pin = pin_of(m.vcs, m.dir, lock, m.path)?;
         let (branch, declared) = self.wanted(m.entry.role, m.entry);
         let found = find_e(m.vcs, m.dir, m.entry, &branch)?;
         let unfound =
@@ -738,10 +751,13 @@ impl Aligner {
                 Found::OnRemote { tip, .. } => vec![tip.clone()],
                 _ => Vec::new(),
             };
-            let on_declared = tip
-                .iter()
-                .chain(upstream_tip.iter())
-                .any(|tip| reaches(m.vcs, m.dir, &pin, tip));
+            let mut on_declared = false;
+            for tip in tip.iter().chain(upstream_tip.iter()) {
+                if reaches(m.vcs, m.dir, &pin, tip)? {
+                    on_declared = true;
+                    break;
+                }
+            }
             if !matches!(found, Found::Foreign { .. } | Found::Nowhere) && !on_declared {
                 return Ok(Target::Detached {
                     at: pin,
@@ -753,7 +769,7 @@ impl Aligner {
         }
         let fast_forward_to = match &found {
             Found::Local { tip } | Found::LocalGivenUpstream { tip, .. }
-                if *tip != pin && reaches(m.vcs, m.dir, tip, &pin) =>
+                if *tip != pin && reaches(m.vcs, m.dir, tip, &pin)? =>
             {
                 Some(pin)
             }
@@ -990,33 +1006,26 @@ impl Aligner {
     }
 
     /// The commit the plan leaves the member's checkout at, where it has one.
-    fn destination(m: &Member<'_>, plan: &Plan) -> Option<ResolvedRevisionId> {
-        match &plan.target {
+    fn destination(m: &Member<'_>, plan: &Plan) -> anyhow::Result<Option<ResolvedRevisionId>> {
+        Ok(match &plan.target {
             Target::AsFound => None,
             Target::Detached { at, .. } => Some(at.clone()),
             Target::Branch {
-                found,
-                fast_forward_to,
+                fast_forward_to: Some(to),
                 ..
-            } => {
-                if fast_forward_to.is_some() {
-                    return fast_forward_to.clone();
+            } => Some(to.clone()),
+            Target::Branch { found, .. } => match (found, &plan.pin) {
+                (Found::Local { tip } | Found::LocalGivenUpstream { tip, .. }, _) => {
+                    Some(tip.clone())
                 }
-                match (found, &plan.pin) {
-                    (Found::Local { tip } | Found::LocalGivenUpstream { tip, .. }, _) => {
-                        Some(tip.clone())
-                    }
-                    (Found::OnRemote { tip, .. }, Pin::At(pin))
-                        if reaches(m.vcs, m.dir, pin, tip) =>
-                    {
-                        Some(pin.clone())
-                    }
-                    (Found::OnRemote { tip, .. }, _) => Some(tip.clone()),
-                    (Found::Nowhere, Pin::At(pin)) => Some(pin.clone()),
-                    (Found::Foreign { .. } | Found::Nowhere, _) => None,
+                (Found::OnRemote { tip, .. }, Pin::At(pin)) if reaches(m.vcs, m.dir, pin, tip)? => {
+                    Some(pin.clone())
                 }
-            }
-        }
+                (Found::OnRemote { tip, .. }, _) => Some(tip.clone()),
+                (Found::Nowhere, Pin::At(pin)) => Some(pin.clone()),
+                (Found::Foreign { .. } | Found::Nowhere, _) => None,
+            },
+        })
     }
 
     /// The edited files the move to the plan's commit would overwrite: all of
@@ -1030,7 +1039,7 @@ impl Aligner {
         if dirty.is_empty() {
             return Ok(dirty);
         }
-        let Some(to) = Self::destination(m, plan) else {
+        let Some(to) = Self::destination(m, plan)? else {
             return Ok(dirty);
         };
         let from = m.vcs.head_revision(m.dir)?;
@@ -1133,7 +1142,7 @@ impl Aligner {
                 match found {
                     Found::OnRemote { upstream, tip } => {
                         let at = match &plan.pin {
-                            Pin::At(pin) if reaches(m.vcs, m.dir, pin, tip) => pin.clone(),
+                            Pin::At(pin) if reaches(m.vcs, m.dir, pin, tip)? => pin.clone(),
                             _ => tip.clone(),
                         };
                         m.vcs.create_branch(m.dir, name, &at, Some(upstream))?;
