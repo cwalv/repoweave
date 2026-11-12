@@ -129,13 +129,12 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
     )
 }
 
-/// `rwv sync <source>` binds the SOURCE to the project this invocation
-/// resolved, not to whatever the source workspace happens to have activated.
-/// Both workspaces here are primary-shaped, which is the shape that has no
-/// marker to fall back on and therefore the one where the pointer used to
-/// decide for a workspace that was not the subject of the invocation.
+/// `rwv sync-to <target>` run from the source binds the source to the project
+/// this invocation resolved, not to whatever the source workspace happens to
+/// have activated. Both workspaces here are primary-shaped, which is the shape
+/// that has no marker to fall back on.
 #[test]
-fn a_pull_reads_the_source_under_the_invocations_project() {
+fn a_landing_reads_the_source_under_the_invocations_project() {
     let tmp = common::tempdir().unwrap();
     let (source, dest) = make_pair(tmp.path());
 
@@ -163,15 +162,21 @@ fn a_pull_reads_the_source_under_the_invocations_project() {
     );
 
     rwv()
-        .args(["sync", &source.root.to_string_lossy(), "--strategy=ff"])
-        .current_dir(&dest.root)
+        .args([
+            "sync-to",
+            &dest.root.to_string_lossy(),
+            "--project",
+            SYNCED_PROJECT,
+            "--strategy=ff",
+        ])
+        .current_dir(&source.root)
         .assert()
         .success();
 
     assert_eq!(
         common::git_in(&dest.server_dir, &["rev-parse", "HEAD"]),
         advanced,
-        "the pull must read the source's `{SYNCED_PROJECT}` lock; binding the \
+        "the landing must read the source's `{SYNCED_PROJECT}` lock; binding the \
          source to its own `.rwv-active` reads a sibling project's lock instead, \
          which either fails naming the wrong path or — where the two projects \
          share history — pulls across projects"
