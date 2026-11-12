@@ -219,7 +219,8 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "complete": true,
   "refused": [],
-  "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
+  "project_repo_advance": { "from_sha": "...", "to_sha": "..." },
+  "left_behind": [ { "path": "...", "was": "...", "now": "...", "commits": [ ... ], "choices": [ ... ] }, ... ]
 }
 ```
 
@@ -227,9 +228,13 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 fast-forward that moved a branch is reported as its repo's `step3_advance`, or
 as `project_repo_advance` for the project repo. `target` is the workspace that
 has the target checked out. `complete` is true once every phase ran and
-op-state is cleared. `--continue --json` emits the same envelope with a
+op-state is cleared. `left_behind` holds, for each member whose declared
+branch the landing changes, the commits the target's pin reaches that the new
+branch lacks, newest first, with the copy that ports them; the text output
+prints the same list. `--continue --json` emits the same envelope with a
 `resumed` field naming the phase the stopped landing had reached; a value past
-`replay` leaves `outcomes` empty.
+`replay` leaves `outcomes` empty. A resumed landing lists `left_behind` again,
+in text and under `--json`.
 
 Schema:
 
@@ -242,10 +247,12 @@ Schema:
   "required": [
     "$schema",
     "complete",
+    "left_behind",
     "members",
     "outcomes",
     "placements",
     "refused",
+    "reports",
     "retired",
     "target"
   ],
@@ -256,6 +263,13 @@ Schema:
     "complete": {
       "description": "True iff the op ran its last phase and cleared its op-state, so nothing remains to `--continue` or `rwv abort`; false when a phase stopped it with its op-state held. A complete op exits 1 when `members` carries a `prune-refused` entry.",
       "type": "boolean"
+    },
+    "left_behind": {
+      "description": "For each declared-branch change the landing makes, the commits the target's pin reaches that the new receiving branch lacks, with the copy that ports them. Empty, not absent, when it leaves none; a resumed op reports the same list its start did.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LeftBehindOutput"
+      }
     },
     "members": {
       "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it. The op still completes, and then exits 1.",
@@ -294,6 +308,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"
+      }
+    },
+    "reports": {
+      "description": "Each move the landing reported as it made it: a receiving branch created, a member that followed its receiving branch, a pin moved backward by name. Empty, not absent, when it made none; a resumed op reports the moves its earlier runs made as well.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LandingReportOutput"
       }
     },
     "resolution": {
@@ -485,6 +506,11 @@ Schema:
           ]
         }
       }
+    },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "ConflictOp": {
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — `Vcs::mid_op` constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
@@ -788,6 +814,150 @@ Schema:
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "LandingReportOutput": {
+      "description": "One move a landing reported as it made it.",
+      "oneOf": [
+        {
+          "description": "A receiving branch that existed nowhere, created at `at`.",
+          "type": "object",
+          "required": [
+            "at",
+            "branch",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "created"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "A member holding no new work moved to its receiving branch's tip `to`; the tip `was` it left is kept in the backup `backup`.",
+          "type": "object",
+          "required": [
+            "backup",
+            "kind",
+            "path",
+            "to",
+            "was"
+          ],
+          "properties": {
+            "backup": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "followed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A pin the landing moved backward, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "re-pinned"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        }
+      ]
+    },
+    "LeftBehindOutput": {
+      "description": "One declared-branch change's left-behind commits.",
+      "type": "object",
+      "required": [
+        "choices",
+        "commits",
+        "now",
+        "path",
+        "was"
+      ],
+      "properties": {
+        "choices": {
+          "description": "The copy that ports them onto `now`, in the order the text prints it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "commits": {
+          "description": "The commits the target's pin reaches that `now` lacks, newest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LeftCommitOutput"
+          }
+        },
+        "now": {
+          "description": "The receiving branch the landing declares.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The member's manifest-relative path.",
+          "type": "string"
+        },
+        "was": {
+          "description": "The branch the target's entry declared.",
+          "type": "string"
+        }
+      }
+    },
+    "LeftCommitOutput": {
+      "type": "object",
+      "required": [
+        "sha",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "subject": {
+          "type": "string"
         }
       }
     },
