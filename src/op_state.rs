@@ -509,6 +509,38 @@ pub struct TakeInRecord {
     /// relock committed.
     #[serde(default)]
     pub source_tip: Option<CommitId>,
+    /// The repos `land --allow-member-change` names, spelled as an operand.
+    #[serde(default)]
+    pub allow_member_change: Vec<String>,
+    /// The members a landing moves to their receiving branch's tip, merging
+    /// nothing: each one whose declared branch it changes and that holds no
+    /// new work.
+    #[serde(default)]
+    pub follows: Vec<RepoKey>,
+    /// The receiving branches a landing moves as refs, since no checkout
+    /// holds them.
+    #[serde(default)]
+    pub receiving_refs: BTreeMap<RepoKey, ReceivingRef>,
+    /// Each branch a landing created, and where.
+    #[serde(default)]
+    pub created_refs: Vec<CreatedRef>,
+}
+
+/// A receiving branch a landing moves as a ref: created at `at` first where
+/// `create` says it exists nowhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceivingRef {
+    pub branch: String,
+    pub create: bool,
+    pub at: CommitId,
+}
+
+/// A branch the op created, checked out nowhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreatedRef {
+    pub repo: RepoKey,
+    pub branch: String,
+    pub at: CommitId,
 }
 
 /// What a `sync` takes in.
@@ -1120,6 +1152,21 @@ pub fn journal_ref_move(workspace_dir: &Path, moved: RefMove) -> anyhow::Result<
     })?;
     if let Some(take_in) = record.take_in.as_mut() {
         take_in.ref_moves.push(moved);
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal a branch the op created, checked out nowhere.
+pub fn journal_created_ref(workspace_dir: &Path, created: CreatedRef) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in.created_refs.push(created);
     }
     write_owner(workspace_dir, &record)
 }

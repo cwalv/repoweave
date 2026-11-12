@@ -52,6 +52,41 @@ fn bad_steps(name: &'static str, steps: Vec<Step>) -> Report {
 }
 
 #[test]
+fn a_seat_with_no_work_on_a_member_follows_its_new_declared_branch_after_landing() {
+    runner::run(scenarios::seat_follows_after_landing()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_lists_what_a_declared_branch_change_leaves_behind_and_status_keeps_it() {
+    runner::run(scenarios::member_change_race_listing()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_member_change_refusal_prints_the_rebind_then_the_setter_then_the_consent() {
+    runner::run(scenarios::member_change_choice_order()).assert_fully_decided_green();
+}
+
+#[test]
+fn removing_a_member_the_target_lists_lands_only_when_named() {
+    runner::run(scenarios::removal_is_member_change()).assert_fully_decided_green();
+}
+
+#[test]
+fn dc06_a_landing_leaves_the_merged_member_set_pinned_with_the_relock_last() {
+    runner::run(scenarios::dc06_member_set_from_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_merged_entry_change_is_reported_until_published_and_named_to_land() {
+    runner::run(scenarios::raw_merge_member_change()).assert_fully_decided_green();
+}
+
+#[test]
+fn roles_in_a_feature_carry_pins_and_a_role_or_backward_pin_change_is_named() {
+    runner::run(scenarios::roles_in_feature()).assert_fully_decided_green();
+}
+
+#[test]
 fn solo_workweave_lands_and_pushes() {
     runner::run(scenarios::solo_workweave()).assert_fully_decided_green();
 }
@@ -471,6 +506,13 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    seat_follows_after_landing,
+    member_change_race_listing,
+    member_change_choice_order,
+    removal_is_member_change,
+    dc06_member_set_from_merge,
+    raw_merge_member_change,
+    roles_in_feature,
     land_into_a_target_checked_out_nowhere,
     land_reports_every_refusal_together,
     land_refuses_a_dependent,

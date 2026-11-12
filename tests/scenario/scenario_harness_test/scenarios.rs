@@ -6058,3 +6058,436 @@ pub fn dc11_drift_before_dirt() -> Scenario {
         ],
     )
 }
+
+const LIB: &str = "local/remotes/lib";
+const DOCS: &str = "local/remotes/docs";
+
+/// `seat-follows-after-landing`: a permanent seat whose `lib` holds no work
+/// of its own declares `lib` on `dev` and lands that change by name. The
+/// seat's `lib` moves to `dev`'s tip, keeping the tip it left in a backup, and
+/// the target's workspace follows `dev`.
+pub fn seat_follows_after_landing() -> Scenario {
+    scenario(
+        "seat follows after landing",
+        vec![
+            create("seat"),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("seat"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: ww("seat"),
+                    repo: Repo::Lib,
+                    rev: "HEAD",
+                    mark: "main-lib",
+                }),
+            Step::rwv(&ww("seat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("seat"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("branch: main → dev"))
+                .claim(Claim::LocalStateUnchanged(ww("seat")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("seat"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::BackedUp {
+                    repo: Repo::Lib,
+                    mark: "main-lib",
+                    marked: None,
+                })
+                .claim(Claim::AtPin {
+                    at: ww("seat"),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Lib,
+                }),
+        ],
+    )
+}
+
+/// `member-change-race-listing`: a fix lands on `main`'s `lib` while a
+/// feature cut before it moves `lib` to `dev`. The landing lists the fix as
+/// a commit `dev` lacks, and `status` keeps listing it until the change is
+/// published.
+pub fn member_change_race_listing() -> Scenario {
+    scenario(
+        "member change race listing",
+        vec![
+            create("fix"),
+            create("feat"),
+            Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
+            Step::rwv(&ww("fix"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("feat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::commit(&ww("feat"), Repo::App, "feat-app"),
+            Step::rwv(&ww("feat"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .claim(Claim::OutputInOrder(&[
+                    "the target's pin reaches commits 'dev' lacks",
+                    "lib-fix",
+                    "copy these commits onto `dev`",
+                ]))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "feat-app",
+                }),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed"))
+                .claim(Claim::OutputContains("lib-fix")),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("lib-fix")),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Lib), "main")
+                .pushes(Remote::origin(Repo::Lib), "dev")
+                .may_rewind(&[Repo::Lib])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("member-changed"))
+                .claim(Claim::OutputLacks("lib-fix")),
+        ],
+    )
+}
+
+/// `member-change-choice-order`: a hotfix cut from `stable` but spelled onto
+/// `main` would change `main`'s entry for `lib`. The refusal prints the
+/// rebind onto `stable` first, then the setter that keeps `main`'s value,
+/// then the consent, which states what it changes; the rebind, run as
+/// printed, lands the hotfix into `stable`.
+pub fn member_change_choice_order() -> Scenario {
+    scenario(
+        "member change choice order",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "create",
+                    "stable",
+                    "--declared",
+                    "--set-branch",
+                    "local/remotes/lib=dev",
+                    "--set-new-branch",
+                    "local/remotes/app=app-stable",
+                    "--set-new-branch",
+                    "local/remotes/docs=docs-stable",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "st",
+                    "--branch",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "hotfix",
+                    "--at",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("hotfix"), Repo::App, "hotfix-app"),
+            Step::rwv(&ww("hotfix"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("branch: main → dev"))
+                .claim(Claim::OutputInOrder(&[
+                    "rwv branch set-mode proj--hotfix feature --target stable",
+                    "rwv member set-branch local/remotes/lib main",
+                    "land these changes too (this changes the target's entries, or its \
+                     top-level setting)",
+                    "rwv land --allow-member-change local/remotes/lib",
+                ]))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &ww("hotfix"),
+                &[
+                    "branch",
+                    "set-mode",
+                    "proj--hotfix",
+                    "feature",
+                    "--target",
+                    "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("hotfix"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: ww("st"),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "hotfix-app",
+                }),
+        ],
+    )
+}
+
+/// `removal-is-member-change`: a feature removing a member its target lists
+/// refuses to land until `--allow-member-change` names the member, run as the
+/// refusal prints it; then the target no longer lists it.
+pub fn removal_is_member_change() -> Scenario {
+    scenario(
+        "removal is a member change",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("removed"))
+                .claim(Claim::OutputContains("rwv member add "))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputLacks(LIB))
+                .claim(Claim::OutputContains(DOCS)),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.lock"]).claim(Claim::OutputLacks(LIB)),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", DOCS])
+                .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag)),
+        ],
+    )
+}
+
+/// `dc06-member-set-from-merge`: `main` adds `docs` while the feature
+/// removes `lib` and adds a `[workweave]` table. Landing, with `lib` named,
+/// leaves `main` listing exactly the merged set, pinning exactly it, the
+/// `[workweave]` table landed unnamed, and the relock as the last commit.
+pub fn dc06_member_set_from_merge() -> Scenario {
+    scenario(
+        "dc06 member set from merge",
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                "[integrations.vscode-workspace]\nenabled = false\n",
+                "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
+                 [\"notes.txt\"]\n",
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputLacks("local/remotes/docs: target"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains("rwv land --continue")),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.toml"]),
+            Step::drop_manifest_entry(&ww("w"), Repo::Proj, Repo::Lib),
+            Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputLacks(LIB))
+                .claim(Claim::OutputContains(DOCS))
+                .claim(Claim::OutputContains("local/remotes/app"))
+                .claim(Claim::OutputContains("copy = [\"notes.txt\"]")),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.lock"])
+                .claim(Claim::OutputLacks(LIB))
+                .claim(Claim::OutputContains(DOCS))
+                .claim(Claim::OutputContains("local/remotes/app")),
+            Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%s", "main"])
+                .claim(Claim::OutputContains("lock: auto-relock after sync from")),
+        ],
+    )
+}
+
+/// `raw-merge-member-change`: a raw merge of `stable` into a feature onto
+/// `main` changes `docs`'s declared branch. Landing it refuses until `docs`
+/// is named; once landed, `status` in `main`'s workspace reports the change,
+/// the pin on the new branch (C25) before the restore (C11), run after run,
+/// until the push branch carries it.
+pub fn raw_merge_member_change() -> Scenario {
+    scenario(
+        "raw merge member change",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "create",
+                    "stable",
+                    "--declared",
+                    "--set-new-branch",
+                    "local/remotes/docs=docs-stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "stable"]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("branch: main → docs-stable"))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-mode proj--w feature --target stable",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", DOCS])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Docs,
+                    branch: "docs-stable",
+                }),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed"))
+                .claim(Claim::OutputInOrder(&[
+                    "rwv member pin local/remotes/docs",
+                    "rwv member set-branch local/remotes/docs main",
+                ])),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed")),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Docs), "docs-stable")
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("member-changed")),
+        ],
+    )
+}
+
+/// `roles-in-feature`: a feature's `dependency` and `reference` members get
+/// no branch of its name; `update --remote --repo` re-pins the dependency in
+/// the feature and the landing carries that pin; patching it needs
+/// `member set-role <m> fork`, and landing that role change needs
+/// `--allow-member-change <m>`. A pin moved backward is a change too.
+pub fn roles_in_feature() -> Scenario {
+    Scenario {
+        name: "roles in feature",
+        seed: Seed::default()
+            .role(Repo::Lib, Role::Dependency)
+            .role(Repo::Docs, Role::Reference),
+        steps: vec![
+            create("w"),
+            Step::git(&ww("w"), Repo::Lib, &["branch", "--list", "proj--w"])
+                .claim(Claim::OutputLacks("proj--w")),
+            Step::git(&ww("w"), Repo::Docs, &["branch", "--list", "proj--w"])
+                .claim(Claim::OutputLacks("proj--w")),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "lib-up",
+            }),
+            Step::rwv(&ww("w"), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "origin/main", "--commit"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-up",
+                }),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-up",
+                }),
+            create("back"),
+            Step::rwv(&ww("back"), &["member", "pin", LIB, "HEAD~1", "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::rwv(&ww("back"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("pin: "))
+                .claim(Claim::OutputContains("rwv member pin local/remotes/lib "))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &ww("back"),
+                &["land", "--retire", "--allow-member-change", LIB],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib]),
+            Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%B", "main"])
+                .claim(Claim::OutputContains("Rwv-Repin: \"local/remotes/lib\"")),
+            create("patch"),
+            Step::rwv(&ww("patch"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("patch"), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: ww("patch"),
+                    repo: Repo::Lib,
+                    branch: "proj--patch",
+                }),
+            Step::commit(&ww("patch"), Repo::Lib, "lib-patch"),
+            Step::rwv(&ww("patch"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputContains("role: dependency → fork"))
+                .claim(Claim::OutputContains(
+                    "rwv member set-role local/remotes/lib dependency",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &ww("patch"),
+                &["land", "--retire", "--allow-member-change", LIB],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["show", "main:lib-patch.txt"])
+                .claim(Claim::OutputContains("lib-patch")),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputContains("role = \"fork\"")),
+        ],
+    }
+}

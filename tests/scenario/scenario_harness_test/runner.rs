@@ -146,6 +146,13 @@ pub enum Action {
         project: Repo,
         member: Repo,
     },
+    /// Removes `member`'s table from the project's `rwv.toml` at `at`, as an
+    /// operator settling a conflict by hand would.
+    DropManifestEntry {
+        at: Place,
+        project: Repo,
+        member: Repo,
+    },
     /// Cut the workspace-state file the project repo at `at` keeps in its
     /// private directory to half its bytes.
     TruncateWorkspaceState {
@@ -353,6 +360,9 @@ pub enum Claim {
     OutputLacks(&'static str),
     /// One line of what the step printed is exactly this text.
     OutputLine(&'static str),
+    /// What the step printed holds each of these texts, each after the one
+    /// before it.
+    OutputInOrder(&'static [&'static str]),
     /// The checkout of `repo` at `at` has `branch` take in from `remote`'s
     /// same-named branch.
     UpstreamOn {
@@ -608,6 +618,24 @@ impl Step {
                 project.name()
             ),
             Action::DropLockEntry {
+                at: at.clone(),
+                project,
+                member,
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    /// Removes `member`'s table from the project's `rwv.toml` at `at`, leaving
+    /// the change uncommitted.
+    pub fn drop_manifest_entry(at: &Place, project: Repo, member: Repo) -> Step {
+        Step::new(
+            format!(
+                "drop {}'s table from {}'s rwv.toml",
+                member.name(),
+                project.name()
+            ),
+            Action::DropManifestEntry {
                 at: at.clone(),
                 project,
                 member,
@@ -1146,6 +1174,35 @@ impl Run<'_> {
                 std::fs::write(&path, text).unwrap();
                 (true, String::new())
             }
+            Action::DropManifestEntry {
+                at,
+                project,
+                member,
+            } => {
+                let path = sb.checkout(at, *project).join("rwv.toml");
+                let text = std::fs::read_to_string(&path).unwrap();
+                let header = format!("[repositories.\"{}\"]", member.rel_path());
+                let mut kept = Vec::new();
+                let mut dropping = false;
+                let mut found = false;
+                for line in text.lines() {
+                    if line.starts_with('[') {
+                        dropping = line == header;
+                        found |= dropping;
+                    }
+                    if !dropping {
+                        kept.push(line);
+                    }
+                }
+                if !found {
+                    return (
+                        false,
+                        format!("{} has no table for {}", path.display(), member.name()),
+                    );
+                }
+                std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+                (true, String::new())
+            }
             Action::TruncateWorkspaceState { at } => {
                 let project = sb.checkout(at, Repo::Proj);
                 let private = sb.git_ok(&project, &["rev-parse", "--absolute-git-dir"]);
@@ -1498,6 +1555,21 @@ impl Run<'_> {
                 } else {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
                 }
+            }
+            Claim::OutputInOrder(texts) => {
+                let mut from = 0;
+                for text in *texts {
+                    match output[from..].find(text) {
+                        Some(at) => from += at + text.len(),
+                        None => {
+                            return Err(format!(
+                                "the output does not hold {text:?} after the texts before it \
+                                 in {texts:?}:\n{output}"
+                            ))
+                        }
+                    }
+                }
+                Ok(())
             }
             Claim::OutputLine(text) => {
                 if output.lines().any(|line| line == *text) {

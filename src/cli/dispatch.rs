@@ -1429,6 +1429,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Land {
             target,
+            allow_member_change,
             strategy,
             retire,
             json,
@@ -1446,7 +1447,11 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 crate::branch::require_recorded(&ctx)?;
                 sync::SyncRequest::Fresh {
-                    landing: Box::new(crate::land::resolve(&ctx, target.as_deref())?),
+                    landing: Box::new(crate::land::resolve(
+                        &ctx,
+                        target.as_deref(),
+                        allow_member_change,
+                    )?),
                     strategy,
                     retire,
                     jobs: jobs.map_or(1, |n| crate::parallel::resolve_jobs(Some(n))),

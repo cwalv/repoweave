@@ -8,13 +8,18 @@
 
 use crate::diagnosis::{Form, Judged, Report, State};
 use crate::lineage::{Lineage, PinHistory};
-use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath, Role};
+use crate::manifest::{
+    LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
+};
+use crate::op_state::{CreatedRef, ReceivingRef};
 use crate::records::{BranchName, Mode, Record, Store};
+use crate::refusal::RefusalKind;
 use crate::vcs::{
-    project_vcs, vcs_for, CommitId, HeadAttachment, RawRefName, ResolvedRevisionId, Vcs,
+    project_vcs, vcs_for, CommitId, CommitSummary, DestroyProof, HeadAttachment, RawRefName,
+    ResolvedRevisionId, Site, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// A landing of the checked-out feature into its target, as resolved before
@@ -34,13 +39,39 @@ pub struct Landing {
     pub target_mode: Mode,
     /// Refusals judged while resolving, reported with the rest.
     pub judged: Report,
+    /// The repos whose entries in `T` the landing may change, as
+    /// `--allow-member-change` names them.
+    pub allow_member_change: Vec<RepoOperand>,
 }
 
-/// What [`judge`] planned: the receiving branch's tip each `owned` or `fork`
-/// member is composed onto.
+/// What [`judge`] planned.
 #[derive(Debug, Clone, Default)]
 pub struct Plan {
+    /// The receiving branch's tip each `owned` or `fork` member is composed
+    /// onto, or moves to where it follows.
     pub sources: BTreeMap<RepoPath, CommitId>,
+    /// The members whose declared branch the landing changes and that hold
+    /// no new work: each takes its receiving branch's tip, merging nothing.
+    pub follows: BTreeSet<RepoPath>,
+    /// The receiving branches no checkout holds, moved as refs, each created
+    /// first where it exists nowhere.
+    pub receiving_refs: BTreeMap<RepoPath, ReceivingRef>,
+    /// For each named declared-branch change, the commits `T`'s pin reaches
+    /// that the new receiving branch lacks.
+    pub left_behind: Vec<LeftBehind>,
+}
+
+/// The commits a declared-branch change leaves on the old branch.
+#[derive(Debug, Clone)]
+pub struct LeftBehind {
+    pub member: RepoPath,
+    pub vcs_type: crate::manifest::VcsType,
+    pub was: String,
+    pub now: String,
+    pub commits: Vec<CommitSummary>,
+    /// Where the new branch is checked out once the landing aligns `T`'s
+    /// workspace.
+    pub checkout: PathBuf,
 }
 
 fn rev(commit: &CommitId) -> ResolvedRevisionId {
@@ -50,7 +81,11 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
 /// Resolve the landing the checked-out feature makes: `--target` for one run,
 /// else the record's. A refusal that leaves nothing to land into refuses here,
 /// with every refusal judged before it.
-pub fn resolve(ctx: &WorkspaceContext, target_flag: Option<&str>) -> anyhow::Result<Landing> {
+pub fn resolve(
+    ctx: &WorkspaceContext,
+    target_flag: Option<&str>,
+    allow_member_change: Vec<RepoOperand>,
+) -> anyhow::Result<Landing> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
@@ -182,6 +217,7 @@ pub fn resolve(ctx: &WorkspaceContext, target_flag: Option<&str>) -> anyhow::Res
         target_tip,
         target_mode: target_record.mode(),
         judged,
+        allow_member_change,
     })
 }
 
@@ -318,8 +354,15 @@ struct Sides {
     ours: Manifest,
     theirs: Manifest,
     base: Option<Manifest>,
+    our_lock: Option<LockFile>,
     their_lock: Option<LockFile>,
+    base_lock: Option<LockFile>,
     history: PinHistory,
+}
+
+fn pin_of(lock: Option<&LockFile>, path: &RepoPath) -> Option<CommitId> {
+    lock.and_then(|lock| lock.get_entry(path))
+        .and_then(|e| e.version.as_commit_id())
 }
 
 fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
@@ -373,10 +416,12 @@ pub fn judge(
         ours: Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
         theirs,
         base: base_commit.as_ref().and_then(|b| manifest_at(vcs, &dir, b)),
+        our_lock: lock_at(vcs, &dir, &head),
         their_lock: lock_at(vcs, &dir, &landing.target_tip),
+        base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, &dir, b)),
         history: PinHistory::of(vcs, &dir, &landing.target_tip)?,
     };
-    judge_entry_changes(landing, &sides, &dir, &label, vcs, report);
+    judge_entry_changes(landing, &sides, source_root, &dir, &label, vcs, report)?;
     for dependent in crate::merge_upstream::dependents_of(vcs, &dir, landing.feature.as_str())? {
         report.add(
             State::TargetDependents
@@ -402,7 +447,7 @@ pub fn judge(
         &landing.project,
         crate::alignment::Accounting::default(),
     )?;
-    let our_lock = lock_at(vcs, &dir, &head);
+    let as_mode = landing.target_mode;
     let mut plan = Plan::default();
     for (path, entry) in sides.ours.iter_entries() {
         let mdir = source_root.join(path.as_path());
@@ -416,12 +461,9 @@ pub fn judge(
             dir: &mdir,
             vcs: mvcs.as_ref(),
         };
-        let aligned = source_aligner.plan(&checked, our_lock.as_ref())?;
+        let aligned = source_aligner.plan(&checked, sides.our_lock.as_ref())?;
         if let Some(off) = source_aligner.refusal(&checked, &aligned, path)? {
             report.add(off);
-            continue;
-        }
-        if !matches!(entry.role, Role::Owned | Role::Fork) {
             continue;
         }
         let member = Member {
@@ -430,16 +472,21 @@ pub fn judge(
             dir: &mdir,
             vcs: mvcs.as_ref(),
         };
-        if let Some(source) = judge_member(
-            landing,
-            &sides,
-            &member,
-            &accounting,
-            &target_aligner,
-            report,
-        )? {
-            plan.sources.insert(path.clone(), source);
+        if sides.theirs.get_entry(path).is_none() {
+            plan_added_member(landing, &sides, &member, as_mode, &mut plan)?;
+            continue;
         }
+        if !matches!(entry.role, Role::Owned | Role::Fork) {
+            continue;
+        }
+        let judging = Judging {
+            landing,
+            sides: &sides,
+            accounting: &accounting,
+            target_aligner: &target_aligner,
+            as_mode,
+        };
+        judge_member(&judging, &member, &mut plan, report)?;
     }
     Ok(plan)
 }
@@ -451,12 +498,35 @@ struct Member<'a> {
     vcs: &'a dyn Vcs,
 }
 
-/// Each field of `ours` that differs from `theirs`, as `field: theirs → ours`.
-fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<String> {
+/// One field of a repo's entry the landing would change, as `T` holds it and
+/// as `W` does.
+#[derive(Debug, Clone)]
+struct FieldChange {
+    name: &'static str,
+    theirs: String,
+    ours: String,
+}
+
+impl FieldChange {
+    fn line(&self) -> String {
+        format!("{}: {} → {}", self.name, self.theirs, self.ours)
+    }
+}
+
+/// What the landing would change in `T` for one repo: fields of its entry,
+/// or, where `W` removed it, the whole entry `T` holds.
+struct Changed {
+    repo: RepoOperand,
+    fields: Vec<FieldChange>,
+    removed: Option<RepoEntry>,
+}
+
+/// Each field of `ours` that differs from `theirs`.
+fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<FieldChange> {
     let mut out = Vec::new();
-    let mut field = |name: &str, t: String, o: String| {
-        if t != o {
-            out.push(format!("{name}: {t} → {o}"));
+    let mut field = |name: &'static str, theirs: String, ours: String| {
+        if theirs != ours {
+            out.push(FieldChange { name, theirs, ours });
         }
     };
     field(
@@ -471,87 +541,313 @@ fn changed_fields(theirs: &RepoEntry, ours: &RepoEntry) -> Vec<String> {
         theirs.branch.local_counterpart().as_str().to_owned(),
         ours.branch.local_counterpart().as_str().to_owned(),
     );
-    let history = |h: Option<crate::manifest::History>| {
-        h.map_or_else(|| "unset".to_owned(), |h| h.to_string())
-    };
-    field("history", history(theirs.history), history(ours.history));
+    field(
+        "history",
+        crate::set_history::spelled(theirs.history),
+        crate::set_history::spelled(ours.history),
+    );
     field(
         "recurse-submodules",
-        format!("{:?}", theirs.recurse_submodules).to_lowercase(),
-        format!("{:?}", ours.recurse_submodules).to_lowercase(),
+        bool::from(theirs.recurse_submodules).to_string(),
+        bool::from(ours.recurse_submodules).to_string(),
     );
     out
 }
 
+/// A `dependency` or `reference` member keeps the pin `W` gave it since the
+/// merge base; where `T`'s pin is not an ancestor of that one, the landing
+/// moves `T`'s pin backward.
+fn backward_pin(
+    sides: &Sides,
+    path: &RepoPath,
+    ours: &RepoEntry,
+    source_root: &Path,
+) -> Option<FieldChange> {
+    if !matches!(ours.role, Role::Dependency | Role::Reference) {
+        return None;
+    }
+    let mine = pin_of(sides.our_lock.as_ref(), path)?;
+    let theirs = pin_of(sides.their_lock.as_ref(), path)?;
+    if Some(&mine) == pin_of(sides.base_lock.as_ref(), path).as_ref() || mine == theirs {
+        return None;
+    }
+    let reaches = vcs_for(ours.vcs_type)
+        .is_ancestor(
+            &source_root.join(path.as_path()),
+            &rev(&theirs),
+            &rev(&mine),
+        )
+        .unwrap_or(false);
+    (!reaches).then(|| FieldChange {
+        name: "pin",
+        theirs: theirs.short().to_owned(),
+        ours: mine.short().to_owned(),
+    })
+}
+
 /// The changes the landing would make to `T`'s member entries and top-level
 /// `history`: each one `W` made since the merge base that `T` does not
-/// already hold. None lands yet, so each refuses.
+/// already hold, and each backward pin of a member `W` re-pinned. A change
+/// `--allow-member-change` names lands; every other one refuses, and a name
+/// that matches no change is refused as naming nothing.
 fn judge_entry_changes(
     landing: &Landing,
     sides: &Sides,
+    source_root: &Path,
     dir: &Path,
     label: &str,
     vcs: &dyn Vcs,
     report: &mut Report,
-) {
-    let mut changes: Vec<(String, Vec<String>)> = Vec::new();
+) -> anyhow::Result<()> {
+    let mut changes: Vec<Changed> = Vec::new();
     for (path, theirs) in sides.theirs.iter_entries() {
         let was = sides.base.as_ref().and_then(|b| b.get_entry(path));
         match sides.ours.get_entry(path) {
             Some(ours) => {
                 let changed_here = was.is_none_or(|was| !changed_fields(was, ours).is_empty());
-                let fields = changed_fields(theirs, ours);
-                if changed_here && !fields.is_empty() {
-                    changes.push((path.to_string(), fields));
+                let mut fields = if changed_here {
+                    changed_fields(theirs, ours)
+                } else {
+                    Vec::new()
+                };
+                fields.extend(backward_pin(sides, path, ours, source_root));
+                if !fields.is_empty() {
+                    changes.push(Changed {
+                        repo: RepoOperand::Member(path.clone()),
+                        fields,
+                        removed: None,
+                    });
                 }
             }
-            None if was.is_some() => {
-                changes.push((path.to_string(), vec!["removed".to_owned()]));
-            }
+            None if was.is_some() => changes.push(Changed {
+                repo: RepoOperand::Member(path.clone()),
+                fields: Vec::new(),
+                removed: Some(theirs.clone()),
+            }),
             None => {}
         }
     }
     let was = sides.base.as_ref().and_then(|b| b.history);
     if sides.ours.history != was && sides.ours.history != sides.theirs.history {
-        let show = |h: Option<crate::manifest::History>| {
-            h.map_or_else(|| "unset".to_owned(), |h| h.to_string())
-        };
-        changes.push((
-            label.to_owned(),
-            vec![format!(
-                "history: {} → {}",
-                show(sides.theirs.history),
-                show(sides.ours.history)
-            )],
-        ));
+        changes.push(Changed {
+            repo: RepoOperand::Project(landing.project.clone()),
+            fields: vec![FieldChange {
+                name: "history",
+                theirs: crate::set_history::spelled(sides.theirs.history),
+                ours: crate::set_history::spelled(sides.ours.history),
+            }],
+            removed: None,
+        });
     }
-    for (repo, fields) in changes {
-        report.add(
-            State::TargetMemberChanges
-                .of(&repo)
-                .subject(format!("'{}''s entry", landing.target))
-                .listing(fields)
-                .bind("<W>", &landing.feature)
-                .bind("<T>", &landing.target)
-                .bind("<m>", &repo)
-                .checkout(dir)
-                .by_verb("land")
-                .judge(vcs),
-        );
+    for named in &landing.allow_member_change {
+        if !changes.iter().any(|c| &c.repo == named) {
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "`--allow-member-change {named}` names no change this landing makes to \
+                 '{}''s entries",
+                landing.target
+            );
+        }
     }
+    let unnamed: Vec<&Changed> = changes
+        .iter()
+        .filter(|c| !landing.allow_member_change.contains(&c.repo))
+        .collect();
+    if unnamed.is_empty() {
+        return Ok(());
+    }
+    let candidates = rebind_candidates(landing, sides, &unnamed, dir, vcs)?;
+    for change in unnamed {
+        report.add(judge_change(landing, change, &candidates, label, dir, vcs));
+    }
+    Ok(())
 }
 
-/// Judge one `owned` or `fork` member: its receiving branch, the lineage
-/// rule when it moves, whether `U` reaches `T`'s pin, and the checkout `U`
-/// fast-forwards in. The receiving branch's tip, where there is one.
-fn judge_member(
+/// The live weave branches whose entries match `W`'s for every unnamed
+/// change, nearest first: each a target `W` could land into unchanged.
+fn rebind_candidates(
+    landing: &Landing,
+    sides: &Sides,
+    unnamed: &[&Changed],
+    dir: &Path,
+    vcs: &dyn Vcs,
+) -> anyhow::Result<Vec<String>> {
+    let store = Store::open(vcs, dir)?;
+    let view = store.view()?;
+    let mut matching = Vec::new();
+    for name in crate::branch::target_candidates(vcs, dir, &view, &landing.feature)? {
+        if name == landing.target.as_str() {
+            continue;
+        }
+        let Ok(at) = vcs.resolve_revision(dir, &name) else {
+            continue;
+        };
+        let Some(theirs) = manifest_at(vcs, dir, at.id()) else {
+            continue;
+        };
+        let matches = unnamed.iter().all(|change| match &change.repo {
+            RepoOperand::Project(_) => theirs.history == sides.ours.history,
+            RepoOperand::Member(path) => {
+                match (theirs.get_entry(path), sides.ours.get_entry(path)) {
+                    (Some(there), Some(ours)) => changed_fields(there, ours).is_empty(),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
+        });
+        if matches {
+            matching.push(name);
+        }
+    }
+    Ok(matching)
+}
+
+/// The `target` member changes line for one repo: each changed field with
+/// `T`'s value and `W`'s, then the rebind onto a branch whose entries match
+/// `W`'s, the setter that keeps `T`'s value here, and the consent that lands
+/// it.
+fn judge_change(
+    landing: &Landing,
+    change: &Changed,
+    candidates: &[String],
+    label: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+) -> Judged {
+    let (repo, subject) = match &change.repo {
+        RepoOperand::Project(_) => (
+            label.to_owned(),
+            format!("'{}''s top-level history", landing.target),
+        ),
+        RepoOperand::Member(path) => (path.to_string(), format!("'{}''s entry", landing.target)),
+    };
+    let mut lines: Vec<String> = match &change.removed {
+        Some(_) => vec!["removed".to_owned()],
+        None => change.fields.iter().map(FieldChange::line).collect(),
+    };
+    let mut forms: Vec<Form> = Vec::new();
+    let mut judging = State::TargetMemberChanges
+        .of(&repo)
+        .subject(subject)
+        .bind("<W>", &landing.feature)
+        .bind("<m>", &change.repo)
+        .checkout(dir)
+        .by_verb("land");
+    if let Some(first) = candidates.first() {
+        lines.push(format!(
+            "--target candidates whose entries match: {}",
+            candidates.join(", ")
+        ));
+        judging = judging.bind("<T>", first);
+        forms.push(Form::C12Feature);
+    }
+    if let Some(entry) = &change.removed {
+        judging = judging.bind("<url>", &entry.url);
+        forms.push(Form::C11MemberAdd);
+    }
+    for field in &change.fields {
+        let top = matches!(change.repo, RepoOperand::Project(_));
+        let (form, key) = match (field.name, top, field.theirs.as_str()) {
+            ("history", true, "unset") => (Form::C11UnsetTopHistory, "<h>"),
+            ("history", true, _) => (Form::C11SetTopHistory, "<h>"),
+            ("history", false, "unset") => (Form::C11UnsetHistory, "<h>"),
+            ("history", false, _) => (Form::C11SetHistory, "<h>"),
+            ("branch", _, _) => (Form::C11SetBranch, "<b>"),
+            ("url", _, _) => (Form::C11SetUrl, "<url>"),
+            ("role", _, _) => (Form::C11SetRole, "<role>"),
+            ("recurse-submodules", _, _) => (Form::C11SetRecurseSubmodules, "<bool>"),
+            ("pin", _, _) => (Form::C25, "<rev>"),
+            _ => continue,
+        };
+        judging = judging.bind(key, &field.theirs);
+        forms.push(form);
+    }
+    forms.push(Form::C31);
+    judging.listing(lines).only_forms(&forms).judge(vcs)
+}
+
+/// A member only `W` lists enters at `W`'s pin; where its receiving branch
+/// exists nowhere, the landing creates it there.
+fn plan_added_member(
     landing: &Landing,
     sides: &Sides,
     member: &Member<'_>,
-    accounting: &crate::alignment::Accounting,
-    target_aligner: &crate::alignment::Aligner,
+    as_mode: Mode,
+    plan: &mut Plan,
+) -> anyhow::Result<()> {
+    let Member {
+        path,
+        entry,
+        dir,
+        vcs,
+        ..
+    } = *member;
+    let Some(receiving) = crate::feature_sync::receiving_branch(
+        path,
+        landing.target.as_str(),
+        Some(as_mode),
+        &sides.ours,
+        Some(&sides.theirs),
+        sides.base.as_ref(),
+    ) else {
+        return Ok(());
+    };
+    let Some(pin) = pin_of(sides.our_lock.as_ref(), path) else {
+        return Ok(());
+    };
+    let home = home_remote(entry, vcs, dir);
+    if matches!(
+        crate::push_branch::newer_of_branch_and_upstream(vcs, dir, &receiving, home.as_ref())?,
+        crate::push_branch::NewerOfBranchAndUpstream::Nowhere
+    ) {
+        plan.receiving_refs.insert(
+            path.clone(),
+            ReceivingRef {
+                branch: receiving.as_str().to_owned(),
+                create: true,
+                at: pin,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn home_remote(entry: &RepoEntry, vcs: &dyn Vcs, dir: &Path) -> Option<crate::vcs::RemoteHandle> {
+    crate::registry::resolve_to_clone_info(&entry.url)
+        .ok()
+        .and_then(|info| vcs.url_remote(dir, &info.url).ok())
+        .and_then(|found| match found {
+            crate::vcs::UrlRemote::Present(remote) => Some(remote),
+            _ => None,
+        })
+}
+
+/// What every member of one landing is judged against.
+struct Judging<'a> {
+    landing: &'a Landing,
+    sides: &'a Sides,
+    accounting: &'a crate::alignment::Accounting,
+    target_aligner: &'a crate::alignment::Aligner,
+    as_mode: Mode,
+}
+
+/// Judge one `owned` or `fork` member and plan it: its receiving branch
+/// (created where it exists nowhere), whether it follows that branch or is
+/// composed onto it, the lineage rule when it moves, whether `U` reaches
+/// `T`'s pin, and where `U` moves.
+fn judge_member(
+    judging: &Judging<'_>,
+    member: &Member<'_>,
+    plan: &mut Plan,
     report: &mut Report,
-) -> anyhow::Result<Option<CommitId>> {
+) -> anyhow::Result<()> {
+    let Judging {
+        landing,
+        sides,
+        accounting,
+        target_aligner,
+        as_mode,
+    } = *judging;
     let Member {
         path,
         entry,
@@ -559,38 +855,37 @@ fn judge_member(
         vcs,
     } = *member;
     let HeadAttachment::Attached(attached) = vcs.head_attachment(dir)? else {
-        return Ok(None);
+        return Ok(());
     };
-    if sides.theirs.get_entry(path).is_none() {
-        return Ok(None);
-    }
+    let Some(their_entry) = sides.theirs.get_entry(path) else {
+        return Ok(());
+    };
     let Some(receiving) = crate::feature_sync::receiving_branch(
         path,
         landing.target.as_str(),
-        Some(landing.target_mode),
+        Some(as_mode),
         &sides.ours,
         Some(&sides.theirs),
         sides.base.as_ref(),
     ) else {
-        return Ok(None);
+        return Ok(());
     };
+    let declared_changed = as_mode == Mode::Declared
+        && their_entry.branch.local_counterpart().as_str() != receiving.as_str();
     let head = vcs.head_revision(dir)?.id().clone();
-    let home = crate::registry::resolve_to_clone_info(&entry.url)
-        .ok()
-        .and_then(|info| vcs.url_remote(dir, &info.url).ok())
-        .and_then(|found| match found {
-            crate::vcs::UrlRemote::Present(remote) => Some(remote),
-            _ => None,
-        });
+    let pin = pin_of(sides.their_lock.as_ref(), path);
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
-    let tip = match crate::push_branch::newer_of_branch_and_upstream(
+    let (tip, created) = match crate::push_branch::newer_of_branch_and_upstream(
         vcs,
         dir,
         &receiving,
-        home.as_ref(),
+        home_remote(entry, vcs, dir).as_ref(),
     )? {
-        Newer::Tip(tip) => tip.id().clone(),
-        Newer::Nowhere => return Ok(None),
+        Newer::Tip(tip) => (tip.id().clone(), false),
+        Newer::Nowhere => match &pin {
+            Some(pin) if vcs.resolve_revision(dir, pin.as_str()).is_ok() => (pin.clone(), true),
+            _ => return Ok(()),
+        },
         Newer::Diverged {
             local,
             upstream_tip,
@@ -611,15 +906,32 @@ fn judge_member(
                     .by_verb("land")
                     .judge(vcs),
             );
-            return Ok(None);
+            return Ok(());
         }
     };
-    let pin = sides
-        .their_lock
-        .as_ref()
-        .and_then(|lock| lock.get_entry(path))
-        .and_then(|e| e.version.as_commit_id());
-    if let Some(pin) = &pin {
+    if declared_changed {
+        if let Some(pin) = &pin {
+            let commits =
+                vcs.commits_excluding(dir, &rev(pin), std::slice::from_ref(&tip), false)?;
+            if !commits.is_empty() {
+                plan.left_behind.push(LeftBehind {
+                    member: path.clone(),
+                    vcs_type: entry.vcs_type,
+                    was: their_entry.branch.local_counterpart().as_str().to_owned(),
+                    now: receiving.as_str().to_owned(),
+                    commits,
+                    checkout: landing.target_workspace.join(path.as_path()),
+                });
+            }
+        }
+    }
+    let new_work = if declared_changed {
+        crate::lineage::new_work(vcs, dir, &head, Some(&tip), &sides.history.of_member(path))?
+    } else {
+        Vec::new()
+    };
+    let follows = declared_changed && new_work.is_empty();
+    if let (Some(pin), false) = (&pin, declared_changed) {
         if vcs.resolve_revision(dir, pin.as_str()).is_ok()
             && !vcs.is_ancestor(dir, &rev(pin), &rev(&tip))?
         {
@@ -642,69 +954,146 @@ fn judge_member(
             );
         }
     }
-    let moved = !vcs.is_ancestor(dir, &rev(&head), &rev(&tip))?;
+    let moved = !follows && !vcs.is_ancestor(dir, &rev(&head), &rev(&tip))?;
     if moved {
-        let pins = sides.history.of_member(path);
-        match crate::lineage::judge(vcs, dir, &head, &pins, &tip)? {
-            Lineage::Passes { .. } => {}
-            Lineage::Off { base } => {
-                let mut judging = State::PinOffLineage
-                    .of(path)
-                    .member()
-                    .checkout(dir)
-                    .bind("<m>", path)
-                    .bind("<b>", &receiving)
-                    .bind("<T>", &landing.target)
-                    .subject(format!(
-                        "its base {} is not on '{receiving}' ({})",
-                        base.short(),
-                        tip.short()
-                    ))
-                    .by_verb("land");
-                if let Some(fact) = crate::feature_sync::patch_fact(vcs, dir, &head, &tip) {
-                    judging = judging.fact(fact);
-                }
-                report.add(judging.judge(vcs));
+        judge_moved(
+            landing, sides, member, &attached, &receiving, &head, &tip, accounting, report,
+        )?;
+    }
+    let moves_as_ref = created || (declared_changed && !follows);
+    if created {
+        plan.receiving_refs.insert(
+            path.clone(),
+            ReceivingRef {
+                branch: receiving.as_str().to_owned(),
+                create: true,
+                at: tip.clone(),
+            },
+        );
+    } else if moves_as_ref {
+        if judge_unheld_receiving(landing, member, &receiving, report)? {
+            plan.receiving_refs.insert(
+                path.clone(),
+                ReceivingRef {
+                    branch: receiving.as_str().to_owned(),
+                    create: false,
+                    at: tip.clone(),
+                },
+            );
+        }
+    } else if !follows {
+        judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?;
+    }
+    if follows {
+        plan.follows.insert(path.clone());
+    }
+    plan.sources.insert(path.clone(), tip);
+    Ok(())
+}
+
+/// The lineage rule for a member the landing moves, and the protection of
+/// the branch its work is rebased off.
+#[allow(clippy::too_many_arguments)]
+fn judge_moved(
+    landing: &Landing,
+    sides: &Sides,
+    member: &Member<'_>,
+    attached: &crate::vcs::AttachedRef,
+    receiving: &RawRefName,
+    head: &CommitId,
+    tip: &CommitId,
+    accounting: &crate::alignment::Accounting,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let Member { path, dir, vcs, .. } = *member;
+    let pins = sides.history.of_member(path);
+    match crate::lineage::judge(vcs, dir, head, &pins, tip)? {
+        Lineage::Passes { .. } => {}
+        Lineage::Off { base } => {
+            let mut judging = State::PinOffLineage
+                .of(path)
+                .member()
+                .checkout(dir)
+                .bind("<m>", path)
+                .bind("<b>", receiving)
+                .bind("<T>", &landing.target)
+                .subject(format!(
+                    "its base {} is not on '{receiving}' ({})",
+                    base.short(),
+                    tip.short()
+                ))
+                .by_verb("land");
+            if let Some(fact) = crate::feature_sync::patch_fact(vcs, dir, head, tip) {
+                judging = judging.fact(fact);
             }
-            Lineage::Unreachable { absent } => report.add(
-                State::PinUnreachable
+            report.add(judging.judge(vcs));
+        }
+        Lineage::Unreachable { absent } => report.add(
+            State::PinUnreachable
+                .of(path)
+                .member()
+                .checkout(dir)
+                .bind("<m>", path)
+                .subject(format!(
+                    "'{}' pinned {} for it, which this clone lacks, so its base cannot be \
+                     read here",
+                    landing.target,
+                    absent
+                        .iter()
+                        .map(|c| c.short().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+                .by_verb("land")
+                .judge(vcs),
+        ),
+    }
+    if !vcs.is_ancestor(dir, &rev(tip), &rev(head))? {
+        let on = attached.to_string();
+        let declarers = accounting.declarers(path, &on);
+        if !declarers.is_empty() {
+            report.add(
+                State::ProtectedDeclared
                     .of(path)
                     .member()
-                    .checkout(dir)
+                    .subject(&on)
+                    .listing(declarers)
                     .bind("<m>", path)
-                    .subject(format!(
-                        "'{}' pinned {} for it, which this clone lacks, so its base cannot be \
-                         read here",
-                        landing.target,
-                        absent
-                            .iter()
-                            .map(|c| c.short().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ))
                     .by_verb("land")
                     .judge(vcs),
-            ),
-        }
-        if !vcs.is_ancestor(dir, &rev(&tip), &rev(&head))? {
-            let on = attached.to_string();
-            let declarers = accounting.declarers(path, &on);
-            if !declarers.is_empty() {
-                report.add(
-                    State::ProtectedDeclared
-                        .of(path)
-                        .member()
-                        .subject(&on)
-                        .listing(declarers)
-                        .bind("<m>", path)
-                        .by_verb("land")
-                        .judge(vcs),
-                );
-            }
+            );
         }
     }
-    judge_receiving_checkout(landing, member, &receiving, target_aligner, report)?;
-    Ok(Some(tip))
+    Ok(())
+}
+
+/// A receiving branch the landing's declared-branch change names moves as a
+/// ref, so no checkout may hold it: one that does refuses. Whether it moves.
+fn judge_unheld_receiving(
+    landing: &Landing,
+    member: &Member<'_>,
+    receiving: &RawRefName,
+    report: &mut Report,
+) -> anyhow::Result<bool> {
+    let Member { path, dir, vcs, .. } = *member;
+    let holding = vcs.checkouts_of_branch(dir, receiving)?;
+    if holding.is_empty() {
+        return Ok(true);
+    }
+    report.add(
+        State::CheckoutInAnotherWorkspace
+            .of(path)
+            .member()
+            .checkout(dir)
+            .subject(format!(
+                "'{receiving}', which this lands into, is checked out outside '{}''s workspace",
+                landing.target
+            ))
+            .listing(holding.iter().map(|p| p.display().to_string()))
+            .by_verb("land")
+            .judge(vcs),
+    );
+    Ok(false)
 }
 
 /// `U` fast-forwards where `T`'s workspace has it checked out: that member
@@ -781,4 +1170,54 @@ fn judge_receiving_checkout(
         ),
     }
     Ok(())
+}
+
+/// Delete each branch an op created that still sits where it was created and
+/// that another branch reaches, newest first. Returns those left, each with
+/// why.
+pub(crate) fn undo_created(
+    workspace: &Path,
+    created: &[CreatedRef],
+) -> Vec<(RepoKey, String, String)> {
+    let vcs = crate::vcs::probe_vcs();
+    let mut left = Vec::new();
+    for made in created.iter().rev() {
+        let RepoKey::Member(path) = &made.repo else {
+            continue;
+        };
+        let dir = workspace.join(path.as_path());
+        let branch = RawRefName::new(made.branch.clone());
+        if let Err(why) = undo_one(vcs.as_ref(), &dir, &branch, &made.at) {
+            left.push((made.repo.clone(), made.branch.clone(), why));
+        }
+    }
+    left
+}
+
+fn undo_one(vcs: &dyn Vcs, dir: &Path, branch: &RawRefName, at: &CommitId) -> Result<(), String> {
+    let tip = vcs
+        .resolve_local_branch_tip(dir, branch)
+        .map_err(|e| format!("{e:#}"))?;
+    match tip {
+        None => return Ok(()),
+        Some(tip) if tip.id() != at => {
+            return Err(format!(
+                "it moved to {} since the op created it at {}",
+                tip.id().short(),
+                at.short()
+            ))
+        }
+        Some(_) => {}
+    }
+    let others: Vec<ResolvedRevisionId> = vcs
+        .branch_tips(dir)
+        .map_err(|e| format!("{e:#}"))?
+        .into_iter()
+        .filter(|other| other.label != branch.as_str())
+        .map(|other| other.tip)
+        .collect();
+    let proof = DestroyProof::landed(vcs, dir, Site::Local, branch, &others)
+        .map_err(|e: VcsError| format!("{e:#}"))?
+        .ok_or_else(|| "no other branch reaches it".to_owned())?;
+    vcs.delete_branch(proof).map_err(|e| format!("{e:#}"))
 }

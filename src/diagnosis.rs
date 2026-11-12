@@ -1491,11 +1491,28 @@ impl State {
                 axis: Axis::Target,
                 name: "member changes",
                 means: "the landing would change the target's entry for a member, each changed \
-                        field listed with the target's value and the feature's, or remove the \
-                        member, or change the target's top-level `history`; a landing changes \
-                        the target's entries only where they are named",
-                refused_by: "`rwv land`, before anything moves",
-                offers: &[Form::C12Feature, Form::C11SetBranch, Form::C31],
+                        field listed with the target's value and the feature's, remove the \
+                        member, move a `dependency` or `reference` member's pin backward, or \
+                        change the target's top-level `history`; a landing changes the \
+                        target's entries only where they are named. Each live weave branch \
+                        whose entries match the feature's is listed as a `--target` candidate",
+                refused_by: "`rwv land`, before anything moves, unless `--allow-member-change` \
+                             names the repo: the member's path, or `projects/<p>` for the \
+                             top-level `history`",
+                offers: &[
+                    Form::C12Feature,
+                    Form::C11SetBranch,
+                    Form::C11SetUrl,
+                    Form::C11SetRole,
+                    Form::C11SetRecurseSubmodules,
+                    Form::C11SetHistory,
+                    Form::C11UnsetHistory,
+                    Form::C11SetTopHistory,
+                    Form::C11UnsetTopHistory,
+                    Form::C11MemberAdd,
+                    Form::C25,
+                    Form::C31,
+                ],
                 verb_offers: &[],
             },
             Self::TargetNotCheckedOut => &StateRow {
@@ -1768,8 +1785,9 @@ impl ChoiceId {
             },
             Self::C31 => &ChoiceRow {
                 id: Some("C31"),
-                phrase: "land these changes too",
-                keeps_work: "only named entries change",
+                phrase: "land these changes too (this changes the target's entries, or its \
+                         top-level setting)",
+                keeps_work: "only named entries change; the lineage rule still judges",
             },
             Self::C32 => &ChoiceRow {
                 id: Some("C32"),
@@ -1965,6 +1983,8 @@ pub enum Form {
     C11UnsetHistory,
     C11MemberAdd,
     C11MemberRemove,
+    C11SetTopHistory,
+    C11UnsetTopHistory,
     C12Feature,
     C12Declared,
     C12RestoreTarget,
@@ -2024,7 +2044,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 76] = [
+    pub const ALL: [Form; 78] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2053,6 +2073,8 @@ impl Form {
         Self::C11UnsetHistory,
         Self::C11MemberAdd,
         Self::C11MemberRemove,
+        Self::C11SetTopHistory,
+        Self::C11UnsetTopHistory,
         Self::C12Feature,
         Self::C12Declared,
         Self::C12RestoreTarget,
@@ -2277,6 +2299,18 @@ impl Form {
                 at: W::WithBranch,
                 shipped: true,
             },
+            Self::C11SetTopHistory => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv branch set-history <h>")],
+                at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C11UnsetTopHistory => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv branch set-history --unset")],
+                at: W::WithBranch,
+                shipped: true,
+            },
             Self::C12Feature => &FormRow {
                 choice: C::C12,
                 steps: &[Rwv("rwv branch set-mode <W> feature --target <T>")],
@@ -2440,7 +2474,7 @@ impl Form {
                 choice: C::C31,
                 steps: &[Rwv("rwv land --allow-member-change <m>")],
                 at: W::WithFeature,
-                shipped: false,
+                shipped: true,
             },
             Self::C32 => &FormRow {
                 choice: C::C32,

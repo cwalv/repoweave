@@ -2091,6 +2091,38 @@ struct SourceSnapshot {
     source_workspace_root: PathBuf,
 }
 
+/// A named declared-branch change's report: the commits `T`'s pin reaches
+/// that the new receiving branch lacks, and the copy that ports them.
+fn left_behind_text(left: &crate::land::LeftBehind) -> String {
+    let vcs = vcs_for(left.vcs_type);
+    let mut out = format!(
+        "rwv land: {}: branch {} -> {}: the target's pin reaches commits '{}' lacks:\n",
+        left.member, left.was, left.now, left.now
+    );
+    for commit in &left.commits {
+        out.push_str(&format!("    {} {}\n", commit.id.short(), commit.subject));
+    }
+    let mut bindings = std::collections::BTreeMap::new();
+    bindings.insert("<m>", left.member.to_string());
+    bindings.insert("<b>", left.now.clone());
+    bindings.insert("<checkout>", left.checkout.display().to_string());
+    bindings.insert(
+        "<ids>",
+        left.commits
+            .iter()
+            .rev()
+            .map(|commit| commit.id.short().to_owned())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    out.push_str(&crate::diagnosis::choices_text(
+        vcs.as_ref(),
+        &[crate::diagnosis::Form::C15],
+        &bindings,
+    ));
+    out
+}
+
 /// The branch the landing lands into, as its op record names it.
 fn target_name(ctx: &OpContext<'_>) -> String {
     match &ctx.take_in.sync_from {
@@ -2924,6 +2956,21 @@ fn guard_and_mark<'a>(
                 .id()
                 .clone(),
         ),
+        allow_member_change: landing
+            .allow_member_change
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        follows: plan
+            .follows
+            .iter()
+            .map(|path| RepoKey::Member(path.clone()))
+            .collect(),
+        receiving_refs: plan
+            .receiving_refs
+            .iter()
+            .map(|(path, receiving)| (RepoKey::Member(path.clone()), receiving.clone()))
+            .collect(),
         ..op_state::TakeInRecord::default()
     };
     take_in
@@ -2933,6 +2980,11 @@ fn guard_and_mark<'a>(
         take_in
             .upstream_tips
             .insert(RepoKey::Member(path.clone()), tip.clone());
+    }
+    if emit_text {
+        for left in &plan.left_behind {
+            eprint!("{}", left_behind_text(left));
+        }
     }
     let mut record = op_state::read_owner(&owner_workspace_dir)?
         .context("the op record vanished as the landing began")?;
@@ -3152,6 +3204,9 @@ fn target_moved(
         let Some(to) = composed.get(key) else {
             continue;
         };
+        if take_in.follows.contains(key) || take_in.receiving_refs.contains_key(key) {
+            continue;
+        }
         let (dir, vcs) = match key {
             RepoKey::Project => (project_dir(target_workspace, project), project_vcs()),
             RepoKey::Member(path) => {
@@ -3823,6 +3878,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
+        let key = RepoKey::Member(repo_path.clone());
+        if ctx.take_in.follows.contains(&key) {
+            let vcs = replayed
+                .manifest
+                .get_entry(repo_path)
+                .map(|e| vcs_for(e.vcs_type))
+                .unwrap_or_else(crate::vcs::probe_vcs);
+            follow_receiving(ctx, vcs.as_ref(), repo_path, &abs, source)?;
+            continue;
+        }
         // The lock names paths; the manifest names backends. A lock entry
         // with no manifest entry has no declared backend to resolve from.
         let vcs = replayed
@@ -4038,6 +4103,50 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         Some(ctx.handler),
     );
 
+    Ok(())
+}
+
+/// A member whose declared branch the landing changes and that holds no new
+/// work takes its receiving branch's tip, merging nothing: its branch moves
+/// there, the tip it leaves kept in a backup.
+fn follow_receiving(
+    ctx: &OpContext<'_>,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    abs: &Path,
+    source: &CommitId,
+) -> anyhow::Result<()> {
+    let head = vcs.head_revision(abs)?;
+    if head.id() == source {
+        return Ok(());
+    }
+    let HeadAttachment::Attached(attached) = vcs.head_attachment(abs)? else {
+        return Err(crate::untokened!(
+            EnvironmentPassthrough,
+            "{repo_path}: left its branch during the landing"
+        ));
+    };
+    let branch = crate::vcs::RawRefName::new(attached.to_string());
+    let kept = vcs.create_backup(
+        abs,
+        &crate::vcs::BackupSource::Branch(branch.clone()),
+        &head,
+        None,
+    )?;
+    vcs.reset_attached_ref_keeping(&attached, &ResolvedRevisionId::from(source.clone()), &kept)?;
+    op_state::journal_tip(
+        &ctx.owner_workspace_dir,
+        RepoKey::Member(repo_path.clone()),
+        source,
+    )?;
+    if ctx.handler.emit_text() {
+        outln!(
+            "  {repo_path}: has no new work, so it takes {} as its pin (was {}, kept in backup {})",
+            source.short(),
+            head.id().short(),
+            kept.backup().name
+        );
+    }
     Ok(())
 }
 
@@ -4371,11 +4480,21 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         .collect();
     let lock = crate::lock::with_pins(manifest, None, resolved.iter().map(|(p, c)| (p, c)));
     crate::lock::write_lock_in(&lock, dir)?;
+    let named =
+        crate::repin::Naming::by_name(
+            "land",
+            ctx.take_in.allow_member_change.iter().filter_map(|named| {
+                match named.parse::<crate::manifest::RepoOperand>() {
+                    Ok(crate::manifest::RepoOperand::Member(path)) => Some(path),
+                    _ => None,
+                }
+            }),
+        );
     if commit_lock_file_with_message(
         vcs,
         dir,
         &auto_relock_commit_message(&ctx.source_workspace_name),
-        &crate::repin::Naming::Unnamed,
+        &named,
     )? && ctx.handler.emit_text()
     {
         eprintln!(
@@ -4469,11 +4588,39 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     let mut any_ff_failure = false;
     let mut moved = Report::default();
+    for (key, receiving) in &ctx.take_in.receiving_refs {
+        let RepoKey::Member(repo_path) = key else {
+            continue;
+        };
+        let Some(entry) = cwd_project_final.manifest.get_entry(repo_path) else {
+            continue;
+        };
+        let vcs = vcs_for(entry.vcs_type);
+        let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        let composed = if ctx.take_in.upstream_tips.contains_key(key) {
+            vcs.head_revision(&cwd_repo)?.id().clone()
+        } else {
+            receiving.at.clone()
+        };
+        if let Err(e) = moved.absorb(advance_receiving_ref(
+            ctx,
+            vcs.as_ref(),
+            repo_path,
+            &cwd_repo,
+            receiving,
+            &composed,
+        )) {
+            if emit_text {
+                eprintln!("  {repo_path}: receiving branch not moved: {e:#}");
+            }
+            any_ff_failure = true;
+        }
+    }
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
-        if !ctx
-            .take_in
-            .upstream_tips
-            .contains_key(&RepoKey::Member(repo_path.clone()))
+        let key = RepoKey::Member(repo_path.clone());
+        if !ctx.take_in.upstream_tips.contains_key(&key)
+            || ctx.take_in.follows.contains(&key)
+            || ctx.take_in.receiving_refs.contains_key(&key)
         {
             continue;
         }
@@ -4649,6 +4796,108 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     align_after_landing(ctx, &target_ctx);
     if !ctx.retire {
         align_after_landing(ctx, &ctx.cwd_ctx);
+    }
+    Ok(())
+}
+
+/// Move a receiving branch no checkout holds to `composed`, creating it
+/// first at its planned start where it existed nowhere. Each step is
+/// journaled, so `rwv abort` restores the move and deletes the creation; a
+/// branch another verb moved since the landing read it stops the landing.
+fn advance_receiving_ref(
+    ctx: &OpContext<'_>,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    dir: &Path,
+    receiving: &op_state::ReceivingRef,
+    composed: &CommitId,
+) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
+    let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
+    let key = RepoKey::Member(repo_path.clone());
+    let from = match vcs.resolve_local_branch_tip(dir, &branch)? {
+        Some(tip) => tip.id().clone(),
+        None => {
+            let upstream = if receiving.create {
+                None
+            } else {
+                vcs.remote_copies(dir, &branch)?
+                    .into_iter()
+                    .find(|copy| copy.tip.id() == &receiving.at)
+                    .map(|copy| crate::vcs::Upstream {
+                        remote: copy.remote,
+                        branch: branch.clone(),
+                    })
+            };
+            vcs.create_branch(
+                dir,
+                &branch,
+                &ResolvedRevisionId::from(receiving.at.clone()),
+                upstream.as_ref(),
+            )?;
+            op_state::journal_created_ref(
+                &ctx.owner_workspace_dir,
+                op_state::CreatedRef {
+                    repo: key.clone(),
+                    branch: receiving.branch.clone(),
+                    at: receiving.at.clone(),
+                },
+            )?;
+            if emit_text && receiving.create {
+                outln!(
+                    "  {repo_path}: created '{}' at {}",
+                    receiving.branch,
+                    receiving.at.short()
+                );
+            }
+            receiving.at.clone()
+        }
+    };
+    if &from == composed {
+        return Ok(());
+    }
+    crate::test_pause::point("advance-target");
+    let fast_forwards = vcs
+        .is_ancestor(
+            dir,
+            &ResolvedRevisionId::from(from.clone()),
+            &ResolvedRevisionId::from(composed.clone()),
+        )
+        .unwrap_or(false);
+    if !fast_forwards
+        || vcs
+            .advance_branch_ref(dir, &branch, &from, composed)
+            .is_err()
+    {
+        let now = vcs
+            .resolve_local_branch_tip(dir, &branch)?
+            .unwrap_or_else(|| ResolvedRevisionId::from(from.clone()));
+        return Err(target_moved_line_for(
+            repo_path,
+            dir,
+            &now,
+            &ResolvedRevisionId::from(composed.clone()),
+        )
+        .refused());
+    }
+    op_state::journal_ref_move(
+        &ctx.owner_workspace_dir,
+        op_state::RefMove {
+            repo: key.clone(),
+            branch: receiving.branch.clone(),
+            from: from.clone(),
+            to: composed.clone(),
+        },
+    )?;
+    ctx.handler
+        .record_step3_advance(&key, from.as_str(), composed.as_str());
+    if emit_text {
+        outln!(
+            "  {repo_path}: '{}' fast-forwarded {} -> {}",
+            receiving.branch,
+            from.short(),
+            composed.short()
+        );
     }
     Ok(())
 }
@@ -5219,6 +5468,18 @@ pub fn run_abort(
         {
             eprintln!(
                 "  {}: '{branch}' moved since the op wrote it, so it is left where it is: {error:#}",
+                RepoOperand::of(&repo, &op_project_name)
+            );
+            tally.any_foreign = true;
+        }
+        let created = record
+            .take_in
+            .as_ref()
+            .map(|take_in| take_in.created_refs.as_slice())
+            .unwrap_or_default();
+        for (repo, branch, why) in crate::land::undo_created(&workspace_dir, created) {
+            eprintln!(
+                "  {}: '{branch}', which the op created, is left where it is: {why}",
                 RepoOperand::of(&repo, &op_project_name)
             );
             tally.any_foreign = true;

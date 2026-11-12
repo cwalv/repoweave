@@ -392,10 +392,19 @@ pub enum Commands {
     ///   rwv land --retire
     ///
     ///   rwv land --target stable
+    ///
+    ///   rwv land --allow-member-change github/o/lib
     Land {
         /// Land into this branch instead of the record's target, for one run
         #[arg(long, value_name = "T", conflicts_with = "do_continue")]
         target: Option<String>,
+        /// Let the landing change the target's entry for this member: any field, its removal, or a backward pin; `projects/<p>` names the target's top-level `history`. Repeat per repo. A name the landing changes nothing for is refused
+        #[arg(
+            long = "allow-member-change",
+            value_name = "REPO",
+            conflicts_with = "do_continue"
+        )]
+        allow_member_change: Vec<crate::manifest::RepoOperand>,
         /// How a member holding work the branch it lands on lacks is composed: rebase (the
         /// default) replays it onto that branch's tip; ff refuses unless every repo
         /// fast-forwards
