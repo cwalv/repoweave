@@ -825,6 +825,7 @@ impl State {
                     ("branch create", Form::C34),
                     ("workweave create", Form::C34),
                     ("push", Form::Republish),
+                    ("sync", Form::Republish),
                 ],
             },
             Self::PushBranchBehind => &StateRow {

@@ -12657,6 +12657,11 @@ pub fn history_published_rebase() -> Scenario {
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("p"), &["sync"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["sync"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv push --overwrite local/remotes/app",
+                )),
             Step::rwv(&ww("p"), &["push"])
                 .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
                 .claim(Claim::OutputContains(

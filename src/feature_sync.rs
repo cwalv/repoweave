@@ -1063,7 +1063,19 @@ fn judge_push_branch(
                         })
                         .judge(vcs),
                 ),
-                Diverged::Unpushed(_) | Diverged::Other => report.add(
+                Diverged::Unpushed(_) => {
+                    let judging = scoped(State::PushBranchDiverged)
+                        .subject(format!("'{branch}': {ahead} ahead, {behind} behind"));
+                    report.add(
+                        if crate::backup::rebased_holding(vcs, dir, &branch, tip.id()) {
+                            judging.by_verb("sync")
+                        } else {
+                            judging
+                        }
+                        .judge(vcs),
+                    );
+                }
+                Diverged::Other => report.add(
                     scoped(State::PushBranchDiverged)
                         .subject(format!("'{branch}': {ahead} ahead, {behind} behind"))
                         .judge(vcs),
