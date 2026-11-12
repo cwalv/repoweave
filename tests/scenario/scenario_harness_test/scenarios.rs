@@ -6816,3 +6816,49 @@ pub fn abort_deletes_a_created_receiving_branch() -> Scenario {
         ],
     )
 }
+
+/// A landing interrupted once it has created a receiving branch that existed
+/// nowhere, then continued under `--json`: the resumed envelope reports the
+/// branch the stopped run created.
+pub fn continue_reports_a_created_receiving_branch() -> Scenario {
+    scenario(
+        "continue reports a created receiving branch",
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "lib-next"),
+            ),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-qam", "lib onto lib-next"],
+            ),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--allow-member-change", LIB],
+                "advance-target",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w"), &["land", "--continue", "--json"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputInOrder(&[
+                    "\"reports\": [",
+                    "\"kind\": \"created\"",
+                    "\"path\": \"local/remotes/lib\"",
+                    "\"branch\": \"lib-next\"",
+                ]))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "lib-next",
+                    mark: "w-lib",
+                }),
+        ],
+    )
+}

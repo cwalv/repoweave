@@ -547,6 +547,7 @@ every_scenario!(
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
     backward_pin_reported_in_json,
+    continue_reports_a_created_receiving_branch,
     member_change_choice_order,
     removal_is_member_change,
     dc06_member_set_from_merge,
@@ -2158,6 +2159,13 @@ holding_rwv! {
     /// `rwv abort`, the created branch deleted.
     fn abort_after_an_interrupted_landing_deletes_the_branch_it_created() {
         runner::run(scenarios::abort_deletes_a_created_receiving_branch())
+            .assert_fully_decided_green();
+    }
+
+    /// A landing interrupted after creating a receiving branch, continued
+    /// under `--json`, reports the branch its stopped run created.
+    fn a_continued_landing_reports_the_receiving_branch_its_stopped_run_created() {
+        runner::run(scenarios::continue_reports_a_created_receiving_branch())
             .assert_fully_decided_green();
     }
 }
