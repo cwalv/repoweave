@@ -195,10 +195,12 @@ pub enum Store {
 }
 
 /// What a second project shares with `proj`: `lib`, declared on `branch` and
-/// pinned at `lib`'s first commit.
+/// pinned at `lib`'s first commit; and `also`, each declared on `main` and
+/// pinned at its first commit.
 #[derive(Debug, Clone, Copy)]
 pub struct SecondProject {
     pub branch: &'static str,
+    pub also: &'static [Repo],
 }
 
 /// What a sandbox holds beyond its fixed shape.
@@ -330,7 +332,9 @@ impl Sandbox {
             false,
         );
         if let Some(second) = seed.second_project {
-            sandbox.seed_project(Repo::Proj2, &[(Repo::Lib, second.branch)], &seed, true);
+            let mut members = vec![(Repo::Lib, second.branch)];
+            members.extend(second.also.iter().map(|member| (*member, "main")));
+            sandbox.seed_project(Repo::Proj2, &members, &seed, true);
         }
         for member in Repo::MEMBERS {
             if seed.forks {

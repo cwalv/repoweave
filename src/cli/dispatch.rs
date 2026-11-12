@@ -552,6 +552,8 @@ pub fn run_and_report() -> std::process::ExitCode {
         }
         Err(err) => {
             let (verb, output, unpresented) = invocation();
+            let unpresented =
+                unpresented.or_else(|| crate::refusal::choices_spelled_for().cloned());
             crate::refusal::report(&err, &verb, output, unpresented.as_ref());
             std::process::ExitCode::FAILURE
         }

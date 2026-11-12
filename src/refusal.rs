@@ -500,6 +500,18 @@ fn spelled_report<'e>(
     })
 }
 
+static SPELLED_FOR: std::sync::OnceLock<crate::manifest::ProjectName> = std::sync::OnceLock::new();
+
+/// Spell every choice this process prints for `project`: the verb acts for a
+/// project the workspace its choices run in does not present.
+pub(crate) fn spell_choices_for(project: crate::manifest::ProjectName) {
+    let _ = SPELLED_FOR.set(project);
+}
+
+pub(crate) fn choices_spelled_for() -> Option<&'static crate::manifest::ProjectName> {
+    SPELLED_FOR.get()
+}
+
 pub fn report(
     err: &anyhow::Error,
     verb: &str,

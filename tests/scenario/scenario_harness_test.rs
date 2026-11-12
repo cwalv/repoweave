@@ -99,6 +99,12 @@ fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_li
 }
 
 #[test]
+fn an_inactive_landing_spells_its_refusals_for_its_project() {
+    runner::run(scenarios::inactive_landing_refusal_spelled_for_its_project())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn unpresented_project_choices_carry_the_project() {
     runner::run(scenarios::unpresented_project_choices_carry_the_project())
         .assert_fully_decided_green();
@@ -1036,6 +1042,7 @@ every_scenario!(
     an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists,
     unpresented_project_choices_carry_the_project,
     inactive_project_choices,
+    inactive_landing_refusal_spelled_for_its_project,
     shared_member_pinned_behind,
     nested_workweaves,
     nested_workweaves_without_naming,

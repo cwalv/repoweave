@@ -702,7 +702,7 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
     };
     Scenario {
         name,
-        seed: Seed::default().second_project(SecondProject { branch }),
+        seed: Seed::default().second_project(SecondProject { branch, also: &[] }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Lib, "lib-pending"),
@@ -746,7 +746,10 @@ pub fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_projec
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
     Scenario {
         name: "an inactive project's landing leaves a dropped member the presented project lists",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
@@ -778,7 +781,10 @@ pub fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_projec
 pub fn unpresented_project_choices_carry_the_project() -> Scenario {
     Scenario {
         name: "unpresented project choices carry the project",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["push", "--project", "proj2"])
@@ -797,11 +803,66 @@ pub fn unpresented_project_choices_carry_the_project() -> Scenario {
     }
 }
 
+/// `proj2`, inactive, lists `docs`, which `proj` no longer does; the
+/// primary's `docs` holds a commit `proj2`'s lock does not record. The
+/// landing from `proj2`'s workweave refuses it unpinned in the primary and
+/// spells the lock for `proj2`. Each printed choice run in turn moves the
+/// state on: the lock and the update refuse the shared `lib` and name the
+/// activation, after which the choices print bare and the landing proceeds.
+pub fn inactive_landing_refusal_spelled_for_its_project() -> Scenario {
+    let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
+    Scenario {
+        name: "inactive landing refusal spelled for its project",
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[Repo::Docs],
+        }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Docs, "docs-unrecorded"),
+            Step::commit(&side, Repo::Lib, "side-lib"),
+            Step::rwv(&side, &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Docs, State::PinUnpinned))
+                .claim(Claim::OutputContains("rwv lock --commit --project proj2")),
+            Step::rwv_printed(&a(), "rwv lock --commit")
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv update --project proj2")),
+            Step::rwv_printed(&a(), "rwv update --project proj2")
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            Step::rwv_printed(&a(), "rwv activate proj2 --update")
+                .expect(Exit::Succeeds)
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+            Step::rwv(&side, &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Docs, State::PinUnpinned))
+                .claim(Claim::OutputLacks("--project")),
+            Step::rwv_printed(&a(), "rwv lock --commit").expect(Exit::Succeeds),
+            Step::rwv(&side, &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "dev",
+                    mark: "side-lib",
+                }),
+        ],
+    }
+}
+
 pub fn inactive_project_choices() -> Scenario {
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
     Scenario {
         name: "inactive project choices",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
@@ -1661,7 +1722,10 @@ pub fn activate_no_checkout() -> Scenario {
     };
     Scenario {
         name: "activate moves no checkout",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             refused_with(
@@ -1717,7 +1781,10 @@ pub fn activate_leaves_what_the_outgoing_project_holds() -> Scenario {
     };
     Scenario {
         name: "activate --update moves a member the outgoing project is aligned on",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::git(&a(), Repo::Lib, &["switch", "-c", "wip"]),
@@ -1760,7 +1827,10 @@ pub fn activate_leaves_what_the_outgoing_project_holds() -> Scenario {
 pub fn activate_over_aligned_shared_member() -> Scenario {
     Scenario {
         name: "activate over a shared member aligned for the project",
-        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "main",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["update", "--project", "proj2"])
@@ -1789,7 +1859,10 @@ pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
     };
     Scenario {
         name: "a verb for an inactive project moves no shared checkout",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             refused(&["update", "--project", "proj2"], State::AlignmentOnBranch)
@@ -1824,7 +1897,10 @@ pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
 pub fn proj2_relock_over_pending() -> Scenario {
     Scenario {
         name: "proj2 relocks over another project's pending commit",
-        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "main",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Lib, "lib-pending"),
@@ -3731,7 +3807,10 @@ pub fn reset_acts_only_on_the_named_repo() -> Scenario {
 pub fn dc15_moved_reports() -> Scenario {
     Scenario {
         name: "dc15: update reports a member moved off a branch nothing accounts for",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::git(&a(), Repo::App, &["switch", "-c", "wip"]),
@@ -4334,7 +4413,10 @@ pub fn history_disagreement() -> Scenario {
     let w2 = Place::Workweave(Machine::A, Repo::Proj2, "w2".to_owned());
     Scenario {
         name: "history: two projects record different settings for a shared member",
-        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "main",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", lib])
@@ -10286,7 +10368,10 @@ pub fn cherry_pick_refusals() -> Scenario {
 pub fn land_leaves_a_shared_member_where_the_presented_project_has_it() -> Scenario {
     Scenario {
         name: "land leaves a shared member where the presented project has it",
-        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "dev",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["activate", "proj2", "--update"]).expect(Exit::Succeeds),
@@ -10336,7 +10421,10 @@ pub fn land_leaves_a_shared_member_where_the_presented_project_has_it() -> Scena
 pub fn land_into_a_workspace_presenting_another_project() -> Scenario {
     Scenario {
         name: "land into a workspace presenting another project",
-        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        seed: Seed::default().second_project(SecondProject {
+            branch: "main",
+            also: &[],
+        }),
         steps: vec![
             Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
             Step::rwv(&a(), &["activate", "proj2"]).expect(Exit::Succeeds),

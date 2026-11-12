@@ -3217,7 +3217,7 @@ impl Judging {
                 run: form
                     .lines(vcs, self.verb)
                     .iter()
-                    .map(|line| fill(line, &self.bindings))
+                    .map(|line| for_spelled_project(fill(line, &self.bindings)))
                     .collect(),
             })
             .collect();
@@ -3279,6 +3279,13 @@ fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
 
 /// `line`, an `rwv` command, with `--project <project>` added where its verb
 /// takes the flag and the line does not give it.
+/// `line`, spelled for the project this process spells its choices for.
+fn for_spelled_project(line: String) -> String {
+    crate::refusal::choices_spelled_for()
+        .and_then(|project| spelled_for_project(&line, project))
+        .unwrap_or(line)
+}
+
 fn spelled_for_project(line: &str, project: &crate::manifest::ProjectName) -> Option<String> {
     use clap::CommandFactory;
     let words = line.strip_prefix("rwv ")?;
@@ -3665,7 +3672,7 @@ pub fn choices(
                 run: form
                     .lines(vcs, None)
                     .iter()
-                    .map(|line| fill(line, bindings))
+                    .map(|line| for_spelled_project(fill(line, bindings)))
                     .collect(),
             }
         })

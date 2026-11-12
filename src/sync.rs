@@ -954,11 +954,7 @@ impl LandingReportOutput {
 
 /// A landing's report of one move, as the handler takes it: printed in
 /// text, recorded under `--json`.
-fn emit_landing_report(
-    handler: &dyn OutputHandler,
-    project: &ProjectName,
-    report: &op_state::LandingReport,
-) {
+fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingReport) {
     if handler.emit_text() {
         match report {
             op_state::LandingReport::Created { repo, branch, at } => {
@@ -1130,18 +1126,12 @@ fn emit_landing_report(
                 if let Some(workspace) = workspace {
                     judging = judging.elsewhere(workspace);
                 }
-                let mut judged = judging
-                    .by_verb("land")
-                    .only_forms(&[crate::diagnosis::Form::C7PushBranch])
-                    .judge(vcs.as_ref());
-                if workspace
-                    .as_deref()
-                    .and_then(|ws| crate::shared_members::outgoing(ws, project))
-                    .is_some()
-                {
-                    judged = judged.for_project(project);
-                }
-                ahead.add(judged);
+                ahead.add(
+                    judging
+                        .by_verb("land")
+                        .only_forms(&[crate::diagnosis::Form::C7PushBranch])
+                        .judge(vcs.as_ref()),
+                );
                 eprint!("{}", ahead.render("land"));
             }
         }
@@ -1153,7 +1143,7 @@ fn emit_landing_report(
 /// run of the op reported is reported again when the op resumes, not here.
 fn report_landing(ctx: &OpContext<'_>, report: op_state::LandingReport) -> anyhow::Result<()> {
     if op_state::journal_report(&ctx.owner_workspace_dir, &report)? {
-        emit_landing_report(ctx.handler, &ctx.cwd_project_name, &report);
+        emit_landing_report(ctx.handler, &report);
     }
     Ok(())
 }
@@ -3512,6 +3502,15 @@ fn judge_target_pins(
 /// into `refreshed`, so on refusal every checkout whose edits are not refused
 /// looks exactly as it did before acquisition.
 #[allow(clippy::too_many_arguments)]
+/// Where `T`'s workspace (the primary, for a landing as refs) presents a
+/// project other than the landing's, every choice the landing prints is
+/// spelled for the landing's project.
+fn spell_choices_for_target(dest: Option<&Path>, primary: &Path, project: &ProjectName) {
+    if crate::shared_members::outgoing(dest.unwrap_or(primary), project).is_some() {
+        crate::refusal::spell_choices_for(project.clone());
+    }
+}
+
 fn run_preconditions_after_acquire(
     drifted: &mut Vec<DriftedCheckout>,
     refreshed: &mut Vec<op_state::LandingReport>,
@@ -3998,6 +3997,11 @@ fn guard_and_mark<'a>(
     let dest_project_dir = dest_workspace_dir
         .as_deref()
         .map(|dir| project_dir(dir, &cwd_project_name));
+    spell_choices_for_target(
+        dest_workspace_dir.as_deref(),
+        cwd_ctx.primary_path(),
+        &cwd_project_name,
+    );
     let source_workspace_name = match target_side_name(
         dest_workspace_dir.as_deref(),
         &cwd_project_name,
@@ -4059,7 +4063,7 @@ fn guard_and_mark<'a>(
         &source_workspace_name,
     );
     for report in &refreshed {
-        emit_landing_report(handler, &cwd_project_name, report);
+        emit_landing_report(handler, report);
     }
     let PreconditionOutcome {
         snapshot,
@@ -4328,7 +4332,7 @@ fn guard_and_mark<'a>(
             commits: commits.clone(),
         });
     for report in beyond_pin.chain(plan.landed_changes.iter().cloned()) {
-        emit_landing_report(handler, &cwd_project_name, &report);
+        emit_landing_report(handler, &report);
         take_in.reports.push(report);
     }
     for (repo, merge) in &plan.merged_ranges {
@@ -4336,7 +4340,7 @@ fn guard_and_mark<'a>(
             repo: repo.clone(),
             merge: merge.clone(),
         };
-        emit_landing_report(handler, &cwd_project_name, &report);
+        emit_landing_report(handler, &report);
         take_in.reports.push(report);
     }
     let mut record = op_state::read_owner(&owner_workspace_dir)?
@@ -4439,6 +4443,11 @@ fn load_continuing_context<'a>(
     let dest_project_dir = dest_workspace_dir
         .as_deref()
         .map(|dir| project_dir(dir, &cwd_project_name));
+    spell_choices_for_target(
+        dest_workspace_dir.as_deref(),
+        cwd_ctx.primary_path(),
+        &cwd_project_name,
+    );
     let target_branch = take_in
         .receiving
         .get(&RepoKey::Project)
@@ -4535,7 +4544,7 @@ fn load_continuing_context<'a>(
         }
         report_left_behind(handler, &take_in.left_behind);
         for report in &take_in.reports {
-            emit_landing_report(handler, &record.project, report);
+            emit_landing_report(handler, report);
         }
 
         let target_tip = take_in
@@ -4597,7 +4606,7 @@ fn load_continuing_context<'a>(
             let refusing = !edits.is_empty() || drifted.iter().any(|d| !d.edits.is_empty());
             for report in settle_drift(&drifted, refusing, &mut edits)? {
                 if op_state::journal_report(&owner_workspace_dir, &report)? {
-                    emit_landing_report(handler, &record.project, &report);
+                    emit_landing_report(handler, &report);
                 }
             }
             edits.note(parked_note(record.verb));
