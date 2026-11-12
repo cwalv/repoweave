@@ -1,0 +1,272 @@
+//! End-to-end tests for the verb-shape overhaul:
+//!   - `rwv clone` and `rwv update` read the lock; `rwv update --remote` bumps it
+//!   - `rwv lock` has no hooks; install moves to `rwv activate`
+//!
+//! Lives alongside the existing clone / update / lock / activate suites; the
+//! focus here is the new verb shape, not the per-feature corner cases.
+
+use std::path::{Path, PathBuf};
+use std::process;
+
+use crate::common;
+
+fn rwv() -> assert_cmd::Command {
+    common::rwv()
+}
+
+fn init_bare(path: &Path) {
+    let status = common::git()
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(path)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git init --bare failed");
+    assert!(status.success());
+}
+
+fn init_bare_with_commit(path: &Path) -> String {
+    init_bare(path);
+    let tmp = common::tempdir().unwrap();
+    let work = tmp.path().join("work");
+    common::git_in(
+        tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("README"), "init\n").unwrap();
+    common::git_in(&work, &["add", "README"]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    let out = common::git()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&work)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// Build a workspace bootstrapped via `rwv clone` of a project whose lock pins
+/// the dep at its remote's tip. Returns (workspace_root, project_dir,
+/// dep_bare_repo, initial_sha).
+fn bootstrap_via_clone(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
+    let workspace = tmp.join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let dep_bare = tmp.join("dep.git");
+    let initial_sha = init_bare_with_commit(&dep_bare);
+
+    let project_bare = tmp.join("project.git");
+    init_bare(&project_bare);
+
+    let work = tmp.join("work");
+    common::git_in(
+        tmp,
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+
+    let dep_url = common::file_url(&dep_bare);
+    let manifest_toml = format!(
+        "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+    );
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    common::set_up_lock_driver(&work);
+    common::fixture_lock_at_remote_tips(&work, &[("local/team/dep", &dep_url)]);
+    common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&work, &["commit", "-m", "manifest + lock"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+
+    let source = common::file_url(&project_bare);
+    rwv()
+        .args(["clone", &source])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let project_dir = workspace.join("projects/project");
+    (workspace, project_dir, dep_bare, initial_sha)
+}
+
+/// Push a new commit to the dep's bare remote and return its SHA.
+fn advance_dep(tmp: &Path, dep_bare: &Path) -> String {
+    let work = tmp.join("dep-work");
+    common::git_in(
+        tmp,
+        &[
+            "clone",
+            &dep_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("advance.txt"), "v2\n").unwrap();
+    common::git_in(&work, &["add", "advance.txt"]);
+    common::git_in(&work, &["commit", "-m", "v2"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+
+    String::from_utf8(
+        common::git()
+            .args(["rev-parse", "main"])
+            .current_dir(dep_bare)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// `rwv update --remote` advances repos to branch HEAD and re-snapshots
+// ---------------------------------------------------------------------------
+
+#[test]
+fn update_remote_advances_dep_to_branch_head_and_relocks() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, project_dir, dep_bare, initial_sha) = bootstrap_via_clone(tmp.path());
+
+    let new_sha = advance_dep(tmp.path(), &dep_bare);
+    assert_ne!(new_sha, initial_sha);
+
+    rwv()
+        .args(["update", "--remote"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let lock = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains(&new_sha) && !lock.contains(&initial_sha),
+        "rwv update --remote should snapshot the advanced SHA into rwv.lock; lock:\n{lock}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `rwv update --remote` re-authors managed content; a filtered run does not
+// ---------------------------------------------------------------------------
+
+/// The generated file used to observe authoring: `vscode-workspace` is
+/// default-enabled and declares `<project>.code-workspace` unconditionally, so
+/// its presence in the project dir means the content pass ran.
+fn code_workspace(project_dir: &Path) -> PathBuf {
+    project_dir.join("project.code-workspace")
+}
+
+#[test]
+fn update_remote_authors_managed_content() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_clone(tmp.path());
+
+    // `rwv clone` is a context verb, so nothing has authored yet.
+    assert!(
+        !code_workspace(&project_dir).exists(),
+        "bootstrap via `rwv clone` must not author managed content"
+    );
+
+    rwv()
+        .args(["update", "--remote"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        code_workspace(&project_dir).exists(),
+        "`rwv update --remote` must re-author the integrations' managed content"
+    );
+}
+
+#[test]
+fn filtered_update_remote_does_not_author_managed_content() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, project_dir, dep_bare, _initial_sha) = bootstrap_via_clone(tmp.path());
+    let new_sha = advance_dep(tmp.path(), &dep_bare);
+
+    // Selects the workspace's only repo, so the advance and the lock write do
+    // exactly the same work as the unfiltered run above — the filter's
+    // emptiness is the only difference.
+    rwv()
+        .args(["update", "--remote", "--repo", "local/team/dep"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let lock = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains(&new_sha),
+        "a filtered `rwv update --remote` still writes the lock; lock:\n{lock}"
+    );
+    assert!(
+        !code_workspace(&project_dir).exists(),
+        "a filtered `rwv update --remote` must not author from a tree it only partly covered"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `rwv lock` does not produce ecosystem files (no hooks)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lock_does_not_write_ecosystem_files() {
+    // `rwv lock` is a pure git SHA snapshot. It should not invoke
+    // `cargo generate-lockfile` / `npm install` / `uv sync`.
+    let tmp = common::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(workspace.join("github/acme")).unwrap();
+    std::fs::create_dir_all(workspace.join("projects")).unwrap();
+
+    let server = workspace.join("github/acme/server");
+    std::fs::create_dir_all(&server).unwrap();
+    common::git_in(&server, &["init", "--initial-branch=main"]);
+    common::git_in(&server, &["config", "user.email", "test@test.com"]);
+    common::git_in(&server, &["config", "user.name", "Test"]);
+    std::fs::write(
+        server.join("Cargo.toml"),
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(server.join("src")).unwrap();
+    std::fs::write(server.join("src/lib.rs"), "").unwrap();
+    common::git_in(&server, &["add", "."]);
+    common::git_in(&server, &["commit", "-m", "init"]);
+
+    let project_dir = workspace.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    std::fs::write(workspace.join(".rwv-active"), "app\n").unwrap();
+
+    rwv()
+        .args(["lock"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // rwv.lock must exist; that's lock's job.
+    assert!(
+        project_dir.join("rwv.lock").exists(),
+        "rwv lock should produce rwv.lock"
+    );
+
+    // But integration outputs should NOT have been generated by lock.
+    // Generated workspace files only appear after `rwv activate`.
+    assert!(
+        !workspace.join("Cargo.toml").exists(),
+        "rwv lock must not generate workspace-root Cargo.toml"
+    );
+    assert!(
+        !workspace.join("Cargo.lock").exists(),
+        "rwv lock must not run cargo generate-lockfile"
+    );
+}

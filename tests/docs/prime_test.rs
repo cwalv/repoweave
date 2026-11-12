@@ -1,0 +1,256 @@
+//! E2E tests for `rwv prime`.
+
+use assert_cmd::Command;
+use predicates::prelude::*;
+use std::fs;
+use std::path::Path;
+
+use crate::common;
+
+/// Create a minimal workspace root at `parent/name` with `github/` and
+/// `projects/` marker directories. Returns the root path.
+fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
+    let root = parent.join(name);
+    fs::create_dir_all(root.join("github")).unwrap();
+    fs::create_dir_all(root.join("projects")).unwrap();
+    root
+}
+
+fn write_manifest(root: &Path, project: &str, manifest_toml: &str) {
+    let dir = root.join("projects").join(project);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("rwv.toml"), manifest_toml).unwrap();
+}
+
+// ============================================================================
+// 1. Silent outside workspace
+// ============================================================================
+
+#[test]
+fn prime_silent_outside_workspace() {
+    let tmp = common::tempdir().unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .arg("prime")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+// ============================================================================
+// 2. Basic output in primary with project
+// ============================================================================
+
+#[test]
+fn prime_primary_with_project() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    write_manifest(
+        &root,
+        "web-app",
+        r#"
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+branch = "main"
+role = "owned"
+
+[repositories."github/acme/client"]
+type = "git"
+url = "https://github.com/acme/client.git"
+branch = "develop"
+role = "fork"
+
+[integrations.cargo-workspace]
+enabled = true
+"#,
+    );
+
+    fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .arg("prime")
+        .current_dir(&root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# repoweave workspace"))
+        .stdout(predicate::str::contains("**Project**: `web-app`"))
+        .stdout(predicate::str::contains("## Repositories"))
+        .stdout(predicate::str::contains("github/acme/server"))
+        .stdout(predicate::str::contains("owned"))
+        .stdout(predicate::str::contains("github/acme/client"))
+        .stdout(predicate::str::contains("fork"))
+        .stdout(predicate::str::contains("## Integrations"))
+        .stdout(predicate::str::contains("- cargo-workspace"))
+        .stdout(predicate::str::contains("## Key commands"))
+        .stdout(predicate::str::contains("## Directory layout"));
+}
+
+// ============================================================================
+// 3. No project active — minimal output
+// ============================================================================
+
+#[test]
+fn prime_no_active_project() {
+    let tmp = common::tempdir().unwrap();
+    let _root = make_workspace(tmp.path(), "ws");
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .arg("prime")
+        .current_dir(tmp.path().join("ws"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# repoweave workspace"))
+        .stdout(predicate::str::contains("**Weave**"))
+        .stdout(predicate::function(|s: &str| !s.contains("**Project**")));
+}
+
+// ============================================================================
+// 4. Inside a workweave
+// ============================================================================
+
+#[test]
+fn prime_in_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    write_manifest(
+        &root,
+        "ws",
+        r#"
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+branch = "main"
+role = "owned"
+"#,
+    );
+
+    let weave_dir = tmp.path().join("ws--hotfix");
+    fs::create_dir_all(&weave_dir).unwrap();
+
+    // Write the .rwv-workweave marker so resolve() recognizes this as a
+    // workweave (marker-less resolution was removed).
+    let primary_canon = repoweave::path_spelling::resolve(&root).unwrap();
+    let marker = common::workweave_marker(&primary_canon, "ws", &primary_canon);
+    fs::write(weave_dir.join(".rwv-workweave"), &marker).unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .arg("prime")
+        .current_dir(&weave_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("**Workweave**"))
+        .stdout(predicate::str::contains("**Project**: `ws`"))
+        .stdout(predicate::str::contains("## Repositories"));
+}
+
+// ============================================================================
+// 5. Directory layout shows active marker
+// ============================================================================
+
+#[test]
+fn prime_directory_layout_active_marker() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
+    fs::create_dir_all(root.join("projects").join("mobile")).unwrap();
+
+    write_manifest(&root, "web-app", "[repositories]\n");
+    fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .arg("prime")
+        .current_dir(&root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("web-app/ (active)"));
+}
+
+// ============================================================================
+// 6. --no-suppress outside workspace: emits orientation overview
+// ============================================================================
+
+#[test]
+fn prime_no_suppress_outside_workspace() {
+    let tmp = common::tempdir().unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .args(["prime", "--no-suppress"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("repoweave: orientation"))
+        .stdout(predicate::str::contains("CWD is not inside a weave"))
+        .stdout(predicate::str::contains("**Weave**"))
+        .stdout(predicate::str::contains("**Workweave**"))
+        .stdout(predicate::str::contains("**Lock & sync**"))
+        .stdout(predicate::str::contains("**Rig**").not())
+        .stdout(predicate::str::contains("Common pitfalls"))
+        .stdout(predicate::str::contains("Typical flow"))
+        .stdout(predicate::str::contains("Essential commands"))
+        .stdout(predicate::str::contains("Sync family"))
+        .stdout(predicate::str::contains("rwv --help"));
+}
+
+// ============================================================================
+// 6b. --no-suppress is repoweave-only — no gc/city leakage
+//      (amendment: broader grep than just 'Rig')
+// ============================================================================
+
+#[test]
+fn prime_no_suppress_has_no_gc_or_city_references() {
+    let tmp = common::tempdir().unwrap();
+
+    let assert = Command::cargo_bin("rwv")
+        .unwrap()
+        .args(["prime", "--no-suppress"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lower = output.to_ascii_lowercase();
+
+    for forbidden in [
+        "rig",
+        "gas city",
+        "city (gc)",
+        "city(gc)",
+        "gc agents",
+        "gc session",
+        "gc.city",
+    ] {
+        assert!(
+            !lower.contains(forbidden),
+            "rwv prime --no-suppress emitted forbidden token {forbidden:?}; full output:\n{output}"
+        );
+    }
+}
+
+// ============================================================================
+// 7. --no-suppress inside workspace: emits normal per-weave block (no regression)
+// ============================================================================
+
+#[test]
+fn prime_no_suppress_inside_workspace() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .args(["prime", "--no-suppress"])
+        .current_dir(&root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# repoweave workspace"))
+        .stdout(predicate::str::contains("**Weave**"))
+        .stdout(predicate::str::contains("## Key commands"));
+}

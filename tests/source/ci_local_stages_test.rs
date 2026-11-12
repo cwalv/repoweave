@@ -1,0 +1,1331 @@
+//! `scripts/ci-local.sh` is the one script CI, the release gate, the
+//! pre-push hook and every contributor run. This pins its `--stages`
+//! selector: the no-flag invocation still runs every default stage, in the
+//! same order, with the same header text and the same terminal line;
+//! `--stages=drift` isolates the regenerate-and-diff block, exiting non-zero
+//! and naming the remedy when regeneration disagrees with the committed
+//! tree; the windows stage skips loudly, printing the install command,
+//! whenever the target isn't there — never a hard failure, because
+//! ci-checks.yml's windows-check job already owns Windows compile and lint
+//! truth authoritatively; a subset run's terminal line names the stages that ran,
+//! so it can never be mistaken for a full gate by a reader holding only the
+//! log; the windows-wine stage runs only when named; the ambient-autocrlf
+//! stage runs the suite under a system config that converts line endings and
+//! leaves the tree as it found it; and every `cargo test` it runs sees
+//! `TMPDIR` behind a symlink made inside the one it was handed, except on a
+//! host that cannot make one, which says so. `--tier=seat` and
+//! `--tier=landing` split the default stages between them, each once, and
+//! say which tier ran on the terminal line.
+//!
+//! Every test drives the real script as a subprocess with a stub `cargo` and
+//! `rustup` on `PATH` (and, for the wine stage's wiring, a stub
+//! `windows-wine.sh` beside a copy of it), so a stage's *shape* — which
+//! header prints, in what order, on what exit code — is pinned without paying
+//! for a real build or depending on whether this host happens to have the
+//! Windows target installed. `#![cfg(unix)]`: the script under test is a
+//! `#!/usr/bin/env bash` file, so every helper here exists for a target this
+//! suite already can't run on; a per-test `#[cfg(unix)]` would strand them
+//! all as dead code on the one platform that denies warnings on the host
+//! target.
+
+#![cfg(unix)]
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use crate::common;
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn ci_local_sh() -> PathBuf {
+    repo_root().join("scripts/ci-local.sh")
+}
+
+const STUB_CARGO: &str = "#!/bin/sh\n\
+printf 'STUB_CARGO: %s\\n' \"$*\"\n\
+if [ \"$1 $2 $3\" = \"run --quiet --example\" ] && [ -n \"${CI_LOCAL_TEST_DRIFT_FILE:-}\" ]; then\n\
+    printf 'drift\\n' >> \"$CI_LOCAL_TEST_DRIFT_FILE\"\n\
+fi\n\
+exit 0\n";
+
+// `rustup target list --installed` is queried live at runtime rather than
+// baked into the stub file, so one stub serves both the installed and
+// missing-target scenarios via CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED.
+const STUB_RUSTUP: &str = "#!/bin/sh\n\
+if [ \"$*\" = \"target list --installed\" ]; then\n\
+    if [ \"${CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
+        echo x86_64-pc-windows-msvc\n\
+    fi\n\
+    exit 0\n\
+fi\n\
+exit 0\n";
+
+/// A directory holding stub `cargo` and `rustup` binaries that log their
+/// argv and exit 0. Prepend it to `PATH` so `scripts/ci-local.sh` never
+/// reaches a real build or depends on this host's installed targets.
+fn stub_bin_dir() -> tempfile::TempDir {
+    let dir = common::tempdir().expect("tempdir");
+    for (name, body) in [("cargo", STUB_CARGO), ("rustup", STUB_RUSTUP)] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    dir
+}
+
+/// A fresh git repo with the artifact directories the drift stage diffs,
+/// each holding one committed placeholder, the generated refusals and
+/// findings pages, and the refusal census — isolated from the real repoweave checkout, so a test that induces drift
+/// never touches a tracked file this suite did not create.
+fn fixture_repo() -> tempfile::TempDir {
+    let dir = common::tempdir().expect("tempdir");
+    let root = dir.path();
+    for sub in [
+        "docs/reference/explain",
+        "docs/reference/schemas",
+        "docs/reference/prime",
+    ] {
+        std::fs::create_dir_all(root.join(sub)).unwrap();
+        std::fs::write(root.join(sub).join("placeholder.txt"), "generated\n").unwrap();
+    }
+    std::fs::write(root.join("docs/reference/refusals.md"), "generated\n").unwrap();
+    std::fs::write(
+        root.join("docs/reference/doctor-findings.md"),
+        "generated\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("docs/internals")).unwrap();
+    std::fs::write(
+        root.join("docs/internals/refusal-census.tsv"),
+        "generated\n",
+    )
+    .unwrap();
+    common::git_in(root, &["init", "-q", "--initial-branch=main"]);
+    common::git_in(root, &["config", "user.email", "test@test.com"]);
+    common::git_in(root, &["config", "user.name", "Test"]);
+    common::git_in(root, &["add", "-A"]);
+    common::git_in(root, &["commit", "-q", "-m", "init"]);
+    dir
+}
+
+fn run_ci_local(cwd: &Path, stub_bin: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Output {
+    run_script(&ci_local_sh(), cwd, stub_bin, args, extra_env)
+}
+
+fn run_script(
+    script: &Path,
+    cwd: &Path,
+    stub_bin: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Output {
+    let real_path = std::env::var("PATH").unwrap_or_default();
+    let path = format!("{}:{real_path}", stub_bin.display());
+    let mut cmd = Command::new(script);
+    cmd.args(args).current_dir(cwd).env("PATH", path);
+    cmd.env_remove("CI_LOCAL_TEST_DRIFT_FILE");
+    cmd.env_remove("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED");
+    cmd.env_remove("CI_LOCAL_TEST_WINE_EXIT");
+    // The ambient-autocrlf stage sets this for the suite running this test;
+    // inherited, it would read as the script setting it for a stage that
+    // does not.
+    cmd.env_remove("GIT_CONFIG_SYSTEM");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    // A sibling test's fork can still hold a just-written script open for
+    // writing; exec then fails with ETXTBSY until that child execs or exits.
+    for _ in 0..100 {
+        match cmd.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            result => return result.expect("ci-local.sh should run"),
+        }
+    }
+    panic!("ci-local.sh stayed busy (ETXTBSY) for 2s")
+}
+
+fn stdout_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn stderr_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+const AMBIENT_AUTOCRLF_HEADER: &str =
+    "==> cargo test --release --no-fail-fast --features test-pause \
+     (ambient core.autocrlf=true, as Git for Windows installs it)";
+
+const NO_TEST_PAUSE_HEADER: &str = "==> cargo test --no-fail-fast --test test_pause_build_test \
+     -- --include-ignored (built as releases build it: without test-pause)";
+
+const HEADERS_IN_ORDER: &[&str] = &[
+    "==> cargo check",
+    "==> cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc",
+    "==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings",
+    "==> cargo test --release --no-fail-fast --features test-pause",
+    AMBIENT_AUTOCRLF_HEADER,
+    NO_TEST_PAUSE_HEADER,
+    "==> cargo clippy --all-targets -- -D warnings",
+    "==> cargo clippy --all-targets --features test-pause -- -D warnings",
+    "==> cargo doc --no-deps --document-private-items --lib --bins --examples (rustdoc warnings deny)",
+    "==> cargo fmt --all -- --check",
+    "==> explain artifacts up to date (no drift after regeneration)",
+];
+
+/// Argv a `==> cargo ...` header claims to run: `cargo ` stripped, and any
+/// trailing parenthetical annotation (the doc stage's `(rustdoc warnings
+/// deny)`) cut off. `None` for a header that isn't a `cargo` echo at all —
+/// the drift stage's header names what the stage checks, not the command it
+/// runs, so it carries no claim this can compare against an invocation.
+fn cargo_args_claimed_by(header: &str) -> Option<&str> {
+    let args = header.strip_prefix("==> cargo ")?;
+    Some(match args.find(" (") {
+        Some(i) => &args[..i],
+        None => args,
+    })
+}
+
+/// `HEADERS_IN_ORDER`'s substring search only proves a header's text exists
+/// somewhere in `stdout`; it cannot tell that from a command that has
+/// drifted underneath an unchanged header, since the old header text is
+/// still there to find. This instead pairs each `cargo`-echoing header with
+/// the STUB_CARGO line logged before the next header and asserts the two
+/// name the same argv — the direction a header and its command actually
+/// disagree.
+///
+/// Scope: covers only headers `cargo_args_claimed_by` recognizes — every one
+/// but drift's, whose header is prose, not a command echo, and is outside
+/// what this can see.
+fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
+    let positions: Vec<(usize, &str)> = HEADERS_IN_ORDER
+        .iter()
+        .filter_map(|h| stdout.find(h).map(|pos| (pos, *h)))
+        .collect();
+    let mut compared = 0;
+    for (i, &(pos, header)) in positions.iter().enumerate() {
+        let Some(claimed) = cargo_args_claimed_by(header) else {
+            continue;
+        };
+        let end = positions.get(i + 1).map_or(stdout.len(), |&(p, _)| p);
+        let logged = stdout[pos..end]
+            .lines()
+            .find_map(|line| line.strip_prefix("STUB_CARGO: "))
+            .unwrap_or_else(|| {
+                panic!(
+                    "header {header:?} has no STUB_CARGO invocation before the next header:\n{stdout}"
+                )
+            });
+        assert_eq!(
+            logged, claimed,
+            "header {header:?} claims `cargo {claimed}` but the logged invocation was `cargo {logged}`"
+        );
+        compared += 1;
+    }
+    // `positions` only holds headers `stdout.find` actually located; a header
+    // that silently stopped printing would just shrink that list, and the
+    // loop above would compare fewer pairs without saying so. Cross-check
+    // the count against `HEADERS_IN_ORDER` itself, which doesn't depend on
+    // what `stdout` contains.
+    let claimable = HEADERS_IN_ORDER
+        .iter()
+        .filter(|h| cargo_args_claimed_by(h).is_some())
+        .count();
+    assert_eq!(
+        compared, claimable,
+        "expected {claimable} header/invocation comparisons, only made {compared} — a cargo-echoing header went unchecked:\n{stdout}"
+    );
+}
+
+/// A stage whose header line goes missing from `stdout` altogether — the
+/// clippy header is absent here, its STUB_CARGO line along with it — leaves
+/// every present header/invocation pair still agreeing, so the loop's own
+/// `assert_eq!` has nothing to object to. Only the comparison count catches
+/// the drop.
+#[test]
+#[should_panic(expected = "expected 10 header/invocation comparisons")]
+fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
+    let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
+\n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
+\n==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings\nSTUB_CARGO: clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings\n\
+\n==> cargo test --release\nSTUB_CARGO: test --release\n\
+\n==> cargo doc --no-deps (rustdoc warnings deny)\nSTUB_CARGO: doc --no-deps\n\
+\n==> cargo fmt --all -- --check\nSTUB_CARGO: fmt --all -- --check\n\
+\n==> explain artifacts up to date (no drift after regeneration)\n";
+    assert_cargo_headers_agree_with_invocations(stdout);
+}
+
+#[test]
+fn default_run_executes_every_default_stage_in_order() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(fixture.path(), stub.path(), &[], &[]);
+    assert!(
+        out.status.success(),
+        "default run should pass on a clean fixture: {}",
+        stderr_of(&out)
+    );
+    let stdout = stdout_of(&out);
+
+    let mut positions = Vec::new();
+    for h in HEADERS_IN_ORDER {
+        let pos = stdout
+            .find(h)
+            .unwrap_or_else(|| panic!("missing header {h:?} in:\n{stdout}"));
+        positions.push(pos);
+    }
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "headers out of order:\n{stdout}"
+    );
+    assert!(
+        stdout.trim_end().ends_with("All checks passed."),
+        "missing final success line:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("STUB_CARGO:").count(),
+        HEADERS_IN_ORDER.len(),
+        "expected one cargo invocation per header:\n{stdout}"
+    );
+    assert_cargo_headers_agree_with_invocations(&stdout);
+}
+
+#[test]
+fn stages_flag_check_only_runs_check_and_nothing_else() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=check"], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains("==> cargo check"));
+    for h in &HEADERS_IN_ORDER[1..] {
+        assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
+    }
+    assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
+    assert!(stdout.contains("STUB_CARGO: check"));
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: check)."),
+        "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
+    );
+}
+
+#[test]
+fn stages_flag_drift_only_skips_every_other_stage() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    let last = HEADERS_IN_ORDER.len() - 1;
+    assert!(stdout.contains(HEADERS_IN_ORDER[last]));
+    for h in &HEADERS_IN_ORDER[..last] {
+        assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
+    }
+    assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
+    assert!(stdout.contains("STUB_CARGO: run --quiet --example generate-explain"));
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: drift)."),
+        "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
+    );
+}
+
+/// The regression this suite exists to catch: a subset run's terminal line
+/// must not be the same string a full run prints. `default_run_executes_every_default_stage_in_order`
+/// pins the full-run line as exactly `All checks passed.`; this pins that no
+/// subset invocation ever produces that same line, so a log holding only the
+/// terminal output can always tell the two apart.
+#[test]
+fn subset_run_terminal_line_never_equals_the_full_run_line() {
+    let stub = stub_bin_dir();
+    for stages in ["check", "drift", "windows", "check,drift"] {
+        let fixture = fixture_repo();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &[&format!("--stages={stages}")],
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stdout = stdout_of(&out);
+        let terminal_line = stdout.trim_end().lines().last().unwrap_or("");
+        assert_ne!(
+            terminal_line, "All checks passed.",
+            "--stages={stages} produced the same terminal line as a full run:\n{stdout}"
+        );
+    }
+}
+
+/// Naming every stage explicitly, out of order, is a full run in substance —
+/// it should get the plain line a no-flag invocation gets, not a stages-list
+/// line that would (falsely) suggest something was left out.
+#[test]
+fn stages_flag_naming_every_default_stage_explicitly_gets_the_full_run_line() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift,fmt,doc,clippy,no-test-pause,test-ambient-autocrlf,test,windows,check"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.trim_end().ends_with("All checks passed."),
+        "naming every default stage should print the full-run line:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("STUB_CARGO:").count(),
+        HEADERS_IN_ORDER.len()
+    );
+}
+
+#[test]
+fn unknown_stage_is_rejected_before_anything_runs() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=bogus"], &[]);
+    assert!(!out.status.success(), "bogus stage should be refused");
+    assert!(stderr_of(&out).contains("unknown stage: bogus"));
+    assert!(
+        !stdout_of(&out).contains("STUB_CARGO:"),
+        "no stage should have run: {}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+fn drift_stage_exits_non_zero_and_names_the_remedy_on_real_drift() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let drift_target = fixture
+        .path()
+        .join("docs/reference/explain/placeholder.txt");
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift"],
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
+    );
+    assert!(
+        !out.status.success(),
+        "drift should fail the stage, got: {}",
+        stdout_of(&out)
+    );
+    assert!(stderr_of(&out).contains(
+        "explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime, docs/reference/refusals.md, docs/reference/doctor-findings.md and docs/internals/refusal-census.tsv against the index; it does not inspect files the generator does not write; an entry of doctor-findings.md that the state-to-choices table generates is changed in the table, not in the page)"
+    ));
+}
+
+/// The refusals page is generated too, so a regeneration that changes it is
+/// drift the stage reports.
+#[test]
+fn drift_stage_reports_a_regenerated_refusals_page() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let drift_target = fixture.path().join("docs/reference/refusals.md");
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift"],
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
+    );
+    assert!(
+        !out.status.success(),
+        "a regenerated refusals page should fail the stage, got: {}",
+        stdout_of(&out)
+    );
+    assert!(stderr_of(&out).contains("explain artifacts changed by regeneration"));
+}
+
+/// The refusal census is generated, so a regeneration that changes it is drift
+/// the stage reports.
+#[test]
+fn drift_stage_reports_a_regenerated_refusal_census() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let drift_target = fixture.path().join("docs/internals/refusal-census.tsv");
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift"],
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
+    );
+    assert!(
+        !out.status.success(),
+        "a regenerated refusal census should fail the stage, got: {}",
+        stdout_of(&out)
+    );
+    assert!(stderr_of(&out).contains("explain artifacts changed by regeneration"));
+}
+
+/// The findings page carries entries the generator writes, so a regeneration
+/// that changes it is drift the stage reports.
+#[test]
+fn drift_stage_reports_a_regenerated_findings_page() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let drift_target = fixture.path().join("docs/reference/doctor-findings.md");
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift"],
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
+    );
+    assert!(
+        !out.status.success(),
+        "a regenerated findings page should fail the stage, got: {}",
+        stdout_of(&out)
+    );
+    assert!(stderr_of(&out).contains("explain artifacts changed by regeneration"));
+}
+
+#[test]
+fn drift_stage_passes_when_regeneration_matches_the_committed_tree() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+}
+
+#[test]
+fn windows_stage_runs_the_cross_check_when_the_target_is_installed() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(
+        "STUB_CARGO: check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc"
+    ));
+    assert!(stdout.contains(
+        "STUB_CARGO: clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+    ));
+    assert!(
+        !stdout.contains("windows cross-check skipped"),
+        "should not skip when the target is installed:\n{stdout}"
+    );
+}
+
+#[test]
+fn windows_stage_skips_loudly_with_the_install_command_when_the_target_is_missing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "0")],
+    );
+    assert!(
+        out.status.success(),
+        "a missing target should skip, not fail: {}",
+        stderr_of(&out)
+    );
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.contains(
+            "windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc"
+        ),
+        "missing the loud skip line with its remedy:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("STUB_CARGO:"),
+        "neither cross-target command should have run:\n{stdout}"
+    );
+}
+
+const WINE_HEADER: &str = "==> test suite under Wine as x86_64-pc-windows-gnu binaries";
+
+/// `scripts/ci-local.sh` copied beside a stub `windows-wine.sh` that logs
+/// its call and exits with `CI_LOCAL_TEST_WINE_EXIT`, so the stage's wiring
+/// is observed without the real script's downloads.
+fn ci_local_beside_a_stub_wine_script() -> (tempfile::TempDir, PathBuf) {
+    let dir = common::tempdir().expect("tempdir");
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let ci_local = scripts.join("ci-local.sh");
+    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    let wine = scripts.join("windows-wine.sh");
+    std::fs::write(
+        &wine,
+        "#!/bin/sh\nprintf 'STUB_WINDOWS_WINE: %s\\n' \"$*\"\nexit \"${CI_LOCAL_TEST_WINE_EXIT:-0}\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&wine, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, ci_local)
+}
+
+#[test]
+fn default_run_never_runs_the_wine_stage() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(&ci_local, fixture.path(), stub.path(), &[], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        !stdout.contains("STUB_WINDOWS_WINE") && !stdout.contains(WINE_HEADER),
+        "the default run reached the opt-in wine stage:\n{stdout}"
+    );
+    assert!(
+        stdout.trim_end().ends_with("All checks passed."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn wine_stage_runs_its_script_when_named() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(WINE_HEADER), "{stdout}");
+    assert_eq!(stdout.matches("STUB_WINDOWS_WINE:").count(), 1, "{stdout}");
+    assert!(!stdout.contains("STUB_CARGO:"), "{stdout}");
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: windows-wine)."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_red_wine_stage_fails_the_run() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[("CI_LOCAL_TEST_WINE_EXIT", "1")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(!stdout_of(&out).contains("All checks passed"));
+}
+
+/// As many stages ran as a full gate has, so a count would call this the full
+/// gate; one of them is the opt-in stage standing in for a default one that
+/// never ran.
+#[test]
+fn the_wine_stage_cannot_stand_in_for_a_default_stage_on_the_terminal_line() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,windows-wine"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert_eq!(
+        stdout.trim_end().lines().last().unwrap_or(""),
+        "All checks passed (stages: check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,windows-wine).",
+        "{stdout}"
+    );
+}
+
+#[test]
+fn wine_stage_refuses_with_the_install_command_when_the_target_is_missing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(stdout_of(&out).contains(WINE_HEADER), "{}", stdout_of(&out));
+    assert!(
+        stderr_of(&out).contains(
+            "windows-wine: x86_64-pc-windows-gnu is not installed — rustup target add x86_64-pc-windows-gnu"
+        ),
+        "{}",
+        stderr_of(&out)
+    );
+    assert!(
+        !stdout_of(&out).contains("STUB_CARGO:"),
+        "{}",
+        stdout_of(&out)
+    );
+}
+
+const STUB_CARGO_RECORDING_GIT_CONFIG: &str = "#!/bin/sh\n\
+autocrlf=$(git config --get core.autocrlf || echo unset)\n\
+printf '%s\\t%s\\t%s\\n' \"$*\" \"${GIT_CONFIG_SYSTEM:-unset}\" \"$autocrlf\" >> \"$CI_LOCAL_TEST_GIT_CONFIG_LOG\"\n\
+exit \"${CI_LOCAL_TEST_CARGO_EXIT:-0}\"\n";
+
+/// What one stub `cargo test` saw of git's config.
+struct SeenGitConfig {
+    argv: String,
+    /// `GIT_CONFIG_SYSTEM`, or `None` where it was unset.
+    system: Option<PathBuf>,
+    /// `core.autocrlf` as git read it in the run's working directory.
+    autocrlf: String,
+}
+
+/// Runs the script over `cwd` with a stub `cargo` recording, for every
+/// `cargo test`, its argv, `GIT_CONFIG_SYSTEM`, and the `core.autocrlf` git
+/// reads there. The host's global config is emptied for the run; its system
+/// config still reaches a stage that sets none, so only the ambient stage's
+/// `core.autocrlf` is one a test can assert on.
+fn run_recording_git_config(
+    cwd: &Path,
+    args: &[&str],
+    cargo_exit: &str,
+) -> (Vec<SeenGitConfig>, Output) {
+    let stub = stub_bin_dir();
+    std::fs::write(stub.path().join("cargo"), STUB_CARGO_RECORDING_GIT_CONFIG).unwrap();
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("seen");
+    let out = run_ci_local(
+        cwd,
+        stub.path(),
+        args,
+        &[
+            ("CI_LOCAL_TEST_GIT_CONFIG_LOG", log.to_str().unwrap()),
+            ("CI_LOCAL_TEST_CARGO_EXIT", cargo_exit),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ],
+    );
+    let seen = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "unparseable stub record {line:?}");
+            SeenGitConfig {
+                argv: fields[0].to_owned(),
+                system: (fields[1] != "unset").then(|| PathBuf::from(fields[1])),
+                autocrlf: fields[2].to_owned(),
+            }
+        })
+        .filter(|seen| seen.argv.split(' ').next() == Some("test"))
+        .collect();
+    (seen, out)
+}
+
+/// The default run's second `cargo test` reads `core.autocrlf=true` from a
+/// system config of the stage's own, which is gone once it is done; the
+/// others are given none.
+#[test]
+fn the_ambient_autocrlf_stage_runs_the_suite_under_a_system_config_that_converts() {
+    let fixture = fixture_repo();
+    let (seen, out) = run_recording_git_config(fixture.path(), &[], "0");
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let [plain, ambient, unfeatured] = &seen[..] else {
+        panic!(
+            "expected three `cargo test` runs; the stub saw {:?}",
+            seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
+        );
+    };
+    for (stage, run) in [("test", plain), ("no-test-pause", unfeatured)] {
+        assert_eq!(
+            run.system, None,
+            "the {stage} stage must not set a system config"
+        );
+    }
+    let system = ambient
+        .system
+        .as_ref()
+        .expect("the ambient-autocrlf stage must set GIT_CONFIG_SYSTEM");
+    assert_eq!(
+        ambient.autocrlf, "true",
+        "git under the ambient-autocrlf stage must read core.autocrlf=true"
+    );
+    assert!(
+        !system.exists(),
+        "the stage left its system config at {}",
+        system.display()
+    );
+}
+
+/// The stage only reads the tree, so it runs over uncommitted work and
+/// leaves it as it was.
+#[test]
+fn the_ambient_autocrlf_stage_runs_over_a_dirty_tree_and_leaves_it_alone() {
+    let fixture = fixture_repo();
+    let tracked = fixture
+        .path()
+        .join("docs/reference/explain/placeholder.txt");
+    std::fs::write(&tracked, "edited\n").unwrap();
+    std::fs::write(fixture.path().join("untracked.txt"), "new\n").unwrap();
+    let before = common::git_in(fixture.path(), &["status", "--porcelain"]);
+
+    let (seen, out) =
+        run_recording_git_config(fixture.path(), &["--stages=test-ambient-autocrlf"], "0");
+
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(seen.len(), 1, "the stage must run the suite once");
+    assert_eq!(std::fs::read_to_string(&tracked).unwrap(), "edited\n");
+    assert_eq!(
+        common::git_in(fixture.path(), &["status", "--porcelain"]),
+        before,
+        "the stage changed the working tree"
+    );
+}
+
+/// A red suite under the ambient config is the run's status, and the
+/// stage's system config is still removed.
+#[test]
+fn a_red_suite_under_the_ambient_config_is_the_runs_status_and_leaves_no_config() {
+    let fixture = fixture_repo();
+    let (seen, out) =
+        run_recording_git_config(fixture.path(), &["--stages=test-ambient-autocrlf"], "3");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "cargo's status must be the run's: {}",
+        stdout_of(&out)
+    );
+    assert!(!stdout_of(&out).contains("All checks passed"));
+    let system = seen[0]
+        .system
+        .as_ref()
+        .expect("the stage must set GIT_CONFIG_SYSTEM");
+    assert!(
+        !system.exists(),
+        "the red stage left its system config at {}",
+        system.display()
+    );
+}
+
+const STUB_CARGO_RECORDING_TMPDIR: &str = "#!/bin/sh\n\
+if [ -L \"$TMPDIR\" ]; then kind=link; target=$(readlink \"$TMPDIR\"); else kind=dir; target=; fi\n\
+printf '%s\\t%s\\t%s\\t%s\\n' \"$*\" \"$kind\" \"$TMPDIR\" \"$target\" >> \"$CI_LOCAL_TEST_TMPDIR_LOG\"\n\
+exit \"${CI_LOCAL_TEST_CARGO_EXIT:-0}\"\n";
+
+/// What one stub `cargo` invocation saw of `$TMPDIR`.
+struct SeenTmpdir {
+    argv: String,
+    is_link: bool,
+    tmpdir: PathBuf,
+    link_target: PathBuf,
+}
+
+/// Runs the script over `cwd` with `handed` as its `TMPDIR` and a stub
+/// `cargo` recording, for every invocation, its argv and the `TMPDIR` it was
+/// given. `extra_stub` adds further stubs beside it.
+fn run_recording_tmpdir(
+    cwd: &Path,
+    handed: &Path,
+    args: &[&str],
+    cargo_exit: &str,
+    extra_stub: &[(&str, &str)],
+) -> (Vec<SeenTmpdir>, Output) {
+    let stub = stub_bin_dir();
+    std::fs::write(stub.path().join("cargo"), STUB_CARGO_RECORDING_TMPDIR).unwrap();
+    for (name, body) in extra_stub {
+        let path = stub.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("seen");
+    let out = run_ci_local(
+        cwd,
+        stub.path(),
+        args,
+        &[
+            ("TMPDIR", handed.to_str().unwrap()),
+            ("CI_LOCAL_TEST_TMPDIR_LOG", log.to_str().unwrap()),
+            ("CI_LOCAL_TEST_CARGO_EXIT", cargo_exit),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ],
+    );
+    let seen = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 4, "unparseable stub record {line:?}");
+            SeenTmpdir {
+                argv: fields[0].to_owned(),
+                is_link: fields[1] == "link",
+                tmpdir: PathBuf::from(fields[2]),
+                link_target: PathBuf::from(fields[3]),
+            }
+        })
+        .collect();
+    (seen, out)
+}
+
+fn entries(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Every `cargo test` the script runs sees `TMPDIR` as a symlink, made inside
+/// the `TMPDIR` the script was handed and pointing at a directory beside it,
+/// and nothing of it is left once the stage is done.
+///
+/// The population is read from the runs rather than listed: the default run,
+/// asserted to have run `cargo test` once per test stage, so a stage that
+/// stopped running the suite fails here rather than leaving nothing to check.
+#[test]
+fn every_cargo_test_runs_with_tmpdir_behind_a_symlink_inside_the_handed_one() {
+    let test_stages = ["test", "test-ambient-autocrlf", "no-test-pause"];
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) = run_recording_tmpdir(fixture.path(), handed.path(), &[], "0", &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+
+    let tests: Vec<&SeenTmpdir> = seen
+        .iter()
+        .filter(|s| s.argv.split(' ').next() == Some("test"))
+        .collect();
+    assert_eq!(
+        tests.len(),
+        test_stages.len(),
+        "expected one `cargo test` per test stage {test_stages:?}; the stub saw {:?}",
+        seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
+    );
+    for (stage, test) in test_stages.iter().zip(tests) {
+        assert!(
+            test.is_link,
+            "{stage:?}: `cargo {}` ran with TMPDIR={} not behind a symlink",
+            test.argv,
+            test.tmpdir.display()
+        );
+        let gate_dir = test.tmpdir.parent().unwrap();
+        assert_eq!(
+            gate_dir.parent(),
+            Some(handed.path()),
+            "{stage:?}: the link must sit one directory inside the handed TMPDIR, \
+             on its filesystem; got {}",
+            test.tmpdir.display()
+        );
+        assert_eq!(
+            test.link_target,
+            gate_dir.join("real"),
+            "{stage:?}: the link must point at the directory beside it"
+        );
+        assert!(
+            entries(handed.path()).is_empty(),
+            "{stage:?}: the stage left {:?} in the handed TMPDIR",
+            entries(handed.path())
+        );
+    }
+}
+
+/// A red suite under the link is the run's own status, and the link's
+/// directory is still removed.
+#[test]
+fn a_red_cargo_test_under_the_link_is_the_runs_status_and_leaves_nothing_behind() {
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) =
+        run_recording_tmpdir(fixture.path(), handed.path(), &["--stages=test"], "3", &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "cargo's status must be the run's: {}",
+        stdout_of(&out)
+    );
+    assert!(
+        seen.len() == 1 && seen[0].is_link,
+        "the red run must still have been under the link"
+    );
+    assert!(
+        !stdout_of(&out).contains("All checks passed"),
+        "{}",
+        stdout_of(&out)
+    );
+    assert!(
+        entries(handed.path()).is_empty(),
+        "the red stage left {:?} in the handed TMPDIR",
+        entries(handed.path())
+    );
+}
+
+/// An `ln -s` that copies instead of linking, as Git Bash's does unless MSYS
+/// asks for native symlinks, leaves the suite running under the handed
+/// `TMPDIR` with a notice saying the comparison it would have checked is not.
+#[test]
+fn a_host_that_makes_no_symlink_runs_the_suite_under_the_handed_tmpdir_and_says_so() {
+    const COPYING_LN: &str = "#!/bin/sh\nshift\ncp -R \"$1\" \"$2\"\n";
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) = run_recording_tmpdir(
+        fixture.path(),
+        handed.path(),
+        &["--stages=test"],
+        "0",
+        &[("ln", COPYING_LN)],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("NOTICE: this host made no symlink"),
+        "the fallback must announce itself: {}",
+        stderr_of(&out)
+    );
+    assert!(
+        seen.len() == 1 && !seen[0].is_link && seen[0].tmpdir == handed.path(),
+        "the suite must run under the handed TMPDIR; the stub saw {}",
+        seen.first()
+            .map_or("nothing".into(), |s| s.tmpdir.display().to_string())
+    );
+    assert!(
+        entries(handed.path()).is_empty(),
+        "the fallback left {:?} in the handed TMPDIR",
+        entries(handed.path())
+    );
+}
+
+const FLOOR_HEADER: &str =
+    "==> cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)";
+
+/// `scripts/ci-local.sh` copied beside a stub `git-floor.sh` whose "built"
+/// git answers `git version $CI_LOCAL_TEST_FLOOR_GIT`, and which names
+/// release 2.36.0, so the stage's wiring is observed without a download or a
+/// build.
+fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
+    let dir = common::tempdir().expect("tempdir");
+    let scripts = dir.path().join("scripts");
+    let bin = dir.path().join("floor-bin");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let ci_local = scripts.join("ci-local.sh");
+    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    for (path, body) in [
+        (
+            scripts.join("git-floor.sh"),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --print-release ]; then echo 2.36.0; else echo '{}'; fi\n",
+                bin.display()
+            ),
+        ),
+        (
+            bin.join("git"),
+            "#!/bin/sh\necho \"git version ${CI_LOCAL_TEST_FLOOR_GIT:-2.36.0}\"\n".to_owned(),
+        ),
+    ] {
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (dir, ci_local)
+}
+
+#[test]
+fn default_run_never_runs_the_git_floor_stage() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(&ci_local, fixture.path(), stub.path(), &[], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(
+        !stdout_of(&out).contains(FLOOR_HEADER),
+        "the default run reached the opt-in git-floor stage:\n{}",
+        stdout_of(&out)
+    );
+}
+
+#[test]
+fn the_git_floor_stage_runs_the_suite_with_the_floor_git_first_on_path() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=git-floor"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(FLOOR_HEADER), "{stdout}");
+    assert!(stdout.contains("git version 2.36.0 from "), "{stdout}");
+    assert_eq!(
+        stdout
+            .matches("STUB_CARGO: test --release --no-fail-fast --features test-pause")
+            .count(),
+        1,
+        "{stdout}"
+    );
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: git-floor)."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_git_floor_stage_whose_git_is_not_the_floor_runs_nothing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=git-floor"],
+        &[("CI_LOCAL_TEST_FLOOR_GIT", "2.53.0")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(
+        !stdout_of(&out).contains("STUB_CARGO:"),
+        "{}",
+        stdout_of(&out)
+    );
+    assert!(
+        stderr_of(&out).contains("PATH resolves git version 2.53.0, not git 2.36.0"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+/// CI runs the git-floor stage: the release it tests is the one the stage
+/// derives, never a second copy in the workflow.
+#[test]
+fn ci_runs_the_git_floor_stage() {
+    let workflow =
+        std::fs::read_to_string(repo_root().join(".github/workflows/ci-checks.yml")).unwrap();
+    assert!(
+        workflow.contains("run: ./scripts/ci-local.sh --stages=git-floor"),
+        "ci-checks.yml runs no git-floor stage"
+    );
+}
+
+/// The stage headers a run printed, in order. Two stages can run the same
+/// cargo argv, so a header, not an invocation, says which stage ran.
+fn header_lines(out: &Output) -> Vec<String> {
+    stdout_of(out)
+        .lines()
+        .filter(|l| l.starts_with("==> "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The stages a subset run's terminal line says it ran.
+fn stages_named_by_terminal_line(out: &Output) -> Vec<String> {
+    let stdout = stdout_of(out);
+    let last = stdout.trim_end().lines().last().unwrap_or("").to_owned();
+    let list = last
+        .split_once("stages: ")
+        .and_then(|(_, rest)| rest.strip_suffix(")."))
+        .unwrap_or_else(|| panic!("terminal line names no stages: {last:?}"));
+    list.split(',').map(str::to_owned).collect()
+}
+
+/// The default stages, in order, as the script's usage line spells them.
+fn default_stages_from_usage(cwd: &Path, stub_bin: &Path) -> Vec<String> {
+    let out = run_ci_local(cwd, stub_bin, &["--no-such-flag"], &[]);
+    let stderr = stderr_of(&out);
+    let list = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("Usage: "))
+        .and_then(|l| l.split_once("--stages="))
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(list, _)| list)
+        .unwrap_or_else(|| panic!("no usage line naming --stages:\n{stderr}"));
+    list.split(',').map(str::to_owned).collect()
+}
+
+fn is_subsequence(part: &[String], whole: &[String]) -> bool {
+    let mut rest = whole.iter();
+    part.iter().all(|p| rest.any(|w| w == p))
+}
+
+/// Seat and landing together are the full gate: every stage header of a
+/// no-argument run prints in exactly one of them, each in the default run's
+/// order, and their terminal lines name disjoint stages that make up the
+/// default list. The opt-in wine stage is in neither.
+#[test]
+fn seat_and_landing_tiers_partition_the_default_stages() {
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let run = |args: &[&str]| {
+        let fixture = fixture_repo();
+        let out = run_script(
+            &ci_local,
+            fixture.path(),
+            stub.path(),
+            args,
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        assert!(
+            !stdout_of(&out).contains("STUB_WINDOWS_WINE"),
+            "{args:?} ran the opt-in wine stage"
+        );
+        out
+    };
+    let full = run(&[]);
+    let seat = run(&["--tier=seat"]);
+    let landing = run(&["--tier=landing"]);
+
+    let cargo_runs = |out: &Output| stdout_of(out).matches("STUB_CARGO:").count();
+    assert_eq!(
+        cargo_runs(&seat) + cargo_runs(&landing),
+        cargo_runs(&full),
+        "seat and landing together do not make one full gate's cargo invocations"
+    );
+    let (full_runs, seat_runs, landing_runs) = (
+        header_lines(&full),
+        header_lines(&seat),
+        header_lines(&landing),
+    );
+    assert!(!seat_runs.is_empty() && !landing_runs.is_empty());
+    assert_eq!(
+        seat_runs.len() + landing_runs.len(),
+        full_runs.len(),
+        "seat {seat_runs:?} and landing {landing_runs:?} together are not one full gate {full_runs:?}"
+    );
+    for part in [&seat_runs, &landing_runs] {
+        assert!(
+            is_subsequence(part, &full_runs),
+            "{part:?} is not in the full gate's order {full_runs:?}"
+        );
+    }
+    for invocation in &full_runs {
+        let in_seat = seat_runs.contains(invocation);
+        let in_landing = landing_runs.contains(invocation);
+        assert!(
+            in_seat != in_landing,
+            "{invocation:?} printed in seat: {in_seat}, in landing: {in_landing}; it belongs to exactly one"
+        );
+    }
+
+    let fixture = fixture_repo();
+    let defaults = default_stages_from_usage(fixture.path(), stub.path());
+    let (seat_stages, landing_stages) = (
+        stages_named_by_terminal_line(&seat),
+        stages_named_by_terminal_line(&landing),
+    );
+    let mut merged: Vec<String> = seat_stages.iter().chain(&landing_stages).cloned().collect();
+    merged.sort_by_key(|s| defaults.iter().position(|d| d == s));
+    assert_eq!(
+        merged, defaults,
+        "seat {seat_stages:?} and landing {landing_stages:?} do not partition the default stages"
+    );
+    for part in [&seat_stages, &landing_stages] {
+        assert!(is_subsequence(part, &defaults), "{part:?} out of order");
+    }
+}
+
+#[test]
+fn each_tier_names_itself_and_its_stages_on_the_terminal_line() {
+    let stub = stub_bin_dir();
+    for (tier, line) in [
+        (
+            "seat",
+            "All checks passed (tier: seat; stages: check,test,no-test-pause,clippy,doc,fmt,drift).",
+        ),
+        (
+            "landing",
+            "All checks passed (tier: landing; stages: windows,test-ambient-autocrlf).",
+        ),
+    ] {
+        let fixture = fixture_repo();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &[&format!("--tier={tier}")],
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stdout = stdout_of(&out);
+        assert_eq!(stdout.trim_end().lines().last().unwrap_or(""), line, "{stdout}");
+    }
+}
+
+#[test]
+fn unknown_tier_is_refused_naming_the_valid_tiers() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    for arg in ["--tier=bogus", "--tier="] {
+        let out = run_ci_local(fixture.path(), stub.path(), &[arg], &[]);
+        assert!(!out.status.success(), "{arg} should be refused");
+        let tier = arg.trim_start_matches("--tier=");
+        assert!(
+            stderr_of(&out).contains(&format!("unknown tier: {tier} (valid: seat,landing)")),
+            "{}",
+            stderr_of(&out)
+        );
+        assert!(
+            !stdout_of(&out).contains("STUB_CARGO:"),
+            "{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// Two selectors are refused whichever comes first, naming both, with the
+/// usage that documents each spelling; a repeated one is refused the same
+/// way rather than the last silently winning.
+#[test]
+fn tier_and_stages_together_are_refused_naming_both() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    for args in [
+        ["--tier=seat", "--stages=check"],
+        ["--stages=check", "--tier=landing"],
+        ["--tier=seat", "--tier=landing"],
+        ["--stages=check", "--stages=drift"],
+    ] {
+        let out = run_ci_local(fixture.path(), stub.path(), &args, &[]);
+        assert!(!out.status.success(), "{args:?} should be refused");
+        let stderr = stderr_of(&out);
+        assert!(
+            stderr.contains(&format!(
+                "conflicting stage selectors: {} and {}",
+                args[0], args[1]
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Usage: ") && stderr.contains("--tier=seat|landing | --stages="),
+            "{stderr}"
+        );
+        assert!(
+            !stdout_of(&out).contains("STUB_CARGO:"),
+            "{}",
+            stdout_of(&out)
+        );
+    }
+}

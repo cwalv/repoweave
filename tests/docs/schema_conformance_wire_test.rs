@@ -1,0 +1,729 @@
+//! What each `--json` verb writes to stdout must satisfy the artifact its own
+//! bytes name.
+//!
+//! `tests/schema_conformance_test.rs` validates serialized envelope types over
+//! a wide corpus. That is the wrong instrument for one failure: a print path
+//! that mints its own bytes. Serializing the envelope type and validating the
+//! result is green whether or not any verb ever hands that type to
+//! `serde_json`, so the shape of the regression the doctor harness was built
+//! for — a hand-written `json!` literal beside a schema derived from a struct
+//! nothing serialized — is invisible to it. This file runs the binary and
+//! reads its stdout.
+//!
+//! The artifact each document is validated against is chosen by the `$schema`
+//! URL in the document, not by the test. A verb that points a consumer at the
+//! wrong file therefore fails here rather than being silently validated
+//! against the file the test had in mind.
+//!
+//! # Print-path coverage
+//!
+//! A verb's `--json` bytes are minted at more than one call site: the
+//! success arm and each failure arm serialize and print independently, so a
+//! fixture that samples only the shape of one outcome exercises only the
+//! print site that outcome takes. `tests/schema_conformance_test.rs`
+//! constructs envelope values directly and validates their serialization —
+//! it never runs the binary, so it cannot tell whether any of those sites
+//! still hands its envelope to `serde_json` rather than minting its own
+//! bytes. This file's coverage is the set of print sites a fixture here
+//! drives, not the set of variants a type can hold; the two audit different
+//! axes and neither substitutes for the other. Every test here asserts its
+//! envelope is non-empty, because an envelope carrying no records validates
+//! against anything and would read as a pass over a print site that emitted
+//! nothing. Tests targeting a failure-arm print site additionally assert the
+//! invocation actually failed before parsing stdout (`emit_after_failure`):
+//! a fixture that silently drove the success arm instead would still
+//! produce a conforming envelope and prove nothing about the arm it meant
+//! to exercise.
+//!
+//! # Residue
+//!
+//!   - `rwv doctor --json` exits non-zero when it finds anything. Exit status
+//!     is not asserted here beyond "not a usage error": what is under test is
+//!     the bytes, and doctor emits them on both paths.
+//!
+//! # Under parallel workers
+//!
+//! `-j` changes how many repos run at once, never what `--json` prints. The
+//! `*_under_two_workers` tests drive `-j 2`, where workers finish in any
+//! order, and validate the one envelope it prints like any other.
+
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+
+use crate::common;
+
+use common::json_schema;
+
+const MEMBER: &str = "github/example/server";
+const PROJECT: &str = "web-app";
+
+// ---------------------------------------------------------------------------
+// Fixture
+// ---------------------------------------------------------------------------
+
+/// A primary weave with one manifest repo and a project repo, both cloned from
+/// local bare remotes so `rwv push` and `rwv update` have somewhere to go.
+struct Weave {
+    _root: tempfile::TempDir,
+    parent: PathBuf,
+    primary: PathBuf,
+    origin: PathBuf,
+}
+
+impl Weave {
+    fn member(&self) -> PathBuf {
+        self.primary.join(MEMBER)
+    }
+
+    fn project(&self) -> PathBuf {
+        self.primary.join("projects").join(PROJECT)
+    }
+
+    fn member_origin(&self) -> PathBuf {
+        self.origin.join("server.git")
+    }
+
+    fn project_origin(&self) -> PathBuf {
+        self.origin.join("web-app.git")
+    }
+}
+
+fn weave() -> Weave {
+    let root = common::tempdir().expect("temp root");
+    let parent = root.path().to_path_buf();
+    let primary = parent.join("primary");
+    let origin = parent.join("origin");
+    std::fs::create_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(primary.join("github/example")).unwrap();
+    std::fs::create_dir_all(primary.join("projects")).unwrap();
+
+    let member_origin = origin.join("server.git");
+    let project_origin = origin.join("web-app.git");
+    for bare in [&member_origin, &project_origin] {
+        common::git_in(
+            &origin,
+            &["init", "--bare", "-b", "main", &bare.to_string_lossy()],
+        );
+    }
+
+    let member = primary.join(MEMBER);
+    common::git_in(
+        &parent,
+        &[
+            "clone",
+            &member_origin.to_string_lossy(),
+            &member.to_string_lossy(),
+        ],
+    );
+    std::fs::write(member.join("README.md"), "init\n").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "initial"]);
+    common::git_in(&member, &["push", "origin", "main"]);
+    let sha = common::git_in(&member, &["rev-parse", "HEAD"]);
+
+    let project = primary.join("projects").join(PROJECT);
+    common::git_in(
+        &parent,
+        &[
+            "clone",
+            &project_origin.to_string_lossy(),
+            &project.to_string_lossy(),
+        ],
+    );
+    let url = common::file_url(&member_origin);
+    std::fs::write(
+        project.join("rwv.toml"),
+        format!(
+            "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{url}\"\n\
+             branch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::set_up_lock_driver(&project);
+    write_lock(&project, &url, &sha);
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "lock: initial"]);
+    common::git_in(&project, &["push", "origin", "main"]);
+    common::record_trunk(&project);
+
+    // `rwv push` refuses a project repo whose remote has no recorded canonical
+    // branch, which a clone of a then-empty bare repo does not have.
+    for repo in [&member, &project] {
+        common::git_in(repo, &["remote", "set-head", "origin", "-a"]);
+    }
+    std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    Weave {
+        _root: root,
+        parent,
+        primary,
+        origin,
+    }
+}
+
+/// Round-tripped through the real parser and writer: a hand-formatted lock
+/// that differs only in whitespace still diffs against a real relock.
+fn write_lock(project: &Path, url: &str, sha: &str) {
+    common::fixture_lock(project, &[(MEMBER, url, sha)]);
+}
+
+/// A workweave forked from `weave`'s primary, placed explicitly so the test
+/// does not have to guess the default container.
+fn workweave(weave: &Weave) -> PathBuf {
+    let dir = weave.parent.join("ww");
+    let out = common::rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            PROJECT,
+            "feat-a",
+            "--dir",
+            &dir.to_string_lossy(),
+        ])
+        .current_dir(&weave.primary)
+        .output()
+        .expect("rwv runs");
+    assert!(
+        out.status.success(),
+        "rwv workweave create failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        dir.join(".rwv-workweave").is_file(),
+        "no workweave marker at {}",
+        dir.display()
+    );
+    dir
+}
+
+// ---------------------------------------------------------------------------
+// Driving a verb and validating what it printed
+// ---------------------------------------------------------------------------
+
+/// Run `rwv <args>` in `cwd` and parse stdout as one JSON document.
+fn emit(cwd: &Path, args: &[&str]) -> Value {
+    let out = common::rwv()
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("rwv runs");
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    assert_ne!(
+        out.status.code(),
+        Some(2),
+        "rwv {args:?} in {} was a usage error, so nothing was emitted:\n{}",
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !stdout.trim().is_empty(),
+        "rwv {args:?} in {} printed no JSON (exit {:?}):\n{}",
+        cwd.display(),
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("rwv {args:?} printed something that is not one JSON document: {e}\n{stdout}")
+    })
+}
+
+/// Validate `doc` against the committed artifact its own `$schema` names, and
+/// assert that artifact is `verb`'s.
+///
+/// `records` is the envelope's array key; it must be non-empty, or the
+/// document validates without saying anything about the records this verb
+/// exists to emit.
+fn assert_conforms(verb: &str, doc: &Value, records: &str) {
+    let url = doc["$schema"]
+        .as_str()
+        .unwrap_or_else(|| panic!("rwv {verb} --json emitted no `$schema` string:\n{doc:#}"));
+    let named = url
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.strip_suffix(".json"))
+        .unwrap_or_else(|| panic!("rwv {verb} --json embedded `{url}`, which names no artifact"));
+    assert_eq!(
+        named,
+        verb,
+        "rwv {verb} --json points consumers at {}",
+        json_schema::schema_path(named)
+    );
+
+    let entries = doc[records]
+        .as_array()
+        .unwrap_or_else(|| panic!("rwv {verb} --json emitted no `{records}` array:\n{doc:#}"));
+    assert!(
+        !entries.is_empty(),
+        "rwv {verb} --json emitted an empty `{records}` — this fixture proves nothing about \
+         the record shape"
+    );
+
+    let schema = json_schema::committed_schema(named);
+    let (errors, walk) = json_schema::conform(doc, &schema);
+    assert!(
+        errors.is_empty(),
+        "the bytes `rwv {verb} --json` wrote do not satisfy {}:\n  {}\n\nemitted:\n{doc:#}",
+        json_schema::schema_path(named),
+        errors.join("\n  ")
+    );
+    assert!(
+        walk.properties_checked >= 3,
+        "the walk never reached the envelope's properties, so the pass is vacuous: {walk:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// One verb, one invocation, one envelope
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["status", "--json"]);
+    assert_conforms("status", &doc, "repos");
+}
+
+#[test]
+fn log_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["log", "--json"]);
+    assert_conforms("log", &doc, "repos");
+}
+
+#[test]
+fn log_against_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(
+        &weave.primary,
+        &["log", "--against", "main", "--diff", "--json"],
+    );
+    assert_conforms("log", &doc, "repos");
+    assert_eq!(doc["against"], "main");
+}
+
+#[test]
+fn log_json_wire_output_conforms_when_an_endpoint_names_nothing() {
+    let weave = weave();
+    let doc = emit_after_failure(&weave.primary, &["log", "main..nosuch", "--json"]);
+    assert_conforms("log", &doc, "repos");
+    assert!(
+        doc["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["refused"][0]["state"] == "no-such-branch"),
+        "{doc:#}"
+    );
+}
+
+#[test]
+fn doctor_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["doctor", "--json"]);
+    // A fresh weave raises findings on both channels; `issues` is what this
+    // fixture reliably populates, and it is the array `violations` shares an
+    // envelope with.
+    assert_conforms("doctor", &doc, "issues");
+}
+
+/// The project repo's remote, as a `clone` source.
+fn project_source(weave: &Weave) -> String {
+    common::file_url(weave.origin.join("web-app.git"))
+}
+
+/// An empty directory beside the primary for a clone to fill.
+fn empty_dir(weave: &Weave, name: &str) -> PathBuf {
+    let dir = weave.parent.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn clone_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(
+        &empty_dir(&weave, "fresh"),
+        &["clone", &project_source(&weave), "--json", "-j", "1"],
+    );
+    assert_conforms("clone", &doc, "outcomes");
+}
+
+#[test]
+fn fetch_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["fetch", "--json", "-j", "1"]);
+    assert_conforms("fetch", &doc, "repos");
+}
+
+#[test]
+fn pull_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["pull", "--json", "-j", "1"]);
+    assert_conforms("pull", &doc, "outcomes");
+}
+
+#[test]
+fn update_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--json", "-j", "1"]);
+    assert_conforms("update", &doc, "outcomes");
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--remote", "--json", "-j", "1"]);
+    assert_conforms("update-remote", &doc, "repos");
+}
+
+#[test]
+fn push_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+}
+
+#[test]
+fn sync_to_json_wire_output_conforms() {
+    let weave = weave();
+    let ww = workweave(&weave);
+
+    std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
+    common::git_in(ww.join(MEMBER), &["add", "-A"]);
+    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
+
+    let doc = emit(&ww, &["land", "--json"]);
+    assert_conforms("land", &doc, "outcomes");
+}
+
+// ---------------------------------------------------------------------------
+// One verb, one invocation, one FAILURE-arm envelope
+// ---------------------------------------------------------------------------
+
+/// Like [`emit`], but for an invocation the fixture expects to fail: asserts
+/// the process exited non-zero before parsing stdout. Without this, a
+/// fixture that silently drove the success path instead would still produce
+/// a conforming envelope, proving nothing about the failure-arm print site.
+fn emit_after_failure(cwd: &Path, args: &[&str]) -> Value {
+    let out = common::rwv()
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("rwv runs");
+    assert!(
+        !out.status.success(),
+        "rwv {args:?} in {} succeeded, so this fixture drove the wrong path:\n{}",
+        cwd.display(),
+        String::from_utf8_lossy(&out.stdout),
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    assert_ne!(
+        out.status.code(),
+        Some(2),
+        "rwv {args:?} in {} was a usage error, so nothing was emitted:\n{}",
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !stdout.trim().is_empty(),
+        "rwv {args:?} in {} printed no JSON (exit {:?}):\n{}",
+        cwd.display(),
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("rwv {args:?} printed something that is not one JSON document: {e}\n{stdout}")
+    })
+}
+
+#[test]
+fn update_json_wire_output_conforms_on_partial_failure() {
+    let weave = weave();
+
+    // A second manifest entry with a nonexistent `file://` URL, never cloned
+    // locally: its clone fails while the existing member (already on disk,
+    // matching the lock) fetches clean.
+    let member_url = common::file_url(weave.member_origin());
+    let bad_url = common::file_url(weave.parent.join("no-such-repo.git"));
+    std::fs::write(
+        weave.project().join("rwv.toml"),
+        format!(
+            "[repositories]\n\
+             [repositories.\"{MEMBER}\"]\n\
+             type = \"git\"\nurl = \"{member_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\
+             [repositories.\"github/example/missing\"]\n\
+             type = \"git\"\nurl = \"{bad_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
+        &["commit", "-m", "manifest: add unreachable repo"],
+    );
+
+    let doc = emit_after_failure(&weave.primary, &["update", "--json", "-j", "1"]);
+    assert_conforms("update", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["status"] == "failed"),
+        "expected a failed update outcome: {doc:#}"
+    );
+}
+
+#[test]
+fn clone_json_wire_output_conforms_on_partial_failure() {
+    let weave = weave();
+    let member_url = common::file_url(weave.member_origin());
+    let bad_url = common::file_url(weave.parent.join("no-such-repo.git"));
+    std::fs::write(
+        weave.project().join("rwv.toml"),
+        format!(
+            "[repositories]\n\
+             [repositories.\"{MEMBER}\"]\n\
+             type = \"git\"\nurl = \"{member_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\
+             [repositories.\"github/example/missing\"]\n\
+             type = \"git\"\nurl = \"{bad_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
+        &["commit", "-m", "manifest: add unreachable repo"],
+    );
+    common::git_in(weave.project(), &["push", "origin", "main"]);
+
+    let doc = emit_after_failure(
+        &empty_dir(&weave, "fresh"),
+        &["clone", &project_source(&weave), "--json", "-j", "1"],
+    );
+    assert_conforms("clone", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["status"] == "failed"),
+        "expected a failed clone outcome: {doc:#}"
+    );
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms_on_failure() {
+    let weave = weave();
+
+    // Point the manifest's declared branch at one the clone has and the remote
+    // lacks, so the branch resolution on the remote fails per-repo.
+    common::git_in(weave.member(), &["branch", "local-only"]);
+    let member_url = common::file_url(weave.member_origin());
+    std::fs::write(
+        weave.project().join("rwv.toml"),
+        format!(
+            "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{member_url}\"\n\
+             branch = \"local-only\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
+        &["commit", "-m", "manifest: point at unreachable branch"],
+    );
+
+    let doc = emit_after_failure(&weave.primary, &["update", "--remote", "--json", "-j", "1"]);
+    assert_conforms("update-remote", &doc, "repos");
+    assert!(
+        doc["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "failed"),
+        "expected a failed repo record: {doc:#}"
+    );
+}
+
+#[test]
+fn push_json_wire_output_conforms_on_manifest_failure() {
+    let weave = weave();
+
+    // The member's remote is reachable and refuses the branch the push
+    // carries.
+    common::refuse_pushes_to(&weave.member_origin(), "refs/heads/main");
+
+    std::fs::write(weave.member().join("LOCAL.md"), "local\n").unwrap();
+    common::git_in(weave.member(), &["add", "."]);
+    common::git_in(weave.member(), &["commit", "-m", "local advance"]);
+
+    let out = common::rwv()
+        .args(["lock"])
+        .current_dir(&weave.primary)
+        .output()
+        .expect("rwv runs");
+    assert!(
+        out.status.success(),
+        "rwv lock failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: local advance"]);
+
+    let doc = emit_after_failure(&weave.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "failed"),
+        "expected a failed manifest-repo outcome: {doc:#}"
+    );
+}
+
+#[test]
+fn push_json_wire_output_conforms_on_project_failure() {
+    let weave = weave();
+
+    std::fs::write(weave.member().join("LOCAL.md"), "local\n").unwrap();
+    common::git_in(weave.member(), &["add", "."]);
+    common::git_in(weave.member(), &["commit", "-m", "local advance"]);
+
+    let out = common::rwv()
+        .args(["lock"])
+        .current_dir(&weave.primary)
+        .output()
+        .expect("rwv runs");
+    assert!(
+        out.status.success(),
+        "rwv lock failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: local advance"]);
+
+    // Sabotage the project repo's remote so the manifest push succeeds and
+    // only the project-repo push fails.
+    common::refuse_pushes_to(&weave.project_origin(), "refs/heads/main");
+
+    let doc = emit_after_failure(&weave.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "pushed"),
+        "expected the manifest repo to have pushed cleanly before the project failure: {doc:#}"
+    );
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "project-repo-failed"),
+        "expected a project-repo-failed outcome: {doc:#}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The same envelope under parallel workers (-j 2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn update_json_wire_output_conforms_under_two_workers() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--json", "-j", "2"]);
+    assert_conforms("update", &doc, "outcomes");
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms_under_two_workers() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--remote", "--json", "-j", "2"]);
+    assert_conforms("update-remote", &doc, "repos");
+}
+
+#[test]
+fn push_json_wire_output_conforms_when_the_record_is_published_and_when_it_is_rejected() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "records-published"),
+        "expected the record's publication: {doc:#}"
+    );
+
+    let refusing = weave_with_refused_records();
+    let doc = emit(&refusing.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "records-rejected" && o.get("withheld").is_none()),
+        "a rejected record is a fact: {doc:#}"
+    );
+}
+
+fn weave_with_refused_records() -> Weave {
+    let weave = weave();
+    common::refuse_pushes_to(&weave.project_origin(), "refs/heads/rwv-records");
+    weave
+}
+
+#[test]
+fn push_json_wire_output_conforms_under_two_workers() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["push", "--json", "-j", "2"]);
+    assert_conforms("push", &doc, "outcomes");
+}
+
+/// Under parallel workers the envelope still carries each advance-target
+/// fast-forward, the target's tip before and CWD's after: a member's as its
+/// outcome's `step3_advance`, the project repo's as `project_repo_advance`.
+#[test]
+fn sync_to_json_wire_output_conforms_under_two_workers_with_both_advances() {
+    let weave = weave();
+    let ww = workweave(&weave);
+    let target_member_before = common::git_in(weave.member(), &["rev-parse", "HEAD"]);
+    let target_project_before = common::git_in(weave.project(), &["rev-parse", "HEAD"]);
+
+    std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
+    common::git_in(ww.join(MEMBER), &["add", "-A"]);
+    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
+
+    let doc = emit(&ww, &["land", "--json", "-j", "2"]);
+    assert_conforms("land", &doc, "outcomes");
+
+    let member = doc["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == MEMBER)
+        .unwrap_or_else(|| panic!("no outcome for {MEMBER}:\n{doc:#}"));
+    assert_eq!(
+        member["step3_advance"]["from_sha"],
+        target_member_before.as_str()
+    );
+    assert_eq!(
+        member["step3_advance"]["to_sha"],
+        common::git_in(weave.member(), &["rev-parse", "HEAD"]).as_str()
+    );
+    assert_eq!(
+        doc["project_repo_advance"]["from_sha"],
+        target_project_before.as_str()
+    );
+    assert_eq!(
+        doc["project_repo_advance"]["to_sha"],
+        common::git_in(weave.project(), &["rev-parse", "HEAD"]).as_str()
+    );
+}

@@ -1,0 +1,683 @@
+//! Disablement, the third moment ownership is withdrawn.
+//!
+//! Deleting a workweave and switching projects both end an integration's claim
+//! on a checkout. So does turning it off in `rwv.toml` — and that one left
+//! everything it authored on disk with no verb reporting it, which is the
+//! defect these pin.
+//!
+//! Two claims run through every test here, and they pull in opposite
+//! directions. Content rwv authored must be reported and removable, or the
+//! operator is left with orphans. Content rwv did **not** author must never be
+//! named, because the remedy deletes and a finding that over-reports is a
+//! finding that proposes to delete someone else's file. Both directions are
+//! seeded, because a scan that reports everything passes the first half alone.
+//!
+//! Driven through the shipped binary: what is being pinned is which verb acts
+//! and which only speaks.
+
+use std::path::{Path, PathBuf};
+
+use crate::common;
+
+fn git_init_with_commit(dir: &Path) {
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
+}
+
+fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {
+    let output = common::rwv()
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("rwv should run");
+    (
+        output.status.success(),
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+/// The lock content stands in for a real `cargo generate-lockfile` run: these
+/// tests are about who may remove the file, not about what resolved it, and a
+/// real cargo run would make every one of them need cargo on PATH.
+const LOCK: &str = "version = 4\n";
+
+/// A primary weave with one Rust member, `gita` and `static-files` enabled, and
+/// every integration's content authored and attested.
+///
+/// `notes.md` is the operator's own file, declared to `static-files` so it is
+/// surfaced. That integration authors nothing — it points at files the operator
+/// committed — so it is the seed for the over-reporting direction.
+fn weave(root: &Path) -> PathBuf {
+    let ws = root.join("ws");
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let member = ws.join("github/acme/lib");
+    std::fs::create_dir_all(member.join("src")).unwrap();
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(member.join("src/lib.rs"), "").unwrap();
+    git_init_with_commit(&member);
+
+    std::fs::write(project_dir.join("notes.md"), "operator content\n").unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/lib\"]\n\
+         type = \"git\"\n\
+         url = \"https://github.com/acme/lib.git\"\n\
+         branch = \"main\"\n\
+         role = \"owned\"\n\
+         \n[integrations.gita]\n\
+         enabled = true\n\
+         \n[integrations.static-files]\n\
+         enabled = true\n\
+         files = [\"notes.md\"]\n",
+    )
+    .unwrap();
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author the managed files");
+
+    // The lock and its attestation, as the hook would have left them.
+    std::fs::write(project_dir.join("Cargo.lock"), LOCK).unwrap();
+    repoweave::owned_state::stamp_owned_digest(&project_dir, "Cargo.lock", LOCK.as_bytes())
+        .unwrap();
+
+    for file in ["Cargo.toml", "Cargo.lock", "gita/repos.csv", "notes.md"] {
+        assert!(
+            project_dir.join(file).is_file(),
+            "fixture: {file} should have been authored"
+        );
+    }
+    ws
+}
+
+/// Turn `integration` off in the project manifest.
+fn disable(ws: &Path, integration: &str) {
+    let manifest = ws.join("projects/app/rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let section = format!("[integrations.{integration}]\nenabled = true");
+    let disabled = format!("[integrations.{integration}]\nenabled = false");
+    let updated = if text.contains(&section) {
+        text.replace(&section, &disabled)
+    } else {
+        format!("{text}\n{disabled}\n")
+    };
+    assert_ne!(updated, text, "fixture: {integration} was not disabled");
+    std::fs::write(&manifest, updated).unwrap();
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+}
+
+/// Both artifact classes are reported, and the verb named is one that removes
+/// them. Before this, all four artifacts survived and every verb was silent.
+#[test]
+fn disabling_an_integration_reports_both_artifact_classes() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    disable(&ws, "cargo-workspace");
+    disable(&ws, "gita");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("cargo-workspace is disabled") && report.contains("gita is disabled"),
+        "every disabled integration holding content must be named:\n{report}"
+    );
+    assert!(
+        report.contains("Cargo.toml (managed region)"),
+        "a marked region inside a file the operator co-owns is one class:\n{report}"
+    );
+    assert!(
+        report.contains("Cargo.lock (generated file)")
+            && report.contains("repos.csv (generated file)"),
+        "a file rwv wrote whole is the other:\n{report}"
+    );
+    assert!(
+        report.contains("surfaced at the weave root as"),
+        "the weave-root symlinks are part of what outlived the integration:\n{report}"
+    );
+    assert!(
+        report.contains("rwv materialize"),
+        "the finding must name the verb that clears it:\n{report}"
+    );
+}
+
+/// The ratified prohibition, as a test.
+///
+/// Doctor reports this class and never acts on it, and there is no `--fix` arm
+/// to reach. Disabling an integration is one character in `rwv.toml`, so a
+/// `--fix` that deleted what it authored would put a typo one keystroke from
+/// data loss. To make this fail, give the finding a repair arm in
+/// `collect_doctor_issues` — nothing else in the tree can.
+#[test]
+fn doctor_fix_reports_the_finding_and_strips_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "cargo-workspace");
+    disable(&ws, "gita");
+
+    let before: Vec<(PathBuf, String)> = ["Cargo.toml", "Cargo.lock", "gita/repos.csv"]
+        .iter()
+        .map(|f| (project_dir.join(f), read(&project_dir.join(f))))
+        .collect();
+
+    let (_, report) = rwv(&["doctor", "--fix"], &ws);
+    assert!(
+        report.contains("cargo-workspace is disabled") && report.contains("gita is disabled"),
+        "--fix must still report what it refuses to touch:\n{report}"
+    );
+    for (path, content) in &before {
+        assert_eq!(
+            &read(path),
+            content,
+            "`doctor --fix` must not touch {}",
+            path.display()
+        );
+    }
+    assert!(
+        ws.join("Cargo.toml").exists() && ws.join("Cargo.lock").exists(),
+        "`doctor --fix` must not unsurface either"
+    );
+}
+
+/// The named remedy clears what named it, taking each class by its own cleanup
+/// shape: a marked region is stripped out of a file the operator keeps, a file
+/// rwv wrote whole is removed, and the attestation goes with it.
+#[test]
+fn materialize_strips_what_the_finding_named() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "cargo-workspace");
+    disable(&ws, "gita");
+
+    let (ok, report) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{report}");
+    assert!(
+        report.contains("Cargo.lock") && report.contains("repos.csv"),
+        "the operation must name what it removed, for an operator who never ran \
+         doctor:\n{report}"
+    );
+
+    assert!(
+        !project_dir.join("Cargo.lock").exists(),
+        "a file rwv wrote whole is removed"
+    );
+    assert!(
+        !project_dir.join("gita/repos.csv").exists()
+            && !project_dir.join("gita/groups.csv").exists(),
+        "gita's CSVs are removed"
+    );
+    assert!(
+        !ws.join("Cargo.lock").exists() && !ws.join("Cargo.toml").exists(),
+        "the weave-root surfacing goes with the content it surfaced"
+    );
+
+    let manifest = read(&project_dir.join("Cargo.toml"));
+    assert!(
+        !manifest.contains("managed by rwv") && !manifest.contains("members"),
+        "rwv's region must be gone from the hybrid file:\n{manifest}"
+    );
+    assert!(
+        !read(&project_dir.join(".rwv-owned-digests")).contains("Cargo.lock"),
+        "an attestation of a file that no longer exists describes nothing"
+    );
+
+    let (_, after) = rwv(&["doctor"], &ws);
+    assert!(
+        !after.contains("is disabled"),
+        "the remedy must clear the finding that named it:\n{after}"
+    );
+}
+
+/// The over-reporting direction, and the reason the default answer is "I own
+/// nothing here".
+///
+/// `static-files` declares the operator's own committed file so the weave root
+/// surfaces it. Naming that file as an artifact of a disabled integration would
+/// be a finding whose remedy deletes the operator's content.
+#[test]
+fn a_disabled_integration_that_authored_nothing_names_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    disable(&ws, "static-files");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("static-files is disabled"),
+        "static-files points at operator content; it authors none:\n{report}"
+    );
+
+    let (ok, _) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed");
+    assert_eq!(
+        read(&ws.join("projects/app/notes.md")),
+        "operator content\n",
+        "the operator's own file must survive their disabling the integration \
+         that surfaced it"
+    );
+}
+
+/// The pen test: with no marker, rwv did not write the region, so the file and
+/// the lock beside it are not rwv's to name — the same rule `deactivate`
+/// already applies before stripping.
+#[test]
+fn an_unmarked_file_is_not_attributed_to_the_integration() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "cargo-workspace");
+
+    let held = "[workspace]\nmembers = [\"github/acme/lib\"]\nresolver = \"2\"\n";
+    std::fs::write(project_dir.join("Cargo.toml"), held).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("cargo-workspace is disabled"),
+        "an unmarked workspace is the operator's; rwv must not offer to delete \
+         it:\n{report}"
+    );
+
+    let (ok, _) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed");
+    assert_eq!(
+        read(&project_dir.join("Cargo.toml")),
+        held,
+        "a hand-authored workspace must survive"
+    );
+    assert!(
+        project_dir.join("Cargo.lock").exists(),
+        "the lock of a workspace rwv did not author is not rwv's to remove"
+    );
+}
+
+/// The control. Everything enabled is the state this scan must be silent in,
+/// and materialize must not strip a thing — without this, a scan that reported
+/// every artifact it found would pass every test above.
+#[test]
+fn nothing_is_reported_or_stripped_while_the_integrations_are_enabled() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("is disabled"),
+        "an enabled integration's content is exactly where it belongs:\n{report}"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !materialized.contains("[stripped]"),
+        "materialize must strip nothing while every integration is enabled:\n{materialized}"
+    );
+    for file in ["Cargo.toml", "Cargo.lock", "gita/repos.csv", "notes.md"] {
+        assert!(
+            project_dir.join(file).is_file(),
+            "{file} must survive a materialize with nothing disabled"
+        );
+    }
+}
+
+/// The agent surface, asserted where an agent reads it.
+///
+/// A consumer routing on `rwv doctor --json` sees a typed `kind` and a
+/// `safe_to_fix` that tells it not to wait for `--fix`. Both are the finding's
+/// whole machine-readable contract, and a text-only assertion would be green
+/// with the JSON path dropping either.
+#[test]
+fn the_finding_reaches_the_json_surface_marked_unfixable() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    disable(&ws, "gita");
+
+    let output = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv should run");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("`--json` must emit parseable JSON");
+
+    let found = parsed["issues"]
+        .as_array()
+        .expect("`issues` must be an array")
+        .iter()
+        .find(|issue| issue["kind"] == "disabled-integration-artifact")
+        .unwrap_or_else(|| panic!("the finding must arrive on --json:\n{parsed:#}"));
+
+    assert_eq!(found["integration"], "gita");
+    assert_eq!(
+        found["safe_to_fix"], false,
+        "an agent must be told this one is not waiting on --fix:\n{found:#}"
+    );
+    assert!(
+        found["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("rwv materialize")),
+        "the remedy must travel with the finding:\n{found:#}"
+    );
+}
+
+/// The pen test for the whole-file class, which needed a different answer from
+/// the region class rather than the same one.
+///
+/// A hybrid file proves rwv's authorship with a marker. A file rwv writes whole
+/// has no marker to carry — and presence at the declared path is not evidence,
+/// because keeping a hand-written `gita/repos.csv` is a reason to disable this
+/// integration in the first place. Attributing it by location would make the
+/// remedy delete exactly what the config change was protecting.
+///
+/// The weave root itself surfaces this file through a link that is rwv's own
+/// creation rather than the operator's, though: unlike the file, that link is
+/// removed, and materialize's own output must not name the file either, on
+/// the same "would propose deleting it" grounds as doctor's report.
+#[test]
+fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let mine = "path,name,flags\n/elsewhere/mine,mine,\n";
+    std::fs::write(project_dir.join("gita/repos.csv"), mine).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita/repos.csv"),
+        "a CSV rwv did not write must not be named as its artifact:\n{report}"
+    );
+
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface the pre-disable link"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !materialized.contains("gita/repos.csv"),
+        "the operator's file must not be named under this remedy either:\n{materialized}"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        mine,
+        "the operator's own file must survive the verb whose job is removal"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "rwv's own surfacing link must not survive stranded, even though the file it \
+         pointed at does"
+    );
+}
+
+/// The other half of the same predicate, so it is a discriminator rather than a
+/// blanket refusal: the CSV rwv actually authored is still named and still
+/// removed. Without this arm, an implementation that attributed nothing at all
+/// would pass the test above.
+///
+/// The control for the link-removal behavior too: here the file is rwv's, so
+/// both it and the link that surfaced it go, unlike the hand-authored case
+/// where only the link does.
+#[test]
+fn the_csv_rwv_authored_is_still_named_and_removed() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("gita/repos.csv"),
+        "content rwv wrote is content rwv owns:\n{report}"
+    );
+
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must surface the link before materialize runs"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !project_dir.join("gita/repos.csv").exists(),
+        "and it is removed"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "the link goes with the content it surfaced"
+    );
+}
+
+/// An rwv-authored CSV the operator then edited is theirs from that moment on.
+///
+/// The edit is what a marker's absence means one class over: rwv's content is
+/// no longer what is in the file. Reporting it would offer to delete an edit,
+/// and rwv cannot tell a deliberate edit from an accident — the same fork A2
+/// refuses at, reached from the other side.
+///
+/// Same link-removal obligation as the hand-authored case: the edit makes the
+/// file the operator's, but the link stays rwv's to clean up, and silently.
+#[test]
+fn an_edited_whole_file_stops_being_the_integrations() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let edited = format!(
+        "{}/tmp/extra,extra,\n",
+        read(&project_dir.join("gita/repos.csv"))
+    );
+    std::fs::write(project_dir.join("gita/repos.csv"), &edited).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita/repos.csv"),
+        "an edited file is no longer rwv's content:\n{report}"
+    );
+
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface the pre-disable link"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed");
+    assert!(
+        !materialized.contains("gita/repos.csv"),
+        "the edited file must not be named under this remedy either:\n{materialized}"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        edited,
+        "the edit must survive"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "rwv's own surfacing link must not survive stranded, even though the edit does"
+    );
+}
+
+/// The wider input the unconditional link removal exists for: not one
+/// hand-authored file among several, but every file the integration ever
+/// wrote — so `owned_paths_on_disk` returns nothing at all and this
+/// integration never appears in `disabled_integration_artifacts`'s output.
+/// The per-artifact loop above therefore never runs for it, and the
+/// unconditional link pass is the only thing that can still find its links.
+#[test]
+fn a_disabled_integration_with_nothing_left_on_disk_still_loses_its_links() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let mine_repos = "path,name,flags\n/elsewhere/mine,mine,\n";
+    let mine_groups = "group,repos\nmine,mine\n";
+    std::fs::write(project_dir.join("gita/repos.csv"), mine_repos).unwrap();
+    std::fs::write(project_dir.join("gita/groups.csv"), mine_groups).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita is disabled"),
+        "an integration with nothing left on disk holds no artifact to name:\n{report}"
+    );
+
+    let repos_link = ws.join("gita/repos.csv");
+    let groups_link = ws.join("gita/groups.csv");
+    assert!(
+        repos_link.symlink_metadata().is_ok() && groups_link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface both pre-disable links"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !materialized.contains("gita/repos.csv") && !materialized.contains("gita/groups.csv"),
+        "neither file may be named under this remedy either:\n{materialized}"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        mine_repos,
+        "the operator's repos.csv must survive byte-identical"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/groups.csv")),
+        mine_groups,
+        "the operator's groups.csv must survive byte-identical"
+    );
+    assert!(
+        repos_link.symlink_metadata().is_err() && groups_link.symlink_metadata().is_err(),
+        "both stranded links must be gone even though disabled_integration_artifacts \
+         never listed gita among what it found"
+    );
+}
+
+/// [`weave`], with cargo-workspace also writing a marked `rustc-wrapper` into
+/// `.cargo/config.toml` and the weave root surfacing it — a `.cargo/`
+/// directory surfacing creates.
+fn weave_with_cargo_config(root: &Path) -> PathBuf {
+    let ws = weave(root);
+    let project_dir = ws.join("projects/app");
+    let manifest = project_dir.join("rwv.toml");
+    let text = read(&manifest);
+    std::fs::write(
+        &manifest,
+        format!(
+            "{text}\n[integrations.cargo-workspace]\nenabled = true\nrustc-wrapper = \"cargo\"\n"
+        ),
+    )
+    .unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author .cargo/config.toml");
+
+    assert!(
+        read(&project_dir.join(".cargo/config.toml")).contains("rustc-wrapper"),
+        "fixture: the wrapper key should have been authored"
+    );
+    assert!(
+        ws.join(".cargo/config.toml")
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink()),
+        "fixture: the weave root should surface .cargo/config.toml"
+    );
+    ws
+}
+
+/// Disabling cargo-workspace takes its `.cargo/config.toml` content, the
+/// weave-root link onto it and the `.cargo/` directory that link emptied.
+/// Before, the strip removed the project's file and left the weave root a real
+/// `.cargo/` holding a dangling link, which doctor had never named.
+#[test]
+fn disabling_cargo_leaves_no_weave_root_cargo_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_cargo_config(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "cargo-workspace");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("config.toml (managed region)"),
+        "the finding must name the config file materialize will strip:\n{report}"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !project_dir.join(".cargo").exists(),
+        "the emptied config and its directory go from the project"
+    );
+    assert!(
+        ws.join(".cargo/config.toml").symlink_metadata().is_err(),
+        "the weave-root link must not survive dangling:\n{materialized}"
+    );
+    assert!(
+        ws.join(".cargo").symlink_metadata().is_err(),
+        "the weave-root `.cargo/` the link emptied must go too"
+    );
+}
+
+/// The other direction: what the operator keeps beside rwv's entries survives
+/// — their own key in the config file, and their own file in the weave-root
+/// `.cargo/`.
+#[test]
+fn disabling_cargo_keeps_what_the_operator_put_beside_its_config() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_cargo_config(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let config = project_dir.join(".cargo/config.toml");
+    std::fs::write(&config, format!("{}jobs = 4\n", read(&config))).unwrap();
+    std::fs::write(ws.join(".cargo/credentials.toml"), "operator\n").unwrap();
+    disable(&ws, "cargo-workspace");
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    let kept = read(&config);
+    assert!(
+        kept.contains("jobs = 4") && !kept.contains("rustc-wrapper"),
+        "rwv's key goes and the operator's stays:\n{kept}"
+    );
+    assert_eq!(
+        read(&ws.join(".cargo/credentials.toml")),
+        "operator\n",
+        "the operator's file in the weave-root `.cargo/` must survive"
+    );
+    assert!(
+        ws.join(".cargo/config.toml").symlink_metadata().is_err(),
+        "no enabled integration declares the link any more"
+    );
+}

@@ -1,0 +1,523 @@
+//! Doc claim (docs/reference/cli.md): each renamed override
+//! flag waives exactly the one precondition it is named for — never a
+//! neighbor.
+//!
+//! `workweave delete --force` used to gate two independent refusals (dirty
+//! worktree, unmerged commits) behind one name that only described the
+//! first. The rename split it into `--discard-uncommitted` and
+//! `--discard-unlanded`. A happy-path test per flag would have
+//! passed even under the old bug, since each scenario only ever constructed
+//! the one precondition its flag was meant to waive. The tests below
+//! construct BOTH preconditions at once and pass only one flag, so a flag
+//! that quietly waives its neighbor fails here.
+//!
+//! Coverage for the other renamed flags already exists elsewhere and is not
+//! repeated:
+//!   - `--replace-existing` (workweave create): refuses on a dirty/unmerged
+//!     existing workweave even when passed —
+//!     `workweave_idempotent_test.rs::workweave_recreate_with_replace_existing_destroys_and_recreates`.
+//!   - `--delete-shared-clone` (remove --delete): both directions —
+//!     `doc_claims_fetch_test.rs::remove_delete_does_not_check_other_projects`.
+//!   - the op-in-progress guard on `workweave delete`, which no flag here
+//!     waives — `workweave_topology_parent_test.rs::delete_waivers_do_not_bypass_op_mutex`.
+//!
+//! `--allow-non-empty-dir` (fetch) only had unit coverage of the underlying
+//! function; the tests here exercise it through the CLI. `push --overwrite
+//! <repo>` is the deliberate narrow one in the family: it replaces one repo's
+//! diverged push branch and never a branch some weave branch declares.
+
+use assert_cmd::Command;
+use std::path::Path;
+use std::process;
+
+use crate::common;
+
+fn rwv() -> Command {
+    common::rwv()
+}
+
+fn init_repo_with_commit(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    std::fs::write(path.join("README"), "init").unwrap();
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+}
+
+fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
+    let ws = tmp.join("ws");
+    let repo_path = ws.join("github/org/repo");
+    init_repo_with_commit(&repo_path);
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let manifest = format!(
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+branch = "main"
+role = "owned"
+"#,
+        repo = common::url_path(&repo_path)
+    );
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+
+    ws
+}
+
+fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::PathBuf {
+    let ws = make_workspace(tmp, project);
+    let project_dir = ws.join("projects").join(project);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
+    ws
+}
+
+fn head_sha(dir: &Path) -> String {
+    let output = common::git()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .expect("git rev-parse should run");
+    assert!(output.status.success(), "git rev-parse HEAD failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+// ============================================================================
+// fetch --allow-non-empty-dir
+// ============================================================================
+
+fn init_bare_repo(path: &Path) {
+    let status = common::git()
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(path)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git should be available");
+    assert!(status.success(), "git init --bare failed");
+}
+
+/// Push an empty `rwv.toml` manifest into a bare repo, via a temporary
+/// working clone.
+fn push_empty_manifest_to_bare(bare: &Path) {
+    let tmp = common::tempdir().expect("tempdir for manifest work clone");
+    let work = tmp.path().join("mwork");
+    common::git_in(
+        tmp.path(),
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
+    common::git_in(&work, &["add", "rwv.toml"]);
+    common::git_in(&work, &["commit", "-m", "add manifest"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+}
+
+/// `--allow-non-empty-dir` waives exactly the non-empty-non-workspace
+/// refusal: bootstrapping into a directory that already holds unrelated
+/// files refuses without it and succeeds with it, leaving the pre-existing
+/// content untouched.
+#[test]
+fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
+    let tmp = common::tempdir().unwrap();
+
+    let project_bare = tmp.path().join("proj.git");
+    init_bare_repo(&project_bare);
+    push_empty_manifest_to_bare(&project_bare);
+    let project_url = common::file_url(&project_bare);
+
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("unrelated.txt"), "pre-existing\n").unwrap();
+
+    // Without the waiver: refuses and names the flag.
+    let output = rwv()
+        .args(["clone", &project_url])
+        .current_dir(&workspace)
+        .output()
+        .expect("rwv fetch should run");
+    assert!(
+        !output.status.success(),
+        "fetch into a non-empty non-workspace dir must refuse without the waiver"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--allow-non-empty-dir"),
+        "refusal must name the waiver; got: {stderr}"
+    );
+    assert!(
+        !workspace.join("projects").exists(),
+        "refused fetch must not bootstrap anything"
+    );
+
+    // With the waiver: proceeds, and the pre-existing file survives.
+    rwv()
+        .args(["clone", &project_url, "--allow-non-empty-dir"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    assert!(
+        workspace.join("projects/proj").exists(),
+        "--allow-non-empty-dir should bootstrap the project"
+    );
+    assert!(
+        workspace.join("unrelated.txt").exists(),
+        "pre-existing file must survive the bootstrap"
+    );
+}
+
+// ============================================================================
+// workweave delete --discard-uncommitted / --discard-unlanded
+// ============================================================================
+
+/// A workweave holding BOTH an uncommitted edit and a commit on the
+/// ephemeral branch that is not merged anywhere. Every test in this section
+/// builds this exact dual-precondition state so passing only one discard
+/// flag can be checked against the precondition it does NOT name.
+fn make_workweave_with_dirty_and_unmerged_commit(
+    tmp: &Path,
+    project: &str,
+    name: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let ws = make_workspace_with_project_repo(tmp, project);
+    let weaveroot = tmp.join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "create", "--project", project, name])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join(format!("{project}--{name}"));
+    let weave_repo = ww_dir.join("github/org/repo");
+
+    // Commit work on the ephemeral branch — unmerged anywhere.
+    std::fs::write(weave_repo.join("feature.txt"), "committed work\n").unwrap();
+    common::git_in(&weave_repo, &["add", "feature.txt"]);
+    common::git_in(&weave_repo, &["commit", "-m", "ww: feature"]);
+
+    // On top, an uncommitted edit — dirty.
+    std::fs::write(weave_repo.join("scratch.txt"), "uncommitted edit\n").unwrap();
+
+    (ws, weaveroot, ww_dir)
+}
+
+/// `--discard-uncommitted` alone clears the dirty refusal and nothing more:
+/// the unlanded commit is not a refusal, so the workweave goes, the branch that
+/// holds the commit survives, and the verb ends with status 3 saying so.
+#[test]
+fn workweave_delete_discard_uncommitted_leaves_the_unlanded_branch() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _weaveroot, ww_dir) =
+        make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-a");
+    let weave_repo = ww_dir.join("github/org/repo");
+    let head_before = head_sha(&weave_repo);
+
+    let output = rwv()
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "both-a",
+            "--discard-uncommitted",
+        ])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv workweave delete should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
+    assert!(!ww_dir.exists(), "the workweave is removed: {stderr}");
+    assert!(
+        stderr.contains("left: github/org/repo web-app--both-a: unlanded"),
+        "the survivor is named with its reason; got: {stderr}"
+    );
+    common::assert_on_branch(&ws.join("github/org/repo"), "main");
+    assert_eq!(
+        common::git_in(
+            ws.join("github/org/repo"),
+            &["rev-parse", "web-app--both-a"]
+        ),
+        head_before,
+        "the branch still holds the commit"
+    );
+}
+
+/// `--discard-unlanded` alone must still refuse on the dirty
+/// worktree: it waives the diverged-history refusal, not the uncommitted one.
+#[test]
+fn workweave_delete_discard_unlanded_does_not_waive_uncommitted() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _weaveroot, ww_dir) =
+        make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-b");
+    let weave_repo = ww_dir.join("github/org/repo");
+    let head_before = head_sha(&weave_repo);
+
+    let output = rwv()
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "both-b",
+            "--discard-unlanded",
+        ])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv workweave delete should run");
+    assert!(
+        !output.status.success(),
+        "--discard-unlanded alone must not clear an uncommitted-changes refusal"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("edits dirty")
+            && stderr.contains("    rwv workweave delete both-b --discard-uncommitted\n"),
+        "refusal must still offer the uncommitted waiver as a choice; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("deletes the workweave with these uncommitted changes in it"),
+        "the waiver is a choice in the table, not a note line beside it; got: {stderr}"
+    );
+    assert!(
+        ww_dir.exists(),
+        "refused delete must leave the workweave intact"
+    );
+    assert_eq!(
+        head_sha(&weave_repo),
+        head_before,
+        "refused delete must not touch the worktree"
+    );
+    assert!(
+        weave_repo.join("scratch.txt").exists(),
+        "the dirty file the refusal is about must survive"
+    );
+}
+
+/// Both flags together clear the dirty refusal and lift the landed clause: the
+/// branch is deleted, and its tip is kept as a backup first.
+#[test]
+fn workweave_delete_both_discard_flags_clear_both_preconditions() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _weaveroot, ww_dir) =
+        make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-c");
+
+    let feature = common::git_in(ww_dir.join("github/org/repo"), &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "both-c",
+            "--discard-uncommitted",
+            "--discard-unlanded",
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(
+        !ww_dir.exists(),
+        "both waivers together must remove the workweave"
+    );
+    let primary_repo = ws.join("github/org/repo");
+    assert!(
+        common::git_in(&primary_repo, &["branch", "--list", "web-app--both-c"]).is_empty(),
+        "the unlanded branch is deleted"
+    );
+    let backups = common::git_in(
+        &primary_repo,
+        &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"],
+    );
+    assert!(
+        backups.lines().any(|tip| tip == feature),
+        "the branch's tip is kept as a backup first; backups: {backups}"
+    );
+}
+
+// ============================================================================
+// push --force: force-pushes; does not waive the from-workweave refusal
+// ============================================================================
+
+/// Initialize a bare repo seeded with one commit on `main`.
+fn init_bare_repo_with_commit(bare: &Path) {
+    let parent = bare.parent().expect("bare repo path needs a parent");
+    init_bare_repo(bare);
+    let seed = parent.join(format!(
+        "__seed_{}",
+        bare.file_stem().unwrap().to_string_lossy()
+    ));
+    common::git_in(
+        parent,
+        &["clone", &bare.to_string_lossy(), &seed.to_string_lossy()],
+    );
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
+    std::fs::write(seed.join("README"), "seed").unwrap();
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
+}
+
+fn bare_main_sha(bare: &Path) -> Option<String> {
+    let output = common::git()
+        .args(["rev-parse", "main"])
+        .current_dir(bare)
+        .output()
+        .expect("git should be available");
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).unwrap().trim().to_string())
+}
+
+/// Minimal single-repo push fixture: one manifest repo (owned) plus a
+/// project repo, both with bare remotes.
+struct PushFixture {
+    _tmp: tempfile::TempDir,
+    workspace: std::path::PathBuf,
+    manifest_local: std::path::PathBuf,
+    manifest_bare: std::path::PathBuf,
+    project_dir: std::path::PathBuf,
+}
+
+fn build_push_fixture() -> PushFixture {
+    let tmp = common::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(workspace.join("projects")).unwrap();
+
+    let manifest_bare = tmp.path().join("repo.git");
+    init_bare_repo_with_commit(&manifest_bare);
+    let manifest_local = workspace.join("local/org/repo");
+    std::fs::create_dir_all(manifest_local.parent().unwrap()).unwrap();
+    common::git_in(
+        workspace.parent().unwrap(),
+        &[
+            "clone",
+            "--origin",
+            "origin",
+            &manifest_bare.to_string_lossy(),
+            &manifest_local.to_string_lossy(),
+        ],
+    );
+    common::git_in(&manifest_local, &["config", "user.email", "test@test.com"]);
+    common::git_in(&manifest_local, &["config", "user.name", "Test"]);
+
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo_with_commit(&project_bare);
+    let project_dir = workspace.join("projects/alpha");
+    common::git_in(
+        workspace.parent().unwrap(),
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &project_dir.to_string_lossy(),
+        ],
+    );
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+
+    let bare_url = common::file_url(&manifest_bare);
+    let manifest_head = head_sha(&manifest_local);
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories.\"local/org/repo\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[("local/org/repo", &bare_url, &manifest_head)],
+    );
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::record_trunk(&project_dir);
+
+    std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();
+
+    PushFixture {
+        _tmp: tmp,
+        workspace,
+        manifest_local,
+        manifest_bare,
+        project_dir,
+    }
+}
+
+fn write_lock_at(fixture: &PushFixture, sha: &str) {
+    let bare_url = common::file_url(&fixture.manifest_bare);
+    common::fixture_lock(&fixture.project_dir, &[("local/org/repo", &bare_url, sha)]);
+    common::git_in(&fixture.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&fixture.project_dir, &["commit", "-m", "relock"]);
+}
+
+/// `push --overwrite <repo>` replaces a push branch only for a branch nothing
+/// declares: a diverged declared branch refuses, naming the flag's limit, and
+/// the remote keeps what it holds.
+#[test]
+fn push_overwrite_never_rewrites_a_declared_branch() {
+    let fixture = build_push_fixture();
+
+    // Advance and push normally: bare moves to commit B.
+    std::fs::write(fixture.manifest_local.join("b.txt"), "b").unwrap();
+    common::git_in(&fixture.manifest_local, &["add", "."]);
+    common::git_in(&fixture.manifest_local, &["commit", "-m", "b"]);
+    let sha_b = head_sha(&fixture.manifest_local);
+    write_lock_at(&fixture, &sha_b);
+    rwv()
+        .args(["push"])
+        .current_dir(&fixture.workspace)
+        .assert()
+        .success();
+    assert_eq!(bare_main_sha(&fixture.manifest_bare), Some(sha_b.clone()));
+
+    // Rewrite local history from the same parent: commit C diverges from B.
+    common::git_in(&fixture.manifest_local, &["reset", "--hard", "HEAD~1"]);
+    std::fs::write(fixture.manifest_local.join("c.txt"), "c").unwrap();
+    common::git_in(&fixture.manifest_local, &["add", "."]);
+    common::git_in(&fixture.manifest_local, &["commit", "-m", "c"]);
+    let sha_c = head_sha(&fixture.manifest_local);
+    write_lock_at(&fixture, &sha_c);
+
+    // A plain push refuses on the diverged push branch; bare stays at B.
+    rwv()
+        .args(["push"])
+        .current_dir(&fixture.workspace)
+        .assert()
+        .failure();
+    assert_eq!(
+        bare_main_sha(&fixture.manifest_bare),
+        Some(sha_b.clone()),
+        "a plain push must not move the diverged remote"
+    );
+
+    // `main` is the branch the project declares: `--overwrite` names the repo
+    // and still refuses, and the remote keeps B.
+    let output = rwv()
+        .args(["push", "--overwrite", "local/org/repo"])
+        .current_dir(&fixture.workspace)
+        .output()
+        .expect("rwv push should run");
+    assert!(
+        !output.status.success(),
+        "a declared branch is not rewritten"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("protected declared"),
+        "the refusal names why; got: {stderr}"
+    );
+    assert_eq!(bare_main_sha(&fixture.manifest_bare), Some(sha_b));
+}

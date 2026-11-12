@@ -1,0 +1,1203 @@
+//! E2E coverage for rwv topology + parent exposure.
+//!
+//! Exercises child adoption on retire/delete and the parent-exposure surface:
+//!   1. retire/delete ADOPT living children (0/1/N children; grandparent vs
+//!      primary fallback) and print the loud per-child line.
+//!   2. dangling-parent `rwv doctor --fix` re-points to primary.
+//!   3. a bare `rwv land` on a dangling parent emits friendly
+//!      doctor-remediation text (no raw `failed to canonicalize … (os error 2)`).
+//!   4. `rwv status --json` `.parent` carries the recorded path + parent tip,
+//!      correct for a STACKED parent.
+//!   5. `rwv log --against` computes the commits beyond a weave branch's pins,
+//!      correct when that branch ADVANCED after the fork (no phantom
+//!      reversals), across a stacked parent, with a `--json` shape.
+
+use assert_cmd::Command as AssertCommand;
+use std::path::{Path, PathBuf};
+
+use crate::common;
+
+use repoweave::diagnosis::State;
+
+// ---------------------------------------------------------------------------
+// Git + rwv helpers
+// ---------------------------------------------------------------------------
+
+fn rwv() -> AssertCommand {
+    common::rwv()
+}
+
+const MANIFEST_REPO_PATH: &str = "github/org/lib";
+const PROJECT: &str = "app";
+
+/// Init a git repo at `path` with one commit on `main`. Returns HEAD SHA.
+fn init_repo(path: &Path) -> String {
+    std::fs::create_dir_all(path).unwrap();
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    std::fs::write(path.join("README.md"), "init\n").unwrap();
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
+}
+
+/// Stage and commit `filename` (relative to `repo`). Returns new HEAD SHA.
+fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
+    let path = repo.join(filename);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&path, content).unwrap();
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
+}
+
+struct MainWorkspace {
+    root: PathBuf,
+    manifest_repo: PathBuf,
+    weaveroot: PathBuf,
+}
+
+/// Build the primary workspace with a manifest repo + project repo, and a
+/// dedicated `.workweaves/` dir for workweaves.
+fn make_main_workspace(tmp: &Path) -> MainWorkspace {
+    let ws = tmp.join("ws");
+    let manifest_repo = ws.join(MANIFEST_REPO_PATH);
+    let initial_sha = init_repo(&manifest_repo);
+
+    let project_dir = ws.join("projects").join(PROJECT);
+    init_repo(&project_dir);
+    common::set_up_lock_driver(&project_dir);
+
+    let manifest = format!(
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
+        path = MANIFEST_REPO_PATH,
+        repo = common::url_path(&manifest_repo)
+    );
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+
+    let repo_url = common::file_url(&manifest_repo);
+    common::fixture_lock(
+        &project_dir,
+        &[(MANIFEST_REPO_PATH, &repo_url, &initial_sha)],
+    );
+
+    common::git_in(
+        &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    );
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_dir);
+
+    std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    // Put the workweave parent OUTSIDE the workspace root (sibling), which is
+    // where rwv puts `.workweaves/` by default (parent of ws root).
+    let weaveroot = tmp.join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    MainWorkspace {
+        root: ws,
+        manifest_repo,
+        weaveroot,
+    }
+}
+
+struct Workweave {
+    name: String,
+    root: PathBuf,
+    manifest_repo: PathBuf,
+}
+
+/// Create a workweave forked from `from` (a workspace root path), or from
+/// primary when `from` is None.
+fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Workweave {
+    let mut cmd = rwv();
+    cmd.args(["workweave", "create", "--project", PROJECT, name]);
+    cmd.current_dir(from.unwrap_or(&main.root))
+        .assert()
+        .success();
+
+    let root = main.weaveroot.join(format!("{PROJECT}--{name}"));
+    Workweave {
+        name: name.to_string(),
+        manifest_repo: root.join(MANIFEST_REPO_PATH),
+        root,
+    }
+}
+
+/// Point `branch`'s record at `target`: the delete of the workweave a branch
+/// lands into refuses until each dependent is rebound.
+fn rebind(main: &MainWorkspace, branch: &str, target: &str) {
+    rwv()
+        .args([
+            "branch",
+            "set-mode",
+            "--project",
+            PROJECT,
+            branch,
+            "feature",
+            "--target",
+            target,
+        ])
+        .current_dir(&main.root)
+        .assert()
+        .success();
+}
+
+/// Read the recorded parent from a workweave's `.rwv-workweave` marker.
+fn recorded_parent(ww_root: &Path) -> String {
+    let content = std::fs::read_to_string(ww_root.join(".rwv-workweave")).unwrap();
+    let marker: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("marker at {} is not JSON: {e}", ww_root.display()));
+    marker["parent"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no parent field in marker at {}", ww_root.display()))
+        .to_string()
+}
+
+fn canon(p: &Path) -> String {
+    repoweave::path_spelling::resolve(p)
+        .unwrap_or_else(|_| p.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Run `rwv lock --commit` from a workspace root.
+fn rwv_lock_commit(workspace_root: &Path) {
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(workspace_root)
+        .assert()
+        .success();
+}
+
+// ===========================================================================
+// 1. Adoption on delete — 0 / 1 / N children
+// ===========================================================================
+
+/// Deleting a childless workweave prints no adoption line and succeeds.
+#[test]
+fn delete_with_zero_children_adopts_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "solo", None);
+    // Ensure clean (no unmerged commits) so delete without a waiver works.
+    let out = rwv()
+        .args(["workweave", "delete", "--project", PROJECT, &ww.name])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "delete failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("adopted child workweave"),
+        "no adoption line expected for a childless delete; got:\n{stderr}"
+    );
+    assert!(!ww.root.exists(), "workweave dir should be gone");
+}
+
+/// Cross-verb mutex: `workweave delete`
+/// refuses while an op involves the target workweave, naming the in-flight op.
+/// The workweave must NOT be destroyed — `rwv abort` (not delete) clears a
+/// stale record.
+#[test]
+fn delete_refuses_while_workweave_is_mid_op() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "busy", None);
+
+    // Plant a v2 owner record in the workweave root (simulate an in-flight op).
+    let op_json = format!(
+        "{{\"id\": \"planted-delete-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+        src = common::json_escaped(&ww.root),
+        tgt = common::json_escaped(&main.root),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
+
+    let out = rwv()
+        .args(["workweave", "delete", "--project", PROJECT, &ww.name])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "delete must refuse while the workweave is mid-op"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("land in progress") && stderr.contains("in progress (started"),
+        "refusal must name the in-flight op with its age; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--continue") && stderr.contains("rwv abort"),
+        "refusal must offer `--continue` and `rwv abort`; got:\n{stderr}"
+    );
+    assert!(
+        ww.root.exists(),
+        "the mid-op workweave must NOT be destroyed by the refused delete"
+    );
+}
+
+/// The discard waivers do NOT bypass the op mutex on delete: the hazard is to
+/// the op's recovery, and the waivers are for dirty/unmerged work, not stale
+/// op-state.
+#[test]
+fn delete_waivers_do_not_bypass_op_mutex() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "busyforce", None);
+
+    let op_json = format!(
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+        src = common::json_escaped(&main.root),
+        tgt = common::json_escaped(&ww.root),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
+
+    let out = rwv()
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            PROJECT,
+            &ww.name,
+            "--discard-uncommitted",
+            "--discard-unlanded",
+        ])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "delete must still refuse while the workweave is mid-op, waivers or not"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("land in progress"),
+        "refusal must name the in-flight op even under the waivers; got:\n{stderr}"
+    );
+    assert!(
+        ww.root.exists(),
+        "workweave must survive the refused delete"
+    );
+}
+
+/// Deleting a parent with ONE child re-points the child to the parent's own
+/// parent (here: primary, since the parent was forked from primary), and
+/// prints the loud line.
+#[test]
+fn delete_with_one_child_adopts_to_grandparent_primary() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    // wwa forked from primary; wwb forked from wwa (stacked).
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    // Sanity: wwb's recorded parent is wwa.
+    assert_eq!(recorded_parent(&wwb.root), canon(&wwa.root));
+
+    // Delete wwa. wwb should be adopted by wwa's parent = primary.
+    rebind(&main, &format!("{PROJECT}--wwb"), "main");
+    let out = rwv()
+        .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "delete wwa failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwb: parent now"
+        )),
+        "expected loud adoption line for wwb; got:\n{stderr}"
+    );
+
+    // wwb's marker now records primary as parent.
+    assert_eq!(
+        recorded_parent(&wwb.root),
+        canon(&main.root),
+        "wwb should be adopted by primary (wwa's own parent)"
+    );
+    assert!(!wwa.root.exists(), "wwa should be gone");
+}
+
+/// Deleting a MIDDLE workweave in a 3-deep stack re-points the grandchild to
+/// the grandparent (a workweave, NOT primary) — the grandparent-fallback path.
+#[test]
+fn delete_middle_adopts_to_grandparent_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    // wwa (from primary) → wwb (from wwa) → wwc (from wwb).
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+    let wwc = create_workweave(&main, "wwc", Some(&wwb.root));
+
+    assert_eq!(recorded_parent(&wwc.root), canon(&wwb.root));
+
+    // Delete wwb (middle). wwc should be adopted by wwb's parent = wwa (a
+    // workweave, NOT primary — the grandparent path, not the primary fallback).
+    rebind(
+        &main,
+        &format!("{PROJECT}--wwc"),
+        &format!("{PROJECT}--wwa"),
+    );
+    let out = rwv()
+        .args(["workweave", "delete", "--project", PROJECT, &wwb.name])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "delete wwb failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwc: parent now"
+        )),
+        "expected adoption line for wwc; got:\n{stderr}"
+    );
+
+    assert_eq!(
+        recorded_parent(&wwc.root),
+        canon(&wwa.root),
+        "wwc should be adopted by wwa (grandparent workweave), not primary"
+    );
+}
+
+/// A delete killed while it re-points a child, after one of the child's two
+/// records of its parent has changed and before the other has, leaves the
+/// child adopted by the next verb run there, never restored to the parent the
+/// delete was removing.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_delete_killed_mid_adoption_leaves_the_child_adopted() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+    let wwc = create_workweave(&main, "wwc", Some(&wwb.root));
+    rebind(
+        &main,
+        &format!("{PROJECT}--wwc"),
+        &format!("{PROJECT}--wwa"),
+    );
+
+    let mut delete = common::rwv_std();
+    delete
+        .args(["workweave", "delete", "--project", PROJECT, &wwb.name])
+        .current_dir(&main.root);
+    let held = common::pause::Paused::spawn(delete, "reparent", &tmp.path().join("pause"))
+        .expect("the delete is held between the two writes of the adoption");
+    drop(held);
+
+    let out = rwv()
+        .args(["status"])
+        .current_dir(&wwc.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "status in the child failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        recorded_parent(&wwc.root),
+        canon(&wwa.root),
+        "the child's marker must carry the adoption forward, not restore the retiree; status said:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Deleting a parent with N children adopts every one of them and prints a
+/// line per child.
+#[test]
+fn delete_with_n_children_adopts_all() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let c1 = create_workweave(&main, "child1", Some(&wwa.root));
+    let c2 = create_workweave(&main, "child2", Some(&wwa.root));
+    let c3 = create_workweave(&main, "child3", Some(&wwa.root));
+
+    for child in ["child1", "child2", "child3"] {
+        rebind(&main, &format!("{PROJECT}--{child}"), "main");
+    }
+    let out = rwv()
+        .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "delete wwa failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for c in ["child1", "child2", "child3"] {
+        assert!(
+            stderr.contains(&format!(
+                "adopted child workweave {PROJECT}--{c}: parent now"
+            )),
+            "expected adoption line for {c}; got:\n{stderr}"
+        );
+    }
+    for c in [&c1, &c2, &c3] {
+        assert_eq!(
+            recorded_parent(&c.root),
+            canon(&main.root),
+            "{} should be adopted by primary",
+            c.name
+        );
+    }
+}
+
+/// Retire (`land --retire`) adopts children the same way delete does: the
+/// shared child-enumeration + adopt step.
+#[test]
+fn retire_adopts_children() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    // wwa from primary; wwb from wwa. wwa makes no unique commits, so a bare
+    // land --retire lands nothing and cleanly retires.
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    // Retire wwa to primary (bare land reads parent = primary).
+    rebind(&main, &format!("{PROJECT}--wwb"), "main");
+    let out = rwv()
+        .args(["land", "--retire"])
+        .current_dir(&wwa.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "land --retire failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwb: parent now"
+        )),
+        "retire should adopt wwb; got:\n{stderr}"
+    );
+    assert_eq!(
+        recorded_parent(&wwb.root),
+        canon(&main.root),
+        "wwb should be adopted by primary after wwa retire"
+    );
+    assert!(!wwa.root.exists(), "wwa retired");
+}
+
+/// A workweave forked from one workspace and landed into another it names
+/// explicitly. `a` is forked from `p1`, so neither its recorded parent nor the
+/// primary holds what it lands in `p2`; the retire that follows the landing
+/// must count `p2` as holding it.
+fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweave) {
+    let p1 = create_workweave(main, "p1", None);
+    let p2 = create_workweave(main, "p2", None);
+    let a = create_workweave(main, "a", Some(&p1.root));
+
+    commit_file(&a.manifest_repo, "a.txt", "from a\n", "a: add a.txt");
+    rwv_lock_commit(&a.root);
+    rwv()
+        .args(["land", "--strategy=ff", "--target", "app--p2"])
+        .current_dir(&a.root)
+        .assert()
+        .success();
+    (a, p2)
+}
+
+fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
+    let branch = target
+        .root
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    rwv()
+        .args(["land", "--retire", "--target", &branch])
+        .current_dir(&a.root)
+        .output()
+        .unwrap()
+}
+
+/// The deletion rule judges against the branch the record lands into, `p1`'s,
+/// so work landed in `p2` for one run is not seen as landed: the workweave is
+/// retired, its branches survive with their commits, and the exit status says
+/// so.
+#[test]
+fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let (a, p2) = fork_and_land_in_a_named_target(&main);
+
+    let out = retire_into(&a, &p2);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
+    assert!(!a.root.exists(), "a retired");
+    assert!(
+        stderr.contains(&format!("{PROJECT}--a: unlanded"))
+            && stderr.contains(&format!(
+                "{PROJECT}--p1's corresponding branch does not reach"
+            )),
+        "{stderr}"
+    );
+}
+
+/// Drop the index entry the primary keeps for `ww`, leaving its marker and
+/// its project checkout as they are.
+fn unlist(main: &MainWorkspace, ww: &Workweave) {
+    let project = repoweave::manifest::ProjectName::new(PROJECT).unwrap();
+    let index = repoweave::workweave_index::read(&main.root, &project)
+        .unwrap()
+        .expect("the primary keeps an index");
+    let (name, _) = index
+        .entry_at(&ww.root)
+        .unwrap_or_else(|| panic!("{} is listed", ww.root.display()));
+    repoweave::workweave_index::forget_workweave(&main.root, &project, name).unwrap();
+}
+
+fn listed(main: &MainWorkspace, ww: &Workweave) -> bool {
+    let project = repoweave::manifest::ProjectName::new(PROJECT).unwrap();
+    repoweave::workweave_index::read(&main.root, &project)
+        .unwrap()
+        .is_some_and(|index| index.entry_at(&ww.root).is_some())
+}
+
+/// A parked retire resumed with `--continue` is still a retire: records that
+/// came to disagree while it was parked are refused, not repaired and then
+/// deleted.
+#[test]
+fn continuing_a_parked_retire_refuses_records_that_disagree() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "parked", None);
+    let op_json = format!(
+        "{{\"id\": \"planted-retire-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 3, \"release\": \"0.0.0\", \"take_in\": null}}",
+        src = common::json_escaped(&ww.root),
+        tgt = common::json_escaped(&main.root),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
+    unlist(&main, &ww);
+
+    let out = rwv()
+        .args(["land", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::StaleRegistryEntry);
+    assert!(
+        !listed(&main, &ww),
+        "a resumed retire lists nothing again; it said:\n{stderr}"
+    );
+    assert!(ww.root.exists());
+}
+
+/// Records that come to disagree while a retire is landing stop the retire
+/// before the workweave is deleted.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_retire_whose_records_come_to_disagree_mid_op_deletes_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "landing", None);
+    commit_file(&ww.manifest_repo, "w.txt", "w\n", "w: add w.txt");
+    rwv_lock_commit(&ww.root);
+
+    let mut retire = common::rwv_std();
+    retire
+        .args(["land", "--retire", "--strategy=ff"])
+        .current_dir(&ww.root);
+    let held = common::pause::Paused::spawn(retire, "advance-target", &tmp.path().join("pause"))
+        .unwrap_or_else(|e| panic!("{e}"));
+    unlist(&main, &ww);
+    let out = held.release();
+
+    common::cli::refused(&out, repoweave::refusal::RefusalKind::StaleRegistryEntry);
+    assert!(ww.root.exists(), "the retire deleted nothing");
+}
+
+/// A checkout the manifest does not name that is its own store, holding
+/// commits no remote has, cannot be retired over: nothing a backup written
+/// there could keep would survive the directory.
+#[test]
+fn retire_refuses_a_stranded_standalone_checkout() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let (a, p2) = fork_and_land_in_a_named_target(&main);
+    init_repo(&a.root.join("github/org/extra"));
+
+    let out = retire_into(&a, &p2);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, vec!["standalone-in-workweave"], "{stderr}");
+    assert!(stderr.contains("github/org/extra"), "{stderr}");
+    assert!(a.root.exists(), "a refused retire leaves the workweave");
+}
+
+// ===========================================================================
+// 2. dangling-parent doctor --fix
+// ===========================================================================
+
+/// A workweave whose parent dir was removed out-of-band is a dangling-parent;
+/// `rwv doctor --fix` re-points the marker to primary.
+#[test]
+fn doctor_fix_repoints_dangling_parent_to_primary() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    // Simulate an out-of-band parent loss: blow away wwa's directory WITHOUT
+    // running the adopting delete. wwb is now dangling. Capture wwa's canonical
+    // path BEFORE removal: the marker stored the canonicalized form at create
+    // time, but `canon()` on a since-deleted path falls back to the raw form,
+    // which differs on macOS (TMPDIR `/var/...` symlinks to `/private/var/...`).
+    let wwa_canonical = canon(&wwa.root);
+    std::fs::remove_dir_all(&wwa.root).unwrap();
+    assert_eq!(recorded_parent(&wwb.root), wwa_canonical);
+
+    // doctor (no --fix) reports the dangling parent.
+    let report = rwv()
+        .args(["doctor"])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    let report_out = String::from_utf8_lossy(&report.stdout);
+    assert!(
+        report_out.contains("dangling-parent") || report_out.contains("does not exist"),
+        "doctor should report dangling-parent; got:\n{report_out}"
+    );
+
+    // doctor --fix re-points wwb to primary and reports [fixed].
+    let fixed = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    let fixed_out = String::from_utf8_lossy(&fixed.stdout);
+    assert!(
+        fixed_out.contains("re-pointed dangling parent"),
+        "doctor --fix should report re-pointing; got:\n{fixed_out}"
+    );
+    assert_eq!(
+        recorded_parent(&wwb.root),
+        canon(&main.root),
+        "wwb's parent should now be primary after --fix"
+    );
+
+    // A follow-up doctor is clean of the dangling-parent violation.
+    let after = rwv()
+        .args(["doctor"])
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    let after_out = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        !after_out.contains("dangling-parent"),
+        "dangling-parent should be gone after --fix; got:\n{after_out}"
+    );
+}
+
+// ===========================================================================
+// 3. Friendly error replaces raw canonicalize on bare land
+// ===========================================================================
+
+/// A bare `rwv land` from a workweave whose parent vanished must emit
+/// friendly doctor-remediation text — NOT the raw `failed to canonicalize …
+/// (os error 2)`.
+#[test]
+fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    // Remove wwa out-of-band; wwb's target is now checked out nowhere.
+    std::fs::remove_dir_all(&wwa.root).unwrap();
+
+    let out = common::cli::run(&["land"], &wwb.root);
+    let stderr = common::cli::refused(&out, State::TargetNotCheckedOut);
+    assert!(
+        !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
+        "should NOT surface the raw canonicalize IO error; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "rwv workweave create <ww> --branch {PROJECT}--wwa"
+        )),
+        "{stderr}"
+    );
+}
+
+// ===========================================================================
+// 4. status --json .parent — correct for a STACKED parent
+// ===========================================================================
+
+/// `rwv status --json` `.parent` records the marker path (a STACKED parent —
+/// a workweave, not primary) and a resolvable per-repo parent tip.
+#[test]
+fn status_json_parent_correct_for_stacked_parent() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    let out = rwv()
+        .args(["status", "--json"])
+        .current_dir(&wwb.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "status --json failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let repos = v["repos"].as_array().expect("repos array");
+    let lib = repos
+        .iter()
+        .find(|r| r["path"] == MANIFEST_REPO_PATH)
+        .expect("lib repo entry");
+
+    let parent = &lib["parent"];
+    assert!(!parent.is_null(), "parent should be present in a workweave");
+
+    // The recorded path is the STACKED parent (wwa), NOT primary.
+    let parent_path = parent["path"].as_str().unwrap();
+    assert_eq!(
+        canon(Path::new(parent_path)),
+        canon(&wwa.root),
+        "parent path should be the stacked parent wwa, not primary or a reconstructed branch"
+    );
+
+    // The parent tip resolves to wwa's lib HEAD.
+    let expected_tip = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        parent["tip"].as_str().unwrap(),
+        expected_tip,
+        "parent tip should be wwa's lib HEAD"
+    );
+}
+
+// ===========================================================================
+// 5. log --against — target advanced after fork (no phantom reversals)
+// ===========================================================================
+
+/// `rwv log --against <W>` lists only what the workweave holds beyond `<W>`'s
+/// pins, and stays correct when `<W>` ADVANCED after the fork. `--diff` is
+/// anchored at the merge-base of the pin and HEAD, so an advanced pin's other
+/// changes never appear as reversals.
+#[test]
+fn log_against_and_diff_correct_when_the_target_advanced() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    // Fork wwb from a first-level workweave wwa (STACKED parent).
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+    let target = format!("{PROJECT}--wwa");
+
+    // wwb makes a unique commit.
+    commit_file(
+        &wwb.manifest_repo,
+        "wwb.txt",
+        "wwb work\n",
+        "wwb: unique commit",
+    );
+
+    // The TARGET (wwa) ADVANCES after the fork with an unrelated commit, and
+    // its lock records it.
+    commit_file(
+        &wwa.manifest_repo,
+        "wwa_advance.txt",
+        "wwa later\n",
+        "wwa: advance after fork",
+    );
+    rwv_lock_commit(&wwa.root);
+
+    // From wwb: the listing is wwb's commits only. wwa's post-fork advance is
+    // the pin, not something wwb holds, and it does not hide wwb's commit.
+    let out = rwv()
+        .args(["log", "--against", &target, "--json"])
+        .current_dir(&wwb.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["diff"], false);
+    assert_eq!(v["against"], target.as_str());
+    let repos = v["repos"].as_array().unwrap();
+    let lib = repos
+        .iter()
+        .find(|r| r["path"] == MANIFEST_REPO_PATH)
+        .expect("lib repo");
+    let wwa_tip = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        lib["pin"].as_str().unwrap(),
+        wwa_tip,
+        "the pin is the commit wwa's lock records for lib"
+    );
+    let subjects: Vec<&str> = lib["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["subject"].as_str().unwrap())
+        .collect();
+    assert_eq!(subjects, ["wwb: unique commit"]);
+
+    // `--diff`: the base is the common ancestor of the pin and HEAD, NOT the
+    // pin. So the diff shows ONLY wwb's change and never a phantom reversal of
+    // wwa_advance.txt (which wwb's HEAD doesn't have).
+    let dout = rwv()
+        .args(["log", "--against", &target, "--diff", "--json"])
+        .current_dir(&wwb.root)
+        .output()
+        .unwrap();
+    assert!(
+        dout.status.success(),
+        "log --against --diff failed:\n{}",
+        String::from_utf8_lossy(&dout.stderr)
+    );
+    let dv: serde_json::Value = serde_json::from_slice(&dout.stdout).unwrap();
+    assert_eq!(dv["diff"], true);
+    let dlib = dv["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == MANIFEST_REPO_PATH)
+        .expect("lib repo in diff");
+    let diff_text = dlib["diff"].as_str().unwrap_or("");
+    assert!(
+        diff_text.contains("wwb.txt"),
+        "diff should include wwb's change; got:\n{diff_text}"
+    );
+    assert!(
+        !diff_text.contains("wwa_advance.txt"),
+        "diff must not show a phantom reversal of the target's post-fork commit; got:\n{diff_text}"
+    );
+
+    // diff_base must be the merge-base, i.e. the lib commit both forked from.
+    let diff_base = dlib["diff_base"].as_str().unwrap();
+    let fork_point = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        diff_base, fork_point,
+        "diff base should be the merge-base (fork point), not the advanced pin"
+    );
+}
+
+/// `rwv log --against` text output lists the commits and names the branch.
+#[test]
+fn log_against_text_output() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "feat", None);
+    commit_file(&ww.manifest_repo, "f.txt", "x\n", "feat: my change");
+
+    let out = rwv()
+        .args(["log", "--against", "main"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("feat: my change"),
+        "log text should list the commit; got:\n{stdout}"
+    );
+    assert!(
+        stdout.starts_with("log against main\n"),
+        "log text should name the branch it reads; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// 6. log --against — project repo included
+// ===========================================================================
+
+/// `rwv log --against --json` includes a `(project)` record whose commits
+/// reflect real per-workweave project-repo work (e.g. a doc or lock commit).
+#[test]
+fn log_against_json_includes_project_repo_commits() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "feat", None);
+    // Commit something in the workweave's project repo.
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(&ww_project, "notes.md", "work notes\n", "docs: add notes");
+
+    let out = rwv()
+        .args(["log", "--against", "main", "--json"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo is a record of `repos`");
+    let commits = pr["commits"].as_array().unwrap();
+    let subjects: Vec<&str> = commits
+        .iter()
+        .map(|c| c["subject"].as_str().unwrap())
+        .collect();
+    assert!(
+        subjects.iter().any(|s| s.contains("docs: add notes")),
+        "project repo commit must be listed; got: {subjects:?}"
+    );
+}
+
+/// A member whose checkout is gone from the workweave is reported as missing,
+/// with where its repair is named, not as a failure to spawn git.
+#[test]
+fn log_names_a_missing_checkout() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "feat", None);
+    std::fs::remove_dir_all(&ww.manifest_repo).unwrap();
+
+    let out = rwv()
+        .args(["log", "--against", "main", "--json"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let note = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == MANIFEST_REPO_PATH)
+        .expect("lib repo")["note"]
+        .as_str()
+        .expect("a missing checkout carries a note")
+        .to_owned();
+    assert!(note.contains("checkout missing"), "got: {note}");
+    assert!(note.contains("rwv doctor"), "got: {note}");
+    assert!(!note.contains("spawn"), "got: {note}");
+}
+
+/// `rwv log --against` text output includes an `=== (project) ===` section.
+#[test]
+fn log_against_text_includes_project_repo_section() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "feat2", None);
+    // Commit something in the workweave's project repo.
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(
+        &ww_project,
+        "notes.md",
+        "work notes\n",
+        "docs: project notes",
+    );
+
+    let out = rwv()
+        .args(["log", "--against", "main"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("=== (project) ==="),
+        "text output must include a (project) section; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("docs: project notes"),
+        "text output must list the project repo commit; got:\n{stdout}"
+    );
+}
+
+/// The `(project)` record has empty `commits` when the project repo holds
+/// nothing beyond the branch, and the text section says so.
+#[test]
+fn log_against_project_repo_with_nothing_beyond() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "clean", None);
+
+    let out = rwv()
+        .args(["log", "--against", "main", "--json"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo is always a record");
+    let commits = pr["commits"].as_array().unwrap();
+    assert!(
+        commits.is_empty(),
+        "project repo commits must be empty when nothing lies beyond the branch; got: {commits:?}"
+    );
+
+    let text = rwv()
+        .args(["log", "--against", "main"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    let project_section_pos = stdout
+        .find("=== (project) ===")
+        .expect("(project) section must appear in text output");
+    assert!(
+        stdout[project_section_pos..].contains("(nothing beyond main)"),
+        "project section must say nothing lies beyond main when clean; got:\n{stdout}"
+    );
+}
+
+/// `rwv log --against --diff --json` includes a `(project)` record with diff
+/// content when the project repo has work beyond the branch.
+#[test]
+fn log_against_diff_json_includes_project_repo() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "difftest", None);
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(
+        &ww_project,
+        "feature.md",
+        "feature description\n",
+        "docs: feature",
+    );
+
+    let out = rwv()
+        .args(["log", "--against", "main", "--diff", "--json"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "log --against --diff failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo must be present in diff output");
+    let diff_text = pr["diff"].as_str().unwrap_or("");
+    assert!(
+        diff_text.contains("feature.md") || diff_text.contains("feature description"),
+        "project_repo diff must include the change; got:\n{diff_text}"
+    );
+}
+
+// ===========================================================================
+// 6. sync / land use the recorded parent, not primary — stacked case
+// ===========================================================================
+
+/// Bare `rwv land` (no target) from a workweave forked from ANOTHER
+/// workweave lands upward onto that STACKED parent, not primary. This is
+/// the case that distinguishes the marker's `parent` field from `primary` —
+/// a resolver that fell back to primary would pass the primary-forked
+/// equivalent of this test while landing the work in the wrong place here.
+#[test]
+fn bare_sync_to_follows_recorded_stacked_parent() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    let wwb_sha = commit_file(
+        &wwb.manifest_repo,
+        "wwb.txt",
+        "from wwb\n",
+        "wwb: add wwb.txt",
+    );
+    rwv_lock_commit(&wwb.root);
+
+    rwv()
+        .args(["land", "--strategy=ff"])
+        .current_dir(&wwb.root)
+        .assert()
+        .success();
+
+    let wwa_lib_head = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        wwa_lib_head, wwb_sha,
+        "bare land must land on the recorded parent wwa, not primary"
+    );
+    let primary_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        primary_lib_head, wwb_sha,
+        "primary must not advance — bare land targets only the immediate recorded parent"
+    );
+}

@@ -1,0 +1,183 @@
+//! A reader that closes rwv's stdout has stopped reading, which is its choice:
+//! `rwv status | head -1` ends quietly, and a verb that changes the workspace
+//! finishes its work rather than stopping because nobody reads what it says.
+//!
+//! Each case hands the verb a pipe whose read end is already closed, so every
+//! write fails with a broken pipe whatever size the output is. That is stricter
+//! than closing after one line, which is only certain when the output outgrows
+//! the pipe buffer; `explain_test.rs` has that one for the largest page.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+use crate::common;
+
+fn closed_stdout(mut cmd: Command) -> Output {
+    let (reader, writer) = std::io::pipe().expect("a pipe");
+    drop(reader);
+    cmd.stdout(writer)
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    cmd.output().expect("rwv runs")
+}
+
+fn assert_quiet(verb: &str, out: &Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("panicked") && !stderr.contains("Broken pipe"),
+        "`rwv {verb}` reported a closed stdout:\n{stderr}"
+    );
+    assert!(
+        out.status.success(),
+        "`rwv {verb}`: {:?}\n{stderr}",
+        out.status
+    );
+}
+
+struct Weave {
+    _tmp: tempfile::TempDir,
+    ws: PathBuf,
+}
+
+impl Weave {
+    /// One project with two members, whose checkouts are present unless `missing`.
+    fn new(missing: bool) -> Self {
+        let tmp = common::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        let mut manifest = String::new();
+        for name in ["app", "lib"] {
+            let origin = tmp.path().join("origin").join(name);
+            std::fs::create_dir_all(&origin).unwrap();
+            common::git_in(&origin, &["init", "-q", "--initial-branch=main"]);
+            common::git_in(&origin, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            if !missing {
+                let member = ws.join("github/org").join(name);
+                std::fs::create_dir_all(&member).unwrap();
+                common::git_in(&member, &["init", "-q", "--initial-branch=main"]);
+                common::git_in(&member, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            }
+            manifest.push_str(&format!(
+                "[repositories.\"github/org/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n\n",
+                common::file_url(&origin)
+            ));
+        }
+        let project = ws.join("projects/demo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("rwv.toml"), manifest).unwrap();
+        std::fs::write(ws.join(".rwv-active"), "demo\n").unwrap();
+        Self { _tmp: tmp, ws }
+    }
+
+    fn command(&self, args: &[&str]) -> Command {
+        let rwv = PathBuf::from(env!("CARGO_BIN_EXE_rwv"));
+        let rest = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(rwv.parent().unwrap().to_path_buf())
+                .chain(std::env::split_paths(&rest)),
+        )
+        .unwrap();
+        let mut cmd = common::rwv_std();
+        cmd.args(args).current_dir(&self.ws).env("PATH", path);
+        cmd
+    }
+}
+
+macro_rules! verbs_that_print {
+    ($($name:ident: [$($arg:expr),+]),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                let weave = Weave::new(false);
+                let args = [$($arg),+];
+                assert_quiet(&args.join(" "), &closed_stdout(weave.command(&args)));
+            }
+        )+
+    };
+}
+
+verbs_that_print! {
+    status_text: ["status"],
+    status_json: ["status", "--json"],
+    doctor_text: ["doctor"],
+    doctor_json: ["doctor", "--json"],
+    prime_page: ["prime"],
+    resolve_line: ["resolve"],
+    completions_script: ["completions", "bash"],
+    explain_index: ["explain"],
+    explain_page: ["explain", "doctor"],
+    each_plan: ["each", "--dry-run", "--", "true"],
+}
+
+#[test]
+fn fetch_still_clones_the_missing_member() {
+    let weave = Weave::new(true);
+    let out = closed_stdout(weave.command(&["update"]));
+    assert_quiet("clone", &out);
+    assert!(
+        ["app", "lib"].iter().all(|m| Path::new(&weave.ws)
+            .join("github/org")
+            .join(m)
+            .join(".git")
+            .exists()),
+        "fetch stopped before cloning every member"
+    );
+}
+
+#[test]
+fn fetch_streaming_its_records_still_clones_the_missing_member() {
+    let weave = Weave::new(true);
+    let out = closed_stdout(weave.command(&["update", "--json", "-j", "2"]));
+    assert_quiet("fetch --json -j 2", &out);
+    assert!(
+        ["app", "lib"].iter().all(|m| Path::new(&weave.ws)
+            .join("github/org")
+            .join(m)
+            .join(".git")
+            .exists()),
+        "fetch stopped before cloning every member"
+    );
+}
+
+#[test]
+fn setup_claude_still_registers_its_hooks() {
+    let tmp = common::tempdir().unwrap();
+    let settings = tmp.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(&settings, "{}").unwrap();
+
+    let mut cmd = common::rwv_std();
+    cmd.args(["setup", "claude"])
+        .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path());
+    assert_quiet("setup claude", &closed_stdout(cmd));
+
+    let written = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        written.contains("rwv prime"),
+        "no hook registered:\n{written}"
+    );
+}
+
+/// Only a closed pipe is the reader's choice. A full disk is not, and a
+/// verb that cannot say what it did must not exit as though it had.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_write_that_fails_for_another_reason_is_still_an_error() {
+    for args in [["status", "--json"], ["explain", "doctor"]] {
+        let weave = Weave::new(false);
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on linux");
+        let mut cmd = weave.command(&args);
+        cmd.stdout(full).stderr(Stdio::piped()).stdin(Stdio::null());
+        let out = cmd.output().expect("rwv runs");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "`rwv {}` exited 0", args.join(" "));
+        assert!(
+            stderr.contains("No space left on device"),
+            "`rwv {}`:\n{stderr}",
+            args.join(" ")
+        );
+    }
+}

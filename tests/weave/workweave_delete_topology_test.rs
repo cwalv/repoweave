@@ -1,0 +1,483 @@
+//! Tier-0 topology behavior for `workweave delete`.
+//!
+//! These tests pin the bug-fix: under the clone-topology
+//! joint, `workweave delete` (and the delete step of `land --retire`)
+//! MUST resolve each per-repo worktree's actual canonical store on disk
+//! rather than assuming `<ws_root>/<repo_path>` is the parent. When the
+//! resolved parent reveals a topology violation that delete cannot
+//! safely handle (the checkout IS a canonical store with foreign
+//! dependents), the verb refuses, naming the condition it carries and
+//! pointing at `rwv doctor`.
+//!
+//! All fixtures here are SYNTHETIC — the verb is destructive and we
+//! never exercise it against the live weave.
+
+use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::refusal::RefusalKind;
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use crate::common;
+
+const BOTH_WAIVERS: &[&str] = &["--discard-uncommitted", "--discard-unlanded"];
+
+fn delete(ws: &Path, name: &str, flags: &[&str]) -> Output {
+    common::rwv()
+        .args(["workweave", "delete", "--project", "web-app", name])
+        .args(flags)
+        .current_dir(ws)
+        .output()
+        .expect("run rwv")
+}
+
+fn stderr_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn init_repo_with_commit(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    std::fs::write(path.join("README"), "init").unwrap();
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+}
+
+/// Build a primary workspace plus a manifest-repo clone. Returns
+/// `(ws_root, manifest_repo_path)`.
+fn make_workspace(tmp: &Path, project: &str) -> (PathBuf, PathBuf) {
+    let ws = tmp.join("ws");
+    let repo_path = ws.join("github/org/repo");
+    init_repo_with_commit(&repo_path);
+    // Mark workspace root.
+    std::fs::create_dir_all(ws.join("github")).unwrap();
+
+    // Project repo so `workweave delete` finds something to delete in
+    // `projects/<project>/`.
+    let project_dir = ws.join("projects").join(project);
+    init_repo_with_commit(&project_dir);
+
+    let manifest = format!(
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+branch = "main"
+role = "owned"
+"#,
+        repo = common::url_path(&repo_path)
+    );
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::set_up_lock_driver_committed(&project_dir);
+
+    (ws, repo_path)
+}
+
+/// Build a workweave at `ww_dir` whose per-repo checkout under
+/// `ws_root/<repo_path>` is added as a worktree of `canonical_repo`.
+/// Mirrors what `create_workweave` does but lets the test choose the
+/// canonical store the worktree is linked into (so we can construct
+/// inverted-topology fixtures).
+fn add_workweave_checkout(canonical_repo: &Path, ww_dir: &Path, rel_repo_path: &str, branch: &str) {
+    let dest = ww_dir.join(rel_repo_path);
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    let dest_str = dest.to_str().unwrap();
+    common::git_in(
+        canonical_repo,
+        &["worktree", "add", "-b", branch, dest_str, "main"],
+    );
+}
+
+fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
+    let marker = common::workweave_marker(primary, project, primary);
+    std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
+    // Register in the primary-side `.rwv-workweave-index` so the
+    // registry-backed delete path can find this hand-crafted fixture.
+    // Real `rwv workweave create` writes both the marker AND the index
+    // entry; the fixtures here don't go through that entry point.
+    let name = ww_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.rsplit_once("--"))
+        .map(|(_, n)| repoweave::manifest::WorkweaveName::new(n).unwrap())
+        .expect("workweave dir name must be `<project>--<name>`");
+    common::register_workweave(primary, project, name.as_str(), ww_dir);
+}
+
+/// Sanity test: under correct topology, `store_of`
+/// resolves a workweave checkout's store path back to the canonical clone
+/// it links into (via `.parent()`).
+#[test]
+fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, repo) = make_workspace(tmp.path(), "web-app");
+    let ww_root = tmp.path().join(".workweaves").join("web-app--probe");
+    add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe");
+
+    let checkout = ww_root.join("github/org/repo");
+    let store_path = repoweave::git::git_vcs()
+        .store_of(&checkout)
+        .expect("store_of returned None");
+    // `.parent()` strips the trailing `.git` component to get the clone directory.
+    let resolved = repoweave::path_spelling::resolve(
+        store_path
+            .parent()
+            .expect("store path should have a parent"),
+    )
+    .unwrap();
+    let expected = repoweave::path_spelling::resolve(&repo).unwrap();
+    assert_eq!(
+        resolved,
+        expected,
+        "checkout should resolve to its canonical clone (the linked-in repo at \
+         {})",
+        expected.display()
+    );
+    let _ = ws; // silence unused
+}
+
+/// Under inverted topology — the workweave checkout links to a DIFFERENT
+/// canonical store than `<ws_root>/<repo_path>` — `delete_workweave`
+/// must run `git worktree remove` in the RESOLVED parent (so the actual
+/// canonical store's registration is cleaned up) and leave no stale
+/// entry behind. The disconnected primary slot stays untouched.
+#[test]
+fn delete_uses_resolved_parent_under_inverted_topology() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
+
+    // Fabricate the "real" canonical store living OUTSIDE the primary
+    // slot — this is the inverted-topology hazard. Clone from the
+    // primary slot so the SHAs line up (the new clone has the same
+    // initial commit), then make `<ws>/.workweaves/...` and add a
+    // worktree FROM this disconnected canonical store.
+    let real_canonical = tmp.path().join("real-canonical/github/org/repo");
+    std::fs::create_dir_all(real_canonical.parent().unwrap()).unwrap();
+    let primary_slot_str = primary_slot.to_str().unwrap();
+    let real_canonical_str = real_canonical.to_str().unwrap();
+    let status = common::git()
+        .args(["clone", primary_slot_str, real_canonical_str])
+        .status()
+        .expect("git clone");
+    assert!(status.success(), "clone failed");
+    // Re-configure user so commits don't fail if needed downstream.
+    common::git_in(&real_canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&real_canonical, &["config", "user.name", "Test"]);
+
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--ww");
+    // Per-repo checkout linked into the REAL canonical store, not the
+    // primary slot.
+    add_workweave_checkout(&real_canonical, &ww_dir, "github/org/repo", "web-app--ww");
+    // Project worktree is a normal one — linked into primary's project.
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--ww");
+    write_marker(&ww_dir, &ws, "web-app");
+
+    // Confirm the inverted topology: the worktree in the workweave is
+    // registered in `real_canonical`, not in `primary_slot`.
+    let real_worktrees = common::git_in(&real_canonical, &["worktree", "list", "--porcelain"]);
+    assert!(
+        real_worktrees.contains("web-app--ww"),
+        "real canonical should know about the workweave worktree:\n{real_worktrees}"
+    );
+    let primary_worktrees = common::git_in(&primary_slot, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !primary_worktrees.contains("web-app--ww"),
+        "primary slot should NOT know about the workweave worktree:\n{primary_worktrees}"
+    );
+
+    // Under the bug, delete would run `worktree remove` in `primary_slot`
+    // (the wrong DAG) and leave a stale registration in `real_canonical`.
+    // Under the fix it resolves to `real_canonical` and the registration is
+    // cleaned up. Both waivers: this pins topology, not the dirty or merged
+    // gates.
+    let out = delete(&ws, "ww", BOTH_WAIVERS);
+    assert!(
+        out.status.success(),
+        "delete should succeed via resolved parent; got:\n{}",
+        stderr_of(&out)
+    );
+    assert!(
+        !ww_dir.exists(),
+        "workweave dir should be gone after delete"
+    );
+
+    // The real canonical store's worktree list must no longer include
+    // the workweave checkout — `worktree remove` ran in the right repo.
+    let real_after = common::git_in(&real_canonical, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !real_after.contains("web-app--ww/github/org/repo"),
+        "real canonical should have no stale workweave registration after delete:\n{real_after}"
+    );
+}
+
+/// When a workweave checkout is itself a canonical store that OTHER
+/// worktrees link into (the catastrophic case the joint flags as
+/// hazard 2), delete must refuse, pointing at `rwv doctor`. The condition it
+/// carries is the one doctor reports for this topology, so the operator meets
+/// one name for it rather than two. The refusal is NOT bypassable with the
+/// discard waivers.
+#[test]
+fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
+
+    // The workweave's per-repo checkout will BE the canonical store. To
+    // arrange this synthetically, build a standalone clone INSIDE the
+    // workweave directory at the manifest-repo slot, then add a
+    // "foreign" worktree from that clone living somewhere ELSE on disk.
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--bad");
+    let ww_repo_slot = ww_dir.join("github/org/repo");
+    std::fs::create_dir_all(ww_repo_slot.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            primary_slot.to_str().unwrap(),
+            ww_repo_slot.to_str().unwrap(),
+        ])
+        .status()
+        .expect("git clone");
+    assert!(status.success(), "clone failed");
+    common::git_in(&ww_repo_slot, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ww_repo_slot, &["config", "user.name", "Test"]);
+
+    // Add a foreign worktree linked into ww_repo_slot (outside the
+    // workweave dir). Deleting the workweave would orphan this.
+    let foreign = tmp.path().join("foreign-checkout");
+    common::git_in(
+        &ww_repo_slot,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "stranger",
+            foreign.to_str().unwrap(),
+            "main",
+        ],
+    );
+
+    // Project worktree: a normal linked workspace under primary.
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--bad");
+    write_marker(&ww_dir, &ws, "web-app");
+
+    // Even with both waivers, delete must refuse.
+    let out = delete(&ws, "bad", BOTH_WAIVERS);
+    let msg = stderr_of(&out);
+    assert!(
+        !out.status.success(),
+        "delete should refuse when a checkout hosts foreign worktrees:\n{msg}"
+    );
+    assert!(
+        msg.contains("inverted clone topology") && msg.contains("rwv doctor"),
+        "refusal must name what it found and point at `rwv doctor`. got:\n{msg}"
+    );
+    assert!(
+        msg.contains(&format!(
+            "\n\nrwv explain {}\n",
+            RefusalKind::StandaloneInWorkweave.token()
+        )),
+        "the refusal must carry doctor's own name for this topology. got:\n{msg}"
+    );
+    // Workweave dir must STILL EXIST — the refusal must not have
+    // partially destroyed it.
+    assert!(
+        ww_dir.exists(),
+        "workweave dir should be preserved by a refusing delete"
+    );
+    // The foreign worktree must still exist and be a registered worktree.
+    assert!(
+        foreign.exists(),
+        "foreign worktree must not be orphaned by the refusing delete"
+    );
+    let registrations = common::git_in(&ww_repo_slot, &["worktree", "list", "--porcelain"]);
+    assert!(
+        registrations.contains("foreign-checkout"),
+        "foreign worktree registration must remain intact:\n{registrations}"
+    );
+}
+
+/// Companion sanity: when a checkout is a canonical store but has NO
+/// foreign dependents (only itself), delete proceeds normally — the
+/// precondition is "foreign dependents", not "is a canonical store".
+#[test]
+fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--lone");
+    let ww_repo_slot = ww_dir.join("github/org/repo");
+    std::fs::create_dir_all(ww_repo_slot.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            primary_slot.to_str().unwrap(),
+            ww_repo_slot.to_str().unwrap(),
+        ])
+        .status()
+        .expect("git clone");
+    assert!(status.success(), "clone failed");
+    common::git_in(&ww_repo_slot, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ww_repo_slot, &["config", "user.name", "Test"]);
+    // No foreign worktree.
+
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--lone");
+    write_marker(&ww_dir, &ws, "web-app");
+
+    let out = delete(&ws, "lone", BOTH_WAIVERS);
+    assert!(
+        out.status.success(),
+        "delete should succeed when canonical checkout has no foreign dependents; got:\n{}",
+        stderr_of(&out)
+    );
+    assert!(!ww_dir.exists(), "workweave dir should be removed");
+
+    // §4.7, applied to `delete`. Delete is a DESTROY over the workweave's own
+    // refs; the checkouts that SURVIVE it are not part of the operation and
+    // must come out attached exactly as they went in. Nothing here asserted
+    // that before: "the directory is gone" is compatible with a delete that
+    // detached the canonical clone whose worktree it was pruning — and a
+    // detached canonical is the state §2.1's chain needs in order to turn the
+    // next landing into a data loss.
+    //
+    // The two lines are NOT equally strong, and the difference is worth
+    // knowing before trusting them. Mutation-tested: detaching `project_store`
+    // in delete's project-repo arm fails the first line and only it. The
+    // second line is weaker — this fixture's `github/org/repo` inside the
+    // workweave is a plain CLONE, not a worktree, so delete's manifest-repo
+    // arm never calls `remove_worktree` for it and a detach injected there
+    // goes unobserved. It pins "delete did not wander into an unrelated
+    // canonical", not "delete's worktree pruning preserves attachment". A
+    // fixture whose manifest repo is a real worktree is what would close that.
+    common::assert_on_branch(&project_dir, "main");
+    common::assert_on_branch(&primary_slot, "main");
+}
+
+/// Under inverted topology the workweave's member checkout links into a store
+/// disconnected from the primary's. A delete that cannot tell which branch it
+/// is meant to judge deletes none: the member's branch, with the commit only
+/// that store holds, is still there afterwards.
+#[test]
+fn delete_keeps_the_commits_of_a_store_it_cannot_judge() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
+
+    // Real canonical = a separate clone (disconnected DAG). After the
+    // initial clone both sides have the same SHA at HEAD.
+    let real_canonical = tmp.path().join("real-canonical/github/org/repo");
+    std::fs::create_dir_all(real_canonical.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            primary_slot.to_str().unwrap(),
+            real_canonical.to_str().unwrap(),
+        ])
+        .status()
+        .expect("git clone");
+    assert!(status.success(), "clone failed");
+    common::git_in(&real_canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&real_canonical, &["config", "user.name", "Test"]);
+
+    // Now diverge: add a new commit to real_canonical's main so the
+    // workweave's tip carries a SHA that ONLY exists in the real-canonical
+    // DAG — never reachable from the primary slot's DAG.
+    std::fs::write(real_canonical.join("only-on-real"), "x\n").unwrap();
+    common::git_in(&real_canonical, &["add", "only-on-real"]);
+    common::git_in(&real_canonical, &["commit", "-m", "real-canonical unique"]);
+
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--diverged");
+    // Worktree linked into the real_canonical DAG — carries the
+    // real-canonical-only commit.
+    add_workweave_checkout(
+        &real_canonical,
+        &ww_dir,
+        "github/org/repo",
+        "web-app--diverged",
+    );
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(
+        &project_dir,
+        &ww_dir,
+        "projects/web-app",
+        "web-app--diverged",
+    );
+    write_marker(&ww_dir, &ws, "web-app");
+
+    let out = delete(&ws, "diverged", &["--discard-uncommitted"]);
+    let msg = stderr_of(&out);
+    assert!(
+        out.status.success(),
+        "delete should remove the workweave:\n{msg}"
+    );
+    assert!(!ww_dir.exists(), "workweave dir should be removed");
+    assert_eq!(
+        common::git_in(
+            &real_canonical,
+            &["log", "-1", "--format=%s", "web-app--diverged"]
+        ),
+        "real-canonical unique",
+        "the branch holding the commit only that store has must survive"
+    );
+}
+
+/// The step-out that releases delete's own directory handle on Windows is
+/// a process-global mutation, and this test binary is a process whose cwd
+/// every concurrently running test shares. Invoked from a directory
+/// OUTSIDE the workweave, delete must leave that directory alone: a cwd
+/// moved into fixture territory dies with the fixture's tempdir, and the
+/// next test to spawn a subprocess inherits the deleted directory. Driven
+/// through the library rather than the binary because the cwd under test is
+/// this process's own.
+///
+/// The inverse arm — cwd inside the workweave steps out to the parent —
+/// is exercised only by production topology (`land --retire` stands
+/// inside the workweave it deletes); a test that moved this binary's
+/// shared cwd into a fixture to probe it would itself recreate the
+/// poisoning this test pins against.
+#[test]
+fn delete_from_outside_leaves_the_process_cwd_alone() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, repo) = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--bystander");
+    add_workweave_checkout(&repo, &ww_dir, "github/org/repo", "web-app--bystander");
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(
+        &project_dir,
+        &ww_dir,
+        "projects/web-app",
+        "web-app--bystander",
+    );
+    write_marker(&ww_dir, &ws, "web-app");
+
+    let cwd_before = std::env::current_dir().expect("the harness cwd is live at test entry");
+    let result = repoweave::workweave::delete_workweave(
+        &ws,
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("bystander").unwrap(),
+        None,
+        None,
+        None,
+        &repoweave::deletion::RemoteDeletes::default(),
+    );
+    assert!(result.is_ok(), "delete should succeed; got: {result:?}");
+    assert!(
+        !ww_dir.exists(),
+        "the workweave directory should be gone — the cwd check below is \
+         vacuous if delete never reached the removal step"
+    );
+    let cwd_after = std::env::current_dir()
+        .expect("the process cwd must still resolve after a delete invoked from outside it");
+    assert_eq!(
+        cwd_after, cwd_before,
+        "deleting a workweave from outside it moved the process cwd"
+    );
+}

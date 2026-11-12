@@ -1,0 +1,1084 @@
+//! Tests for provenance checks in `rwv doctor`.
+//!
+//! Covers two sub-kinds of `Provenance` violations, and a lock pin the clone
+//! lacks, which is `pin` `unreachable` and not a provenance finding:
+//!
+//!   1. `origin-url-mismatch` — a clone's `origin` remote URL differs from
+//!      the URL recorded in the manifest. Warning severity; report-only.
+//!
+//!   2. a SHA pinned in `rwv.lock` absent from the local object store.
+//!
+//!   3. `placement-disagreement` — the manifest key disagrees with
+//!      `placement(url)`. Warning severity; report-only. `reference` and
+//!      `fork` role entries are exempt by rule, not by survey (see
+//!      `docs/reference/roles.md` §`fork` and the `reference` note on
+//!      `origin-url-mismatch` below).
+//!
+//! Each sub-kind has:
+//!   - a fixture test that triggers the violation (must be flagged)
+//!   - a clean-state test that must produce no false positives
+//!
+//! `placement-disagreement`'s advised repair is also run, from each state it
+//! names, to a report with nothing on it.
+
+use std::path::{Path, PathBuf};
+
+use crate::common;
+
+// ---------------------------------------------------------------------------
+// Workspace / fixture construction helpers
+// ---------------------------------------------------------------------------
+
+/// Create a minimal primary workspace at `root/ws/` with `github/` and
+/// `projects/` directories. Returns the workspace root path.
+fn make_primary(root: &Path) -> PathBuf {
+    let ws = root.join("ws");
+    std::fs::create_dir_all(ws.join("github")).unwrap();
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    ws
+}
+
+/// Initialize a bare-minimum git repo at `path` with one commit (so HEAD is
+/// valid), configure the user identity inside the repo, and return the SHA
+/// of the initial commit.
+fn init_repo(path: &Path) -> String {
+    std::fs::create_dir_all(path).unwrap();
+    common::git()
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    common::git()
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    common::git()
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    // Add a file and commit so HEAD is valid.
+    std::fs::write(path.join("README.md"), "init\n").unwrap();
+    common::git()
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    common::git()
+        .args(["commit", "-m", "init"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    // Return the SHA of HEAD.
+    let out = common::git()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// Write a minimal `rwv.toml` manifest for project `name` at
+/// `ws/projects/<name>/rwv.toml`. `entries` is a list of
+/// `(repo_path, url, role)` tuples.
+fn write_manifest(ws: &Path, name: &str, entries: &[(&str, &str, &str)]) {
+    let project_dir = ws.join("projects").join(name);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let mut content = String::new();
+    content.push_str("[repositories]\n");
+    for (repo_path, url, role) in entries {
+        content.push_str(&format!(
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
+        ));
+    }
+    std::fs::write(project_dir.join("rwv.toml"), content).unwrap();
+}
+
+/// Write a minimal `rwv.lock` at `ws/projects/<name>/rwv.lock` with one
+/// entry pointing `repo_path` at `sha`.
+fn write_lock(ws: &Path, name: &str, repo_path: &str, url: &str, sha: &str) {
+    let project_dir = ws.join("projects").join(name);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    common::fixture_lock(&project_dir, &[(repo_path, url, sha)]);
+}
+
+/// Add a remote named `remote_name` pointing at `remote_url` to the repo at
+/// `repo_path`.
+fn add_remote(repo_path: &Path, remote_name: &str, remote_url: &str) {
+    common::git()
+        .args(["remote", "add", remote_name, remote_url])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+}
+
+fn rwv() -> assert_cmd::Command {
+    common::rwv()
+}
+
+// ===========================================================================
+// 1. origin-url-mismatch
+// ===========================================================================
+
+/// A clone whose `origin` remote URL differs from the manifest URL must be
+/// flagged as an `origin-url-mismatch` warning.
+#[test]
+fn origin_url_mismatch_is_reported() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    // Create a "remote" bare repo.
+    let remote_dir = tmp.path().join("remote.git");
+    std::fs::create_dir_all(&remote_dir).unwrap();
+    common::git()
+        .args(["init", "--bare"])
+        .current_dir(&remote_dir)
+        .output()
+        .unwrap();
+
+    // Clone the repo into the workspace.
+    let repo_abs = ws.join("github/myorg/myrepo");
+    common::git()
+        .args([
+            "clone",
+            remote_dir.to_str().unwrap(),
+            repo_abs.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    // Give the repo a commit and HEAD so doctor doesn't complain about missing
+    // HEAD (it may not have one if the bare repo was empty).
+    // If clone fails to create a HEAD, we init manually.
+    if !repo_abs.join(".git").is_dir() {
+        init_repo(&repo_abs);
+    }
+
+    // Manifest records a different URL than the clone's `origin`.
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("origin-url-mismatch")
+            || stdout.contains("URL mismatch")
+            || stdout.contains("origin URL mismatch"),
+        "doctor should report origin-url-mismatch; got:\n{stdout}"
+    );
+}
+
+/// When the clone's `origin` URL matches the manifest URL, no
+/// `origin-url-mismatch` violation must be emitted.
+#[test]
+fn matching_origin_url_is_clean() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    // Create a repo with an `origin` remote.
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    add_remote(&repo_abs, "origin", manifest_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("origin URL mismatch"),
+        "matching origin URL should not produce origin-url-mismatch; got:\n{stdout}"
+    );
+}
+
+/// A local clone whose origin is the bare absolute path, recorded in the
+/// manifest as the percent-encoded `file://` URL of that path, is the same
+/// repo and raises no `origin-url-mismatch`.
+#[test]
+fn encoded_file_url_matches_the_bare_path_origin() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("local/acme/fresh");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "/srv/my repos/caf\u{e9}/fresh");
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "local/acme/fresh",
+            "file:///srv/my%20repos/caf%C3%A9/fresh",
+            "owned",
+        )],
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("origin URL mismatch"),
+        "an encoded file URL and the bare path it encodes must agree; got:\n{stdout}"
+    );
+}
+
+/// A remote whose configured URL the manifest matches, but whose resolved
+/// URL a `url.<base>.insteadOf` rule rewrites to a different host entirely
+/// (a corporate mirror of `https://github.com/`, set here in a fixture
+/// `HOME`'s global `.gitconfig`), must not be flagged — doctor compares the
+/// configured URL, not the one `git remote get-url` would resolve it to.
+/// The rewrite target changes host rather than just scheme/syntax (unlike
+/// the scp-style `git@host:owner/repo` rewrite, which `CloneUrl::names_same_remote`
+/// already treats as equivalent to its `https://host/owner/repo` form) so
+/// this pins the fix rather than the pre-existing normalization.
+#[test]
+fn origin_url_mismatch_is_clean_under_an_instead_of_rewrite() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    add_remote(&repo_abs, "origin", manifest_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[url \"https://git-mirror.corp.example/gh/\"]\n\tinsteadOf = https://github.com/\n",
+    )
+    .unwrap();
+
+    let out = rwv()
+        .env("HOME", &home)
+        .args(["doctor"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("origin-url-mismatch") && !stdout.contains("origin URL mismatch"),
+        "an insteadOf rewrite must not read as a mismatch against the manifest's \
+         unrewritten URL; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// 2. a pinned SHA the clone lacks
+// ===========================================================================
+
+/// Each finding `doctor --json` reports, as `(kind, sub_kind)`.
+fn findings(ws: &Path) -> Vec<(String, String)> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .map(|v| {
+            let sub_kind = match &v["sub_kind"] {
+                serde_json::Value::String(token) => token.clone(),
+                serde_json::Value::Object(o) => o.keys().cloned().collect(),
+                other => other.to_string(),
+            };
+            (v["kind"].as_str().unwrap_or_default().to_owned(), sub_kind)
+        })
+        .collect()
+}
+
+/// A lock file that pins a SHA absent from the repo's object store is one
+/// finding, `pin` `unreachable`, named by the SHA's abbreviation in text.
+#[test]
+fn a_pinned_sha_the_clone_lacks_is_one_finding() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    let _sha = init_repo(&repo_abs);
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    add_remote(&repo_abs, "origin", manifest_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let absent_sha = "0000000000000000000000000000000000000000";
+    write_lock(
+        &ws,
+        "my-project",
+        "github/myorg/myrepo",
+        manifest_url,
+        absent_sha,
+    );
+
+    let found = findings(&ws);
+    let about_the_pin: Vec<&(String, String)> = found
+        .iter()
+        .filter(|(kind, sub_kind)| {
+            kind == "pin" || (kind == "provenance" && sub_kind != "origin-url-mismatch")
+        })
+        .collect();
+    assert_eq!(
+        about_the_pin,
+        vec![&("pin".to_owned(), "unreachable".to_owned())],
+        "{found:?}"
+    );
+}
+
+/// A lock file that references the actual HEAD SHA reports no pin finding.
+#[test]
+fn reachable_lock_sha_is_clean() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    let sha = init_repo(&repo_abs);
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    add_remote(&repo_abs, "origin", manifest_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+    write_lock(&ws, "my-project", "github/myorg/myrepo", manifest_url, &sha);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("unreachable"),
+        "a reachable lock SHA is no unreachable pin; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// 3. JSON output includes provenance kind
+// ===========================================================================
+
+/// `rwv doctor --json` must include a `provenance` kind entry when an
+/// `origin-url-mismatch` violation exists.
+#[test]
+fn json_output_includes_provenance_kind() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    // Set `origin` to a URL that differs from the manifest.
+    add_remote(&repo_abs, "origin", "https://github.com/myorg/myrepo.git");
+
+    // Manifest records a different URL.
+    let manifest_url = "https://gitlab.com/myorg/myrepo.git";
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+
+    let violations = json["violations"].as_array().expect("violations is array");
+    let found = violations.iter().any(|v| v["kind"] == "provenance");
+    assert!(
+        found,
+        "doctor --json must include a provenance violation; violations: {violations:?}"
+    );
+}
+
+/// The wire token for this finding is `origin-url-mismatch`, and it names a
+/// git remote on purpose.
+///
+/// Renaming it to something backend-neutral is a decision this repo has
+/// weighed and declined — the token is published in the committed schema and
+/// keyed in the reference page, and a `--json` consumer matching it stops
+/// matching *silently* when it moves, because a selector against a renamed key
+/// yields nothing rather than erroring. The reasoning, and what it was weighed
+/// against, is in `docs/explanation/joints/vcs-as-seam.md`.
+///
+/// This is the pin that makes the decision a decision rather than an
+/// accident. Regenerating the committed schema after a rename produces a diff
+/// a reviewer has to notice; nothing else fails. A test that names the token
+/// turns a silent wire break into a conversation with the choice above.
+///
+/// Asserted on the key of the `sub_kind` object, which is where the token
+/// actually reaches a consumer — not on the rendered message, whose "origin
+/// URL mismatch" phrasing is satisfied whatever the kind is called.
+#[test]
+fn the_provenance_sub_kind_token_is_origin_url_mismatch() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "https://github.com/myorg/myrepo.git");
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/myorg/myrepo",
+            "https://gitlab.com/myorg/myrepo.git",
+            "owned",
+        )],
+    );
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+
+    let tokens: Vec<String> = json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .filter(|v| v["kind"] == "provenance")
+        .filter_map(|v| v["sub_kind"].as_object())
+        .flat_map(|o| o.keys().cloned())
+        .collect();
+
+    assert!(
+        tokens.iter().any(|t| t == "origin-url-mismatch"),
+        "the published sub_kind token must stay `origin-url-mismatch`; got {tokens:?}"
+    );
+}
+
+// ===========================================================================
+// 4. placement-disagreement (design AC10)
+// ===========================================================================
+
+/// `sub_kind` tokens for `provenance` violations in a `doctor --json` run.
+fn provenance_sub_kind_tokens(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .filter(|v| v["kind"] == "provenance")
+        .filter_map(|v| v["sub_kind"].as_object())
+        .flat_map(|o| o.keys().cloned())
+        .collect()
+}
+
+/// An `owned` entry whose recorded path disagrees with `placement(url)` is
+/// reported. No on-disk clone is needed — this is a pure manifest
+/// comparison, unlike `origin-url-mismatch`.
+#[test]
+fn placement_disagreement_is_reported_for_an_owned_member() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    // placement("https://github.com/me/thing.git") == "github/me/thing",
+    // not the recorded "github/upstream/thing".
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/upstream/thing",
+            "https://github.com/me/thing.git",
+            "owned",
+        )],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        tokens.iter().any(|t| t == "placement-disagreement"),
+        "an owned entry whose path disagrees with placement(url) must be \
+         reported; got {tokens:?}"
+    );
+}
+
+/// An entry whose recorded path agrees with `placement(url)` produces no
+/// finding.
+#[test]
+fn placement_agreement_is_clean() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/me/thing",
+            "https://github.com/me/thing.git",
+            "owned",
+        )],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        !tokens.iter().any(|t| t == "placement-disagreement"),
+        "an entry whose path already agrees with placement(url) must not be \
+         reported; got {tokens:?}"
+    );
+}
+
+/// AC10 row 3: a `fork`-role entry keyed on the upstream's coordinates
+/// against a fork URL — the exact arrangement `docs/reference/formats.md`'s
+/// worked example shows, and the one `docs/reference/roles.md` §`fork`'s
+/// added sentence sanctions — produces no finding.
+#[test]
+fn placement_disagreement_is_exempt_for_fork_role_naming_upstream_coordinates() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/socketio/engine.io",
+            "https://github.com/chatly/engine.io.git",
+            "fork",
+        )],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        !tokens.iter().any(|t| t == "placement-disagreement"),
+        "a fork-role entry keyed on the upstream's coordinates must be \
+         exempt; got {tokens:?}"
+    );
+}
+
+/// The same path/URL disagreement as the owned case, but with `role =
+/// "fork"`, must not be reported — confirms the exemption is read from the
+/// entry's own role rather than tripping on the disagreement regardless.
+#[test]
+fn placement_disagreement_is_exempt_for_fork_role_generally() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/upstream/thing",
+            "https://github.com/me/thing.git",
+            "fork",
+        )],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        !tokens.iter().any(|t| t == "placement-disagreement"),
+        "role fork must exempt any placement disagreement, not only the \
+         upstream-coordinates arrangement; got {tokens:?}"
+    );
+}
+
+/// AC10 row 4: a `reference`-role mirror — path names what it mirrors, URL
+/// names where the mirror actually lives — produces neither
+/// `placement-disagreement` nor `origin-url-mismatch`. The clone is real on
+/// disk with its `origin` set to the mirror URL, so `origin-url-mismatch`'s
+/// absence is not just "the repo isn't there to check" — the two URLs
+/// genuinely agree; only the placement comparison would fire, and role
+/// exempts it.
+#[test]
+fn placement_disagreement_is_exempt_for_reference_role_mirror() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let mirror_dir = tmp.path().join("mirrors").join("cargo.git");
+    std::fs::create_dir_all(&mirror_dir).unwrap();
+    common::git()
+        .args(["init", "--bare"])
+        .current_dir(&mirror_dir)
+        .output()
+        .unwrap();
+    let mirror_url = common::file_url(&mirror_dir);
+
+    // placement(file://.../mirrors/cargo.git) derives to a `local/...` path,
+    // not "github/rust-lang/cargo" — a real disagreement the role exempts.
+    let repo_abs = ws.join("github/rust-lang/cargo");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", &mirror_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/rust-lang/cargo", &mirror_url, "reference")],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        !tokens.iter().any(|t| t == "placement-disagreement"),
+        "a reference-role mirror must be exempt from the placement \
+         comparison; got {tokens:?}"
+    );
+    assert!(
+        !tokens.iter().any(|t| t == "origin-url-mismatch"),
+        "the clone's origin agrees with the manifest URL, so this must stay \
+         absent regardless of the placement comparison; got {tokens:?}"
+    );
+}
+
+/// The two provenance comparisons are independent: an entry that trips both
+/// — its clone's origin differs from the manifest URL, *and* its recorded
+/// path differs from placement(url) — reports two findings, not one merged
+/// one.
+#[test]
+fn an_entry_tripping_both_provenance_conditions_reports_two_findings() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    // Recorded at "github/wrongpath/thing"; the URL places at
+    // "github/acme/thing" (placement-disagreement). The on-disk clone's
+    // origin is a third URL entirely (origin-url-mismatch).
+    let repo_abs = ws.join("github/wrongpath/thing");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "https://gitlab.com/other/thing.git");
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/wrongpath/thing",
+            "https://github.com/acme/thing.git",
+            "owned",
+        )],
+    );
+
+    let tokens = provenance_sub_kind_tokens(&ws);
+    assert!(
+        tokens.iter().any(|t| t == "placement-disagreement"),
+        "the path/placement disagreement must be reported; got {tokens:?}"
+    );
+    assert!(
+        tokens.iter().any(|t| t == "origin-url-mismatch"),
+        "the origin/manifest URL disagreement must be reported \
+         independently; got {tokens:?}"
+    );
+    assert_eq!(
+        tokens.len(),
+        2,
+        "the two conditions must report as two findings, not merge into \
+         one; got {tokens:?}"
+    );
+}
+
+// ===========================================================================
+// 5. placement-disagreement: the advised repair
+// ===========================================================================
+
+const MISPLACED: &str = "vendor/acme/x";
+const PLACED: &str = "local/acme/x";
+
+/// A weave whose `demo` project registered a clone of `acme/x` with
+/// `rwv member add --adopt` at `vendor/acme/x`, where its `file://` URL does not
+/// place it, and locked it there.
+fn weave_with_misplaced_member(tmp: &Path) -> PathBuf {
+    let ws = tmp.join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    rwv()
+        .args(["init", "demo"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let origin = common::under(tmp, "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::git_in(
+        &ws,
+        &["clone", "--quiet", &common::file_url(&origin), MISPLACED],
+    );
+    rwv()
+        .args(["member", "add", "--adopt", MISPLACED])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    ws
+}
+
+/// Every violation `rwv doctor --all --json` reports, as its kind, its
+/// sub-kind token where it has one, and the path it names.
+fn all_violations(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--all", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json produced invalid JSON: {e}\noutput: {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .map(|v| {
+            let sub_kind = v["sub_kind"]
+                .as_object()
+                .and_then(|o| o.keys().next().cloned())
+                .unwrap_or_default();
+            format!(
+                "{} {sub_kind} {}",
+                v["kind"].as_str().unwrap_or_default(),
+                v["path"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+/// The line `rwv doctor` prints for the `placement-disagreement` finding.
+fn placement_advice(ws: &Path) -> String {
+    let out = rwv().arg("doctor").current_dir(ws).output().unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    report
+        .lines()
+        .find(|l| l.contains("its URL places at"))
+        .unwrap_or_else(|| panic!("no placement-disagreement line:\n{report}"))
+        .to_owned()
+}
+
+fn move_checkout(ws: &Path) {
+    let to = common::under(ws, PLACED);
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::rename(common::under(ws, MISPLACED), to).unwrap();
+}
+
+fn re_key(ws: &Path) {
+    let manifest = ws.join("projects").join("demo").join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let from = format!("[repositories.\"{MISPLACED}\"]");
+    assert!(
+        text.contains(&from),
+        "fixture: keyed at {MISPLACED}:\n{text}"
+    );
+    std::fs::write(
+        &manifest,
+        text.replace(&from, &format!("[repositories.\"{PLACED}\"]")),
+    )
+    .unwrap();
+}
+
+#[test]
+fn moving_the_checkout_and_re_keying_the_entry_clears_placement_disagreement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    assert_eq!(
+        all_violations(&ws),
+        vec![format!("provenance placement-disagreement {MISPLACED}")]
+    );
+    let advice = placement_advice(&ws);
+    for step in [
+        format!("move the checkout to `{PLACED}`"),
+        format!("re-key the entry in rwv.toml from `{MISPLACED}` to `{PLACED}`"),
+        "run `rwv lock`".to_owned(),
+        format!("pin it with `rwv member pin {PLACED} <rev> --commit`"),
+    ] {
+        assert!(advice.contains(&step), "must advise `{step}`: {advice}");
+    }
+
+    move_checkout(&ws);
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert_eq!(
+        all_violations(&ws),
+        Vec::<String>::new(),
+        "the advised steps must leave nothing to report"
+    );
+}
+
+#[test]
+fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_there() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    move_checkout(&ws);
+    let moved = all_violations(&ws);
+    for expected in [
+        format!("provenance placement-disagreement {MISPLACED}"),
+        format!("dangling-reference  {MISPLACED}"),
+    ] {
+        assert!(
+            moved.contains(&expected),
+            "moving the checkout alone leaves `{expected}`: {moved:?}"
+        );
+    }
+    assert!(
+        placement_advice(&ws).contains("unless it is already there"),
+        "the advice must say the move is skipped for a checkout already moved"
+    );
+
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert_eq!(
+        all_violations(&ws),
+        Vec::<String>::new(),
+        "re-keying and relocking must leave nothing to report"
+    );
+}
+
+fn commit_project(ws: &Path, message: &str) {
+    let project = ws.join("projects").join("demo");
+    common::git_in(&project, &["add", "-A"]);
+    common::commit_staged(&project, message);
+}
+
+fn create_workweave(ws: &Path, name: &str) -> PathBuf {
+    rwv()
+        .args(["workweave", "create", "--project", "demo", name])
+        .current_dir(ws)
+        .assert()
+        .success();
+    ws.parent()
+        .unwrap()
+        .join(".workweaves")
+        .join(format!("demo--{name}"))
+}
+
+/// A workweave holds a worktree of the misplaced clone, so moving the clone
+/// would strand it. The primary's advice names that workweave and has it
+/// landed and retired first; the workweave's own advice points at the
+/// primary instead of advising a move.
+#[test]
+fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    commit_project(&ws, "init");
+    let ww = create_workweave(&ws, "feat");
+    let checkout = common::under(&ww, MISPLACED);
+    std::fs::write(checkout.join("work"), "unlanded\n").unwrap();
+    common::git_in(&checkout, &["add", "work"]);
+    common::git_in(&checkout, &["commit", "--quiet", "-m", "unlanded"]);
+    let unlanded = common::git_in(&checkout, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+
+    let in_workweave = placement_advice(&ww);
+    assert!(
+        in_workweave.contains("converge it in the primary weave")
+            && !in_workweave.contains("move the checkout to"),
+        "a workweave must point at the primary, not advise a move: {in_workweave}"
+    );
+    let in_primary = placement_advice(&ws);
+    for step in [
+        "land and retire each workweave holding a worktree of it",
+        "`demo--feat`",
+        "commit or stash its edits and run `rwv land --retire` from it",
+        "then move the checkout to",
+    ] {
+        assert!(
+            in_primary.contains(step),
+            "must advise `{step}`: {in_primary}"
+        );
+    }
+
+    rwv()
+        .args(["land", "--retire"])
+        .current_dir(&ww)
+        .assert()
+        .success();
+    assert!(!ww.exists(), "the workweave is retired");
+    assert!(
+        !placement_advice(&ws).contains("retire"),
+        "with no workweave left holding it, the move comes first"
+    );
+    move_checkout(&ws);
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    commit_project(&ws, "re-key");
+
+    let placed = common::under(&ws, PLACED);
+    common::git_in(&placed, &["merge-base", "--is-ancestor", &unlanded, "HEAD"]);
+    assert_eq!(all_violations(&ws), Vec::<String>::new());
+    let fresh = create_workweave(&ws, "next");
+    assert!(common::under(&fresh, PLACED).join("work").is_file());
+    assert_eq!(all_violations(&fresh), Vec::<String>::new());
+    assert_eq!(all_violations(&ws), Vec::<String>::new());
+}
+
+// ===========================================================================
+// 4. unresolvable-url
+// ===========================================================================
+
+fn doctor_text_and_json(ws: &Path) -> (String, String) {
+    let text = rwv().args(["doctor"]).current_dir(ws).output().unwrap();
+    let json = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    (
+        String::from_utf8_lossy(&text.stdout).into_owned(),
+        String::from_utf8_lossy(&json.stdout).into_owned(),
+    )
+}
+
+/// A `url` that is neither a URL nor registry shorthand names no remote, so
+/// no clone of the member can be made; doctor reports it whether or not a
+/// clone is on disk, naming the `file://` spelling to write.
+#[test]
+fn a_plain_path_url_is_reported_with_its_file_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("local/acme/x", "/srv/repos/acme/x", "owned")],
+    );
+
+    let (text, json) = doctor_text_and_json(&ws);
+    assert!(json.contains("unresolvable-url"), "{json}");
+    assert!(
+        text.contains("`file:///srv/repos/acme/x`"),
+        "the finding names the spelling to write: {text}"
+    );
+
+    let spelled = common::advised_command(&text, "file://");
+    let manifest = ws.join("projects/my-project/rwv.toml");
+    let body = std::fs::read_to_string(&manifest).unwrap();
+    let findings_before = common::doctor_findings(&ws);
+    std::fs::write(
+        &manifest,
+        body.replace(
+            "url = \"/srv/repos/acme/x\"",
+            &format!("url = \"{spelled}\""),
+        ),
+    )
+    .unwrap();
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("unresolvable-url"), "{json}");
+    let new: Vec<String> = common::doctor_findings(&ws)
+        .into_iter()
+        .filter(|f| !findings_before.contains(f) && !f.starts_with("incomplete-lock"))
+        .collect();
+    assert_eq!(
+        new,
+        ["dangling-reference  local/acme/x"],
+        "once the url names a remote, the missing clone is fetch's to repair"
+    );
+}
+
+#[test]
+fn a_url_or_shorthand_raises_no_unresolvable_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    write_manifest(
+        &ws,
+        "my-project",
+        &[
+            ("github/acme/x", "https://github.com/acme/x.git", "owned"),
+            ("github/acme/y", "github/acme/y", "owned"),
+            ("local/acme/z", "file:///srv/repos/acme/z", "owned"),
+        ],
+    );
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("unresolvable-url"), "{json}");
+}
+
+// ===========================================================================
+// 5. relative-remote
+// ===========================================================================
+
+/// git reads a relative remote from each checkout's own directory, and every
+/// workweave checkout of a member shares the canonical clone's remote
+/// config, so the path names a different remote in each. Doctor names it
+/// rather than resolving it, even where it would reach the manifest's remote
+/// from the canonical clone.
+#[test]
+fn a_relative_remote_is_reported_by_name() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "../../up.git");
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/myorg/myrepo",
+            "https://github.com/myorg/myrepo.git",
+            "owned",
+        )],
+    );
+
+    let (text, json) = doctor_text_and_json(&ws);
+    assert!(json.contains("relative-remote"), "{json}");
+    assert!(
+        !json.contains("origin-url-mismatch"),
+        "a relative path is not compared as a remote: {json}"
+    );
+    assert!(
+        text.contains("`../../up.git`")
+            && text.contains("remote set-url origin https://github.com/myorg/myrepo.git"),
+        "the finding names the path and the command that replaces it: {text}"
+    );
+
+    let advised = common::advised_command(&text, "git -C");
+    let findings_before = common::doctor_findings(&ws);
+    let followed = common::run_advised(&advised, &ws);
+    assert!(followed.status.success(), "`{advised}`");
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("relative-remote"), "{json}");
+    assert!(!json.contains("origin-url-mismatch"), "{json}");
+    common::assert_no_new_findings(&ws, &findings_before);
+}
