@@ -1257,7 +1257,7 @@ fn held(repo: &str, what: &str, error: &dyn std::fmt::Display) -> anyhow::Error 
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
-            "rwv {VERB}: the copy of {what} in {repo} failed: {error}\nThe port is held: once what \
+            "rwv {VERB}: the copy of {what} in {repo} failed: {error:#}\nThe port is held: once what \
              stopped it is fixed, run `{}`, or `rwv abort` to put everything back as it was",
             crate::op_state::resume_command(OpVerb::CherryPick),
         ),

@@ -108,12 +108,9 @@ fn an_untracked_file_is_dirty_but_not_staged() {
     );
 }
 
-/// A staged rename changes two paths, and each listing says so in its own
-/// terms.
-///
-/// `staged_paths` answers "what lands in the commit under which name" and
-/// reports the name after the rename. `dirty_file_names` answers "is this path
-/// changed" and reports both, so a caller asking about either name hears yes.
+/// A staged rename changes two paths, and every listing reports both: a
+/// commit of what is staged deletes the old name as it adds the new, so a
+/// commit of the post-rename name alone would keep the old one.
 #[test]
 fn a_staged_rename_reads_differently_to_each_listing() {
     let tmp = common::tempdir().expect("tempdir");
@@ -121,13 +118,8 @@ fn a_staged_rename_reads_differently_to_each_listing() {
     common::git_in(repo, &["mv", "tracked.txt", "renamed.txt"]);
 
     let vcs = repoweave::git::git_vcs();
-    assert_eq!(
-        vcs.staged_paths(repo).expect("read staged paths"),
-        vec!["renamed.txt".to_owned()],
-        "the commit will carry the post-rename name"
-    );
-
     for listing in [
+        vcs.staged_paths(repo).expect("read staged paths"),
         vcs.dirty_file_names(repo).expect("read dirty names"),
         vcs.tracked_dirty_file_names(repo)
             .expect("read tracked dirty names"),
