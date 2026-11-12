@@ -54,14 +54,30 @@ tables, `[integrations]` and `[workweave]`, port as content.
 | `pin` | `backwards` | an `--except` member's tip does not descend from its pin here |
 | `edits` | `dirty`, `mid-operation` | a repo the port moves holds uncommitted changes or an operation in progress |
 | `edits` | `rwv.toml or rwv.lock uncommitted` | the project repo's lock files hold uncommitted changes |
-| `alignment` | any | a member the port copies onto is not where the branch expects it |
+| `alignment` | any | a member the port copies onto, or one `--except` names, is not where the branch expects it |
 
 Each `port` refusal for a member lists what its change holds and prints its
 port by hand, then the rerun with `--except <m>`, which leaves that member out
 and records it as it stands. `inapplicable-flag` refuses an `--except` naming
-a repo the commit does not move. A conflict stops the port with its op record
-kept (`op-parked`): resolve and stage it in the checkout named, then
-`rwv cherry-pick --continue`, or `rwv abort` to put every repo back.
+a repo the commit does not move, and `untracked-collision` a file the commit
+writes into the project repo that stands there untracked.
+
+A conflict stops the port with its op record kept (`op-parked`): resolve and
+stage it in the checkout named, then `rwv cherry-pick --continue`, or
+`rwv abort` to put every repo back. At a stop in the project repo `rwv.toml`
+holds this branch's entries and the ported tables, so `rwv abort` and the
+setters still read it; where a ported table changed on both sides, it holds
+this branch's tables and the stop shows the commit's, to set as wanted and
+stage. A step the VCS refuses once the port has started (an untracked file in
+a member's way, a hook) also holds the op (`op-parked`), naming what failed.
+
+`--continue` rechecks every repo the port moves before it moves anything: a
+member on another branch than the one the port copies onto refuses
+(`head-not-on-branch`), and a commit the port did not make, such as one made
+by hand in a member during the stop, is a foreign tip (`foreign-tip`), never
+taken for a copy; it names the way out, moving that commit off. An `--except`
+member is judged again at its tip, so a hand port finished during the stop is
+recorded where it ends.
 
 ## Invocation
 

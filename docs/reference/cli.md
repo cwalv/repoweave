@@ -505,7 +505,7 @@ The commit's `rwv.lock` is read against its parent's; for a merge commit, agains
 
 **The project commit**, last, applies the commit's other project files, writes the relock (each copied member's new tip, each carried pin, each `--except` member's tip; the commit's own `rwv.lock` is never picked), and keeps the commit's message and author, recording the commit it mirrors in its `Rwv-Picked-From` annotation. A commit leaving nothing to port makes no commit and says so, so running it again after a completed port changes nothing.
 
-Every refusal is reported before anything moves. The copies run under an op record: a conflict in a member's copy or a project file stops the port with the backend's hint up to staging; resolve and stage, then `rwv cherry-pick --continue`, or `rwv abort` to put every repo back. A member a refusal names can be ported by hand from the commits the refusal lists, then left out of the rerun with `--except`, which records it as it stands.
+Every refusal is reported before anything moves. The copies run under an op record: a conflict in a member's copy or a project file stops the port with the backend's hint up to staging; resolve and stage, then `rwv cherry-pick --continue`, or `rwv abort` to put every repo back. `--continue` rechecks each repo first: a member switched to another branch refuses (`head-not-on-branch`), and a commit the port did not make, such as one made by hand during the stop, refuses as a foreign tip (`foreign-tip`); it is never taken for a copy. A member a refusal names can be ported by hand from the commits the refusal lists, then left out of the rerun with `--except`, which records it as it stands.
 
 | Flag | Effect |
 |---|---|
