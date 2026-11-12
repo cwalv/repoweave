@@ -654,6 +654,9 @@ every_scenario!(
     dc04_conflict_setter,
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
+    abort_after_a_landing_merge_stops,
+    landing_merge_continued_writes_one_project_merge,
+    abort_after_a_sync_merge_stops,
     sync_continue_merges_a_range_the_stop_gave_a_merge,
     landing_names_every_field,
     history_unset_fast_forward,
@@ -4360,6 +4363,22 @@ fn sync_continue_merges_a_range_the_stop_gave_a_merge_scenario() {
 fn land_continue_composes_a_merge_the_stop_left_scenario() {
     runner::run(scenarios::land_continue_composes_a_merge_the_stop_left())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_after_a_landing_merge_stops_scenario() {
+    runner::run(scenarios::abort_after_a_landing_merge_stops()).assert_fully_decided_green();
+}
+
+#[test]
+fn landing_merge_continued_writes_one_project_merge_scenario() {
+    runner::run(scenarios::landing_merge_continued_writes_one_project_merge())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_after_a_sync_merge_stops_scenario() {
+    runner::run(scenarios::abort_after_a_sync_merge_stops()).assert_fully_decided_green();
 }
 
 #[test]

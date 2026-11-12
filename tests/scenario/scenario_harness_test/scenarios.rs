@@ -11060,6 +11060,100 @@ pub fn land_continue_composes_a_merge_the_stop_left() -> Scenario {
     )
 }
 
+/// A `merge` landing stopped on `app`'s composing merge, its project merge
+/// staged and uncommitted.
+fn landing_merge_stopped() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Succeeds),
+    ]
+}
+
+/// [`landing_merge_stopped`], resolved and continued: the project gets one
+/// commit, the merge whose first parent is `main`'s tip, and its lock pins
+/// `app`'s landing merge.
+pub fn landing_merge_continued_writes_one_project_merge() -> Scenario {
+    let mut steps = landing_merge_stopped();
+    steps.extend([
+        Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&ww("w"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w"), &["land", "--continue"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main^1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("readme-main")),
+        Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%s", "main^2"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%B", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("Merge ")),
+    ]);
+    scenario("a landing merge continued writes one project merge", steps)
+}
+
+/// [`landing_merge_stopped`], then `rwv abort`: every merge in flight is
+/// canceled and both workspaces stand as before.
+pub fn abort_after_a_landing_merge_stops() -> Scenario {
+    let mut steps = landing_merge_stopped();
+    steps.extend([
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(&ww("w"), Repo::App, &["status", "--porcelain"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("README")),
+        Step::git(&ww("w"), Repo::App, &["log", "-1", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("readme-w")),
+    ]);
+    scenario("abort after a landing's merge stops", steps)
+}
+
+/// The stop of [`sync_stopped_then_lib_committed`] before anything is
+/// resolved, and `rwv abort`: `app`'s merge is canceled.
+pub fn abort_after_a_sync_merge_stops() -> Scenario {
+    let mut steps: Vec<Step> = sync_stopped_then_lib_committed("merge")
+        .into_iter()
+        .take(10)
+        .collect();
+    steps.extend([
+        Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(&ww("w"), Repo::App, &["log", "-1", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("readme-w")),
+    ]);
+    scenario("abort after a sync's merge stops", steps)
+}
+
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
 /// conflict, printing each field's setter with each side's value. That the
