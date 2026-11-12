@@ -2160,6 +2160,17 @@ pub struct FormRow {
     pub shipped: bool,
 }
 
+impl FormRow {
+    /// Shipped, and every form it runs after prints by `printable`.
+    fn printable_where(&self, printable: impl Fn(Form) -> bool) -> bool {
+        self.shipped
+            && self.steps.iter().all(|step| match step {
+                Step::Then(next) => printable(*next),
+                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => true,
+            })
+    }
+}
+
 impl Form {
     pub const ALL: [Form; 85] = [
         Self::C1Pull,
@@ -2800,12 +2811,7 @@ impl Form {
     /// Whether this form may be printed: its verb has shipped, and so has
     /// every form it runs after.
     pub fn printable(self) -> bool {
-        let row = self.row();
-        row.shipped
-            && row.steps.iter().all(|step| match step {
-                Step::Then(next) => next.printable(),
-                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => true,
-            })
+        self.row().printable_where(Form::printable)
     }
 
     /// Every rwv command this form prints, `then` forms included, with its
@@ -3869,6 +3875,12 @@ mod tests {
         }
         assert!(Form::C15AtCherryPick.printable());
         assert!(Form::C14Keep.printable());
+        let after_c40 = FormRow {
+            steps: &[Step::Rwv("rwv lock --commit"), Step::Then(Form::C40)],
+            ..*Form::C15AtCherryPick.row()
+        };
+        assert!(after_c40.printable_where(|_| true));
+        assert!(!after_c40.printable_where(|form| form != Form::C40));
     }
 
     #[test]
