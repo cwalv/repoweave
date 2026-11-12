@@ -197,7 +197,7 @@ fn sync_json_emits_envelope_and_outcomes() {
 
 #[test]
 fn sync_json_failed_outcome_yields_nonzero_exit() {
-    // Build a divergence that ff cannot resolve, then run `--json` and
+    // Build a divergence whose replay conflicts, then run `--json` and
     // expect exit code 1 with a `failed` outcome in the JSON.
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
@@ -205,7 +205,7 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     // Primary: advance to C2.
     let c2 = make_commit(
         &primary.server_dir,
-        "primary.txt",
+        "shared.txt",
         "primary\n",
         "primary: C2",
     );
@@ -213,30 +213,31 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
-    // Workweave: diverge.
-    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
+    // Workweave: diverge on the same file.
+    let c_ww = make_commit(&ww.server_dir, "shared.txt", "ww\n", "ww: diverged from C1");
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
-    // ff --discard-local-commits: bypasses the Phase 1 ancestor check;
-    // Phase 2 ff still fails.
     let assert = rwv()
         .args([
             "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
-            "ff",
+            "rebase",
             "--json",
-            "--discard-local-commits",
         ])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout not parseable as JSON ({e}):\n{stdout}"));
+    let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout not parseable as JSON ({e}):\n{stdout}\n{}",
+            String::from_utf8_lossy(&assert.get_output().stderr)
+        )
+    });
     let outcomes = parsed
         .get("outcomes")
         .and_then(Value::as_array)
@@ -1099,7 +1100,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
 }
 
 #[test]
-fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
+fn sync_json_discloses_the_verdict_a_failed_rebase_ran_against() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -1114,9 +1115,10 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Two commits here against the source's one, so the pair of counts cannot
-    // be read correctly by a disclosure that transposes them.
+    // be read correctly by a disclosure that transposes them; the second
+    // writes the source's file differently, so the replay conflicts.
     make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
-    let c_ww = make_commit(&ww.server_dir, "ww2.txt", "ww2\n", "ww: second");
+    let c_ww = make_commit(&ww.server_dir, "primary.txt", "ww2\n", "ww: second");
     common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
@@ -1126,9 +1128,8 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
             "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
-            "ff",
+            "rebase",
             "--json",
-            "--discard-local-commits",
         ])
         .current_dir(&ww.root)
         .assert()
@@ -1138,9 +1139,9 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
     let containment = containment_of(&stdout, SERVER_PATH);
     assert_eq!(
         containment["verdict"]["relation"], "diverged",
-        "the fast-forward failed because both sides hold commits the other \
-         lacks, and that is the fact a consumer must not have to parse out of \
-         the failure message: {containment}"
+        "the replay failed because both sides hold commits the other lacks, \
+         and that is the fact a consumer must not have to parse out of the \
+         failure message: {containment}"
     );
     assert_eq!(
         containment["verdict"]["ahead"], 2,

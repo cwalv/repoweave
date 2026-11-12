@@ -317,7 +317,7 @@ fn a_late_added_member_whose_canonical_clone_is_not_on_disk_is_created_by_fetch(
 }
 
 #[test]
-fn a_reference_member_arriving_by_sync_is_a_worktree_at_the_pinned_revision() {
+fn a_reference_member_arriving_by_sync_is_a_worktree_on_its_declared_branch() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
     let seat = weave.create("seat", None);
@@ -335,18 +335,25 @@ fn a_reference_member_arriving_by_sync_is_a_worktree_at_the_pinned_revision() {
     std::fs::write(canonical.join("AHEAD"), "a\n").unwrap();
     common::git_in(&canonical, &["add", "AHEAD"]);
     common::git_in(&canonical, &["commit", "-m", "ahead of the pin"]);
+    let ahead = common::git_in(&canonical, &["rev-parse", "HEAD"]);
     common::git_in(&canonical, &["checkout", "-q", &pin]);
 
     let synced = run(&["sync"], &seat);
     assert!(synced.status.success(), "{}", describe(&synced));
 
-    assert_worktree_at(
-        &seat.join(LATE_PATH),
-        &canonical,
-        "reference",
-        "app--seat",
-        &pin,
+    let checkout = seat.join(LATE_PATH);
+    assert_eq!(
+        store_of(&checkout),
+        repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap(),
+        "the member must be a worktree of the canonical clone's store"
     );
+    assert_eq!(
+        common::checkout_ref(&checkout).as_deref(),
+        Some("main"),
+        "a reference member sits on its declared branch where that branch reaches the pin \
+         and no other workspace has it checked out"
+    );
+    assert_eq!(common::git_in(&checkout, &["rev-parse", "HEAD"]), ahead);
     let lock =
         std::fs::read_to_string(seat.join("projects").join(PROJECT).join("rwv.lock")).unwrap();
     assert!(

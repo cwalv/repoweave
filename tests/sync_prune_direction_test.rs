@@ -568,43 +568,33 @@ fn pruning_a_member_only_the_seat_added_releases_the_primarys_clone() {
     assert_the_clone_is_released(&weave);
 }
 
-/// The seat's branch holds a commit no baseline contains while its checkout
-/// sits detached on the clone's tip: the prune removes the checkout, but the
-/// branch stays, and the warning names the branch.
+/// The seat's branch holds a commit no baseline contains while its checkout of
+/// a member the target dropped sits detached on the clone's tip. `rwv sync`
+/// judges every member's alignment before anything moves, so it refuses the
+/// detached checkout and prunes nothing: the checkout and the branch with its
+/// commit stay where they were. Keeping such a branch when its checkout is
+/// released is `member remove --delete`'s to show.
 #[test]
-fn pruning_keeps_a_seat_branch_that_holds_commits_nothing_else_has() {
+fn a_detached_checkout_of_a_dropped_member_refuses_the_sync_and_keeps_its_branch() {
     let weave = weave();
     let s1 = seat_behind_a_drop(&weave);
     let checkout = common::under(&s1, EXTRA);
     commit_note(&checkout, "only on the seat's branch\n");
     let kept = head(&checkout);
     common::git_in(&checkout, &["checkout", "-q", "--detach", "HEAD~1"]);
+    let project_before = head(&s1.join("projects/app"));
 
-    let out = run(&s1, &["sync-to", "--strategy", "rebase"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "{stdout}\n{stderr}");
-    assert!(!checkout.exists(), "{stdout}\n{stderr}");
+    let out = run(&s1, &["sync"]);
+    let stderr = common::cli::refused(
+        &out,
+        repoweave::diagnosis::State::AlignmentDetachedElsewhere,
+    );
+
+    assert!(stderr.contains(EXTRA), "{stderr}");
+    assert!(checkout.exists(), "{stderr}");
+    assert_eq!(head(&s1.join("projects/app")), project_before);
     let clone = common::under(&weave.root, EXTRA);
-    assert_eq!(
-        common::git_in(&clone, &["rev-parse", SEAT_BRANCH]),
-        kept,
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(&format!(
-            "  left: {EXTRA}: branch {SEAT_BRANCH} holds commits no baseline contains; left in \
-             place"
-        )),
-        "{stderr}"
-    );
-    let out = run(&weave.root, &["member", "remove", EXTRA, "--delete"]);
-    assert!(
-        !out.status.success()
-            && String::from_utf8_lossy(&out.stderr).contains("local-only commits"),
-        "the branch still holds commits only the clone has:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_eq!(common::git_in(&clone, &["rev-parse", SEAT_BRANCH]), kept);
 }
 
 /// A seat behind a drop whose checkout of the dropped member holds untracked

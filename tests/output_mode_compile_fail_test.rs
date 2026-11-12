@@ -24,7 +24,8 @@ fn the_harness_can_compile_a_verb_handed_its_mode() {
         use repoweave::parallel::OutputMode;
         use repoweave::selector::RepoFilter;
         use repoweave::status::run_status;
-        use repoweave::sync::{run_sync, sync_to_json_run, SyncRequest};
+        use repoweave::feature_sync::{run_sync, Run};
+        use repoweave::sync::{run_sync_to, sync_to_json_run, SyncRequest};
         use repoweave::workspace::WorkspaceContext;
 
         pub fn modes(ctx: &WorkspaceContext, filter: &RepoFilter, request: SyncRequest) {
@@ -33,7 +34,8 @@ fn the_harness_can_compile_a_verb_handed_its_mode() {
             let _ = run(ctx, &LogQuery::Range(None), OutputMode::Text);
         }
         pub fn sync(ctx: &WorkspaceContext, request: SyncRequest) {
-            let _ = run_sync(ctx, request, OutputMode::Text);
+            let _ = run_sync(ctx, Run::Continue, OutputMode::Text);
+            let _ = run_sync_to(ctx, request, OutputMode::Text);
         }
         "#,
     );
@@ -108,11 +110,11 @@ fn sync_decides_text_or_json_from_the_mode_it_is_handed() {
         "E0061",
         "run_sync has no separate json entry to choose between; it takes the mode",
         r#"
-        use repoweave::sync::{run_sync, SyncRequest};
+        use repoweave::feature_sync::{run_sync, Run};
         use repoweave::workspace::WorkspaceContext;
 
-        pub fn two_args(ctx: &WorkspaceContext, request: SyncRequest) {
-            let _ = run_sync(ctx, request);
+        pub fn two_args(ctx: &WorkspaceContext) {
+            let _ = run_sync(ctx, Run::Continue);
         }
         "#,
     );

@@ -320,10 +320,10 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
 // Test 4: Sync post-condition refresh
 // ---------------------------------------------------------------------------
 
-/// After `rwv sync-to`, if the workweave's server repo had a stale index before
-/// the landing (from a shared-ref advance), the index should be clean afterward.
+/// After `rwv sync`, if the workweave's server repo had a stale index before
+/// the sync (from a shared-ref advance), the index should be clean afterward.
 #[test]
-fn sync_to_post_refresh_clears_stale_index() {
+fn sync_post_refresh_clears_stale_index() {
     let tmp = common::tempdir().unwrap();
 
     // --- Primary workspace ---
@@ -333,11 +333,12 @@ fn sync_to_post_refresh_clears_stale_index() {
 
     let server_primary = primary_root.join(SERVER_PATH);
     let c1 = init_repo(&server_primary);
+    let server_url = common::file_url(&server_primary);
 
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
-    write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    write_manifest(&project_primary, &[(SERVER_PATH, server_url.as_str())]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, server_url.as_str(), &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
     common::record_trunk(&project_primary);
@@ -388,21 +389,20 @@ fn sync_to_post_refresh_clears_stale_index() {
 
     // --- Primary commits C2, updates lock ---
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
-    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, server_url.as_str(), &c2)]);
     common::git_in(&project_primary, &["add", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
-    // Mirror the lock advance into the workweave's own project worktree so
-    // that the workweave's lock matches the workweave's tip after we advance
-    // the server ref below; the landing's freshness precondition reads it.
-    common::fixture_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    // The workweave's own project commit, so the project branch has work of
+    // its own to rebase onto the target's tip.
+    common::fixture_lock(&project_ww, &[(SERVER_PATH, server_url.as_str(), &c2)]);
     common::git_in(&project_ww, &["add", "rwv.lock"]);
     common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 
     // Advance the workweave's server branch ref to C2 (stale-index setup).
     advance_ww_branch(&server_primary, "ww/main", &c2);
 
-    // Verify stale before the landing.
+    // Verify stale before the sync.
     let diff_before = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&server_ww)
@@ -410,19 +410,13 @@ fn sync_to_post_refresh_clears_stale_index() {
         .unwrap();
     assert!(
         !diff_before.stdout.is_empty(),
-        "workweave index should be stale before the landing"
+        "workweave index should be stale before the sync"
     );
 
-    // Both sides committed independent lock advances above (so each side's
-    // lock-freshness check passes), which diverges the project repos;
-    // --discard-local-commits is required to bypass the ancestor
-    // precondition. The test's focus is the post-refresh.
+    // Both sides committed independent lock advances above, which diverges
+    // the project repos; the test's focus is the post-refresh.
     rwv()
-        .args([
-            "sync-to",
-            &primary_root.to_string_lossy(),
-            "--discard-local-commits",
-        ])
+        .args(["sync", "--strategy", "rebase"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -437,7 +431,7 @@ fn sync_to_post_refresh_clears_stale_index() {
         .unwrap();
     assert!(
         diff_after.success(),
-        "workweave index should match HEAD after sync-to"
+        "workweave index should match HEAD after sync"
     );
 }
 

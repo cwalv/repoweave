@@ -1,4 +1,4 @@
-//! `rwv sync-to` and rwv-owned generated state: the non-carry is deliberate,
+//! `rwv sync` and rwv-owned generated state: the non-carry is deliberate,
 //! and the remedy note is conditional on delivered input changes.
 //!
 //! Sync moves committed state and never fires integration hooks, so the
@@ -160,12 +160,13 @@ impl Fixture {
         }
     }
 
-    /// `rwv sync-to --strategy rebase` in the workweave, returning combined output.
+    /// `rwv sync` in the workweave, taking in the branch it lands into,
+    /// returning combined output.
     fn sync_from_primary(&self) -> String {
-        self.rwv(&["sync-to", "--strategy", "rebase"], &self.ww_dir)
+        self.rwv(&["sync"], &self.ww_dir)
     }
 
-    /// `rwv sync-to --strategy rebase --json` in the workweave, returning stdout parsed
+    /// `rwv sync --json` in the workweave, returning stdout parsed
     /// as JSON. Stdout only (never combined with stderr): the envelope is
     /// what a `--json` consumer actually reads, and combining streams would
     /// let stderr chatter corrupt the parse.
@@ -175,14 +176,14 @@ impl Fixture {
 
     fn sync_json_from_primary_with(&self, extra: &[&str]) -> serde_json::Value {
         let output = common::rwv()
-            .args(["sync-to", "--strategy", "rebase", "--json"])
+            .args(["sync", "--json"])
             .args(extra)
             .current_dir(&self.ww_dir)
             .output()
             .expect("rwv should run");
         assert!(
             output.status.success(),
-            "rwv sync-to --strategy rebase --json {extra:?} failed:\n{}",
+            "rwv sync --json {extra:?} failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
@@ -245,7 +246,11 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
+        format!(
+            "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
+            common::file_url(&protocol),
+            common::file_url(&server)
+        ),
     )
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
@@ -537,7 +542,7 @@ fn sync_at_primary_names_materialize_for_the_presented_project() {
     let f = fixture();
     advance_ww_member_manifest(&f);
 
-    let output = f.rwv(&["sync-to", "--strategy", "ff"], &f.ww_dir);
+    let output = f.rwv(&["sync", "--from", "web-app--agent-1"], &f.ws);
 
     assert!(
         output.contains("rwv materialize"),
@@ -560,13 +565,17 @@ fn sync_at_primary_stays_quiet_for_a_project_the_root_does_not_present() {
 
     let ww_tip = git_head(&f.ww_server_dir());
     let output = f.rwv(
-        &["sync-to", "--strategy", "ff", "--project", "web-app"],
-        &f.ww_dir,
+        &["sync", "--from", "web-app--agent-1", "--project", "web-app"],
+        &f.ws,
     );
 
-    assert_eq!(
-        git_head(&f.server_dir()),
-        ww_tip,
+    assert!(
+        common::git()
+            .args(["merge-base", "--is-ancestor", &ww_tip, "HEAD"])
+            .current_dir(f.server_dir())
+            .status()
+            .unwrap()
+            .success(),
         "control: the input change must actually have been delivered — a \
          refused or no-op sync stays quiet for the wrong reason"
     );

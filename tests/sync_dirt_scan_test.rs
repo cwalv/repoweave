@@ -474,17 +474,16 @@ fn sync_untracked_only_destination_proceeds() {
 // 5. Dirty rwv.lock in destination project → refused (no carve-out for sync)
 // ===========================================================================
 
-/// Unlike the sync-to source-side scan, `rwv sync-to` does NOT carve out a dirty
-/// `rwv.lock`. The distinction:
+/// `rwv sync-to` carves a dirty `rwv.lock` out of its source-side scan: the
+/// project repo there is never fast-forwarded during replay, and Phase 3
+/// regenerates and commits the lock, so a dirty lock is the auto-relock's
+/// input. `rwv sync` makes no such carve-out: it fast-forwards or rebases the
+/// project repo onto the target's tip, which git refuses over a dirty tracked
+/// `rwv.lock`, so the operator must stash or commit it.
 ///
-/// - sync-to: the project repo is never ff'd during replay; Phase 3 regenerates
-///   and commits the lock. A dirty lock is the auto-relock's input.
-/// - sync (pull): Phase 1' fast-forwards or rebases the project repo to the
-///   source's tip. `git merge --ff-only` and `git rebase` both fail on a dirty
-///   tracked `rwv.lock`. The operator must stash or commit it.
-///
-/// This test verifies that a destination with a dirty-only rwv.lock is refused
-/// (not silently passed through to a mid-op git failure).
+/// This test verifies that a feature with a dirty-only rwv.lock is refused
+/// before anything moves (not silently passed through to a mid-op git
+/// failure).
 #[test]
 fn sync_dirty_lock_in_destination_project_refuses() {
     let f = fixture();
@@ -514,19 +513,14 @@ fn sync_dirty_lock_in_destination_project_refuses() {
 
     // Sync must refuse (no carve-out for sync; git would fail mid-op anyway).
     let assert = rwv()
-        .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
-            "--strategy",
-            "rebase",
-        ])
+        .args(["sync"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("rwv sync-to: ") && stderr.contains(": edits dirty\n"),
+        stderr.contains("rwv sync: ") && stderr.contains(": edits dirty\n"),
         "dirty rwv.lock must trigger the sync dirt refusal; got:\n{stderr}"
     );
     assert!(
@@ -686,15 +680,18 @@ fn sync_retry_after_dirt_refusal_succeeds() {
 /// A manifest repo whose branch ref was advanced externally (shared-ref
 /// advance — index/working tree lag the moved tip; rwv-attributable drift)
 /// plus a project repo with a genuine user edit. The refusal must name ONLY
-/// the user dirt: the drifted repo is excluded because sync's replay loop
-/// self-heals attributable drift (the pure-drift self-healing spec lives in
-/// index_drift_test.rs / working_tree_drift_test.rs), and advising the
+/// the user dirt: the drifted repo's branch already holds what it lands on,
+/// so sync moves and judges nothing there, and refreshes the lagging index
+/// and working tree once it has taken in (the pure-drift self-healing spec
+/// lives in index_drift_test.rs / working_tree_drift_test.rs). Advising the
 /// operator to commit/stash a moved-branch diff they never authored would be
 /// harmful.
 #[test]
 fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     let f = fixture();
     let new_sha = advance_primary(&f);
+    // A feature's member sits on the feature's own branch.
+    common::git_in(&f.ww.repo_dir, &["branch", "-m", "ww/main", "ww/project"]);
 
     // Shared-ref advance: move ww's branch to the new tip from the canonical
     // store, leaving ww's index/working tree at the old state. Structurally
@@ -702,7 +699,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     // the "missing" file exists in HEAD (D entry — restorable from the DAG).
     common::git_in(
         &f.primary.repo_dir,
-        &["update-ref", "refs/heads/ww/main", &new_sha],
+        &["update-ref", "refs/heads/ww/project", &new_sha],
     );
     // Sanity: the drifted repo DOES show tracked differences to git status —
     // without attribution this would have refused.
@@ -722,12 +719,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     std::fs::write(&yaml_path, y).unwrap();
 
     let assert = rwv()
-        .args([
-            "sync-to",
-            &f.primary.root.to_string_lossy(),
-            "--strategy",
-            "rebase",
-        ])
+        .args(["sync"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();

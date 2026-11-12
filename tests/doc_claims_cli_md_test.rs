@@ -267,7 +267,7 @@ fn cli_md_lock_flags_exist_in_help() {
 #[test]
 fn cli_md_sync_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv sync <source>");
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv sync [");
     let help = help_flags(&["sync"]);
     assert_all_cli_md_flags_in_help("sync", &cli_flags, &help);
 }
@@ -582,8 +582,8 @@ fn a_documented_value_clap_rejects_is_caught() {
         "--strategy".to_owned(),
         vec!["ff".to_owned(), "rebase".to_owned()],
     )]);
-    let row = "| `rwv sync <source>` | Pull: align CWD to another workspace's \
-               committed `rwv.lock`. `--strategy ff\\|rebase\\|merge` (default `ff`) |";
+    let row = "| `rwv sync` | Take the target's new work into a feature. \
+               `--strategy ff\\|rebase\\|merge` (default `ff`) |";
     let errors = value_claim_errors("README.md", "sync", row, &accepted);
     assert_eq!(
         errors.len(),
@@ -606,7 +606,7 @@ fn documented_values_clap_accepts_are_not_reported() {
         "--strategy".to_owned(),
         vec!["ff".to_owned(), "rebase".to_owned()],
     )]);
-    let row = "| `rwv sync <source>` | `--strategy ff\\|rebase` (default `ff`) |";
+    let row = "| `rwv sync` | `--strategy ff\\|rebase` (default `ff`) |";
     let errors = value_claim_errors("README.md", "sync", row, &accepted);
     assert!(
         errors.is_empty(),
@@ -647,7 +647,7 @@ fn both_surfaces_actually_yield_a_strategy_claim() {
     let readme = read_doc("README.md");
     let readme_claims: Vec<_> = readme
         .lines()
-        .filter(|l| l.trim_start().starts_with("| `rwv sync <source>`"))
+        .filter(|l| l.trim_start().starts_with("| `rwv sync` |"))
         .flat_map(extract_flag_value_claims)
         .collect();
     assert!(

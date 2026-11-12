@@ -99,17 +99,21 @@ fn sync_reports_how_the_files_it_moved_were_placed(endings: LineEndings) {
         .current_dir(&seat)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(output.status.success(), "sync failed:\n{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success(),
+        "sync failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let line = stderr
+    let line = stdout
         .lines()
         .find_map(|l| {
             l.trim()
-                .strip_prefix("rwv update: ")
+                .strip_prefix("rwv sync: ")
                 .and_then(|l| l.strip_prefix(&format!("{MEMBER}: files ")))
         })
-        .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stderr}"));
+        .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stdout}"));
     let expected = match (endings, declared_to_clone(tmp.path())) {
         (LineEndings::Converted, _) | (_, Some(false)) => {
             Some("0 reflinked, 0 hardlinked, 2 written")
@@ -153,13 +157,14 @@ fn sync_json_reports_the_placement_as_its_own_record(endings: LineEndings) {
     assert!(output.status.success(), "sync failed:\n{stdout}");
 
     let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let outcome = envelope["outcomes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["path"] == MEMBER)
-        .unwrap_or_else(|| panic!("no outcome for {MEMBER}:\n{stdout}"));
-    assert!(outcome.get("files").is_none(), "{stdout}");
+    assert!(
+        envelope["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o.get("files").is_none()),
+        "{stdout}"
+    );
     let placements = envelope["placements"].as_array().unwrap();
     assert_eq!(placements.len(), 1, "{stdout}");
     let placement = &placements[0];

@@ -114,13 +114,12 @@ fn a_rebase_refuses_a_member_on_a_declared_branch_with_commits_to_replay_and_mov
     succeed(&["lock", "--commit"], &ww);
     commit_in(&w.workspace.join(LIB), "ours");
     succeed(&["lock", "--commit"], &w.workspace);
-    let before = common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]);
+    declare_lib_on(&w.workspace, "line", "p--anon");
+    let before = common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]);
 
-    let text = refuse(&["sync", "--strategy", "rebase"], &ww);
+    let out = run(&["sync", "--strategy", "rebase"], &ww);
+    let text = common::cli::refused(&out, repoweave::diagnosis::State::ProtectedDeclared);
 
-    assert!(text.contains("protected declared"), "{text}");
-    assert_eq!(
-        common::git_in(w.workspace.join(LIB), &["rev-parse", "HEAD"]),
-        before
-    );
+    assert!(text.contains("line (projects/p)"), "{text}");
+    assert_eq!(common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]), before);
 }
