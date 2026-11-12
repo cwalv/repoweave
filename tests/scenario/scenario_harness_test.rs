@@ -657,6 +657,7 @@ every_scenario!(
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
+    stack_cycle,
     stack_carried_by_a_landing,
     stack_two_dependents,
     stack_transitive,
@@ -4510,6 +4511,11 @@ fn git_below_2_38_is_green() {
 #[test]
 fn stack_carried_by_a_landing_is_green() {
     runner::run(scenarios::stack_carried_by_a_landing()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_cycle_is_green() {
+    runner::run(scenarios::stack_cycle()).assert_fully_decided_green();
 }
 
 #[test]

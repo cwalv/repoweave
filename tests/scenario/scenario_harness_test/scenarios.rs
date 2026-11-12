@@ -12676,3 +12676,59 @@ pub fn stack_carried_by_a_landing() -> Scenario {
     );
     scenario("stack: a landing carries a dependent along", steps)
 }
+
+/// `stack-cycle`: a record naming its own branch as its target is refused
+/// at write; a cycle formed by merging two machines' records (`x -> y`
+/// written on A, `y -> x` on B) reads as `target` cycle, refusing a
+/// deletion and a sync of either branch with that state alone, and C12
+/// settles it.
+pub fn stack_cycle() -> Scenario {
+    let set_mode = |at: Place, branch: &'static str, target: &'static str| {
+        Step::rwv(
+            &at,
+            &["branch", "set-mode", branch, "feature", "--target", target],
+        )
+        .expect(Exit::Succeeds)
+    };
+    let push = |at: Place, branch: &'static str| {
+        publishes_records(Step::rwv(&at, &["push", "--branch", branch]))
+            .pushes(Remote::origin(Repo::Proj), branch)
+            .expect(Exit::Succeeds)
+    };
+    scenario(
+        "stack: a target cycle, at write and by merge",
+        vec![
+            create("w1"),
+            Step::rwv(
+                &ww("w1"),
+                &[
+                    "branch", "set-mode", "proj--w1", "feature", "--target", "proj--w1",
+                ],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::TargetCycle)),
+            Step::git(&a(), Repo::Proj, &["branch", "x"]),
+            Step::git(&a(), Repo::Proj, &["branch", "y"]),
+            set_mode(a(), "y", "main"),
+            set_mode(a(), "x", "main"),
+            push(a(), "y"),
+            push(a(), "x"),
+            Step::new_machine(Machine::B),
+            set_mode(a(), "x", "y"),
+            push(a(), "x"),
+            Step::git(&b(), Repo::Proj, &["branch", "y", "origin/y"]),
+            set_mode(b(), "y", "x"),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["push", "--branch", "y"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetCycle))
+                .claim(Claim::JudgedOnly(Repo::Proj, State::TargetCycle)),
+            Step::rwv(&b(), &["branch", "delete", "x"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetCycle))
+                .claim(Claim::JudgedOnly(Repo::Proj, State::TargetCycle))
+                .claim(Claim::OutputContains("rwv branch set-mode")),
+            set_mode(b(), "y", "main"),
+            Step::rwv(&b(), &["branch", "delete", "y"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+                .claim(Claim::JudgedOnly(Repo::Proj, State::TargetDependents)),
+        ],
+    )
+}
