@@ -606,6 +606,39 @@
         }
       }
     },
+    "MissingLockMergeDriverKind": {
+      "description": "Which part of a project repo's lock merge driver setup is missing or left as an earlier release wrote it.",
+      "oneOf": [
+        {
+          "description": "The checked-out commit's `.gitattributes` assigns `rwv.lock` no driver.",
+          "type": "string",
+          "enum": [
+            "attribute-absent"
+          ]
+        },
+        {
+          "description": "It assigns `merge=rwv-ours` or `merge=ours`, written by an earlier release.",
+          "type": "string",
+          "enum": [
+            "attribute-legacy"
+          ]
+        },
+        {
+          "description": "The clone's config does not define the driver's command.",
+          "type": "string",
+          "enum": [
+            "config-absent"
+          ]
+        },
+        {
+          "description": "The clone's config defines a driver that keeps one side.",
+          "type": "string",
+          "enum": [
+            "config-legacy"
+          ]
+        }
+      ]
+    },
     "OpVerb": {
       "description": "Which top-level verb started this op.",
       "oneOf": [
@@ -954,32 +987,6 @@
           "type": "string",
           "enum": [
             "directory-stands"
-          ]
-        }
-      ]
-    },
-    "ReplayExclusionKind": {
-      "description": "Which spelling of the replay exclusion the project repo carries, which decides whether `--fix` writes the entry fresh or migrates one in place.",
-      "oneOf": [
-        {
-          "description": "`.gitattributes` carries no entry for `rwv.lock` at all.",
-          "type": "string",
-          "enum": [
-            "absent"
-          ]
-        },
-        {
-          "description": "`.gitattributes` carries the legacy `merge=ours` spelling. The driver was renamed to close a collision with a global-config `ours` driver; the old name reads as the invariant being met while sync's check — which matches the current name — sees nothing.",
-          "type": "string",
-          "enum": [
-            "legacy-spelling"
-          ]
-        },
-        {
-          "description": "`.gitattributes` carries both spellings for `rwv.lock`. Which one git applies is decided by reading order, and the legacy name is live either way: a global `merge.ours.driver` binds to it during a bare `git rebase --continue`.",
-          "type": "string",
-          "enum": [
-            "legacy-alongside-current"
           ]
         }
       ]
@@ -1440,14 +1447,14 @@
             "kind": {
               "type": "string",
               "enum": [
-                "missing-replay-exclusion"
+                "missing-lock-merge-driver"
               ]
             },
             "project": {
               "type": "string"
             },
             "sub_kind": {
-              "$ref": "#/definitions/ReplayExclusionKind"
+              "$ref": "#/definitions/MissingLockMergeDriverKind"
             }
           }
         },
@@ -1465,55 +1472,7 @@
             "kind": {
               "type": "string",
               "enum": [
-                "replay-exclusion-unreadable"
-              ]
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "config_key",
-            "kind",
-            "project"
-          ],
-          "properties": {
-            "config_key": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "missing-merge-driver-config"
-              ]
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "config_key",
-            "error",
-            "kind",
-            "project"
-          ],
-          "properties": {
-            "config_key": {
-              "type": "string"
-            },
-            "error": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "merge-driver-config-unreadable"
+                "lock-merge-driver-unreadable"
               ]
             },
             "project": {

@@ -440,6 +440,13 @@ Schema:
           "enum": [
             "protected"
           ]
+        },
+        {
+          "description": "A project repo whose lock merge driver is not set up as this release sets it up.",
+          "type": "string",
+          "enum": [
+            "missing-lock-merge-driver"
+          ]
         }
       ]
     },
@@ -484,7 +491,7 @@ Schema:
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — `Vcs::mid_op` constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every `VcsError::RebaseConflict` raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
       "oneOf": [
         {
-          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` remains a safe fallback (the durable `merge.rwv-ours.driver` config plant carries the exclusion), but it is not the primary operator path.",
+          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` resumes without rwv's hold on the lock merge driver, so the clone's own definition merges the lock of each remaining pick.",
           "type": "string",
           "enum": [
             "rebase"
@@ -1697,9 +1704,10 @@ rwv abort
   `--allow-stale-lock` let step 1 replay against a lock that was behind those
   commits. The target's project repo is left un-advanced, so its lock still
   describes the target's pre-op state. Roll back with `rwv abort` and re-run.
-- *missing-replay-exclusion* — the project repo doesn't have
-  `rwv.lock merge=rwv-ours` in `.gitattributes` (or still carries the
-  legacy `merge=ours` spelling). Run `rwv doctor --fix`.
+- *missing-lock-merge-driver* — the project repo's lock merge driver is
+  absent or set up by an earlier release, in the workspace or, under
+  `--strategy rebase`, in the one replayed onto. Run `rwv doctor --fix`
+  where the refusal names.
 - *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
   workweave context. Provide an explicit `<target>` or run from inside a workweave.
 - *lock-freshness precondition failed (stale lock)* — a repo's lock↔HEAD relation

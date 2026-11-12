@@ -96,10 +96,6 @@ fn commit_in(dir: &Path, file: &str) {
 #[test]
 fn a_sync_of_a_feature_whose_member_branch_another_branch_declares_is_refused_and_moves_nothing() {
     let w = common::build_workspace(PROJECT, &[(LIB, "owned")]);
-    let project = project_dir(&w.workspace);
-    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
-    common::git_in(&project, &["add", ".gitattributes"]);
-    common::git_in(&project, &["commit", "-qm", "replay exclusion"]);
     succeed(
         &["workweave", "create", "--project", PROJECT, "anon"],
         &w.workspace,

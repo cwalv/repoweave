@@ -78,11 +78,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
         repo = common::url_path(&repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
 
     let repo_url = common::file_url(&repo);
     common::fixture_lock(&project_dir, &[(REPO_PATH, &repo_url, &initial_sha)]);

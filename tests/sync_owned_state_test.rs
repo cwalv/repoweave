@@ -254,11 +254,7 @@ fn fixture() -> Fixture {
     )
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    common::set_up_lock_driver(&project_dir);
     git_init_with_commit(&project_dir);
     common::record_trunk(&project_dir);
 

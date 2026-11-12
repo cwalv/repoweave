@@ -68,8 +68,8 @@ question the classes answer is whether the weave you invoked doctor from
 determines what gets repaired.
 
 **Weave-scoped arms — the invoking weave sets the scope.** Integration
-content regeneration, surfacing symlinks, the `rwv.lock` replay-exclusion and
-its paired merge-driver config, and the index / working-tree / state-hygiene
+content regeneration, surfacing symlinks, the lock merge driver's attribute
+line and config, and the index / working-tree / state-hygiene
 drift arms all repair state that
 exists once *per weave*. Run inside a workweave, they repair that workweave
 and nothing else: primary's copy of the same file is left alone, including
@@ -168,10 +168,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-merge-driver-unreadable`, `lock-pinned-by-name`, `member-permissions`, `missing-canonical-clone`, `missing-lock-merge-driver`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -810,6 +810,39 @@ Schema:
         }
       }
     },
+    "MissingLockMergeDriverKind": {
+      "description": "Which part of a project repo's lock merge driver setup is missing or left as an earlier release wrote it.",
+      "oneOf": [
+        {
+          "description": "The checked-out commit's `.gitattributes` assigns `rwv.lock` no driver.",
+          "type": "string",
+          "enum": [
+            "attribute-absent"
+          ]
+        },
+        {
+          "description": "It assigns `merge=rwv-ours` or `merge=ours`, written by an earlier release.",
+          "type": "string",
+          "enum": [
+            "attribute-legacy"
+          ]
+        },
+        {
+          "description": "The clone's config does not define the driver's command.",
+          "type": "string",
+          "enum": [
+            "config-absent"
+          ]
+        },
+        {
+          "description": "The clone's config defines a driver that keeps one side.",
+          "type": "string",
+          "enum": [
+            "config-legacy"
+          ]
+        }
+      ]
+    },
     "OpVerb": {
       "description": "Which top-level verb started this op.",
       "oneOf": [
@@ -1158,32 +1191,6 @@ Schema:
           "type": "string",
           "enum": [
             "directory-stands"
-          ]
-        }
-      ]
-    },
-    "ReplayExclusionKind": {
-      "description": "Which spelling of the replay exclusion the project repo carries, which decides whether `--fix` writes the entry fresh or migrates one in place.",
-      "oneOf": [
-        {
-          "description": "`.gitattributes` carries no entry for `rwv.lock` at all.",
-          "type": "string",
-          "enum": [
-            "absent"
-          ]
-        },
-        {
-          "description": "`.gitattributes` carries the legacy `merge=ours` spelling. The driver was renamed to close a collision with a global-config `ours` driver; the old name reads as the invariant being met while sync's check — which matches the current name — sees nothing.",
-          "type": "string",
-          "enum": [
-            "legacy-spelling"
-          ]
-        },
-        {
-          "description": "`.gitattributes` carries both spellings for `rwv.lock`. Which one git applies is decided by reading order, and the legacy name is live either way: a global `merge.ours.driver` binds to it during a bare `git rebase --continue`.",
-          "type": "string",
-          "enum": [
-            "legacy-alongside-current"
           ]
         }
       ]
@@ -1644,14 +1651,14 @@ Schema:
             "kind": {
               "type": "string",
               "enum": [
-                "missing-replay-exclusion"
+                "missing-lock-merge-driver"
               ]
             },
             "project": {
               "type": "string"
             },
             "sub_kind": {
-              "$ref": "#/definitions/ReplayExclusionKind"
+              "$ref": "#/definitions/MissingLockMergeDriverKind"
             }
           }
         },
@@ -1669,55 +1676,7 @@ Schema:
             "kind": {
               "type": "string",
               "enum": [
-                "replay-exclusion-unreadable"
-              ]
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "config_key",
-            "kind",
-            "project"
-          ],
-          "properties": {
-            "config_key": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "missing-merge-driver-config"
-              ]
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "config_key",
-            "error",
-            "kind",
-            "project"
-          ],
-          "properties": {
-            "config_key": {
-              "type": "string"
-            },
-            "error": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "merge-driver-config-unreadable"
+                "lock-merge-driver-unreadable"
               ]
             },
             "project": {
@@ -3102,15 +3061,13 @@ rwv doctor --fix
 
 ## Common errors
 
-- *missing-replay-exclusion* on a project repo — the project repo lacks
-  `rwv.lock merge=rwv-ours` in `.gitattributes`, or still carries the
-  legacy `rwv.lock merge=ours` spelling (renamed to close an
-  accidental-collision hazard with an unrelated global
-  `merge.ours.driver` during bare `git rebase --continue`), or carries
-  both lines at once, which leaves the legacy name live whichever way
-  git's reading order resolves them. Run `rwv doctor --fix` to add,
-  migrate, or drop the line — those paths also commit the change
-  (skipping the commit when the repo has other staged work).
+- *missing-lock-merge-driver* on a project repo — the checked-out commit's
+  `.gitattributes` lacks `rwv.lock merge=rwv-lock` or names a driver an
+  earlier release wrote (`merge=rwv-ours`, `merge=ours`), or the clone's
+  config does not name `rwv lock --merge-driver %O %A %B` or still defines
+  `merge.rwv-ours.driver`. Run `rwv doctor --fix`: it rewrites the line,
+  committing only that (declining while an
+  operation is in progress), and replaces the config.
 - *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
   an `rwv-`-prefixed merge driver rwv does not define. Git resolves
   `merge=<name>` through `merge.<name>.driver` config and falls back to a
