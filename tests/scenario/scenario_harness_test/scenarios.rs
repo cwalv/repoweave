@@ -13217,6 +13217,37 @@ pub fn abort_refuses_a_tip_amended_during_a_stop() -> Scenario {
     )
 }
 
+/// `sync --continue` under `linear` judges the dependents of a rebase the
+/// stop made it plan before it rebases: during the stop `lib` gains a
+/// commit, so `lib`, planned a fast-forward, now needs a rebase, and a
+/// dependent `w2` is cut from `w`'s branch, lacking that commit. The
+/// continue refuses on `w2` and leaves `lib`'s commit as the operator made
+/// it.
+pub fn sync_continue_judges_dependents_before_a_rejudged_rebase() -> Scenario {
+    let mut steps = sync_stopped_then_lib_committed("linear");
+    steps.extend([
+        create("w2"),
+        dependent_of(&ww("w2"), "w2", "proj--w"),
+        Step::rwv(&ww("w"), &["sync", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentLacksTip))
+            .claim(Claim::OutputContains("in local/remotes/lib"))
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "proj--w",
+                mark: "w-lib-stop",
+            })
+            .claim(Claim::NoBackup {
+                repo: Repo::Lib,
+                mark: "w-lib-stop",
+            }),
+    ]);
+    scenario(
+        "sync --continue judges dependents before a rebase it re-judged",
+        steps,
+    )
+}
+
 /// `sync --continue` re-judges a repo the stop changed: `lib`, planned a
 /// fast-forward, now holds the operator's commit, and under `merge` it takes
 /// `main` in by a merge commit, the seat's branch first, never by a rebase.
