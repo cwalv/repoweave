@@ -76,10 +76,31 @@ pub(crate) struct Uncarried {
     pub(crate) why: Why,
 }
 
+/// A dependent known here only on remotes whose copies its target's tip
+/// already holds, in every repo the rewrite moves: nothing to carry.
+#[derive(Debug, Clone)]
+pub(crate) struct Landed {
+    pub(crate) dependent: BranchName,
+    pub(crate) parent: BranchName,
+    pub(crate) remotes: Vec<String>,
+}
+
+impl Landed {
+    pub(crate) fn line(&self) -> String {
+        format!(
+            "'{}' has landed into '{}': nothing to carry; its branch still exists on {}",
+            self.dependent,
+            self.parent,
+            self.remotes.join(", ")
+        )
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Stack {
     pub(crate) carried: Vec<Carry>,
     pub(crate) uncarried: Vec<Uncarried>,
+    pub(crate) landed: Vec<Landed>,
 }
 
 /// The dependents a rewrite of `w`'s branches would carry, parents first, and
@@ -87,7 +108,8 @@ pub(crate) struct Stack {
 /// with its tip there before. A dependent's own dependents are walked only
 /// where it is carried. A record whose branch exists nowhere is no
 /// dependent, and neither is one known only on a remote `w` is not
-/// published on. A dependent's branch at the tip a journaled carry in
+/// published on; one known only on remotes whose copies `w`'s old tips hold
+/// is landed. A dependent's branch at the tip a journaled carry in
 /// `carried` composed and moved it to is read at the tip it was carried
 /// from, so a rerun judges the stack as the carry first did.
 pub(crate) fn walk(
@@ -139,7 +161,16 @@ pub(crate) fn walk(
                     .filter(|copy| parents.iter().any(|p| p.remote == copy.remote))
                     .map(|copy| copy.remote.name().to_owned())
                     .collect();
-                if !shared.is_empty() {
+                if shared.is_empty() {
+                    continue;
+                }
+                if holds_remote_copies(repos, &parent, &parent_moved, &name, &shared)? {
+                    stack.landed.push(Landed {
+                        dependent,
+                        parent: parent.clone(),
+                        remotes: shared,
+                    });
+                } else {
                     stack.uncarried.push(Uncarried {
                         dependent,
                         parent: parent.clone(),
@@ -199,6 +230,38 @@ pub(crate) fn walk(
         }
     }
     Ok(stack)
+}
+
+/// Whether `parent`'s tips before the rewrite hold every copy of `dependent`
+/// on `remotes`, in each repo `parent_moved` names and in the project repo.
+fn holds_remote_copies(
+    repos: &Repos<'_>,
+    parent: &BranchName,
+    parent_moved: &[(RepoKey, CommitId)],
+    dependent: &RawRefName,
+    remotes: &[String],
+) -> anyhow::Result<bool> {
+    let mut tips = parent_moved.to_vec();
+    if !tips.iter().any(|(repo, _)| repo == &RepoKey::Project) {
+        let dir = repos.dir(&RepoKey::Project);
+        let vcs = repos.vcs(&RepoKey::Project);
+        match vcs.resolve_local_branch_tip(&dir, &RawRefName::new(parent.as_str()))? {
+            Some(tip) => tips.push((RepoKey::Project, tip.id().clone())),
+            None => return Ok(false),
+        }
+    }
+    for (repo, old) in &tips {
+        let dir = repos.dir(repo);
+        let vcs = repos.vcs(repo);
+        for copy in vcs.remote_copies(&dir, dependent)? {
+            if remotes.iter().any(|r| r == copy.remote.name())
+                && !vcs.is_ancestor(&dir, &copy.tip, &rev(old))?
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// The workweave a checkout belongs to, by its root's name.
@@ -273,6 +336,13 @@ pub(crate) struct Carried {
     pub(crate) was: CommitId,
     pub(crate) now: CommitId,
     pub(crate) backup: String,
+}
+
+/// What a carry moved, and the dependents it found landed already.
+#[derive(Debug, Default)]
+pub(crate) struct Carries {
+    pub(crate) carried: Vec<Carried>,
+    pub(crate) landed: Vec<Landed>,
 }
 
 /// The op a carry runs under.
@@ -414,7 +484,7 @@ impl Carrier<'_> {
     /// dependent's branch. A dependent that can no longer be carried refuses
     /// before any of their branches moves. The claims are held until the op
     /// ends or is aborted.
-    pub(crate) fn carry(&self) -> anyhow::Result<Vec<Carried>> {
+    pub(crate) fn carry(&self) -> anyhow::Result<Carries> {
         self.finish_stopped()?;
         let record = take_in(self.workspace)?;
         let mut new_tips: BTreeMap<(String, RepoKey), (CommitId, CommitId)> = BTreeMap::new();
@@ -494,7 +564,10 @@ impl Carrier<'_> {
                 );
             }
         }
-        self.move_carried(verb)
+        Ok(Carries {
+            carried: self.move_carried(verb)?,
+            landed: stack.landed,
+        })
     }
 
     /// Where a dependent's project branch is replayed when its target's is

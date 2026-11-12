@@ -1598,7 +1598,11 @@ fn act(
         remap(sync, op, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }
-    for carried in carrier.carry()? {
+    let carries = carrier.carry()?;
+    for landed in &carries.landed {
+        say(output, &landed.line());
+    }
+    for carried in carries.carried {
         say(
             output,
             &format!(

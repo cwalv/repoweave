@@ -17011,3 +17011,124 @@ pub fn drift_staged_return_after_a_hand_refresh() -> Scenario {
     }
     scenario("drift staged return after a hand refresh", steps)
 }
+
+/// What machine B has of `w2` beyond what it landed into `w1`.
+#[derive(Debug, Clone, Copy)]
+pub enum RemoteDependentLanded {
+    /// Nothing: every commit of `w2` it published has landed.
+    Wholly,
+    /// One more commit, published and not landed.
+    ButOneCommit,
+}
+
+/// `stack-remote-dependent`, with B landing its `w2` into `w1` and pushing
+/// `w1`, A then pulling `w1`. A's `sync` under a moved `linear` `main`
+/// reads `w2` as landed, its published copy held by `w1`'s tip: it carries
+/// nothing, says so, and passes. Where B published one more commit of `w2`
+/// it did not land, the sync refuses with C35 printed; B runs that landing
+/// as printed and pushes, and A's next sync passes.
+pub fn stack_remote_dependent_landed(published: RemoteDependentLanded) -> Scenario {
+    let push_w1 = || {
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "w1"]))
+            .pushes(Remote::origin(Repo::App), "w1")
+            .pushes(Remote::origin(Repo::Proj), "w1")
+            .expect(Exit::Succeeds)
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w1",
+                "--new-branch",
+                "w1",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("w1"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "w1")
+            .pushes(Remote::origin(Repo::Proj), "w1")
+            .expect(Exit::Succeeds),
+        Step::new_machine(Machine::B),
+        Step::rwv(
+            &b(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2",
+                "--new-branch",
+                "w2",
+                "--target",
+                "w1",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&b_ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b_ww("w2"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "w2")
+            .pushes(Remote::origin(Repo::Proj), "w2")
+            .expect(Exit::Succeeds),
+        Step::rwv(&b_ww("w2"), &["land"]).expect(Exit::Succeeds),
+        push_w1(),
+    ];
+    if let RemoteDependentLanded::ButOneCommit = published {
+        steps.extend([
+            Step::commit(&b_ww("w2"), Repo::App, "w2-more"),
+            Step::rwv(&b_ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&b_ww("w2"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "w2")
+                .pushes(Remote::origin(Repo::Proj), "w2")
+                .expect(Exit::Succeeds),
+        ]);
+    }
+    steps.extend([
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["pull"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(main_moves_app("main-app"));
+    let passes = || {
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "'w2' has landed into 'w1': nothing to carry; its branch still exists on origin",
+            ))
+            .claim(Claim::OutputLacks("carried"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "HEAD",
+                mark: "main-app",
+            })
+    };
+    match published {
+        RemoteDependentLanded::Wholly => steps.push(passes()),
+        RemoteDependentLanded::ButOneCommit => steps.extend([
+            Step::rwv(&ww("w1"), &["sync"])
+                .expect(Exit::refuses(
+                    Repo::Proj,
+                    State::TargetDependentOnAnotherMachine,
+                ))
+                .claim(Claim::JudgedOnly(
+                    Repo::Proj,
+                    State::TargetDependentOnAnotherMachine,
+                ))
+                .claim(Claim::OutputContains("w2 lands into w1"))
+                .claim(Claim::LocalStateUnchanged(ww("w1"))),
+            Step::rwv_printed(&b_ww("w2"), "rwv land").expect(Exit::Succeeds),
+            push_w1(),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["pull"]).expect(Exit::Succeeds),
+            passes(),
+        ]),
+    }
+    scenario("stack: a dependent published from another machine and landed there", steps)
+}

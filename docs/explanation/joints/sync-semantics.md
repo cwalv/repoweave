@@ -212,7 +212,10 @@ carried refuses before anything moves, one line each: cut from an older tip
 (`target` dependent lacks the tip), checked out in another workspace
 (`target` dependent checked out elsewhere), or known here only from another
 machine's publish (`target` dependent on another machine), each with its own
-choices. A `merge` setting never rewrites the branch, so its dependents never
+choices. A dependent known only from another machine's publish whose every
+published copy the branch's old tip already holds has landed: nothing is
+carried, and the operation reports it, naming the remotes that still hold its
+branch. A `merge` setting never rewrites the branch, so its dependents never
 block it.
 
 **Backups.** Before a rebase rewrites a branch, rwv keeps its tip as a

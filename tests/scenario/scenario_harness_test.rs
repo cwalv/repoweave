@@ -760,6 +760,8 @@ every_scenario!(
     stack_carried,
     stack_cycle,
     stack_remote_dependent,
+    stack_remote_dependent_landed(scenarios::RemoteDependentLanded::Wholly),
+    stack_remote_dependent_landed(scenarios::RemoteDependentLanded::ButOneCommit),
     stack_carried_by_a_landing,
     stack_two_dependents,
     stack_transitive,
@@ -5368,6 +5370,22 @@ fn stack_cycle_is_green() {
 #[test]
 fn stack_remote_dependent_is_green() {
     runner::run(scenarios::stack_remote_dependent()).assert_fully_decided_green();
+}
+
+#[test]
+fn stack_remote_dependent_landed_wholly_carries_nothing() {
+    runner::run(scenarios::stack_remote_dependent_landed(
+        scenarios::RemoteDependentLanded::Wholly,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn stack_remote_dependent_with_an_unlanded_commit_refuses_until_it_lands() {
+    runner::run(scenarios::stack_remote_dependent_landed(
+        scenarios::RemoteDependentLanded::ButOneCommit,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

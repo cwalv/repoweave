@@ -6316,7 +6316,13 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    for carried in carrier.carry()? {
+    let carries = carrier.carry()?;
+    if ctx.handler.emit_text() {
+        for landed in &carries.landed {
+            outln!("  {}", landed.line());
+        }
+    }
+    for carried in carries.carried {
         report_landing(
             ctx,
             op_state::LandingReport::Carried {

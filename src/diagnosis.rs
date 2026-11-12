@@ -1566,7 +1566,9 @@ impl State {
                 name: "dependent on another machine",
                 means: "a branch whose record names this branch as the one it lands into is \
                         here only as a remote's copy, published from another machine with \
-                        its record: no verb here moves it",
+                        its record, holding commits this branch's tip lacks: no verb here \
+                        moves it. A copy this branch's tip already holds has landed: it is \
+                        reported, not refused",
                 refused_by: "`rwv sync` and `rwv land` where they would rebase this branch; \
                              nothing moves",
                 offers: &[Form::C35, Form::C12Feature],
