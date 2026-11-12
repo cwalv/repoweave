@@ -479,7 +479,7 @@ fn fresh(
         pick: Some(plan.record.clone()),
         ..TakeInRecord::default()
     };
-    let repos = savepoint_repos(here);
+    let repos = savepoint_repos(here, &plan.record);
     let op = Op::begin(
         ctx.active_path(),
         &here.project,
@@ -490,14 +490,19 @@ fn fresh(
     act(here, &op, plan.record, false, output, reported)
 }
 
-fn savepoint_repos(here: &Here<'_>) -> Vec<(PathBuf, Box<dyn Vcs>)> {
+/// The repos the port moves: the project repo and each member it copies
+/// onto.
+fn savepoint_repos(here: &Here<'_>, record: &PickRecord) -> Vec<(PathBuf, Box<dyn Vcs>)> {
     let mut repos: Vec<(PathBuf, Box<dyn Vcs>)> = vec![(here.dir.clone(), project_vcs())];
-    if let Ok(manifest) = Manifest::from_path(&here.dir.join(Manifest::FILE_NAME)) {
-        for (path, entry) in manifest.iter_entries() {
-            let member = here.member_dir(path);
-            if member.exists() {
-                repos.push((member, vcs_for(entry.vcs_type)));
-            }
+    let Ok(manifest) = Manifest::from_path(&here.dir.join(Manifest::FILE_NAME)) else {
+        return repos;
+    };
+    for pick in record.members.iter().filter(|m| !m.commits.is_empty()) {
+        let RepoKey::Member(path) = &pick.repo else {
+            continue;
+        };
+        if let Some(entry) = manifest.get_entry(path) {
+            repos.push((here.member_dir(path), vcs_for(entry.vcs_type)));
         }
     }
     repos
@@ -1447,6 +1452,10 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
     Ok(())
 }
 
+/// A repo the port moves: its label, checkout, VCS, the tip it was planned
+/// on and the branch it copies onto.
+type Moved<'a> = (String, PathBuf, Box<dyn Vcs>, &'a CommitId, Option<&'a str>);
+
 /// Every repo the port moves has its savepoint before it moves: one an
 /// interrupted start did not take is taken where the repo still sits at the
 /// tip the port was planned on.
@@ -1457,7 +1466,7 @@ fn ensure_savepoints(
     record: &PickRecord,
 ) -> anyhow::Result<()> {
     let key = SavepointKey::Op(op.id.clone());
-    let mut repos: Vec<(String, PathBuf, Box<dyn Vcs>, CommitId)> = Vec::new();
+    let mut repos: Vec<Moved<'_>> = Vec::new();
     for pick in &record.members {
         let RepoKey::Member(path) = &pick.repo else {
             continue;
@@ -1472,21 +1481,25 @@ fn ensure_savepoints(
             path.to_string(),
             here.member_dir(path),
             vcs_for(entry.vcs_type),
-            pick.start.clone(),
+            &pick.start,
+            Some(pick.branch.as_str()),
         ));
     }
     repos.push((
         here.label(),
         here.dir.clone(),
         project_vcs(),
-        record.head.clone(),
+        &record.head,
+        None,
     ));
-    for (repo, dir, vcs, start) in repos {
+    for (repo, dir, vcs, start, branch) in repos {
         if vcs.resolve_savepoint(&dir, &key).is_some() {
             continue;
         }
         let head = vcs.head_revision(&dir)?.id().clone();
-        if head != start || vcs.mid_operation(&dir).is_some() {
+        let on = crate::branch::checked_out(vcs.as_ref(), &dir)?;
+        let off_branch = branch.is_some_and(|b| on.as_deref() != Some(b));
+        if head != *start || off_branch || vcs.mid_operation(&dir).is_some() {
             return Err(crate::untokened!(
                 Owed,
                 "{repo}: the op's savepoint of it is gone and it has moved since the port began, so \
@@ -1547,7 +1560,7 @@ fn act(
     }
     let run = crate::update::align_after(here.ctx, 1, output, VERB)?;
     run.tail?;
-    op.finish(&savepoint_repos(here));
+    op.finish(&savepoint_repos(here, &record));
     match made {
         Some(commit) => say(
             output,

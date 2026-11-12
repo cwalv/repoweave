@@ -1006,7 +1006,12 @@ impl OwnerRecord {
                     .map(|(key, _)| key.clone()),
             );
             if let Some(pick) = &take_in.pick {
-                repos.extend(pick.members.iter().map(|m| m.repo.clone()));
+                repos.extend(
+                    pick.members
+                        .iter()
+                        .filter(|m| !m.commits.is_empty())
+                        .map(|m| m.repo.clone()),
+                );
             }
         }
         Some(repos)
