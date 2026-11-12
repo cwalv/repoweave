@@ -2,7 +2,7 @@
 //! exists, and in a checkout stopped before its commit where it does not.
 
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
-use super::{git_command, local_branch, lock_driver_held_args, GitVcs};
+use super::{git_command, local_branch, lock_driver_held_args, nul_terminated_fields, GitVcs};
 use crate::vcs::{
     BackupWitness, CommitId, RawRefName, RefMerge, TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
 };
@@ -68,8 +68,14 @@ impl TreeMerges for GitVcs {
         tree: &TreeId,
         path: &str,
     ) -> Result<Option<String>, VcsError> {
-        let named = Self::run_trimmed(["ls-tree", "--name-only", tree.as_str(), "--", path], repo)?;
-        if named.is_empty() {
+        let named = Self::run(
+            ["ls-tree", "--name-only", "-z", tree.as_str(), "--", path],
+            repo,
+        )?;
+        if !nul_terminated_fields(&named)
+            .iter()
+            .any(|name| name == path)
+        {
             return Ok(None);
         }
         Self::run(
@@ -116,12 +122,10 @@ impl GitVcs {
     }
 
     pub(super) fn unmerged(checkout: &Path) -> Result<Vec<String>, VcsError> {
-        Ok(
-            Self::run_trimmed(["diff", "--name-only", "--diff-filter=U"], checkout)?
-                .lines()
-                .map(str::to_owned)
-                .collect(),
-        )
+        Ok(nul_terminated_fields(&Self::run(
+            ["diff", "--name-only", "--diff-filter=U", "-z"],
+            checkout,
+        )?))
     }
 
     pub(super) fn merge_head(checkout: &Path) -> Result<Option<CommitId>, VcsError> {

@@ -707,7 +707,7 @@ pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
     }
 
     let status_out = match git_command()
-        .args(["diff-index", "--name-status", "HEAD"])
+        .args(["diff-index", "--name-status", "-z", "HEAD"])
         .current_dir(repo)
         .output()
     {
@@ -716,14 +716,13 @@ pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
     };
     let mut changed: Vec<String> = Vec::new();
     let mut modified: Vec<String> = Vec::new();
-    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(2, '\t');
-        let status = parts.next().unwrap_or("").trim();
-        let path = parts.next().unwrap_or("").trim();
-        match status {
+    let fields = nul_terminated_fields(&String::from_utf8_lossy(&status_out.stdout));
+    for record in fields.chunks(2) {
+        let [status, path] = record else {
+            return WorkingTreeState::Unrecognized;
+        };
+        let path = path.as_str();
+        match status.as_str() {
             // Absent from the working tree: HEAD holds the content, so
             // restoring it cannot lose anything.
             "D" => changed.push(path.to_owned()),
@@ -781,13 +780,10 @@ pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
 
 /// Every tracked path whose working-tree content differs from HEAD.
 pub fn paths_differing_from_head(repo: &Path) -> Result<Vec<String>, VcsError> {
-    let out = GitVcs::run_trimmed(["diff-index", "--name-only", "HEAD"], repo)?;
-    Ok(out
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect())
+    Ok(nul_terminated_fields(&GitVcs::run(
+        ["diff-index", "--name-only", "-z", "HEAD"],
+        repo,
+    )?))
 }
 
 /// Overwrite `paths` in the working tree with HEAD's content, leaving the
