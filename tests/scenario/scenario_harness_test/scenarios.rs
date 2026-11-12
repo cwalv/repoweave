@@ -9182,7 +9182,14 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
     steps.extend([
         Step::rwv_paused(
             &ww("w"),
-            &["land", "--retire", "--allow-member-change", LIB],
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
             "retire",
             "landing",
         ),
@@ -9231,7 +9238,14 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
     steps.push(
         Step::rwv(
             &ww("w"),
-            &["land", "--retire", "--allow-member-change", LIB],
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
         )
         .expect(Exit::Succeeds)
         .claim(Claim::WorkweaveGone(ww("w")))
@@ -9291,7 +9305,7 @@ pub fn a_receiving_branch_moved_as_a_ref_loses_its_race(race: RefRace) -> Scenar
         Step::commit(&ww("w"), Repo::Lib, "w-lib"),
         Step::rwv_paused(
             &ww("w"),
-            &["land", "--allow-member-change", LIB],
+            &["land", "--history", "linear", "--allow-member-change", LIB],
             "advance-target",
             "landing",
         ),
@@ -9330,13 +9344,16 @@ pub fn a_receiving_branch_moved_as_a_ref_loses_its_race(race: RefRace) -> Scenar
         steps.push(Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]));
     }
     steps.push(
-        Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OnBranch {
-                at: a(),
-                repo: Repo::Lib,
-                branch: "lib-next",
-            }),
+        Step::rwv(
+            &ww("w"),
+            &["land", "--history", "linear", "--allow-member-change", LIB],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::Lib,
+            branch: "lib-next",
+        }),
     );
     steps.push(
         Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
