@@ -36,7 +36,7 @@ src/alignment.rs	alignment aligned	-	1
 src/alignment.rs	alignment detached	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment on branch	tests/scenario/scenario_harness_test/scenarios.rs	1
-src/alignment.rs	alignment on branch with stray commits	-	1
+src/alignment.rs	alignment on branch with stray commits	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/alignment.rs	alignment unaligned	-	1
 src/alignment.rs	name no-such-branch	-	1
@@ -58,13 +58,14 @@ src/branch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/branch.rs	target conflict	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/weave/branch_create_switch_test.rs	1
 src/branch.rs	target differs	tests/weave/branch_rename_test.rs	1
+src/branch.rs	target gone	-	1
 src/branch.rs	target no target	-	1
 src/branch.rs	target unreadable	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target unrecorded	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment detached	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment on branch	tests/scenario/scenario_harness_test/scenarios.rs	2
-src/check.rs	alignment on branch with stray commits	-	2
+src/check.rs	alignment on branch with stray commits	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment unaligned	-	2
 src/check.rs	missing-lock-merge-driver attribute absent	-	1
@@ -111,7 +112,6 @@ src/feature_sync.rs	protected declared	tests/weave/branch_rename_test.rs	1
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
 src/feature_sync.rs	target dependents	-	2
-src/feature_sync.rs	target gone	-	1
 src/feature_sync.rs	target no target	-	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
@@ -145,7 +145,6 @@ src/land.rs	protected declared	tests/weave/branch_rename_test.rs	1
 src/land.rs	push-branch diverged	tests/sync/push_test.rs	2
 src/land.rs	target checked out nowhere	tests/sync/sync_to_test.rs	1
 src/land.rs	target dependents	-	1
-src/land.rs	target gone	-	2
 src/land.rs	target member changes	tests/sync/sync_prune_direction_test.rs	1
 src/land.rs	target mode changed	-	1
 src/land.rs	target no target	-	1
@@ -271,6 +270,7 @@ src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
 src/sync.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/sync.rs	pin unmerged	tests/sync/push_test.rs	1
 src/sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	3
+src/sync.rs	push-branch ahead	-	1
 src/sync.rs	resume-contradicts-record	-	2
 src/sync.rs	target moved mid-operation	tests/sync/crash_matrix_test.rs	2
 src/sync.rs	unparseable-project malformed	-	1

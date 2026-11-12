@@ -10,14 +10,19 @@ unchanged. A declared branch lands nowhere: it refuses as `target`
 `no target`, naming `rwv branch set-mode <W> feature --target <T>`.
 
 Every refusal is judged before anything moves, and all of them are reported
-together. Then, under an op record:
+together, the source's own (its edits, its alignment, its lock) included when
+nothing could be landed into. Then, under an op record:
 
-1. **Compose (replay).** Each `owned` or `fork` member the target lists is
-   composed onto the tip of its **receiving branch**: its branch named after
+1. **Compose (replay).** Each `owned` or `fork` member the target lists that
+   holds commits its **receiving branch** lacks is moved: composed onto the tip
+   of that branch, its branch named after
    the target when the target is itself a feature, else the branch the merged
    entries declare, read as the newer of that branch and its upstream. A member
    whose work that branch lacks is rebased onto it (`--strategy rebase`, the
-   default); a member with nothing to land follows it. The project branch is
+   default). A member holding nothing that branch lacks is not moved and keeps
+   the target's pin, unless the feature changed that pin, which the relock then
+   takes. Commits a moved member's receiving branch holds beyond the target's
+   pin are listed before composing: the landing pins them into the target. The project branch is
    rebased onto the target's tip, again the newer of the target and its
    upstream, unless it already contains that tip. A target or receiving
    branch behind its upstream is so taken in, fast-forward only. Every
@@ -32,7 +37,9 @@ together. Then, under an op record:
    receiving branch fast-forwards in its checkout, then the target's project
    branch: each the branch the landing planned, to exactly what was composed
    and recorded, never a commit made in this workspace since. Nothing there
-   is ever rebased or merged.
+   is ever rebased or merged. The target is then reported `push-branch`
+   `ahead` where its push branch lacks the landing, naming
+   `rwv push --branch <T>`.
 4. **Align.** The workspace with the target checked out aligns its members as
    `rwv update` does, storing the entries without reporting them; then this
    workspace's members follow the target's new pins. A member alignment leaves
@@ -53,10 +60,13 @@ rebind the feature (`rwv branch set-mode <W> feature --target <T>`) or restore
 the target's mode (`rwv branch set-mode <T> <as>`). A landing is never
 redirected. `--target <T>` takes the target's mode now.
 
-**A record published by another machine** names a target this machine reads
-only through that remote: the target published there, and a local branch of
-that name taking in from it. Anything else refuses as `target` `gone`, never
-landing into an unrelated branch that shares the name.
+**A record published on a remote** names a target this machine reads only
+through that remote: the target published there, and a local branch of that
+name taking in from it or configured to publish to it. Anything else refuses
+as `target` `gone`, never landing into an unrelated branch that shares the
+name. A target that exists nowhere refuses the same way. The recovery rebinds
+the feature onto another target, listing the candidates, nearest first, and
+naming the nearest in `rwv branch set-mode <W> feature --target <T>`.
 
 **The lineage rule.** A member holding work its receiving branch lacks moves
 only when that branch contains its base: the newest commit of its first-parent
@@ -76,7 +86,10 @@ target's pin that no live lock and no remote reaches refuses as `pin`
 `unpinned`, naming `rwv lock --commit` in the target's workspace: the landing
 would pin work the target never recorded. Commits another live lock pins, or a
 remote holds, are pinned by the landing. A receiving branch that does not reach
-the target's pin refuses as `pin` `not on declared branch`.
+the target's pin refuses as `pin` `not on declared branch`. These, the
+receiving branch's own `push-branch` `diverged` and its checkout where the
+target is checked out are judged for moved members only; a member the landing
+does not move is left as it is.
 
 A target checked out in no workspace refuses as `target` `checked out
 nowhere`, naming `rwv workweave create <ww> --branch <T>`. A receiving branch

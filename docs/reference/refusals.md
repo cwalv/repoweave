@@ -136,7 +136,7 @@ The others follow.
 |---|---|---|
 | `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv update --remote`, for a member; `rwv branch create` and `rwv workweave create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
 | `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
-| `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it; `rwv push` publishes it |
+| `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it, and `rwv land` for the branch it landed into; `rwv push` publishes it |
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
 | `foreign upstream` | the branch takes in from a branch of another name, which the subject names; a branch publishes to the branch of its own name | `rwv push`; `rwv status` reports it |
 | `no push target` | no remote is configured for the branch to push to, and the repo has no url remote to fall back on | `rwv push`; `rwv status` reports it |
@@ -156,6 +156,7 @@ The others follow.
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
 | `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `ahead`, for `rwv land` | C7: publish it (again) | `rwv push --branch <W>` | any workspace | adds only |
 | `gone` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
 | `gone` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `gone` | C22: squashed, rebase-merged or on another lineage: reset yours to the target's here | `rwv sync --reset-to-target <m>` | the workspace with that feature | backup kept; local only |

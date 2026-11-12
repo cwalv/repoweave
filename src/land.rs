@@ -373,9 +373,9 @@ fn refusal(report: Report) -> anyhow::Error {
 
 /// A record published on a remote names a target this machine resolves only
 /// through that remote: its branch published there, and a local branch of
-/// that name taking in from it or configured to publish to it. Anything else is that
-/// target gone here, never an unrelated branch that happens to share its
-/// name.
+/// that name taking in from it or configured to publish to it. Anything else
+/// is that target gone here, never an unrelated branch that happens to share
+/// its name.
 fn judge_unrelated_target(
     vcs: &dyn Vcs,
     project: &ProjectName,
