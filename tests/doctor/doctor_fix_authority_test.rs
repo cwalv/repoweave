@@ -1486,6 +1486,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["orphaned-savepoint/redundant"]),
         ),
         (
+            "claim-owner-unreachable at",
+            Findings(&["claim-owner-unreachable"]),
+        ),
+        (
             "dead-op-lease for",
             Findings(&[
                 "dead-op-lease/owner-record-absent",

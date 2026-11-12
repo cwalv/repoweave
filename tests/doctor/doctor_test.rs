@@ -1434,6 +1434,11 @@ mod doctor_json {
             op_id: String,
             recorded_owner: String,
         },
+        ClaimOwnerUnreachable {
+            claim_dir: String,
+            op_id: String,
+            recorded_owner: String,
+        },
         OrphanedSavepoint {
             path: String,
             absolute_path: String,

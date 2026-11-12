@@ -726,17 +726,18 @@ fn write_sync_to_retire_record(
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
 
-/// Test: a retire refusal keeps the phase=retire record and the target lease.
+/// Test: a retire refusal keeps the phase=retire record, and holds nothing on
+/// the target: its lease there is released before the retire is judged.
 ///
 /// Setup: ww and primary share tips (advance-target ran clean) and an
 /// untracked file sits in ww's server repo, which the retire's dirty check
 /// refuses. Verify:
 ///   - rwv land --continue fails.
 ///   - owner record still present at ww, still at phase=retire.
-///   - target lease still present at primary.
+///   - no lease at primary.
 ///   - the error names `--continue` and `rwv abort`.
 #[test]
-fn retire_refusal_leaves_phase_retire_and_lease() {
+fn retire_refusal_leaves_phase_retire_and_no_target_lease() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
 
@@ -774,8 +775,8 @@ fn retire_refusal_leaves_phase_retire_and_lease() {
         "owner record must remain at phase=retire after a retire refusal; got:\n{record_json}"
     );
     assert!(
-        primary.root.join(".rwv-op-lease").exists(),
-        "target lease must survive a retire refusal"
+        !primary.root.join(".rwv-op-lease").exists(),
+        "a landing at retire holds no lease on its target"
     );
 
     let stderr = String::from_utf8_lossy(&out.stderr);
