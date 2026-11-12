@@ -1455,7 +1455,7 @@ impl Aligner {
             .checkout(m.dir)
             .bind("<m>", m.path)
             .bind("<b>", &wanted)
-            .bind("<ids>", ids.join(" "));
+            .bind_list("<ids>", &ids);
         if !commits.is_empty() {
             let onto = checked_out_elsewhere(m, &wanted)
                 .unwrap_or_default()

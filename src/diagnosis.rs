@@ -3073,7 +3073,6 @@ const LIST: &str = "\u{1e}";
 
 /// `template` with every bound `<placeholder>` replaced by its value, quoted
 /// where it holds whitespace. An unbound one stays for the operator to fill.
-
 fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
     let quoted = |value: &str| {
         if value.contains(char::is_whitespace) {
