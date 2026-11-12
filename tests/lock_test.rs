@@ -1983,7 +1983,6 @@ fn a_lock_commit_lists_its_refusals_before_an_absent_member_directory() {
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = common::cli::refused(&out, repoweave::diagnosis::State::EditsDirty);
     assert!(stderr.contains("local/org/b: edits dirty"), "{stderr}");
 }

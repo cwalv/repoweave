@@ -11,6 +11,7 @@
 //! invariant and the precondition refuse-paths from the spec.
 
 use assert_cmd::Command;
+use repoweave::diagnosis::State;
 use std::path::Path;
 
 mod common;
@@ -1558,17 +1559,13 @@ fn merge_settled_by(side: &str) -> std::process::Output {
 #[test]
 fn a_raw_merge_settled_with_this_sides_lock_is_pin_unmerged() {
     let out = merge_settled_by("--ours");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("local/org/a: pin unmerged"), "{stderr}");
+    common::cli::refused(&out, State::PinUnmerged);
 }
 
 #[test]
 fn a_raw_merge_settled_with_the_other_sides_lock_is_pin_unmerged() {
     let out = merge_settled_by("--theirs");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("local/org/a: pin unmerged"), "{stderr}");
+    let stderr = common::cli::refused(&out, State::PinUnmerged);
     assert!(!stderr.contains("pin waived"), "{stderr}");
 }
 
@@ -1669,8 +1666,7 @@ fn a_feature_push_whose_target_diverged_from_its_upstream_is_refused_as_push_bra
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = common::cli::refused(&out, State::PushBranchDiverged);
     assert!(
         stderr.contains("projects/alpha: push-branch diverged (main and origin/main)"),
         "{stderr}"
@@ -1746,9 +1742,7 @@ fn a_member_overwrite_that_publishes_no_project_branch_keeps_its_published_lock_
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("pin would be unreachable"), "{stderr}");
+    common::cli::refused(&out, State::PinWouldBeUnreachable);
     assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
 }
 
@@ -1764,8 +1758,7 @@ fn a_member_overwrite_does_not_exempt_a_sibling_whose_name_ends_like_the_pushed_
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = common::cli::refused(&out, State::PinWouldBeUnreachable);
     assert!(stderr.contains("origin/review/x"), "{stderr}");
     assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
 }
@@ -1783,8 +1776,7 @@ fn a_published_lock_needs_a_remote_tracking_branch_not_a_local_one() {
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = common::cli::refused(&out, State::PinWouldBeUnreachable);
     assert!(stderr.contains("origin/other"), "{stderr}");
     assert_eq!(member_tip_on_remote(&ws), m1, "nothing was overwritten");
 }
@@ -1827,9 +1819,7 @@ fn a_pin_of_a_member_not_materialized_here_withholds_the_project_branch() {
         .current_dir(&ws.workspace)
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("local/org/c: pin unreachable"), "{stderr}");
+    common::cli::refused(&out, State::PinUnreachable);
     assert_eq!(bare_main_sha(&ws.project_bare), before);
 }
 

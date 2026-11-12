@@ -895,7 +895,6 @@ fn push_outcomes() -> Vec<PushOutcomeOutput> {
             )),
             project: repoweave::manifest::ProjectName::new("proj").unwrap(),
             message: "this remote refuses refs/heads/rwv-records".to_owned(),
-            withheld: true,
         },
         PushOutcomeOutput::ProjectRepoPushed {
             path: "projects/proj".to_owned(),
