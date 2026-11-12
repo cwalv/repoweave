@@ -570,6 +570,12 @@ every_scenario!(
     land_reports_what_it_pins_beyond_the_target,
     land_reports_the_target_ahead_of_its_push_branch,
     land_resolves_a_target_that_publishes_where_its_record_is,
+    land_refuses_a_target_diverged_from_its_upstream,
+    land_refuses_a_receiving_branch_diverged_from_its_upstream,
+    land_refuses_a_receiving_branch_checked_out_in_a_third_workspace,
+    land_from_the_primary_refuses_a_target_in_a_workweave,
+    land_refuses_a_target_member_off_its_receiving_branch,
+    land_refuses_a_target_checkout_diverged_from_its_pin,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
@@ -3429,5 +3435,41 @@ fn land_reports_the_target_ahead_of_its_push_branch_scenario() {
 #[test]
 fn a_landing_resolves_a_target_that_publishes_where_its_record_is() {
     runner::run(scenarios::land_resolves_a_target_that_publishes_where_its_record_is())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_target_diverged_from_its_upstream_scenario() {
+    runner::run(scenarios::land_refuses_a_target_diverged_from_its_upstream())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_receiving_branch_diverged_from_its_upstream_scenario() {
+    runner::run(scenarios::land_refuses_a_receiving_branch_diverged_from_its_upstream())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace_scenario() {
+    runner::run(scenarios::land_refuses_a_receiving_branch_checked_out_in_a_third_workspace())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_from_the_primary_refuses_a_target_in_a_workweave_scenario() {
+    runner::run(scenarios::land_from_the_primary_refuses_a_target_in_a_workweave())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_target_member_off_its_receiving_branch_scenario() {
+    runner::run(scenarios::land_refuses_a_target_member_off_its_receiving_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_target_checkout_diverged_from_its_pin_scenario() {
+    runner::run(scenarios::land_refuses_a_target_checkout_diverged_from_its_pin())
         .assert_fully_decided_green();
 }

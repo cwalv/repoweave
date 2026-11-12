@@ -7130,3 +7130,183 @@ pub fn land_resolves_a_target_that_publishes_where_its_record_is() -> Scenario {
         ],
     }
 }
+
+/// `T` and its upstream diverged: the landing refuses before anything moves,
+/// naming the merge and the take of theirs where `T` is checked out.
+pub fn land_refuses_a_target_diverged_from_its_upstream() -> Scenario {
+    scenario(
+        "land refuses a target diverged from its upstream",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Proj,
+                branch: "main",
+                mark: "forge-proj",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Proj, "a-proj"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv pull --reset-to-upstream projects/proj",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// A moved member's receiving branch and its upstream diverged: the landing
+/// refuses before anything moves, naming the merge and the take of theirs
+/// where it is checked out.
+pub fn land_refuses_a_receiving_branch_diverged_from_its_upstream() -> Scenario {
+    scenario(
+        "land refuses a receiving branch diverged from its upstream",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "forge-lib",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "a-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv update --remote --reset-to-upstream local/remotes/lib",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// A moved member's receiving branch is checked out in a third workspace, so
+/// nothing would fast-forward it where the target is: the landing refuses,
+/// and freeing that checkout as printed lets it land.
+pub fn land_refuses_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenario {
+    scenario(
+        "land refuses a receiving branch checked out in a third workspace",
+        vec![
+            create("w"),
+            create("w3"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
+            Step::git(&ww("w3"), Repo::Lib, &["switch", "main"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::CheckoutInAnotherWorkspace))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&ww("w3"), &["update"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w-lib",
+                }),
+        ],
+    )
+}
+
+/// From the primary, a target checked out in a workweave refuses: the primary
+/// would switch onto it. Freeing the workweave's checkout as printed lets the
+/// landing reach the next thing it needs, a workspace with the target.
+pub fn land_from_the_primary_refuses_a_target_in_a_workweave() -> Scenario {
+    scenario(
+        "land from the primary refuses a target in a workweave",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "feat"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "feat-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "t",
+                    "--branch",
+                    "main",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::CheckoutInAnotherWorkspace))
+                .claim(Claim::OutputContains(
+                    "rwv workweave delete t --project proj",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["workweave", "delete", "t", "--project", "proj"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut)),
+        ],
+    )
+}
+
+/// A moved member's checkout where the target is checked out is not on its
+/// receiving branch: the landing refuses; aligning there as printed lets it
+/// land.
+pub fn land_refuses_a_target_member_off_its_receiving_branch() -> Scenario {
+    scenario(
+        "land refuses a target member off its receiving branch",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentDetachedElsewhere))
+                .claim(Claim::OutputContains("rwv update"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main",
+                    mark: "w-lib",
+                }),
+        ],
+    )
+}
+
+/// The target's checkout of a moved member diverged from the target's pin:
+/// the landing refuses; re-pinning it there as printed lets it land.
+pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
+    scenario(
+        "land refuses a target checkout diverged from its pin",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::commit(&a(), Repo::Lib, "a-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_rewind(&[Repo::Lib])
+                .may_rewrite(&[Repo::Lib])
+                .may_strand(&[Repo::Lib])
+                .may_leave_unresolved(&[Repo::Lib]),
+            Step::commit(&a(), Repo::Lib, "a-lib-again"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::PinDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv member pin local/remotes/lib <rev> --commit",
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &a(),
+                &["member", "pin", "local/remotes/lib", "main", "--commit"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .may_strand(&[Repo::Lib]),
+            Step::rwv(&ww("w"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["cat-file", "-e", "main:w-lib.txt"]),
+        ],
+    )
+}
