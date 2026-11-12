@@ -92,6 +92,16 @@ This can happen if:
 cannot be attributed to the op. In that case op-state is retained so the
 operator can re-run after reconciling.
 
+### Leaving a branch as it stands
+
+A branch a landing moved as a ref, or created, that abort cannot put back
+(others moved it on, deleted it, or checked it out since) is a foreign tip,
+and `--abandon-foreign-tip` cannot move it. `--leave-foreign-tip <repo>` ends
+the operation without it: every other repo is restored, that repo's branches
+abort cannot put back stay as they stand, its savepoints are dropped, and a
+commit only a dropped savepoint reached is kept as a backup first. The
+refusal prints it for each such repo.
+
 ### Abandoning a foreign tip on purpose
 
 `--abandon-foreign-tip <repo>` is the operator's answer to "these foreign
