@@ -59,7 +59,7 @@ src/branch.rs	target conflict	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/weave/branch_create_switch_test.rs	1
 src/branch.rs	target differs	tests/weave/branch_rename_test.rs	1
 src/branch.rs	target gone	-	1
-src/branch.rs	target no target	-	1
+src/branch.rs	target no target	tests/sync/land_drift_test.rs	1
 src/branch.rs	target unreadable	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target unrecorded	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment detached	tests/doctor/benign_staleness_test.rs	2
@@ -87,7 +87,7 @@ src/cherry_pick.rs	port backward	-	1
 src/cherry_pick.rs	port mainline	-	1
 src/cherry_pick.rs	port merge in range	-	1
 src/cherry_pick.rs	port not listed	-	1
-src/cherry_pick.rs	target no target	-	1
+src/cherry_pick.rs	target no target	tests/sync/land_drift_test.rs	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
 src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
@@ -105,7 +105,7 @@ src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
 src/deletion.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/diagnosis.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
-src/diagnosis.rs	edits mid-operation	-	3
+src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	unparseable-project here	-	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
@@ -126,7 +126,7 @@ src/feature_sync.rs	protected declared	tests/weave/branch_rename_test.rs	1
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	4
 src/feature_sync.rs	target dependents	-	2
-src/feature_sync.rs	target no target	-	1
+src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
 src/fetch_claim.rs	state-claim-held	-	1
@@ -151,17 +151,16 @@ src/land.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/land.rs	alignment unaligned	-	1
 src/land.rs	checkout in another workspace	-	2
 src/land.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
-src/land.rs	pin not on declared branch	-	2
+src/land.rs	pin not on declared branch	-	3
 src/land.rs	pin off lineage	-	1
 src/land.rs	pin unmerged	tests/sync/push_test.rs	1
 src/land.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
-src/land.rs	protected declared	tests/weave/branch_rename_test.rs	1
-src/land.rs	push-branch diverged	tests/sync/push_test.rs	2
+src/land.rs	push-branch diverged	tests/sync/push_test.rs	3
 src/land.rs	target checked out nowhere	tests/sync/sync_to_test.rs	1
 src/land.rs	target dependents	-	1
 src/land.rs	target member changes	tests/sync/sync_prune_direction_test.rs	1
 src/land.rs	target mode changed	-	1
-src/land.rs	target no target	-	1
+src/land.rs	target no target	tests/sync/land_drift_test.rs	1
 src/land.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	2
 src/lock.rs	(untokened:environment-passthrough)	-	5
 src/lock.rs	(untokened:tally)	-	1
@@ -266,7 +265,7 @@ src/switch.rs	name no-such-branch	-	2
 src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
-src/sync.rs	(untokened:environment-passthrough)	-	4
+src/sync.rs	(untokened:environment-passthrough)	-	5
 src/sync.rs	(untokened:internal-invariant)	-	18
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	checkout in a raw worktree	-	1
