@@ -146,6 +146,14 @@ impl Fixture {
         );
         moved
     }
+
+    /// Records `sha` as the primary's pin for `lib`, as the operator who
+    /// moved `main` would before landing onto it.
+    fn pin_primary(&self, sha: &str) {
+        let url = common::file_url(&self.primary_lib);
+        common::fixture_lock(&self.primary_project, &[(LIB, &url, sha)]);
+        common::git_in(&self.primary_project, &["commit", "-q", "-am", "lock: moved"]);
+    }
 }
 
 fn read(path: &Path) -> Option<String> {
@@ -337,7 +345,8 @@ fn drift_changing_a_file_in_the_source_is_refreshed() {
 #[test]
 fn drift_in_the_target_is_refreshed_and_the_landing_proceeds() {
     let f = fixture();
-    f.move_from_elsewhere("main", "notes.txt", "three\n");
+    let moved = f.move_from_elsewhere("main", "notes.txt", "three\n");
+    f.pin_primary(&moved);
     assert_eq!(
         common::git_in(&f.primary_lib, &["diff", "--cached", "--name-status"]),
         "M\tnotes.txt"
@@ -426,6 +435,7 @@ fn drift_is_left_alone_when_another_checkout_refuses() {
 fn json_carries_what_was_refreshed() {
     let f = fixture();
     let moved = f.move_from_elsewhere("main", "notes.txt", "three\n");
+    f.pin_primary(&moved);
 
     let out = common::cli::succeed(&["land", "--json"], &f.ww);
 
