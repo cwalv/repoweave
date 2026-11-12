@@ -322,7 +322,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
         (&parked.seat.root, &["sync-to"][..]),
         (&target, &["abort"][..]),
         (&target, &["status"][..]),
-        (&target, &["sync", seat.as_str()][..]),
+        (&target, &["sync-to", seat.as_str()][..]),
     ] {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);

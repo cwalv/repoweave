@@ -7,8 +7,8 @@
 //! pins the read-only disclosure both ways: an op in progress shows, text and
 //! `--json`; a workspace with no op shows nothing.
 //!
-//! The op here is parked by a REAL interrupted `rwv sync` — two repos
-//! diverge after a fork, `--strategy ff` genuinely cannot fast-forward, and
+//! The op here is parked by a REAL interrupted `rwv sync-to` — two repos
+//! edit one file differently after a fork, the rebase replay genuinely conflicts, and
 //! the acquired op-state is kept on disk per the phase-failure cleanup rule.
 //! No `.rwv-op` is hand-planted.
 
@@ -78,11 +78,19 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
         repo = common::url_path(&repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
 
     let repo_url = common::file_url(&repo);
     common::fixture_lock(&project_dir, &[(REPO_PATH, &repo_url, &initial_sha)]);
 
-    common::git_in(&project_dir, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(
+        &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    );
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     common::record_trunk(&project_dir);
 
@@ -119,55 +127,49 @@ fn rwv_lock_commit(workspace_root: &Path) {
 }
 
 /// `rwv status` (text + `--json`) discloses an op parked by a real
-/// interrupted sync, and stays silent for a workspace that never ran one.
+/// interrupted sync-to, and stays silent for a workspace that never ran one.
 #[test]
-fn status_discloses_a_parked_op_from_a_real_interrupted_sync() {
+fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let primary = make_primary(tmp.path());
     let ww = create_workweave(&primary, &weaveroot, "wa");
+    let bystander = create_workweave(&primary, &weaveroot, "wb");
 
-    // Diverge the shared repo: primary and ww each commit a distinct file
-    // from the same fork point, so neither side is a fast-forward of the
-    // other. `--strategy ff` (the default) then fails for a real reason.
-    // Primary relocks so its own lock-freshness precondition passes; ww's
-    // divergence is discovered only once replay actually attempts the ff.
+    // Primary and ww each commit a different version of the same file from
+    // the same fork point, so the rebase replay stops on a conflict. Primary
+    // relocks so its own lock-freshness precondition passes.
     commit_file(
         &primary.repo,
-        "primary_only.txt",
+        "shared.txt",
         "from primary\n",
-        "primary: add primary_only.txt",
+        "primary: add shared.txt",
     );
     rwv_lock_commit(&primary.root);
-    commit_file(&ww.repo, "ww_only.txt", "from ww\n", "ww: add ww_only.txt");
+    commit_file(&ww.repo, "shared.txt", "from ww\n", "ww: add shared.txt");
 
     let sync_out = rwv()
-        .args(["sync", "primary"])
+        .args(["sync-to", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         !sync_out.status.success(),
-        "sync should fail on a genuine ff divergence; stdout:\n{}\nstderr:\n{}",
+        "sync-to should fail on a genuine conflict; stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&sync_out.stdout),
         String::from_utf8_lossy(&sync_out.stderr)
     );
     let sync_stderr = String::from_utf8_lossy(&sync_out.stderr);
     assert!(
-        sync_stderr.contains("fast-forward"),
-        "expected a fast-forward refusal; got:\n{sync_stderr}"
+        sync_stderr.contains("conflict"),
+        "expected a conflict refusal; got:\n{sync_stderr}"
     );
 
-    // The field corollary this disclosure exists for: git status is clean
-    // in every repo even though an op is parked.
-    for repo in [
-        &ww.repo,
-        &ww.project_dir,
-        &primary.repo,
-        &primary.project_dir,
-    ] {
+    // Git sees only the conflicted member as dirty; the project repos and
+    // the primary stay clean while the op is parked.
+    for repo in [&ww.project_dir, &primary.repo, &primary.project_dir] {
         let out = common::git()
             .args(["status", "--porcelain"])
             .current_dir(repo)
@@ -195,7 +197,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync() {
     assert!(text_out.status.success());
     let text = String::from_utf8_lossy(&text_out.stdout);
     assert!(
-        text.contains("sync in progress") && text.contains("mid `replay`"),
+        text.contains("sync-to in progress") && text.contains("mid `replay`"),
         "status text should name the verb and phase: {text}"
     );
     assert!(
@@ -213,7 +215,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync() {
     let op = v
         .get("op")
         .expect("status --json should disclose the parked op");
-    assert_eq!(op["verb"], "sync");
+    assert_eq!(op["verb"], "sync-to");
     assert_eq!(op["phase"], "replay");
     assert_eq!(
         canon(Path::new(op["owner"].as_str().unwrap())),
@@ -221,40 +223,40 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync() {
     );
     assert_eq!(
         canon(Path::new(op["source"].as_str().unwrap())),
-        canon(&primary.root)
+        canon(&ww.root)
     );
     assert_eq!(
         canon(Path::new(op["target"].as_str().unwrap())),
-        canon(&ww.root)
+        canon(&primary.root)
     );
     assert!(op["overrides"].as_array().unwrap().is_empty());
     assert!(op["id"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(op["started_at"].as_str().is_some_and(|s| !s.is_empty()));
 
-    // Negative: primary never ran this op — status must not show one. An
+    // Negative: a workweave outside the op — status must not show one. An
     // assertion that only checks the positive passes when the surface is
     // stuck on.
-    let primary_text_out = rwv()
+    let bystander_text_out = rwv()
         .args(["status"])
-        .current_dir(&primary.root)
+        .current_dir(&bystander.root)
         .output()
         .unwrap();
-    assert!(primary_text_out.status.success());
-    let primary_text = String::from_utf8_lossy(&primary_text_out.stdout);
+    assert!(bystander_text_out.status.success());
+    let bystander_text = String::from_utf8_lossy(&bystander_text_out.stdout);
     assert!(
-        !primary_text.contains("in progress"),
-        "primary has no op; status text must not disclose one: {primary_text}"
+        !bystander_text.contains("in progress"),
+        "the bystander has no op; status text must not disclose one: {bystander_text}"
     );
 
-    let primary_json_out = rwv()
+    let bystander_json_out = rwv()
         .args(["status", "--json"])
-        .current_dir(&primary.root)
+        .current_dir(&bystander.root)
         .output()
         .unwrap();
-    assert!(primary_json_out.status.success());
-    let pv: serde_json::Value = serde_json::from_slice(&primary_json_out.stdout).unwrap();
+    assert!(bystander_json_out.status.success());
+    let pv: serde_json::Value = serde_json::from_slice(&bystander_json_out.stdout).unwrap();
     assert!(
         pv.get("op").is_none(),
-        "primary has no op; the `op` key must be absent, not null: {pv}"
+        "the bystander has no op; the `op` key must be absent, not null: {pv}"
     );
 }

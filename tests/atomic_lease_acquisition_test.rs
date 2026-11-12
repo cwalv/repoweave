@@ -9,7 +9,7 @@
 //!
 //! Coverage in this file:
 //!
-//! * **In-flight refusal**: a second `rwv sync` against a workweave whose
+//! * **In-flight refusal**: a second `rwv sync-to` against a workweave whose
 //!   `.rwv-op` is held by a real parked op gets the in-flight refusal and
 //!   leaves the holder's record untouched. Constructed deterministically (a
 //!   rebase conflict parks the first op mid-replay); the *concurrent* half of
@@ -20,7 +20,7 @@
 //! * **Precondition-refusal cleanup**: acquire → fail a precondition after
 //!   acquisition → the acquired records are cleared (cleanup table row
 //!   "precondition refusal → cleared everywhere"). Verified by observing that
-//!   a follow-up `rwv sync` doesn't get an in-flight refusal.
+//!   a follow-up `rwv sync-to` doesn't get an in-flight refusal.
 //! * **Doctor dead-lease detection**: a `.rwv-op-lease` whose recorded owner
 //!   has no matching `.rwv-op` is reported by `rwv doctor` and removed by
 //!   `rwv doctor --fix`. Structural check — no wall-clock input.
@@ -161,19 +161,19 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 //
 // The property: `.rwv-op` is a mutex — while one sync op holds it, a second
-// `rwv sync` at the same workweave must be refused with the operator-facing
+// `rwv sync-to` at the same workweave must be refused with the operator-facing
 // in-flight shape (verb / `--continue` / `rwv abort`), not a raw filesystem
 // AlreadyExists and not some downstream git-layer collision, and the holder's
 // record must survive the refused attempt byte-for-byte.
 //
-// The in-flight holder is REAL, not hand-planted JSON: the first `rwv sync`
+// The in-flight holder is REAL, not hand-planted JSON: the first `rwv sync-to`
 // is parked mid-replay by a rebase conflict (same recipe as
 // e2e_op_state_test.rs test 2), and the cleanup table's "phase failure →
 // records kept everywhere" row leaves its `.rwv-op` on disk. The second sync
 // then runs against that parked op with no concurrency anywhere — the verdict
 // depends only on on-disk artifacts, never on scheduling.
 //
-// History: this test used to race two `rwv sync` processes released by a
+// History: this test used to race two `rwv sync-to` processes released by a
 // thread barrier and assert exactly one in-flight refusal. The barrier
 // synchronized the parents, not the children's critical sections, so the
 // overlap was merely hoped for — under host load the trial collapsed
@@ -187,7 +187,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // `durable_file::tests::concurrent_create_new_has_exactly_one_winner`.
 
 #[test]
-fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
+fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -220,7 +220,7 @@ fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // path, exactly what a crashed/conflicted peer leaves behind.
     let assertion = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
@@ -249,7 +249,7 @@ fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // other refusal, so regardless of what state the parked op left the
     // repos in, the refusal MUST be the in-flight shape.
     let assertion = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync-to", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();

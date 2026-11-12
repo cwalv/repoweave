@@ -11,7 +11,7 @@
 //! - Tests 3 and 5 are `sync-to` scenarios (multi-workspace); they drive a real `sync-to`
 //!   into a parked state via a target-side collision and recover it via `--continue` /
 //!   `rwv abort`.
-//! - Test 1 uses `rwv sync` from two directions to trigger the in-progress check.
+//! - Test 1 uses `rwv sync-to` from two directions to trigger the in-progress check.
 //! - Test 2 uses `rwv sync --strategy rebase` to induce a conflict, then `--continue`.
 //! - Test 4 uses `rwv sync` with mismatched `--strategy`.
 
@@ -158,14 +158,14 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 // Test 1: Concurrent-op detection
 //
-// An in-progress op-state file blocks a new `rwv sync` from either the CWD
+// An in-progress op-state file blocks a new `rwv sync-to` from either the CWD
 // or the target workspace. The first test parks a real op via a genuine
 // rebase conflict; the second constructs an owner record directly at the
 // `relock` phase, which that recipe cannot reach organically.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
+fn concurrent_op_detection_blocks_new_sync_to_in_cwd_workspace() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -196,7 +196,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // First sync parks mid-replay on the real conflict.
     rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
@@ -213,7 +213,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // Attempt a new sync from ww while the op-state file is present.
     // It should fail with an in-progress error.
     let assertion = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync-to", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -258,7 +258,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
     let before = unix_now();
     let assertion = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync-to", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -290,8 +290,8 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 // ---------------------------------------------------------------------------
 // Test 2: Mid-step-1 resume (conflict → resolve → --continue → completion)
 //
-// Induce a rebase conflict in Phase 1' of sync. Resolve it manually.
-// Then `rwv sync --continue` should resume and complete.
+// Induce a rebase conflict in Phase 1' of sync-to. Resolve it manually.
+// Then `rwv sync-to --continue` should resume and complete.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -326,7 +326,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     // (project repos diverged). Adapted from --force.
     let out = rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
@@ -366,9 +366,9 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         String::from_utf8_lossy(&continue_rebase.stderr)
     );
 
-    // `rwv sync --continue` should now resume and complete.
+    // `rwv sync-to --continue` should now resume and complete.
     rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -487,13 +487,13 @@ fn continue_with_strategy_flag_is_rejected() {
 /// --force is removed from sync/sync-to; passing it must produce an actionable
 /// error (from the early-dispatch did-you-mean hint in `cli::dispatch`).
 #[test]
-fn sync_force_flag_is_removed_and_produces_friendly_error() {
+fn sync_to_force_flag_is_removed_and_produces_friendly_error() {
     let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // --force must be rejected with a migration hint.
     let assertion = rwv()
-        .args(["sync", "--force"])
+        .args(["sync-to", "--force"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -535,7 +535,7 @@ fn continue_with_allow_stale_lock_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
-        .args(["sync", "--allow-stale-lock", "--continue"])
+        .args(["sync-to", "--allow-stale-lock", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -554,7 +554,7 @@ fn continue_with_discard_local_commits_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
-        .args(["sync", "--discard-local-commits", "--continue"])
+        .args(["sync-to", "--discard-local-commits", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -1035,7 +1035,7 @@ fn sync_continue_flag_is_recognized() {
 /// filesystem state, so the file has to be caught while a real op sits
 /// stalled on a genuine conflict, not while one is merely running.
 #[test]
-fn op_state_file_written_during_sync_and_removed_on_success() {
+fn op_state_file_written_during_sync_to_and_removed_on_success() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -1063,7 +1063,7 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
 
     rwv()
         .args([
-            "sync",
+            "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
@@ -1103,7 +1103,7 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
     );
 
     rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
