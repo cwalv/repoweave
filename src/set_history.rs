@@ -149,6 +149,7 @@ pub fn run(ctx: &WorkspaceContext, request: SetHistory) -> anyhow::Result<()> {
             spelled(committed_was),
             spelled(now)
         ),
+        naming: crate::repin::Naming::Unnamed,
     })?;
     if was == now && !committed {
         eprintln!(

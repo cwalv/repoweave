@@ -51,12 +51,16 @@ with the fact `pinned-by` naming the lock, and the push goes on. Every merge in
 the range the project branch publishes is judged too: where both its parents
 changed a member's pin to different commits under one declared branch, the
 lock at the pushed tip must pin a commit containing both, unless the tip
-declares the member elsewhere or a later lock in the range re-pins it backward,
-to a commit that does not reach the pin the merge left behind; a merge's own
-lock that keeps either parent's pin, as settling a lock conflict by hand does,
-waives nothing. A merge that does neither refuses as `pin` `unmerged`, listing the merge and the pins and
-offering the VCS's merge; one a later lock waived is reported as `pin`
-`waived`, listing the merge and the re-pin. After the members are pushed, the
+declares the member elsewhere or a commit in the range at or after the merge,
+the merge's own included, records re-pinning it backward by name to a commit
+that does not reach the pin the merge left behind. rwv's by-name verbs record
+that in an `Rwv-Repin` trailer on their lock commits; a commit made with git,
+a raw merge whose lock conflict was settled by hand included, records none and
+waives nothing, and a trailer whose pins disagree with what its commit's lock
+changed waives nothing and is listed. A merge that does neither refuses as
+`pin` `unmerged`, listing the merge and the pins and offering the VCS's merge
+and `rwv member pin <m> <rev> --commit`; one a re-pin waived is reported as
+`pin` `waived`, listing the merge, the re-pin and the verb that made it. After the members are pushed, the
 project branch is withheld (`publish` `withheld`) while any pin its lock holds
 is not reached as the gate requires: a feature's `owned` and `fork` pins by a
 remote-tracking branch of the url remote or of the push target, a declared
@@ -161,7 +165,7 @@ has an uncommitted `rwv.toml` or `rwv.lock`, before anything is pushed; and each
 push the remote rejected, as `publish` `withheld`, when the project repo was
 not pushed because of it, and the project repo the same way when its own push
 was rejected. It is empty, not absent, otherwise. `reported`
-lists the repos judged `behind` or `gone`, and the merges a later lock waived
+lists the repos judged `behind` or `gone`, and the merges a re-pin by name waived
 (`pin` `waived`), and went past; it is empty when none was.
 
 Schema:
