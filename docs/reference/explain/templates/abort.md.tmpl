@@ -27,13 +27,24 @@ when the repo's current tip is attributable to the op. The classification:
 | Equal to the savepoint | `untouched` — op never moved this repo; HEAD not touched |
 | Equal to the recorded intent tip (`advanced_tips[repo]`) | `restored (from recorded intent tip)` — op advanced this repo during replay before crashing; reset to savepoint |
 | Equal to the recorded converged tip (`converged_tips[repo]`) | `restored (from recorded converged tip)` — op converged repo before crash; reset to savepoint |
-| Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op canceled; reset to savepoint |
+| Stopped in a rebase, merge or cherry-pick the op started there: a repo the op integrates, where canceling returns to the savepoint or a tip the op wrote | `restored (from mid-op state)` — canceled, then restored as the tip it returns to is |
+| Stopped in an operation begun at the savepoint, in a repo the op never integrates (or with no savepoint) | `left stopped in a <operation>, which this operation never starts there` — left as it is |
+| Stopped in any other operation: begun on a tip the op never wrote, or in a repo the op never integrates on a tip it moved (every operation in a `land`'s target) | `stopped in a <operation> begun at <tip>` — refused, nothing touched |
 | Anything else, in the target workspace of a `land`, in a repo whose branch the landing never fast-forwarded | `left at <tip>, where something other than this landing moved it` — not the op's, so not restored and not a violation |
 | Anything else | `foreign-tip violation` — restore refused, the tip left where it is, nothing written |
-| Anything else, in a repo named on `--abandon-foreign-tip` | `restored (abandoned foreign tip)` — the tip is first kept as a backup marked `abandoned`, then the repo is reset to the savepoint |
+| Anything else, in a repo named on `--abandon-foreign-tip` | `restored (abandoned foreign tip)` — an operation in progress is canceled and the tip kept as a backup marked `abandoned`, then the repo is reset to the savepoint |
 
-Every tip abort resets is a commit the op made, so a clean restore keeps
-nothing: the commits it discards are the op's own output.
+Every commit abort resets off is one the op made, so the commits a clean
+restore discards are the op's own output. Uncommitted edits are another
+matter: before any reset or cancel that would discard edits (a tracked
+change, or an untracked file at a path the savepoint tracks), abort keeps
+them as a backup and prints its name. Canceling the op's own stopped
+operation is the one step it takes as the VCS's own abort would, edits
+included.
+
+Where the op record parses no further than its header, abort reads no tip
+it recorded: a repo is restored only where it sits at its savepoint, and one
+stopped in an operation begun there is canceled once its edits are kept.
 
 The `advanced_tips` map is the op's **advancement-intent journal**: written
 during the replay phase, it records the planned target tip for genuine
@@ -60,9 +71,9 @@ when all repos restored without a foreign-tip violation.
 
 ### What is **not** restored
 
-- **Uncommitted working-tree changes** that existed before the sync started.
-  The savepoint is a git commit pointer; it does not record staged or
-  unstaged edits.
+- **Uncommitted working-tree changes.** The savepoint records commits, not
+  edits. Edits a reset would discard are kept as a backup (`rwv backup
+  list`), not restored into the working tree.
 - **Side effects outside the git history** — integration-generated files,
   `node_modules/`, `.venv/`, etc. are not snapshotted and are not rolled back.
 
@@ -140,6 +151,8 @@ Per-repo restoration lines to stdout. Each line names the outcome:
   <repo-path>: restored (from recorded converged tip)
   <repo-path>: restored (from mid-op state)
   <repo-path>: restored (abandoned foreign tip, per --abandon-foreign-tip)
+  <repo-path>: its uncommitted edits are kept as backup <name> (`rwv backup list`)
+  <repo-path>: left stopped in a merge, which this operation never starts there
 ```
 
 The abandoned-tip line is followed by the tip that was left behind and the
@@ -165,12 +178,15 @@ with a count of any remainder). Each foreign-tip block also notes whether the
 tip is strictly ahead of or diverged from the savepoint.
 
 The recovery-options block is printed exactly once at the end (to stderr)
-when at least one repo refused, with only the operator-facing choices:
+when at least one repo refused. It lists each refused repo with the choices
+that clear it, each command on a line of its own:
 
-- if the foreign commits are wanted: move the branch back to them and re-run
-  `rwv abort`.
-- if they are not: re-run as `rwv abort --abandon-foreign-tip <repo>`; the
-  commits are kept as an `abandoned` backup.
+- a foreign tip: `rwv abort --abandon-foreign-tip <repo>`; the commits are
+  kept as an `abandoned` backup.
+- an operation in progress abort may not cancel: finish or abandon it there
+  (the VCS's status command names how), then `rwv abort`; or `rwv abort
+  --abandon-foreign-tip <repo>`, which keeps its edits and commits as
+  backups before canceling it.
 
 On failure for any repo, `abort` continues to the next repo before exiting
 non-zero.

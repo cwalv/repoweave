@@ -29,15 +29,14 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 | Equal to the savepoint | `untouched` — the operation never moved this repository |
 | Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
 | On another branch than when the operation began, at a tip the operation accounts for | `switched back` onto that branch, the branch it was on left where it stands, then judged by this table |
-| A repository the operation integrates, mid-rebase / mid-merge / mid-cherry-pick / mid-revert | `restored` — VCS operation canceled and reset to the savepoint |
-| Any other repository mid-rebase / mid-merge / mid-cherry-pick / mid-revert, or in a `land`'s target a repository the landing never moved | `left` where it stands, the operation in progress there included |
+| Stopped in a rebase, merge or cherry-pick the operation started, begun on a tip the operation wrote | `restored` — the VCS operation canceled, then judged by this table |
+| Stopped in an operation begun where the operation found it, in a repository the operation never merges or rebases, or in a `land`'s target a repository the landing never moved | `left` where it stands, the operation in progress there included |
+| Stopped in any other operation: begun on a commit made after the stop, or in a `land`'s target on a tip the landing moved | refused, the operation in progress left as it is; op-state retained |
 | Anything else | `foreign-tip violation` — restore refused, the tip left in place and nothing written; op-state retained |
 
 A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
 
-A clean restore writes no ref: every tip `rwv abort` resets is a commit the operation made, so what it discards is the operation's own output. A refusal moves and writes nothing either.
-
-Uncommitted working-tree edits that existed before the sync started and untracked tool directories (`node_modules/`, `.venv/`, `target/`) are not snapshotted by savepoints and are not modified by `rwv abort`.
+Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Uncommitted edits made during the stop are kept: before any reset that would discard them, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Canceling the operation's own stopped rebase or merge is the one step it takes as the VCS's own abort would. A refusal moves and writes nothing.
 
 ### Handling a `foreign-tip` refusal
 
@@ -48,7 +47,8 @@ If a commit was made in a repository after the sync paused, `rwv abort` refuses 
   rwv abort --abandon-foreign-tip github/foo/bar
   ```
   The abandoned commits are first kept as a backup marked `abandoned`, named for the branch they were on, and abort prints its name. `rwv backup list` shows it with the commits only it holds, and `rwv backup drop github/foo/bar <name>` drops it once they are not wanted. If the foreign agent kept committing between two runs, the rerun keeps the tip as it then stands.
-- **To keep the post-crash commits**, move the branch back to the tip recorded by the op (or finish resolving manually) and re-run `rwv abort`.
+
+A repository refused because it is stopped in an operation abort did not start prints its own choices: finish or abandon that operation there, then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip <repo>`, which keeps its edits and commits as backups before canceling it.
 
 ### When no operation is in progress
 
