@@ -460,7 +460,7 @@ never anywhere else. A backup is the only copy by construction, so it counts.
 
 **Exits.** Push the commits to their remote, or merge them somewhere that
 survives, then re-run `rwv member remove --delete`. `rwv backup list` shows the
-backups and what each holds; `rwv backup drop <repo>` drops the ones that are
+backups and what each holds; `rwv backup drop <repo> <name>` drops the ones that are
 not wanted. If the commits are genuinely unwanted, remove the checkout by hand
 so the loss is a deliberate act. A sync whose replay refuses this prune still
 completes, reports the checkout and exits 1; re-running it will not prune the

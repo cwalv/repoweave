@@ -501,9 +501,10 @@ List each repo's backups, one line each: the name, the commit it holds, `[abando
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each repo record has `path` (as `rwv backup drop` names the repo) and `backups`; each backup has `name`, `tip`, `mark` (`rebased` or `abandoned`, absent otherwise), `redundant` and `held` (`sha`, `short`, `subject`). See [JSON envelope convention](#--json-envelope-convention).
 
-### `rwv backup drop <repo> [<name>...]`
+### `rwv backup drop <repo> <name>...`
+### `rwv backup drop <repo> --all`
 
-Drop the named backups of one repo, or all of that repo's when no name is given, printing each tip as it goes. `<repo>` is the workspace-relative path of a member, or `projects/<name>` for the project repo; no form drops across repos. A name `rwv backup list` does not show is reported and skipped, so a drop interrupted partway is finished by running it again.
+Drop the named backups of one repo, or with `--all` every backup of that repo, printing each tip as it goes. A bare `rwv backup drop <repo>` names neither and is a usage error that drops nothing; `--all` with names is one too. `<repo>` is the workspace-relative path of a member, or `projects/<name>` for the project repo; no form drops across repos. A name `rwv backup list` does not show is reported and skipped, so a drop interrupted partway is finished by running it again.
 
 Refused under the **pin rule** (`pin` `would be unreachable`) when it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup. A pin is live in every project of the weave, not only the active one: it is the commit a member's pin names in the `rwv.lock` at the tip of any local or remote-tracking branch of any project's repo. The refusal names the commits and the locks, and nothing is dropped. Dropping a backup that holds commits nothing else reaches loses them; the drop prints what it dropped, and that is the whole record.
 

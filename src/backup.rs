@@ -321,12 +321,17 @@ fn refuse_if_any(refusals: Vec<crate::diagnosis::Judged>) -> anyhow::Result<()> 
     report.into_result()
 }
 
-/// `rwv backup drop <repo> [<name>...]`: the named backups of one repo, or all
-/// of them.
+/// Which backups of a repo `rwv backup drop` drops.
+pub enum Dropping {
+    Named(Vec<String>),
+    All,
+}
+
+/// `rwv backup drop <repo> <name>...` and `rwv backup drop <repo> --all`.
 pub fn run_drop(
     ctx: &WorkspaceContext,
     repo: &RepoOperand,
-    names: &[String],
+    dropping: &Dropping,
 ) -> anyhow::Result<()> {
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (project, _) = repos_of_project(ctx)?;
@@ -335,21 +340,22 @@ pub fn run_drop(
         .vcs
         .list_backups(&target.dir, RemoteTracking::Counted)
         .map_err(|e| listing_error(&target, e))?;
-    let chosen: Vec<&Backup> = if names.is_empty() {
-        listed.iter().map(|l| &l.backup).collect()
-    } else {
-        let mut chosen = Vec::new();
-        for name in names {
-            match listed.iter().find(|l| l.backup.name.as_str() == name) {
-                Some(l) => chosen.push(&l.backup),
-                None => eprintln!(
-                    "{}: no backup named {name}; already dropped, or not a name \
+    let chosen: Vec<&Backup> = match dropping {
+        Dropping::All => listed.iter().map(|l| &l.backup).collect(),
+        Dropping::Named(names) => {
+            let mut chosen = Vec::new();
+            for name in names {
+                match listed.iter().find(|l| l.backup.name.as_str() == name) {
+                    Some(l) => chosen.push(&l.backup),
+                    None => eprintln!(
+                        "{}: no backup named {name}; already dropped, or not a name \
                      `rwv backup list` shows",
-                    target.operand
-                ),
+                        target.operand
+                    ),
+                }
             }
+            chosen
         }
-        chosen
     };
     if chosen.is_empty() {
         return Ok(());

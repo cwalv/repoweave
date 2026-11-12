@@ -417,9 +417,12 @@ pub fn dc10_store_destroy() -> Scenario {
                 mark: "anon-app",
                 marked: None,
             }),
-            Step::rwv(&a(), &["backup", "drop", &app, "--project", "proj"])
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App]),
+            Step::rwv(
+                &a(),
+                &["backup", "drop", &app, "--all", "--project", "proj"],
+            )
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App]),
             Step::rwv(
                 &a(),
                 &["member", "remove", &app, "--delete", "--project", "proj"],
@@ -460,7 +463,14 @@ pub fn tombstone_to_backup() -> Scenario {
                 .claim(Claim::OutputContains(" tombstoned")),
             Step::rwv(
                 &a(),
-                &["backup", "drop", "projects/proj", "--project", "proj"],
+                &[
+                    "backup",
+                    "drop",
+                    "projects/proj",
+                    "--all",
+                    "--project",
+                    "proj",
+                ],
             )
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj]),

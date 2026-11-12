@@ -1292,12 +1292,18 @@ pub fn run() -> anyhow::Result<()> {
             BackupAction::Drop {
                 repo,
                 names,
+                all,
                 project,
             } => {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
                 let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
-                crate::backup::run_drop(&ctx, &repo, &names)?;
+                let dropping = if all {
+                    crate::backup::Dropping::All
+                } else {
+                    crate::backup::Dropping::Named(names)
+                };
+                crate::backup::run_drop(&ctx, &repo, &dropping)?;
             }
             BackupAction::Prune { project } => {
                 let project_override =

@@ -59,15 +59,18 @@ or `--continue` first); `list` does not.
 
 ```
 rwv backup list [--json] [--project <name>]
-rwv backup drop <repo> [<name>...] [--project <name>]
+rwv backup drop <repo> <name>... [--project <name>]
+rwv backup drop <repo> --all [--project <name>]
 rwv backup prune [--project <name>]
 ```
 
 - `<repo>` is a member's workspace-relative path, or `projects/<name>` for the
   project repo. No form drops across repos.
-- `<name>` is a backup as `list` shows it. With no name, `drop` drops every
-  backup of the repo. A name `list` does not show is reported and skipped, so a
-  drop interrupted partway is finished by running it again.
+- `<name>` is a backup as `list` shows it; `drop` takes at least one. `--all`
+  drops every backup of the repo instead, and is refused beside a name; a
+  bare `drop <repo>` is a usage error that drops nothing. A name `list` does
+  not show is reported and skipped, so a drop interrupted partway is finished
+  by running it again.
 - `prune` fetches every remote of every repo of the project with pruning, then
   drops each backup that is `[redundant]`. A remote it cannot fetch is named,
   and that repo's remote-tracking branches are not counted: a backup is dropped

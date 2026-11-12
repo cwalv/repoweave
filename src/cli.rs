@@ -594,12 +594,19 @@ pub enum BackupAction {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Drop the named backups of one repo, or all of that repo's, printing each tip. Refused where it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup
+    /// Drop the named backups of one repo, or with `--all` every backup of it, printing each tip. Refused where it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup
+    #[command(
+        group(clap::ArgGroup::new("which").required(true).args(["names", "all"])),
+        override_usage = "rwv backup drop <REPO> <NAMES>...\n       rwv backup drop <REPO> --all"
+    )]
     Drop {
         /// The repo: its workspace-relative path, or `projects/<name>` for the project repo
         repo: crate::manifest::RepoOperand,
-        /// Backups to drop, as `rwv backup list` names them; none drops every backup of the repo
+        /// Backups to drop, as `rwv backup list` names them
         names: Vec<String>,
+        /// Drop every backup of the repo instead of naming them
+        #[arg(long)]
+        all: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

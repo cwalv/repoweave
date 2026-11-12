@@ -134,8 +134,9 @@ The backup is written first and the delete or the reset runs only once it
 exists: a backup that cannot be written stops the verb with nothing
 changed.
 
-A backup stays until it is dropped. `rwv backup drop <repo> [<name>...]`
-drops the named backups of one repo, or all of them, and `rwv backup
+A backup stays until it is dropped. `rwv backup drop <repo> <name>...`
+drops the named backups of one repo, `--all` instead of names drops all
+of them, and `rwv backup
 prune` drops those a branch or remote-tracking branch reaches in full,
 after a pruning fetch. Both obey the **pin rule**: nothing is dropped
 that would leave a commit some project's live lock pins reached by no

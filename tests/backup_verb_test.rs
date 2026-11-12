@@ -372,7 +372,7 @@ fn member_remove_delete_refuses_while_a_backup_holds_commits_only_the_clone_has(
         "the backup survived the refusal"
     );
 
-    succeed(&["backup", "drop", ALPHA], &weave.ws);
+    succeed(&["backup", "drop", ALPHA, "--all"], &weave.ws);
     succeed(&["member", "remove", ALPHA, "--delete"], &weave.ws);
     assert!(!weave.alpha().exists(), "with the backup dropped, it goes");
 }
@@ -466,7 +466,10 @@ fn the_pin_rule_judges_the_set_of_backups_a_drop_removes() {
     assert_eq!(names.len(), 2, "{names:?}");
     pin_in_another_project(&weave, &commit);
 
-    let stderr = refused(&["backup", "drop", ALPHA, "--project", "demo"], &weave.ws);
+    let stderr = refused(
+        &["backup", "drop", ALPHA, "--all", "--project", "demo"],
+        &weave.ws,
+    );
     assert_routes_to(&stderr, "pin");
     assert_eq!(weave.backups_of(ALPHA).len(), 2, "nothing was dropped");
 
@@ -606,18 +609,21 @@ fn list_runs_mid_operation_and_drop_and_prune_do_not() {
 fn drop_takes_a_repo_as_list_names_it() {
     let weave = Weave::new();
 
-    succeed(&["backup", "drop", "projects/demo"], &weave.ws);
+    succeed(&["backup", "drop", "projects/demo", "--all"], &weave.ws);
 
     let out = succeed(&["backup", "drop", ALPHA, "no/such-backup"], &weave.ws);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("no backup named no/such-backup"), "{err}");
 
-    let stderr = refused(&["backup", "drop", "(project)"], &weave.ws);
+    let stderr = refused(&["backup", "drop", "(project)", "--all"], &weave.ws);
     assert!(stderr.contains("projects/<name>"), "{stderr}");
-    let stderr = refused(&["backup", "drop", "projects/elsewhere"], &weave.ws);
+    let stderr = refused(
+        &["backup", "drop", "projects/elsewhere", "--all"],
+        &weave.ws,
+    );
     assert!(stderr.contains("project `elsewhere`"), "{stderr}");
     assert!(stderr.contains("projects/demo"), "{stderr}");
-    let stderr = refused(&["backup", "drop", "github/not/here"], &weave.ws);
+    let stderr = refused(&["backup", "drop", "github/not/here", "--all"], &weave.ws);
     assert!(stderr.contains("no repo in this weave"), "{stderr}");
 }
 
@@ -643,5 +649,51 @@ fn a_pin_nothing_the_drop_removes_reaches_does_not_refuse_it() {
         &["backup", "drop", ALPHA, &name, "--project", "demo"],
         &weave.ws,
     );
+    assert_eq!(weave.backups_of(ALPHA), vec![]);
+}
+
+/// `drop` takes names or `--all`: the bare form names neither and drops
+/// nothing, `--all` beside a name is refused, a named drop drops only what it
+/// names, and `--all` drops the rest.
+#[test]
+fn drop_needs_names_or_all_and_drops_only_what_it_was_told() {
+    let weave = Weave::new();
+    let (_, commit) = weave.workweave_with_a_commit("anon");
+    weave.give_up("anon");
+    let alpha = weave.alpha();
+    for twin in ["one", "two"] {
+        let name = format!("refs/rwv/backup/{twin}/{}", &commit[..12]);
+        common::git_in(&alpha, &["update-ref", &name, &commit]);
+    }
+    let names: Vec<String> = weave
+        .backups_of(ALPHA)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+
+    let bare = run(&["backup", "drop", ALPHA], &weave.ws);
+    assert_eq!(bare.status.code(), Some(2), "{}", describe(&bare));
+    let usage = String::from_utf8_lossy(&bare.stderr);
+    assert!(usage.contains("--all"), "{usage}");
+    assert_eq!(
+        weave.backups_of(ALPHA).len(),
+        3,
+        "the bare form dropped nothing"
+    );
+
+    let both = run(&["backup", "drop", ALPHA, &names[0], "--all"], &weave.ws);
+    assert_eq!(both.status.code(), Some(2), "{}", describe(&both));
+    assert_eq!(weave.backups_of(ALPHA).len(), 3);
+
+    succeed(&["backup", "drop", ALPHA, &names[0]], &weave.ws);
+    let left: Vec<String> = weave
+        .backups_of(ALPHA)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(left, names[1..].to_vec(), "only the named one went");
+
+    succeed(&["backup", "drop", ALPHA, "--all"], &weave.ws);
     assert_eq!(weave.backups_of(ALPHA), vec![]);
 }
