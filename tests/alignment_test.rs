@@ -144,6 +144,29 @@ fn a_corrupt_workspace_state_reads_as_absent_is_reported_and_update_restores_it(
 }
 
 #[test]
+fn a_switch_that_replaces_a_corrupt_workspace_state_says_so() {
+    let w = weave(&[(OWNED, "owned")]);
+    let project = project_dir(&w.workspace);
+    let state = state_file(&project);
+    rwv()
+        .arg("update")
+        .current_dir(&w.workspace)
+        .assert()
+        .success();
+    let sound = std::fs::read(&state).unwrap();
+    std::fs::write(&state, &sound[..sound.len() / 2]).unwrap();
+    let head = common::git_in(&project, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args(["switch", "--detach", &head])
+        .current_dir(&w.workspace)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("workspace state"))
+        .stderr(predicate::str::contains("reads as absent"));
+}
+
+#[test]
 fn dependency_and_reference_members_never_get_the_workweave_branch() {
     let w = weave(&[
         (OWNED, "owned"),

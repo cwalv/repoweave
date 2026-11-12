@@ -843,6 +843,12 @@ fn switch_detached(
     .map_err(|e| refused_move(vcs, project, dir, e))?;
     let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME));
     let aligner = Aligner::open(ctx.active_path(), project, Accounting::default())?;
+    if let Some(why) = &aligner.corrupt {
+        eprintln!(
+            "rwv {SWITCH}: the workspace state of {} reads as absent: {why}",
+            crate::workspace::project_rel_path(project)
+        );
+    }
     let mut state = aligner.state.clone();
     state.aligned = Some(Aligned::Detached);
     crate::alignment::store_state(vcs, dir, &state)?;
