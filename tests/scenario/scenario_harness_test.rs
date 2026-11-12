@@ -659,6 +659,8 @@ every_scenario!(
     stack_checked_out(scenarios::CheckedOutChoice::Rebind),
     stack_checked_out(scenarios::CheckedOutChoice::LandThenRetire),
     stack_not_containing,
+    stack_carry_conflict(scenarios::AfterHandContinue::Continue),
+    stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
         scenarios::AfterHandContinue::Continue
@@ -4476,6 +4478,22 @@ fn stack_checked_out_land_then_retire_is_green() {
 #[test]
 fn stack_not_containing_is_green() {
     runner::run(scenarios::stack_not_containing()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_carry_that_conflicts_continues_once_resolved() {
+    runner::run(scenarios::stack_carry_conflict(
+        scenarios::AfterHandContinue::Continue,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_carry_that_conflicts_aborts_to_where_the_stack_was() {
+    runner::run(scenarios::stack_carry_conflict(
+        scenarios::AfterHandContinue::Abort,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

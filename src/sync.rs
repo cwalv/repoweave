@@ -7513,13 +7513,13 @@ pub fn run_abort(
             .and_then(|take_in| take_in.source_tip.as_ref()),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
-    let rebases: Vec<op_state::Rebasing> = match &reading {
+    let (rebases, carries): (Vec<op_state::Rebasing>, Vec<op_state::Carrying>) = match &reading {
         op_state::OwnerReading::Whole(record) => record
             .take_in
             .as_ref()
-            .map(|take_in| take_in.rebases.clone())
+            .map(|take_in| (take_in.rebases.clone(), take_in.carries.clone()))
             .unwrap_or_default(),
-        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
+        op_state::OwnerReading::HeaderOnly { .. } => (Vec::new(), Vec::new()),
     };
 
     let mut members = OpMembers::default();
@@ -7540,6 +7540,7 @@ pub fn run_abort(
         operates_in.as_ref(),
         source_tip,
         &rebases,
+        &carries,
         abandon,
         &mut tally,
     );
@@ -7573,6 +7574,7 @@ pub fn run_abort(
                             operates_in.as_ref(),
                             source_tip,
                             &rebases,
+                            &carries,
                             abandon,
                             &mut tally,
                         );
@@ -7712,6 +7714,7 @@ fn restore_abort_workspace(
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     source_tip: Option<&CommitId>,
     rebases: &[op_state::Rebasing],
+    carries: &[op_state::Carrying],
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -7824,12 +7827,22 @@ fn restore_abort_workspace(
             (AbortSide::Replay, Some(ours)) if ours.contains(&repo_key) => Integrates::Yes,
             (AbortSide::Replay, Some(_)) => Integrates::No,
         };
+        let stopped_carry = match side {
+            AbortSide::Replay => carries
+                .iter()
+                .find(|c| c.repo == repo_key && c.composed.is_none())
+                .map(|c| c.from.clone()),
+            AbortSide::LandTarget => None,
+        };
         let attribution = Attribution {
             intent: advanced_tips.get(&repo_key),
-            converged: converged_tips.get(&repo_key).or(finished_by_hand.as_ref()),
+            converged: converged_tips
+                .get(&repo_key)
+                .or(finished_by_hand.as_ref())
+                .or(stopped_carry.as_ref()),
             started_from: match (side, &repo_key) {
                 (AbortSide::Replay, RepoKey::Project) => source_tip,
-                _ => None,
+                _ => stopped_carry.as_ref(),
             },
             integrates,
         };

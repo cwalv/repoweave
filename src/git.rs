@@ -14,10 +14,9 @@ use crate::vcs::{
     RecordsPublish, RecordsSite, RefMerge, RefOrigin, RefRestoreOutcome, RefSavepoint,
     RefreshScope, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch,
     RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed,
-    ResolvedEndpoint,
-    ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness,
-    TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
-    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth,
+    SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
+    Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use crate::vcs::{Attribution, Integrates, KeptWork};
 use std::borrow::Cow;

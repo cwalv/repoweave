@@ -12484,3 +12484,91 @@ pub fn stack_not_containing() -> Scenario {
     ]);
     scenario("stack: a dependent cut from an older commit", steps)
 }
+
+/// `stack-carried` where `w2`'s replay conflicts with `main`'s new work: the
+/// sync stops in `w1`'s checkout of `app` with `w2` not moved; the operator
+/// resolves it and continues, and `w2` is carried, or aborts, and `w1` and
+/// `w2` are as they were.
+pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "carrying 'w2' along in local/remotes/app",
+            ))
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+    ];
+    match then {
+        AfterHandContinue::Continue => steps.extend([
+            Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+            Step::rwv(&ww("w1"), &["sync", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("carried 'w2' along"))
+                .claim(Claim::OnBranch {
+                    at: ww("w1"),
+                    repo: Repo::App,
+                    branch: "proj--w1",
+                })
+                .claim(Claim::PinsReplayed {
+                    at: ww("w1"),
+                    rev: "w2",
+                    member: Repo::App,
+                    subject: "w2-app",
+                    reached_from: "w2",
+                }),
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+            )
+            .expect(Exit::Succeeds),
+        ]),
+        AfterHandContinue::Abort => steps.extend([
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputLacks("foreign"))
+                .claim(Claim::OnBranch {
+                    at: ww("w1"),
+                    repo: Repo::App,
+                    branch: "proj--w1",
+                }),
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["log", "--format=%s", "-1", "proj--w1"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w1-app")),
+            Step::git(&ww("w1"), Repo::App, &["diff", "--quiet", "HEAD"]).expect(Exit::Succeeds),
+            Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine("w2-app")),
+        ]),
+    }
+    scenario(
+        "stack: a carry that conflicts stops before any dependent moves",
+        steps,
+    )
+}

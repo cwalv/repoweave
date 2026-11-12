@@ -1907,7 +1907,6 @@ fn take_project(
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
-    report_dropped_derived(&label, dir, vcs, &src, &here);
     say(output, &format!("{label}: rebased onto {}", source.short()));
     Ok(())
 }
