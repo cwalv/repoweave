@@ -207,7 +207,9 @@ each in the checkout the rebase ran in, and every dependent's branch moves
 only once all of them have replayed, a `rebased` backup kept of each. A
 dependent's project branch is replayed after its members, so its pins follow
 them. A conflict in one stops the operation there, no dependent moved yet:
-resolve it and `--continue`, or `rwv abort`. A dependent that cannot be
+resolve it and `--continue`, or `rwv abort`. A resumed operation never carries
+again a dependent it has already moved: commits the branch gains after the
+carry reach that dependent at its own next `rwv sync`. A dependent that cannot be
 carried refuses before anything moves, one line each: cut from an older tip
 (`target` dependent lacks the tip), checked out in another workspace
 (`target` dependent checked out elsewhere), or known here only from another

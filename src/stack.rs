@@ -482,8 +482,9 @@ impl Carrier<'_> {
     /// rebases record it: claim each as a landing into it would, compose
     /// each in its repo's checkout, parents first, then move every
     /// dependent's branch. A dependent that can no longer be carried refuses
-    /// before any of their branches moves. The claims are held until the op
-    /// ends or is aborted.
+    /// before any of their branches moves. A dependent this op already moved
+    /// stays where it moved it. The claims are held until the op ends or is
+    /// aborted.
     pub(crate) fn carry(&self) -> anyhow::Result<Carries> {
         self.finish_stopped()?;
         let record = take_in(self.workspace)?;
