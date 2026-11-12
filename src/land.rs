@@ -1198,6 +1198,7 @@ fn judge_carried_pin(
                             "this feature pins {}, and '{receiving}' exists nowhere",
                             mine.short()
                         ))
+                        .only_forms(&[Form::C19])
                         .by_verb("land")
                         .judge(vcs),
                 );
@@ -1267,11 +1268,13 @@ fn judge_carried_pin(
                 .bind("<m>", path)
                 .bind("<b>", &receiving)
                 .bind("<T>", &landing.target)
+                .bind("<rev>", &tip)
                 .subject(format!(
                     "this feature pins {}, which '{receiving}' ({}) does not reach",
                     mine.short(),
                     tip.short()
                 ))
+                .only_forms(&[Form::C19, Form::C25])
                 .by_verb("land")
                 .judge(vcs),
         );

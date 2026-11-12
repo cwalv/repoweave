@@ -7510,7 +7510,7 @@ pub fn a_backward_pin_offers_only_a_rebind_that_lands_it_unchanged() -> Scenario
 /// A feature's pin of a `dependency` that contains the target's newer pin
 /// but sits off the receiving branch is refused, though the target changed
 /// the pin too: the landing would take the feature's pin, which `main` of the
-/// member does not reach.
+/// member does not reach. The pin it prints, run as printed, clears it.
 pub fn a_containing_pin_off_the_receiving_branch_is_refused() -> Scenario {
     Scenario {
         name: "a containing pin off the receiving branch is refused",
@@ -7536,8 +7536,20 @@ pub fn a_containing_pin_off_the_receiving_branch_is_refused() -> Scenario {
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+                .claim(Claim::OutputLacks("cherry-pick"))
+                .claim(Claim::OutputLacks("rwv member set-branch"))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed(&ww("w"), "rwv member pin local/remotes/lib ")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-b5",
+                }),
         ],
     }
 }
