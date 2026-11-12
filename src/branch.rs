@@ -201,6 +201,7 @@ pub(crate) fn write_refusal(
         WriteError::TargetUnreadable(target, lookup) => judged(&target, lookup),
         WriteError::Busy => crate::untokened!(EnvironmentPassthrough, "{}", WriteError::Busy),
         WriteError::Vcs(e) => anyhow::Error::new(e).context("could not write the branch record"),
+        WriteError::Judging(e) => e.context("could not write the branch record"),
     }
 }
 
@@ -1111,10 +1112,12 @@ pub fn run_delete(
 
 /// Drop the records whose branches exist nowhere: no local branch, no
 /// remote-tracking branch, and no workspace of this machine aligned for it.
-/// Nothing drops while a fetch of the project repo went unconfirmed. Each is
-/// judged as the write that drops it reads the records, so a branch another
-/// writer recorded while this one lost its compare-and-swap is still there;
-/// one that cannot be judged is kept.
+/// Nothing drops while a fetch of the project repo went unconfirmed. What
+/// exists is read once per attempt, as the write that drops reads the
+/// records; a writer that creates a branch creates it before it writes the
+/// record, and that write always commits, so a drop judged before the branch
+/// existed loses its compare-and-swap and judges again. What cannot be read
+/// fails the drop.
 pub fn drop_records(
     project: &ProjectName,
     primary: &Path,
@@ -1125,14 +1128,12 @@ pub fn drop_records(
     }
     let vcs = project_vcs();
     let dir = crate::workspace::project_dir(primary, project);
-    let gone = |name: &str| -> anyhow::Result<bool> {
-        if vcs
+    let gone = |names: &[String]| -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let mut kept: std::collections::BTreeSet<String> = vcs
             .named_branches(&dir)?
-            .iter()
-            .any(|branch| branch.name == name)
-        {
-            return Ok(false);
-        }
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
         let mut workspaces: Vec<std::path::PathBuf> = vec![dir.clone()];
         for (id, root) in crate::sync::recorded_workweaves(primary)? {
             if &id.project == project {
@@ -1149,18 +1150,18 @@ pub fn drop_records(
                 ..
             } = crate::alignment::read_state(vcs.as_ref(), &workspace)?
             {
-                if aligned == name {
-                    return Ok(false);
-                }
+                kept.insert(aligned);
             }
         }
-        Ok(true)
+        Ok(names
+            .iter()
+            .filter(|name| !kept.contains(*name))
+            .cloned()
+            .collect())
     };
     let store = Store::open(vcs.as_ref(), &dir)?;
     let written = store
-        .write_dropping(|_| Ok(Vec::new()), &|name: &str| {
-            gone(name).unwrap_or(false)
-        })
+        .write_dropping(|_| Ok(Vec::new()), &gone)
         .map_err(|e| anyhow::Error::new(e).context("could not drop the branch records"))?;
     Ok(written.dropped)
 }

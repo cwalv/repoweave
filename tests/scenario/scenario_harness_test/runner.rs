@@ -252,7 +252,30 @@ pub enum Exit {
     /// The process ended with exactly this status. For rwv it is never 1:
     /// rwv's status 1 is a refusal, and names what refused.
     Code(i32),
+    /// The step meets a known product defect: its claims hold, its exit is
+    /// not checked, and a green run announces it as a skip.
+    Defect(Defect),
     Undecided,
+}
+
+/// A known product defect a step meets, until the change that fixes it
+/// gives the step the exit the design decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Defect {
+    /// A landing into a target another landing holds is refused
+    /// `dead-op-lease`, naming `rwv doctor --fix`, which would release the
+    /// live op's lease; the design has it wait on a landing claim instead.
+    LiveLandingReadsAsDead,
+}
+
+impl Defect {
+    fn describe(self) -> &'static str {
+        match self {
+            Defect::LiveLandingReadsAsDead => {
+                "a landing into a target another landing holds reads its lease as dead"
+            }
+        }
+    }
 }
 
 impl Exit {
@@ -326,6 +349,20 @@ fn judged_line(output: &str, repo: Repo, state: State) -> Result<(), String> {
     }
 }
 
+/// The lines of `output` that judge `repo`: its path, standing alone as a
+/// word, then `: ` or ` in <workspace>`.
+fn lines_judging(output: &str, repo: Repo) -> impl Iterator<Item = &str> {
+    let path = repo.rel_path();
+    output.lines().filter(move |line| {
+        line.match_indices(&path).any(|(at, _)| {
+            let before = line[..at].chars().next_back();
+            let after = &line[at + path.len()..];
+            matches!(before, None | Some(' '))
+                && (after.starts_with(": ") || after.starts_with(" in "))
+        })
+    })
+}
+
 /// A fact about the state after a step. Marks name commits recorded by
 /// [`Action::Commit`] and [`Forge::Commit`].
 #[derive(Debug, Clone)]
@@ -365,6 +402,9 @@ pub enum Claim {
     /// What the step printed judges `repo` in `state`, as a refusal's or a
     /// report's line does.
     Judged(Repo, State),
+    /// What the step printed judges `repo` in `state` and in nothing else:
+    /// every line judging it, in any workspace, is that state's.
+    JudgedOnly(Repo, State),
     /// What the step printed holds this text.
     OutputContains(&'static str),
     /// What the step printed does not hold this text.
@@ -852,6 +892,7 @@ pub struct StepRecord {
     pub label: String,
     pub succeeded: bool,
     pub decided: bool,
+    pub defect: Option<Defect>,
     pub output: String,
 }
 
@@ -912,6 +953,16 @@ impl Report {
                 "scenario {}: `{label}` ran with no decided outcome",
                 self.name
             ));
+        }
+        for record in &self.ran {
+            if let Some(defect) = record.defect {
+                crate::common::report_skip(&format!(
+                    "scenario {}: `{}` meets a known defect: {}",
+                    self.name,
+                    record.label,
+                    defect.describe()
+                ));
+            }
         }
     }
 
@@ -1023,6 +1074,10 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             label: step.label,
             succeeded,
             decided: step.expect.is_decided(),
+            defect: match step.expect.exit {
+                Exit::Defect(defect) => Some(defect),
+                _ => None,
+            },
             output,
         });
         before = after;
@@ -1579,6 +1634,21 @@ impl Run<'_> {
         let sb = self.sandbox;
         match claim {
             Claim::Judged(repo, state) => judged_line(output, *repo, *state),
+            Claim::JudgedOnly(repo, state) => {
+                judged_line(output, *repo, *state)?;
+                let others = lines_judging(output, *repo)
+                    .filter(|line| judged_line(line, *repo, *state).is_err())
+                    .collect::<Vec<_>>();
+                if others.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} is judged in more than {}: {others:#?}",
+                        repo.rel_path(),
+                        state.name()
+                    ))
+                }
+            }
             Claim::OutputContains(text) => {
                 if output.contains(text) {
                     Ok(())

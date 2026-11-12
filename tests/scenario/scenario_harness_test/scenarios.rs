@@ -1,6 +1,6 @@
 use super::invariants::{LockSite, Mode, Record};
 use super::runner::{
-    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
+    Claim, Defect, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
 };
 use super::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
@@ -5508,66 +5508,135 @@ pub fn deletion_offline_unpublished() -> Scenario {
     )
 }
 
-/// How `dc01-mid-operation` stops a member.
+/// How `dc01-mid-operation` stops a checkout.
 #[derive(Debug, Clone, Copy)]
 pub enum Stopped {
-    /// A rebase whose last step failed, leaving the member detached.
+    /// A rebase whose last step failed, leaving the member detached at its
+    /// branch's tip.
     Rebase,
+    /// A rebase stopped part-way, leaving the member detached behind the
+    /// lock's pin.
+    RebaseBehindPin,
+    /// A merge stopped on a conflict, on the member's branch.
+    Merge,
+    /// A cherry-pick stopped on a conflict, on the member's branch.
+    CherryPick,
+    /// A revert not yet committed, on the member's branch.
+    Revert,
     /// A bisect, which leaves the member on its branch.
     Bisect,
+    /// A bisect in the project repo.
+    ProjectBisect,
+}
+
+impl Stopped {
+    fn repo(self) -> Repo {
+        match self {
+            Stopped::ProjectBisect => Repo::Proj,
+            _ => Repo::Lib,
+        }
+    }
+
+    /// The steps after the workweave's first commit in `lib` that leave the
+    /// checkout stopped.
+    fn steps(self) -> Vec<Step> {
+        let w = ww("w");
+        let conflicting = || {
+            vec![
+                Step::git(&w, Repo::Lib, &["branch", "side", "HEAD~1"]),
+                Step::hand_commit(&w, Repo::Lib, "side", &[("w-lib.txt", "side\n")]),
+            ]
+        };
+        match self {
+            Stopped::Rebase => vec![
+                Step::git(&w, Repo::Lib, &["rebase", "-x", "false", "HEAD~1"])
+                    .expect(Exit::Code(1)),
+            ],
+            Stopped::RebaseBehindPin => vec![
+                Step::commit(&w, Repo::Lib, "w-lib-2"),
+                Step::rwv(&w, &["lock", "--commit"]).expect(Exit::Succeeds),
+                Step::git(&w, Repo::Lib, &["rebase", "-x", "false", "HEAD~2"])
+                    .expect(Exit::Code(1)),
+            ],
+            Stopped::Merge => {
+                let mut steps = conflicting();
+                steps.push(
+                    Step::git(&w, Repo::Lib, &["merge", "--no-edit", "side"]).expect(Exit::Code(1)),
+                );
+                steps
+            }
+            Stopped::CherryPick => {
+                let mut steps = conflicting();
+                steps
+                    .push(Step::git(&w, Repo::Lib, &["cherry-pick", "side"]).expect(Exit::Code(1)));
+                steps
+            }
+            Stopped::Revert => vec![Step::git(&w, Repo::Lib, &["revert", "--no-commit", "HEAD"])],
+            Stopped::Bisect => vec![Step::git(&w, Repo::Lib, &["bisect", "start"])],
+            Stopped::ProjectBisect => vec![Step::git(&w, Repo::Proj, &["bisect", "start"])],
+        }
+    }
+
+    /// Whether `update` would move the stopped checkout, so reports it.
+    fn update_moves_it(self) -> bool {
+        matches!(self, Stopped::Rebase | Stopped::RebaseBehindPin)
+    }
 }
 
 /// `dc01-mid-operation`, for the verbs that align, move or remove a
-/// checkout: a member stopped in a VCS operation is judged on that alone,
-/// offering only the VCS's own status; `update` reports it where it would
-/// move the member and leaves a member it would not, `switch`, `land` and
-/// `workweave delete` refuse it, a discard flag included, and nothing moves.
+/// checkout: a checkout stopped in a VCS operation is judged on that alone,
+/// offering only the VCS's own status, wherever its HEAD stands; `update`
+/// reports it where it would move the member and leaves a member it would
+/// not, `switch`, `land` and `workweave delete` refuse it, a discard flag
+/// included, and nothing moves.
 pub fn dc01_mid_operation(stopped: Stopped) -> Scenario {
-    let stop = match stopped {
-        Stopped::Rebase => Step::git(&ww("w"), Repo::Lib, &["rebase", "-x", "false", "HEAD~1"])
-            .expect(Exit::Code(1)),
-        Stopped::Bisect => Step::git(&ww("w"), Repo::Lib, &["bisect", "start"]),
-    };
+    let repo = stopped.repo();
     let alone = |step: Step| {
-        step.claim(Claim::OutputContains(
-            "finish or abandon the operation in progress first",
-        ))
-        .claim(Claim::OutputLacks("alignment"))
-        .claim(Claim::OutputLacks("commit your edits"))
-        .claim(Claim::LocalStateUnchanged(ww("w")))
+        step.claim(Claim::JudgedOnly(repo, State::EditsMidOperation))
+            .claim(Claim::OutputContains(
+                "finish or abandon the operation in progress first",
+            ))
+            .claim(Claim::OutputLacks("commit your edits"))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
     };
     let update = Step::rwv(&ww("w"), &["update"])
         .expect(Exit::Succeeds)
         .claim(Claim::OutputLacks("alignment"))
         .claim(Claim::LocalStateUnchanged(ww("w")));
-    let update = match stopped {
-        Stopped::Rebase => update
-            .claim(Claim::Judged(Repo::Lib, State::EditsMidOperation))
+    let update = if stopped.update_moves_it() {
+        update
+            .claim(Claim::JudgedOnly(repo, State::EditsMidOperation))
             .claim(Claim::OutputContains(
                 "finish or abandon the operation in progress first",
-            )),
-        Stopped::Bisect => update.claim(Claim::OutputLacks("mid-operation")),
-    };
-    scenario(
-        "dc01 a member mid-operation is judged on that alone",
-        vec![
-            create("w"),
-            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
-            stop,
-            update,
-            alone(Step::rwv(&ww("w"), &["switch", "--detach", "HEAD"]))
-                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
-            alone(Step::rwv(&ww("w"), &["land"]))
-                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation))
-                .claim(Claim::LocalStateUnchanged(a())),
-            alone(Step::rwv(&a(), &["workweave", "delete", "w"]))
-                .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
-            alone(Step::rwv(
-                &a(),
-                &["workweave", "delete", "w", "--discard-uncommitted"],
             ))
-            .expect(Exit::refuses(Repo::Lib, State::EditsMidOperation)),
-        ],
+    } else {
+        update.claim(Claim::OutputLacks("mid-operation"))
+    };
+    let mut steps = vec![create("w"), Step::commit(&ww("w"), Repo::Lib, "w-lib")];
+    steps.extend(stopped.steps());
+    steps.extend([
+        update,
+        alone(Step::rwv(&ww("w"), &["switch", "--detach", "HEAD"]))
+            .expect(Exit::refuses(repo, State::EditsMidOperation)),
+        alone(Step::rwv(&ww("w"), &["land"]))
+            .expect(Exit::refuses(repo, State::EditsMidOperation))
+            .claim(Claim::LocalStateUnchanged(a())),
+        alone(Step::rwv(&a(), &["workweave", "delete", "w"]))
+            .expect(Exit::refuses(repo, State::EditsMidOperation)),
+        alone(Step::rwv(
+            &a(),
+            &["workweave", "delete", "w", "--discard-uncommitted"],
+        ))
+        .expect(Exit::refuses(repo, State::EditsMidOperation)),
+        alone(Step::rwv(
+            &a(),
+            &["workweave", "delete", "w", "--discard-unlanded"],
+        ))
+        .expect(Exit::refuses(repo, State::EditsMidOperation)),
+    ]);
+    scenario(
+        "dc01 a checkout mid-operation is judged on that alone",
+        steps,
     )
 }
 
@@ -5891,12 +5960,22 @@ fn seat_recorded(seat: &str, recorded: bool) -> Claim {
     }
 }
 
+/// A seat's `land --retire` while another landing into the same target is
+/// held: the design has it wait on the landing claim and then land; it is
+/// refused instead, and nothing of the seat or the target moves.
+fn landing_into_a_held_target(seat: &str) -> Step {
+    Step::rwv(&ww(seat), &["land", "--retire"])
+        .expect(Exit::Defect(Defect::LiveLandingReadsAsDead))
+        .claim(Claim::LocalStateUnchanged(ww(seat)))
+        .claim(Claim::LocalStateUnchanged(a()))
+}
+
 /// `records-local-writers`: eight seats created at once on one machine, all
 /// but the last held before their records compare-and-swap, each losing it
 /// and retrying, every record kept; then retires whose drops race a create,
 /// the drop retried against the winner's write and dropping only what is
-/// gone. Two landings into one target at once wait on the landing claim,
-/// which this scenario leaves undecided.
+/// gone. A second landing into the target while one runs meets a known
+/// defect in place of the landing claim.
 pub fn records_local_writers() -> Scenario {
     let (held, last) = SEATS.split_at(SEATS.len() - 1);
     let mut steps: Vec<Step> = held
@@ -5943,7 +6022,7 @@ pub fn records_local_writers() -> Scenario {
             "retire-s1",
         ),
         create("s9"),
-        Step::rwv(&ww("s2"), &["land", "--retire"]),
+        landing_into_a_held_target("s2"),
         Step::release("retire-s1")
             .expect(Exit::Succeeds)
             .claim(Claim::WorkweaveGone(ww("s1")))
@@ -5968,14 +6047,77 @@ pub fn records_local_writers() -> Scenario {
     scenario("records local writers", steps)
 }
 
+/// `records-local-writers`, a drop racing a create: `branch create` makes
+/// its branch before it writes the record, so a drop that judges between
+/// the two finds the branch; and a create that re-records a name whose stale
+/// entry already holds the same value still commits, so a drop judged
+/// before that branch existed loses its compare-and-swap and keeps the
+/// entry.
+pub fn records_drop_races_create() -> Scenario {
+    let recorded = |branch: &'static str| Claim::RecordIs {
+        machine: Machine::A,
+        branch,
+        record: Some(feature_onto("main", Mode::Declared)),
+    };
+    scenario(
+        "records drop races create",
+        vec![
+            create("s2"),
+            Step::rwv_paused(
+                &ww("s2"),
+                &["branch", "create", "fresh", "--target", "main"],
+                "records-write",
+                "create-fresh",
+            ),
+            Step::git(
+                &ww("s2"),
+                Repo::Proj,
+                &["rev-parse", "--verify", "-q", "refs/heads/fresh"],
+            ),
+            Step::release("create-fresh")
+                .expect(Exit::Succeeds)
+                .claim(recorded("fresh")),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "s1",
+                    "--new-branch",
+                    "feat-1",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("s1"), Repo::App, "s1-app"),
+            Step::rwv_paused(
+                &ww("s1"),
+                &["land", "--retire"],
+                "records-write",
+                "retire-s1",
+            ),
+            Step::rwv(
+                &ww("s2"),
+                &["branch", "create", "feat-1", "--target", "main"],
+            )
+            .expect(Exit::Succeeds),
+            Step::release("retire-s1")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("s1")))
+                .claim(recorded("feat-1")),
+        ],
+    )
+}
+
 /// `parallel-retire-fetch`: four published seats retire in one clone. A
 /// pruning fetch that meets the store's fetch claim held by a retiring seat
 /// waits for it rather than failing on a ref lock, and each retire's
 /// deletion completes. A second landing into the same target while one runs
-/// waits on the landing claim, which this scenario leaves undecided, as it
-/// does the later seats' landings: `main` records `merge`, so each lands by a
-/// merge commit its push branch is an ancestor of, which the landing reads
-/// once the history setting governs it.
+/// meets a known defect in place of the landing claim. The later seats each
+/// land and retire; `main` records `merge`, so the shape of the history each
+/// leaves on `main` is the history setting's, which this scenario does not
+/// claim.
 pub fn parallel_retire_fetch() -> Scenario {
     let seats = [
         ("s1", "feat-1", "f1-app"),
@@ -6026,13 +6168,17 @@ pub fn parallel_retire_fetch() -> Scenario {
             "fetch-under-claim",
             "retire-s1",
         ),
-        Step::rwv(&ww("s2"), &["land", "--retire"]),
+        landing_into_a_held_target("s2"),
         Step::rwv_paused(&ww("s2"), &["fetch"], "claim-held", "fetch-s2"),
         retired(Step::release("retire-s1"), "s1", "f1-app"),
         Step::release("fetch-s2").expect(Exit::Succeeds),
     ]);
-    for (seat, _, _) in &seats[1..] {
-        steps.push(Step::rwv(&ww(seat), &["land", "--retire"]));
+    for (seat, _, mark) in &seats[1..] {
+        steps.push(retired(
+            Step::rwv(&ww(seat), &["land", "--retire"]),
+            seat,
+            mark,
+        ));
     }
     scenario("parallel retire fetch", steps)
 }

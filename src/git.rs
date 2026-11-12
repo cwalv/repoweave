@@ -1585,6 +1585,9 @@ impl GitVcs {
         if git_dir.join("CHERRY_PICK_HEAD").exists() {
             return Some(MidOperation::Conflict(ConflictOp::CherryPick));
         }
+        if git_dir.join("REVERT_HEAD").exists() {
+            return Some(MidOperation::Conflict(ConflictOp::Revert));
+        }
         if git_dir.join("BISECT_LOG").exists() {
             return Some(MidOperation::Bisect);
         }
@@ -1737,6 +1740,9 @@ fn git_conflict_resolution_hint(op: ConflictOp) -> String {
         }
         ConflictOp::CherryPick => {
             "  # edit conflicted files\n  git add <files>\n  git cherry-pick --continue".to_string()
+        }
+        ConflictOp::Revert => {
+            "  # edit conflicted files\n  git add <files>\n  git revert --continue".to_string()
         }
     }
 }
@@ -3028,6 +3034,7 @@ impl Vcs for GitVcs {
             Some(ConflictOp::Rebase) => &["rebase", "--abort"],
             Some(ConflictOp::Merge) => &["merge", "--abort"],
             Some(ConflictOp::CherryPick) => &["cherry-pick", "--abort"],
+            Some(ConflictOp::Revert) => &["revert", "--abort"],
             None => return,
         };
         let _ = Self::run(abort_args, repo);

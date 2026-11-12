@@ -716,9 +716,16 @@ impl State {
             Self::EditsMidOperation => &StateRow {
                 axis: Axis::Edits,
                 name: "mid-operation",
-                means: "a rebase, merge, cherry-pick or bisect is in progress, named",
+                means: "a rebase, merge, cherry-pick, revert or bisect is in progress, \
+                        named. It is the checkout's only line: where its HEAD stands and \
+                        what it holds are the operation's until it ends",
                 refused_by: "`rwv sync` and `rwv land`, for a repo they would rebase or \
-                             fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a \
+                             fast-forward; `rwv workweave delete` and `rwv land --retire`, for \
+                             every checkout in the workweave, whatever their discard flags; \
+                             `rwv switch`, `rwv member set-branch`, `rwv member pin`, `rwv lock` \
+                             and `rwv push`, for a member not where they would put it or read \
+                             it; `rwv update` reports it for a member it would move, and moves \
+                             the others; `rwv activate`, `rwv update` and `rwv pull`, for a \
                              shared member as `dirty` is",
                 offers: &[Form::C32],
                 verb_offers: &[],
@@ -3161,8 +3168,26 @@ pub struct Report {
 }
 
 impl Report {
-    /// Add `judged`, unless the report already holds that same line.
+    /// Add `judged`, unless the report already holds that same line. A
+    /// checkout stopped in a VCS operation is judged on that alone: where its
+    /// HEAD stands and what it holds are the operation's until it ends, so its
+    /// other `alignment`, `edits` and `pin` lines give way.
     pub fn add(&mut self, judged: Judged) {
+        let held = |line: &Judged| {
+            line.repo == judged.repo
+                && line.workspace == judged.workspace
+                && matches!(line.state.axis(), Axis::Alignment | Axis::Edits | Axis::Pin)
+        };
+        if judged.state == State::EditsMidOperation {
+            self.lines.retain(|line| !held(line));
+        } else if held(&judged)
+            && self
+                .lines
+                .iter()
+                .any(|line| line.state == State::EditsMidOperation && held(line))
+        {
+            return;
+        }
         if !self.lines.contains(&judged) {
             self.lines.push(judged);
         }
@@ -3760,6 +3785,41 @@ mod tests {
         }
         assert!(Form::C15AtCherryPick.printable());
         assert!(Form::C14Keep.printable());
+    }
+
+    #[test]
+    fn a_checkout_mid_operation_is_judged_on_that_alone() {
+        let vcs = git();
+        let line = |state: State, repo: &str, elsewhere: Option<&str>| {
+            let judging = state.of(repo).subject("x");
+            match elsewhere {
+                Some(at) => judging.elsewhere(Path::new(at)),
+                None => judging,
+            }
+            .judge(vcs.as_ref())
+        };
+        let mut report = Report::default();
+        report.add(line(State::PinBackwards, "github/o/lib", None));
+        report.add(line(State::EditsDirty, "github/o/lib", None));
+        report.add(line(State::PinBackwards, "github/o/lib", Some("/t")));
+        report.add(line(State::PinBackwards, "github/o/app", None));
+        report.add(line(State::EditsMidOperation, "github/o/lib", None));
+        report.add(line(State::AlignmentOnBranch, "github/o/lib", None));
+        report.add(line(State::PushBranchDiverged, "github/o/lib", None));
+        let kept: Vec<(State, &str, bool)> = report
+            .lines()
+            .iter()
+            .map(|l| (l.state(), l.repo(), l.workspace.is_some()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                (State::PinBackwards, "github/o/lib", true),
+                (State::PinBackwards, "github/o/app", false),
+                (State::EditsMidOperation, "github/o/lib", false),
+                (State::PushBranchDiverged, "github/o/lib", false),
+            ]
+        );
     }
 
     #[test]

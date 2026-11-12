@@ -1,5 +1,5 @@
 //! `src/sync.rs` composes a `mid-<op>` refusal from `ConflictOp`'s `Display`
-//! and spells none of the mid-op labels (`rebase`, `merge`, `cherry-pick`)
+//! and spells none of the mid-op labels (`rebase`, `merge`, `cherry-pick`, `revert`)
 //! itself. Two tables agree only until someone edits one of them, and the one
 //! in sync is the one an operator reads.
 //!
@@ -19,10 +19,14 @@ fn all_conflict_ops() -> Vec<ConflictOp> {
         ConflictOp::Rebase,
         ConflictOp::Merge,
         ConflictOp::CherryPick,
+        ConflictOp::Revert,
     ];
     for op in &all {
         match op {
-            ConflictOp::Rebase | ConflictOp::Merge | ConflictOp::CherryPick => {}
+            ConflictOp::Rebase
+            | ConflictOp::Merge
+            | ConflictOp::CherryPick
+            | ConflictOp::Revert => {}
         }
     }
     all

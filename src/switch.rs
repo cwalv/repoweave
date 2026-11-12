@@ -513,8 +513,8 @@ pub(crate) fn judge_creation(
     }))
 }
 
-/// Write `record` as `new`'s, reporting a record it replaced because its
-/// branch exists nowhere.
+/// Write `record` as the record of `new`, a branch that now exists,
+/// reporting a record it replaced because its branch existed nowhere.
 pub(crate) fn write_created_record(
     vcs: &dyn Vcs,
     project: &ProjectName,
@@ -525,7 +525,7 @@ pub(crate) fn write_created_record(
     let store = Store::open(vcs, dir)?;
     let replaced = store.settle().ok().and_then(|view| view.entry(new));
     store
-        .write(|view| {
+        .write_created(|view| {
             Ok(vec![Write {
                 branch: new.clone(),
                 record: match record {
@@ -621,6 +621,10 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     };
     report.into_result()?;
 
+    let departure = Departure::of_project_move(vcs, &dir, &start)?;
+    vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
+        .map_err(|e| refused_move(vcs, &project, &dir, e))?;
+    crate::alignment::forget_branch(vcs, &dir, new.as_str())?;
     let replaced = write_created_record(vcs, &project, &dir, &new, &record)?;
     if let Lookup::Value(written) = Store::open(vcs, &dir)?.view()?.lookup(&new) {
         crate::alignment::store_record(vcs, &dir, &new, &written)?;
@@ -628,10 +632,6 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
     if let Some(line) = replaced {
         outln!("{line}");
     }
-    let departure = Departure::of_project_move(vcs, &dir, &start)?;
-    vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
-        .map_err(|e| refused_move(vcs, &project, &dir, e))?;
-    crate::alignment::forget_branch(vcs, &dir, new.as_str())?;
     outln!(
         "created {new} at {}: {record}",
         short_revision(start.id().as_str())

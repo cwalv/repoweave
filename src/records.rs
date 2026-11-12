@@ -522,6 +522,23 @@ pub enum WriteError {
     /// Another verb kept winning the compare-and-swap.
     Busy,
     Vcs(VcsError),
+    /// What the drop rule reads to judge an entry could not be read.
+    Judging(anyhow::Error),
+}
+
+/// The drop rule's judgement: of the names given, those whose branches are
+/// gone. It is called at most once per attempt, with every candidate.
+pub type Droppable<'a> = &'a dyn Fn(&[String]) -> anyhow::Result<BTreeSet<String>>;
+
+fn none_droppable(_: &[String]) -> anyhow::Result<BTreeSet<String>> {
+    Ok(BTreeSet::new())
+}
+
+/// Whether a write equal to the entry it replaces makes a commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unchanged {
+    Skip,
+    Commit,
 }
 
 impl From<VcsError> for WriteError {
@@ -545,6 +562,7 @@ impl fmt::Display for WriteError {
                 "the records branch kept changing under this write; run it again"
             ),
             Self::Vcs(e) => write!(f, "{e:#}"),
+            Self::Judging(e) => write!(f, "{e:#}"),
         }
     }
 }
@@ -739,7 +757,28 @@ impl<'a> Store<'a> {
         &self,
         decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
     ) -> Result<Written, WriteError> {
-        self.write_dropping(decide, &|_| false)
+        self.write_folding(
+            &|| self.remote_tips(),
+            decide,
+            &none_droppable,
+            Unchanged::Skip,
+        )
+    }
+
+    /// [`Store::write`] for a branch that now exists: the write commits even
+    /// where the entry already holds its value, so the compare-and-swap of a
+    /// drop judged before the branch existed loses, and its retry sees the
+    /// branch. The branch must exist before this is called.
+    pub fn write_created(
+        &self,
+        decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
+    ) -> Result<Written, WriteError> {
+        self.write_folding(
+            &|| self.remote_tips(),
+            decide,
+            &none_droppable,
+            Unchanged::Commit,
+        )
     }
 
     /// [`Store::write`], and in the same commit the drop rule: every entry the
@@ -749,9 +788,9 @@ impl<'a> Store<'a> {
     pub fn write_dropping(
         &self,
         decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
-        droppable: &dyn Fn(&str) -> bool,
+        droppable: Droppable<'_>,
     ) -> Result<Written, WriteError> {
-        self.write_folding(&|| self.remote_tips(), decide, droppable)
+        self.write_folding(&|| self.remote_tips(), decide, droppable, Unchanged::Skip)
     }
 
     /// [`Store::write_dropping`], folding in the remotes' tips `remotes`
@@ -760,7 +799,8 @@ impl<'a> Store<'a> {
         &self,
         remotes: &dyn Fn() -> Result<RemoteTips, VcsError>,
         decide: impl Fn(&View) -> Result<Vec<Write>, WriteError>,
-        droppable: &dyn Fn(&str) -> bool,
+        droppable: Droppable<'_>,
+        unchanged: Unchanged,
     ) -> Result<Written, WriteError> {
         for _ in 0..WRITE_ATTEMPTS {
             let local = self.vcs.records_tip(self.repo, RecordsSite::Local)?;
@@ -770,18 +810,29 @@ impl<'a> Store<'a> {
             };
             let writes: Vec<Write> = decide(&folded)?
                 .into_iter()
-                .filter(|w| folded.entry(&w.branch) != Some(Entry::Value(w.record.clone())))
+                .filter(|w| {
+                    unchanged == Unchanged::Commit
+                        || folded.entry(&w.branch) != Some(Entry::Value(w.record.clone()))
+                })
                 .collect();
-            let drops: Vec<String> = fold
+            let candidates: Vec<String> = fold
                 .local
                 .keys()
                 .filter(|name| {
                     fold.snapshot.contains_key(*name)
-                        && droppable(name)
                         && !writes.iter().any(|w| w.branch.as_str() == name.as_str())
                 })
                 .cloned()
                 .collect();
+            let drops: Vec<String> = if candidates.is_empty() {
+                Vec::new()
+            } else {
+                let gone = droppable(&candidates).map_err(WriteError::Judging)?;
+                candidates
+                    .into_iter()
+                    .filter(|name| gone.contains(name))
+                    .collect()
+            };
             let first_snapshot = match fold.heads.first() {
                 Some(first) => self.snapshot_at(first)?,
                 None => Snapshot::new(),
@@ -884,7 +935,13 @@ impl<'a> Store<'a> {
                 }
                 Ok(writes)
             },
-            &|name| name == from.as_str(),
+            &|names| {
+                Ok(names
+                    .iter()
+                    .filter(|name| name.as_str() == from.as_str())
+                    .cloned()
+                    .collect())
+            },
         )
     }
 
@@ -906,7 +963,12 @@ impl<'a> Store<'a> {
         for _ in 0..WRITE_ATTEMPTS {
             let tips = self.remote_tips()?;
             let settled = self
-                .write_folding(&|| Ok(tips.clone()), |_| Ok(Vec::new()), &|_| false)
+                .write_folding(
+                    &|| Ok(tips.clone()),
+                    |_| Ok(Vec::new()),
+                    &none_droppable,
+                    Unchanged::Skip,
+                )
                 .map_err(anyhow::Error::new)?
                 .view;
             let settled = SettledView { view: settled };
@@ -1124,6 +1186,79 @@ mod tests {
             .collect();
 
         assert_eq!(paths, vec![("a%2Fb".to_owned(), true)]);
+    }
+
+    fn store_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path().join("p");
+        std::fs::create_dir(&dir).unwrap();
+        let out = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        (tmp, dir)
+    }
+
+    fn declare(store: &Store<'_>, names: &[&str]) {
+        store
+            .write(|_| {
+                Ok(names
+                    .iter()
+                    .map(|n| Write {
+                        branch: name(n),
+                        record: Record::Declared,
+                    })
+                    .collect())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn the_drop_rule_is_judged_once_per_attempt_and_a_judgement_that_fails_fails_the_write() {
+        let (_tmp, dir) = store_repo();
+        let vcs = crate::git::git_vcs();
+        let store = Store::open(vcs.as_ref(), &dir).unwrap();
+        declare(&store, &["a", "b", "c"]);
+
+        let calls = std::cell::Cell::new(0);
+        let gone = |names: &[String]| -> anyhow::Result<BTreeSet<String>> {
+            calls.set(calls.get() + 1);
+            assert_eq!(names, ["a", "b", "c"]);
+            Ok(["a", "c"].map(str::to_owned).into())
+        };
+        let written = store.write_dropping(|_| Ok(Vec::new()), &gone).unwrap();
+        assert_eq!(written.dropped, ["a", "c"]);
+        assert_eq!(calls.get(), 1);
+
+        let unreadable =
+            |_: &[String]| -> anyhow::Result<BTreeSet<String>> { anyhow::bail!("unreadable") };
+        let tip = vcs.records_tip(&dir, RecordsSite::Local).unwrap();
+        assert!(matches!(
+            store.write_dropping(|_| Ok(Vec::new()), &unreadable),
+            Err(WriteError::Judging(_))
+        ));
+        assert_eq!(vcs.records_tip(&dir, RecordsSite::Local).unwrap(), tip);
+    }
+
+    #[test]
+    fn a_created_branch_record_commits_even_where_the_entry_holds_its_value() {
+        let (_tmp, dir) = store_repo();
+        let vcs = crate::git::git_vcs();
+        let store = Store::open(vcs.as_ref(), &dir).unwrap();
+        declare(&store, &["a"]);
+        let tip = vcs.records_tip(&dir, RecordsSite::Local).unwrap();
+        let again = |_: &View| {
+            Ok(vec![Write {
+                branch: name("a"),
+                record: Record::Declared,
+            }])
+        };
+        assert!(!store.write(again).unwrap().committed);
+        assert_eq!(vcs.records_tip(&dir, RecordsSite::Local).unwrap(), tip);
+        assert!(store.write_created(again).unwrap().committed);
+        assert_ne!(vcs.records_tip(&dir, RecordsSite::Local).unwrap(), tip);
     }
 
     fn feature(target: &str, as_mode: Mode) -> Record {

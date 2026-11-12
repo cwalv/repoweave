@@ -464,10 +464,10 @@ impl VcsAction {
 /// messages embed VCS-appropriate "how do I resume this?" text without
 /// hardcoding git vocabulary.
 ///
-/// The type admits all three variants — [`Vcs::mid_op`] constructs any of
-/// them from a repo's on-disk state — but a given field can be narrower than
-/// the type: every [`VcsError::RebaseConflict`] raised carries `Rebase`, so
-/// `Rebase` is the only value that field will actually carry.
+/// [`Vcs::mid_op`] constructs any variant from a repo's on-disk state, but a
+/// given field can be narrower than the type: every
+/// [`VcsError::RebaseConflict`] raised carries `Rebase`, so `Rebase` is the
+/// only value that field will actually carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {
@@ -485,10 +485,12 @@ pub enum ConflictOp {
     /// Cherry-pick (`git cherry-pick`) — resumes with `git cherry-pick --continue`.
     /// Used by sync's project-repo rebase-with-lock-exclusion path.
     CherryPick,
+    /// Revert (`git revert`) — resumes with `git revert --continue`.
+    Revert,
 }
 
 impl ConflictOp {
-    pub const ALL: [Self; 3] = [Self::Rebase, Self::Merge, Self::CherryPick];
+    pub const ALL: [Self; 4] = [Self::Rebase, Self::Merge, Self::CherryPick, Self::Revert];
 }
 
 impl std::fmt::Display for ConflictOp {
@@ -3024,8 +3026,7 @@ pub trait Vcs: Send + Sync {
     /// repo, the `rwv <verb> --continue` line for Rebase, and `rwv abort` as
     /// the rollback option).
     ///
-    /// `op` is the in-flight operation that produced the conflict (rebase,
-    /// merge, cherry-pick); the hint text varies per VCS and per op. No
+    /// `op` is the in-flight operation that produced the conflict; the hint text varies per VCS and per op. No
     /// `repo` param: the hint text for git
     /// doesn't vary per-repo, and adding a parameter we don't read would be
     /// noise. Add one if a future VCS needs to inspect on-disk state.
@@ -3371,12 +3372,11 @@ pub trait Vcs: Send + Sync {
         self.mid_operation(repo).and_then(MidOperation::conflict)
     }
 
-    /// Cancel any in-flight VCS operation in `repo` (rebase, merge,
-    /// cherry-pick). No-op when the repo is in a clean state.
+    /// Cancel any in-flight VCS operation in `repo` that has a resume path.
+    /// No-op when the repo is in a clean state.
     ///
-    /// For git: runs
-    /// `git rebase --abort` / `git merge --abort` / `git cherry-pick --abort`
-    /// depending on what [`mid_op`] reports. Errors from the underlying
+    /// For git: runs that operation's own `--abort`, by what [`mid_op`]
+    /// reports. Errors from the underlying
     /// abort command are swallowed — the call is a best-effort cleanup
     /// before the surrounding flow (e.g. `rwv abort`) does its own
     /// recovery.

@@ -592,7 +592,12 @@ every_scenario!(
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
+    dc01_mid_operation(scenarios::Stopped::RebaseBehindPin),
+    dc01_mid_operation(scenarios::Stopped::Merge),
+    dc01_mid_operation(scenarios::Stopped::CherryPick),
+    dc01_mid_operation(scenarios::Stopped::Revert),
     dc01_mid_operation(scenarios::Stopped::Bisect),
+    dc01_mid_operation(scenarios::Stopped::ProjectBisect),
     dc02_c14_keeps_work,
     land_retire_judges_deletion_against_the_named_target,
     bump_to_cut_pin,
@@ -600,6 +605,7 @@ every_scenario!(
     dc29_no_bring,
     concurrent_landing_merge_upstream,
     records_local_writers,
+    records_drop_races_create,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     cross_repo_pr,
@@ -3364,6 +3370,42 @@ fn dc01_a_member_stopped_mid_bisect_is_judged_on_that_alone_by_every_verb_that_m
 }
 
 #[test]
+fn dc01_a_member_stopped_mid_rebase_behind_its_pin_is_judged_on_that_alone() {
+    runner::run(scenarios::dc01_mid_operation(
+        scenarios::Stopped::RebaseBehindPin,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_stopped_mid_merge_is_judged_on_that_alone_by_every_verb_that_moves_it() {
+    runner::run(scenarios::dc01_mid_operation(scenarios::Stopped::Merge))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_stopped_mid_cherry_pick_is_judged_on_that_alone_by_every_verb_that_moves_it() {
+    runner::run(scenarios::dc01_mid_operation(
+        scenarios::Stopped::CherryPick,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_member_stopped_mid_revert_is_judged_on_that_alone_by_every_verb_that_moves_it() {
+    runner::run(scenarios::dc01_mid_operation(scenarios::Stopped::Revert))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn dc01_a_project_repo_stopped_mid_bisect_is_judged_on_that_alone() {
+    runner::run(scenarios::dc01_mid_operation(
+        scenarios::Stopped::ProjectBisect,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn dc02_c14_keeps_detached_work_on_a_branch_through_the_landing() {
     runner::run(scenarios::dc02_c14_keeps_work()).assert_fully_decided_green();
 }
@@ -3399,6 +3441,15 @@ holding_rwv! {
     /// branch; every lost compare-and-swap retries and no record is lost.
     fn records_written_at_once_on_one_machine_are_all_kept_and_drops_retry_against_the_winner() {
         runner::run(scenarios::records_local_writers()).assert_green();
+    }
+}
+
+holding_rwv! {
+    /// A drop racing `branch create` keeps the record: the branch exists
+    /// before its record is written, and a re-record of the same value still
+    /// moves the records branch under the drop's compare-and-swap.
+    fn a_drop_racing_a_create_keeps_the_created_branchs_record() {
+        runner::run(scenarios::records_drop_races_create()).assert_fully_decided_green();
     }
 }
 
