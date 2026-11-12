@@ -2179,6 +2179,7 @@ pub fn acquire_lease(
         Err(CreateNewError::Io(e)) => {
             Err(anyhow::Error::new(e).context(format!("failed to acquire lease at {path}")))
         }
+        Err(CreateNewError::NoExclusivePublish(e)) => Err(e),
     }
 }
 
@@ -2254,6 +2255,7 @@ pub fn acquire_op(
             return Err(anyhow::Error::new(e)
                 .context(format!("failed to acquire owner record at {owner_path}")));
         }
+        Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
     }
 
     let mut acquired_leases: Vec<PathBuf> = Vec::with_capacity(lease_workspaces.len());
@@ -2293,6 +2295,10 @@ pub fn acquire_op(
                 rollback_acquired(owner_workspace_dir, &acquired_leases);
                 return Err(anyhow::Error::new(e)
                     .context(format!("failed to acquire lease at {lease_path}")));
+            }
+            Err(CreateNewError::NoExclusivePublish(e)) => {
+                rollback_acquired(owner_workspace_dir, &acquired_leases);
+                return Err(e);
             }
         }
     }
@@ -2339,6 +2345,7 @@ pub fn acquire_more_leases(
                     anyhow::Error::new(e)
                         .context(format!("failed to acquire a lease at {}", ws.display())),
                 ),
+                Err(CreateNewError::NoExclusivePublish(e)) => Some(e),
             })
         };
         let refused = lease_one().unwrap_or_else(Some);

@@ -16,16 +16,28 @@
 //! fsyncs the loose ref it writes beside it, so a cached index entry leaves a
 //! workweave on disk that no verb can find.
 //!
-//! ## Why the temp name carries a pid and a counter and no clock
+//! ## Why the temp name carries a pid, a process key and a counter and no clock
 //!
 //! The pid keeps concurrent processes apart; a process-local monotonic
-//! counter keeps threads within one process apart. Both components are
-//! structural. An earlier revision used a nanosecond timestamp for the
+//! counter keeps threads within one process apart; a key drawn once per
+//! process keeps a later process that reuses a pid from ever spelling a dead
+//! one's temp, so a temp's name is never reused. All three are structural. An earlier revision used a nanosecond timestamp for the
 //! intra-process half: two barrier-synchronized threads read the same
 //! `SystemTime::now()` under load, collided on the temp path, and each
 //! unlinked the other's in-flight temp, so the winner's publish hit ENOENT
 //! and *both* calls failed. Uniqueness here must not be re-derived from a
 //! clock.
+//!
+//! ## Who removes a temp a killed writer left
+//!
+//! A temp is never at a published name, so one left behind blocks nothing.
+//! The next publish of a file whose name it begins with removes it, once it
+//! can tell no writer still holds it: on unix a writer holds an advisory lock
+//! on its temp for as long as the publish runs, which the kernel drops when
+//! the process dies; on Windows a writer holds its temp open without sharing
+//! deletion until just before it publishes. A temp that may still be held is
+//! left. Where the filesystem takes no lock, nothing is removed. A writer
+//! whose temp vanished before it published it stages it again.
 
 use anyhow::Context;
 use std::io::Write as _;
@@ -38,6 +50,10 @@ pub(crate) enum CreateNewError {
     /// means — for op-state it is a peer op holding the workspace.
     AlreadyExists,
     Io(std::io::Error),
+    /// The filesystem makes neither a hard link nor a rename that refuses an
+    /// occupied target, so nothing can be published on it exclusively. Holds
+    /// the refusal naming the filesystem.
+    NoExclusivePublish(anyhow::Error),
 }
 
 /// Serial number for temp files, so two threads publishing to the same path
@@ -66,6 +82,7 @@ pub(crate) enum ClaimError {
     /// the claim file records about its holder.
     Held(String),
     Io(std::io::Error),
+    NoExclusivePublish(anyhow::Error),
 }
 
 /// A claim file this process created, removed by [`ClaimFile::release`].
@@ -99,6 +116,9 @@ pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
                 std::thread::sleep(CLAIM_POLL);
             }
             Err(CreateNewError::Io(e)) => return Err(ClaimError::Io(e)),
+            Err(CreateNewError::NoExclusivePublish(e)) => {
+                return Err(ClaimError::NoExclusivePublish(e))
+            }
         }
     }
 }
@@ -159,15 +179,24 @@ pub(crate) fn after_release<T>(
 /// either the old file or the new one, never a splice of the two.
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = parent_of(path);
-    let tmp = staged_temp(path, bytes)
-        .with_context(|| format!("failed to stage a write of {}", path.display()))?;
-    if let Err(e) = rename_over(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow::Error::new(e).context(format!(
-            "failed to rename {} to {}",
-            tmp.display(),
-            path.display()
-        )));
+    sweep_abandoned_temps(path);
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        let mut staged = staged_temp(path, bytes)
+            .with_context(|| format!("failed to stage a write of {}", path.display()))?;
+        let tmp = staged.ready_to_publish();
+        match rename_over(tmp, path) {
+            Ok(()) => break,
+            Err(e) if vanished(&e) && std::time::Instant::now() < deadline => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(tmp);
+                return Err(anyhow::Error::new(e).context(format!(
+                    "failed to rename {} to {}",
+                    tmp.display(),
+                    path.display()
+                )));
+            }
+        }
     }
     sync_dir(parent).with_context(|| format!("failed to fsync directory {}", parent.display()))
 }
@@ -202,30 +231,349 @@ fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Publish `bytes` at `path` only if nothing is there.
+/// Publish `bytes` at `path` only if nothing is there, and atomically: a
+/// reader sees nothing there or all of `bytes`, never an empty or partial
+/// file, and a loser of a race reads the winner's complete file.
 ///
-/// `link(2)` is atomic and fails with `EEXIST` on an occupied target —
-/// `O_CREAT|O_EXCL` semantics, but applied to an already-populated inode so
-/// the loser reads a complete file. With a plain `create_new` open the winner
-/// creates the file and then writes it, and a loser that hits `EEXIST` and
-/// immediately reads may see it empty: it then fails with a parse error
-/// instead of whatever refusal the caller wanted to raise.
-///
-/// `std::fs::hard_link` works on POSIX and NTFS. A platform without hard
-/// links would need a different atomic exclusive publish.
+/// Two publish modes, each atomic and failing on an occupied target: a hard
+/// link of the fully written temp, and where the filesystem makes no hard
+/// link, a rename of it that refuses to replace. The link is tried first on
+/// every call and the rename is reached only on an error that says this
+/// filesystem makes no links, never on one that could mean a permission was
+/// denied. Where neither is made the publish is refused, naming the
+/// filesystem: an exclusive create followed by a write is never a fallback,
+/// because a writer killed between the two leaves an empty file that every
+/// reader of an op record or a claim refuses.
 pub(crate) fn create_new(path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
+    create_new_with(Publisher::native(), path, bytes)
+}
+
+fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
     let parent = parent_of(path);
-    let tmp = staged_temp(path, bytes).map_err(CreateNewError::Io)?;
-    let linked = std::fs::hard_link(&tmp, path);
-    // The temp's role ends here whether or not the link took.
-    let _ = std::fs::remove_file(&tmp);
-    match linked {
-        Ok(()) => sync_dir(parent).map_err(CreateNewError::Io),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(CreateNewError::AlreadyExists)
+    sweep_abandoned_temps(path);
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    let published = loop {
+        let mut staged = staged_temp(path, bytes).map_err(CreateNewError::Io)?;
+        let tmp = staged.ready_to_publish();
+        let published = publisher.publish(tmp, path);
+        // The temp's role ends here whether or not the publish took.
+        let _ = std::fs::remove_file(tmp);
+        match published {
+            Err(Published::Io(e)) if vanished(&e) && std::time::Instant::now() < deadline => {}
+            published => break published,
         }
-        Err(e) => Err(CreateNewError::Io(e)),
+    };
+    match published {
+        Ok(()) => sync_dir(parent).map_err(CreateNewError::Io),
+        Err(Published::Occupied) => Err(CreateNewError::AlreadyExists),
+        Err(Published::Io(e)) => Err(CreateNewError::Io(e)),
+        Err(Published::Unsupported { link, rename }) => Err(CreateNewError::NoExclusivePublish(
+            no_exclusive_publish(path, &link, &rename),
+        )),
     }
+}
+
+/// How [`create_new`] publishes a staged temp: the calls a filesystem makes
+/// or refuses, apart so a test can stand in a filesystem that lacks one.
+#[derive(Clone, Copy)]
+struct Publisher {
+    link: fn(&Path, &Path) -> std::io::Result<()>,
+    rename_no_replace: fn(&Path, &Path) -> std::io::Result<()>,
+}
+
+enum Published {
+    Occupied,
+    Io(std::io::Error),
+    Unsupported {
+        link: std::io::Error,
+        rename: std::io::Error,
+    },
+}
+
+impl Publisher {
+    fn native() -> Self {
+        Self {
+            link: if crate::test_pause::withheld("hard-link") {
+                |_, _| Err(no_hard_links_error())
+            } else {
+                |from, to| std::fs::hard_link(from, to)
+            },
+            rename_no_replace: if crate::test_pause::withheld("no-replace-rename") {
+                |_, _| Err(no_rename_no_replace_error())
+            } else {
+                rename_no_replace
+            },
+        }
+    }
+
+    fn publish(self, tmp: &Path, path: &Path) -> Result<(), Published> {
+        let link = match (self.link)(tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(Published::Occupied)
+            }
+            Err(e) if makes_no_hard_links(&e) => e,
+            Err(e) => return Err(Published::Io(e)),
+        };
+        match (self.rename_no_replace)(tmp, path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Published::Occupied),
+            Err(rename) if makes_no_rename_no_replace(&rename) => {
+                Err(Published::Unsupported { link, rename })
+            }
+            Err(e) => Err(Published::Io(e)),
+        }
+    }
+}
+
+/// `link(2)` answers EPERM where the filesystem has no link operation (vfat,
+/// exfat on Linux) and EOPNOTSUPP or ENOSYS on some FUSE and SMB mounts. A
+/// denied permission is EACCES, and the temp beside the target was created a
+/// moment ago, so EPERM here is not a permission rwv could be granted.
+#[cfg(unix)]
+fn makes_no_hard_links(e: &std::io::Error) -> bool {
+    use nix::libc;
+    e.raw_os_error().is_some_and(|code| {
+        [libc::EPERM, libc::EOPNOTSUPP, libc::ENOTSUP, libc::ENOSYS].contains(&code)
+    })
+}
+
+/// `CreateHardLinkW` answers these where the volume has no hard links (FAT,
+/// exFAT); a denied permission is `ERROR_ACCESS_DENIED`, which is not among
+/// them.
+#[cfg(windows)]
+fn makes_no_hard_links(e: &std::io::Error) -> bool {
+    windows_unsupported(e)
+}
+
+/// `renameat2` answers EINVAL where the filesystem takes no
+/// `RENAME_NOREPLACE` (NFS, FUSE without rename2) and ENOSYS on a kernel
+/// before 3.15; `renamex_np` answers ENOTSUP where the volume has no
+/// `RENAME_EXCL`.
+#[cfg(unix)]
+fn makes_no_rename_no_replace(e: &std::io::Error) -> bool {
+    use nix::libc;
+    e.raw_os_error().is_some_and(|code| {
+        [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::ENOTSUP].contains(&code)
+    })
+}
+
+#[cfg(windows)]
+fn makes_no_rename_no_replace(e: &std::io::Error) -> bool {
+    windows_unsupported(e)
+}
+
+#[cfg(windows)]
+fn windows_unsupported(e: &std::io::Error) -> bool {
+    use windows::Win32::Foundation::{ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED};
+    [ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED]
+        .iter()
+        .any(|code| e.raw_os_error() == Some(code.0 as i32))
+}
+
+#[cfg(unix)]
+fn no_hard_links_error() -> std::io::Error {
+    std::io::Error::from_raw_os_error(nix::libc::EPERM)
+}
+
+#[cfg(windows)]
+fn no_hard_links_error() -> std::io::Error {
+    std::io::Error::from_raw_os_error(windows::Win32::Foundation::ERROR_INVALID_FUNCTION.0 as i32)
+}
+
+#[cfg(unix)]
+fn no_rename_no_replace_error() -> std::io::Error {
+    std::io::Error::from_raw_os_error(nix::libc::EINVAL)
+}
+
+#[cfg(windows)]
+fn no_rename_no_replace_error() -> std::io::Error {
+    std::io::Error::from_raw_os_error(windows::Win32::Foundation::ERROR_NOT_SUPPORTED.0 as i32)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use nix::libc;
+    let from = c_path(from)?;
+    let to = c_path(to)?;
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    let renamed = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if renamed == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use nix::libc;
+    let from = c_path(from)?;
+    let to = c_path(to)?;
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_vendor = "apple"))
+))]
+fn rename_no_replace(_from: &Path, _to: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(nix::libc::ENOSYS))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn c_path(path: &Path) -> std::io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+}
+
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` fails with
+/// `ERROR_ALREADY_EXISTS` on an occupied target.
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { MoveFileExW(&HSTRING::from(from), &HSTRING::from(to), MOVE_FILE_FLAGS(0)) }
+        .map_err(win32_io_error)
+}
+
+/// `windows::core::Error` carries an HRESULT; a Win32 code rides in its low
+/// word under `FACILITY_WIN32`, and `std::io::Error` classifies the bare code.
+#[cfg(windows)]
+fn win32_io_error(e: windows::core::Error) -> std::io::Error {
+    let hresult = e.code().0 as u32;
+    if hresult & 0xFFFF_0000 == 0x8007_0000 {
+        std::io::Error::from_raw_os_error((hresult & 0xFFFF) as i32)
+    } else {
+        std::io::Error::other(e)
+    }
+}
+
+fn no_exclusive_publish(
+    path: &Path,
+    link: &std::io::Error,
+    rename: &std::io::Error,
+) -> anyhow::Error {
+    let dir = parent_of(path);
+    crate::refusal::refusal(
+        crate::refusal::RefusalKind::FilesystemWithoutExclusivePublish,
+        format!(
+            "cannot publish {path} exclusively: {dir} is on {fs}, which makes neither a hard \
+             link ({link}) nor a rename that refuses an occupied target ({rename}). rwv \
+             records its operations and claims through one of the two, and writes nothing \
+             else first. Move this workspace to a filesystem that makes hard links (ext4, \
+             XFS, Btrfs, APFS, NTFS) or a no-replace rename, then rerun.",
+            path = path.display(),
+            dir = dir.display(),
+            fs = filesystem_of(dir),
+        ),
+    )
+}
+
+/// The filesystem type of `dir` as the OS names it, for a refusal to print.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn filesystem_of(dir: &Path) -> String {
+    use nix::libc;
+    let Ok(c_dir) = c_path(dir) else {
+        return "a filesystem the OS did not name".to_owned();
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: the path is NUL-terminated; `stat` is written in full on success.
+    if unsafe { libc::statfs(c_dir.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return "a filesystem the OS did not name".to_owned();
+    }
+    // SAFETY: statfs returned 0.
+    let magic = unsafe { stat.assume_init() }.f_type as u64;
+    let name = match magic {
+        0x4d44 => "vfat (FAT)",
+        0x2011_bab0 => "exfat",
+        0x6573_5546 => "a FUSE mount",
+        0xfe53_4d42 => "SMB2",
+        0xff53_4d42 => "CIFS",
+        0x517b => "SMB",
+        0x6969 => "NFS",
+        0x5346_544e => "ntfs3",
+        0x9123_683e => "btrfs",
+        0x5846_5342 => "xfs",
+        0xef53 => "ext4",
+        0x0102_1994 => "tmpfs",
+        _ => return format!("a filesystem of type 0x{magic:x}"),
+    };
+    name.to_owned()
+}
+
+#[cfg(target_vendor = "apple")]
+fn filesystem_of(dir: &Path) -> String {
+    use nix::libc;
+    let Ok(c_dir) = c_path(dir) else {
+        return "a filesystem the OS did not name".to_owned();
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: the path is NUL-terminated; `stat` is written in full on success.
+    if unsafe { libc::statfs(c_dir.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return "a filesystem the OS did not name".to_owned();
+    }
+    // SAFETY: statfs returned 0, and f_fstypename is NUL-terminated.
+    let name = unsafe { std::ffi::CStr::from_ptr(stat.assume_init().f_fstypename.as_ptr()) };
+    name.to_string_lossy().into_owned()
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_vendor = "apple"))
+))]
+fn filesystem_of(_dir: &Path) -> String {
+    "a filesystem the OS did not name".to_owned()
+}
+
+#[cfg(windows)]
+fn filesystem_of(dir: &Path) -> String {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::{GetVolumeInformationW, GetVolumePathNameW};
+    let mut root = [0u16; 261];
+    let mut name = [0u16; 261];
+    // SAFETY: every buffer outlives its call, and each length is its slice's.
+    let named = unsafe {
+        GetVolumePathNameW(&HSTRING::from(dir), &mut root).and_then(|()| {
+            GetVolumeInformationW(
+                windows::core::PCWSTR(root.as_ptr()),
+                None,
+                None,
+                None,
+                None,
+                Some(&mut name),
+            )
+        })
+    };
+    match named {
+        Ok(()) => {
+            let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            String::from_utf16_lossy(&name[..end])
+        }
+        Err(_) => "a filesystem the OS did not name".to_owned(),
+    }
+}
+
+/// Whether a publish failed because its staged temp was gone: removed by a
+/// [`sweep_abandoned_temps`] that met it before its writer held it.
+fn vanished(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::NotFound
 }
 
 /// Remove a lock file rwv created at `path` with [`create_new`]; one already
@@ -241,36 +589,147 @@ fn parent_of(path: &Path) -> &Path {
     path.parent().unwrap_or_else(|| Path::new("."))
 }
 
-/// Write `bytes` into a sibling temp of `path` and fsync it, so a publish can
-/// only ever expose bytes that have reached the disk. Returns the temp path;
-/// the caller publishes it and owns removing it. On failure nothing is left
-/// behind and `path` has not been touched.
-fn staged_temp(path: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
+/// A temp written and fsynced beside the path it will be published at, held
+/// by its writer so no sweep takes it for abandoned.
+struct Staged {
+    path: PathBuf,
+    held: Option<std::fs::File>,
+}
+
+impl Staged {
+    /// Let go of what marks the temp as held where holding it would stop the
+    /// publish, and return its path. A unix lock is advisory and is kept until
+    /// this value drops, after the publish; a Windows handle that does not
+    /// share deletion would refuse the publish itself.
+    fn ready_to_publish(&mut self) -> &Path {
+        crate::test_pause::point("durable-file-staged");
+        if cfg!(not(unix)) {
+            self.held = None;
+        }
+        &self.path
+    }
+}
+
+/// Drawn once per process, so no later process that reuses this pid spells
+/// one of this process's temp names.
+fn process_key() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        hasher.finish()
+    })
+}
+
+const TEMP_MARK: &str = ".tmp.";
+
+fn temp_name(file_name: &str, serial: u64) -> String {
+    format!(
+        "{file_name}{TEMP_MARK}{pid}.{key:016x}.{serial}",
+        pid = std::process::id(),
+        key = process_key()
+    )
+}
+
+/// Whether `name` spells a temp [`staged_temp`] makes for a file whose name
+/// begins with `published`.
+fn is_temp_of(name: &str, published: &str) -> bool {
+    let Some((base, tail)) = name.rsplit_once(TEMP_MARK) else {
+        return false;
+    };
+    let parts: Vec<&str> = tail.split('.').collect();
+    base.starts_with(published)
+        && matches!(parts.as_slice(), [pid, key, serial]
+            if pid.parse::<u32>().is_ok()
+                && key.len() == 16
+                && u64::from_str_radix(key, 16).is_ok()
+                && serial.parse::<u64>().is_ok())
+}
+
+/// Write `bytes` into a sibling temp of `path`, fsync it, and hold it. On
+/// failure nothing is left behind and `path` has not been touched.
+fn staged_temp(path: &Path, bytes: &[u8]) -> std::io::Result<Staged> {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "durable-file".to_owned());
     let serial = TMP_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp_path = parent_of(path).join(format!(
-        "{file_name}.tmp.{pid}.{serial}",
-        pid = std::process::id()
-    ));
+    let tmp_path = parent_of(path).join(temp_name(&file_name, serial));
 
-    match (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
+    match (|| -> std::io::Result<std::fs::File> {
+        let mut f = open_held(&tmp_path)?;
         f.write_all(bytes)?;
-        f.sync_all()
+        f.sync_all()?;
+        Ok(f)
     })() {
-        Ok(()) => Ok(tmp_path),
+        Ok(held) => Ok(Staged {
+            path: tmp_path,
+            held: Some(held),
+        }),
         Err(e) => {
             // Do not leave the temp behind for a later reader to trip over.
             let _ = std::fs::remove_file(&tmp_path);
             Err(e)
         }
     }
+}
+
+#[cfg(unix)]
+fn open_held(tmp: &Path) -> std::io::Result<std::fs::File> {
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)?;
+    match f.lock() {
+        Err(e) if e.kind() != std::io::ErrorKind::Unsupported => Err(e),
+        _ => Ok(f),
+    }
+}
+
+#[cfg(windows)]
+fn open_held(tmp: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    const FILE_SHARE_WRITE: u32 = 0x2;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(tmp)
+}
+
+/// Remove each temp beside `path` for a file whose name begins with its own
+/// that no writer holds: one a writer killed mid-publish left.
+fn sweep_abandoned_temps(path: &Path) {
+    let Some(published) = path.file_name().map(|s| s.to_string_lossy().into_owned()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(parent_of(path)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if is_temp_of(&entry.file_name().to_string_lossy(), &published) {
+            remove_if_abandoned(&entry.path());
+        }
+    }
+}
+
+#[cfg(unix)]
+fn remove_if_abandoned(tmp: &Path) {
+    let Ok(f) = std::fs::File::open(tmp) else {
+        return;
+    };
+    if f.try_lock().is_ok() {
+        let _ = std::fs::remove_file(tmp);
+    }
+}
+
+/// A delete fails with a sharing violation while the writer holds the temp
+/// open, since it shares no deletion.
+#[cfg(windows)]
+fn remove_if_abandoned(tmp: &Path) {
+    let _ = std::fs::remove_file(tmp);
 }
 
 /// fsync the directory so the **publish** is durable, not just the bytes it
@@ -334,6 +793,149 @@ mod tests {
         });
         assert_eq!(winners, 1);
         assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    fn without_hard_links() -> Publisher {
+        Publisher {
+            link: |_, _| Err(no_hard_links_error()),
+            ..Publisher::native()
+        }
+    }
+
+    #[test]
+    fn where_no_hard_link_is_made_the_rename_publishes_exclusively() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        create_new_with(without_hard_links(), &path, b"first").unwrap();
+        assert!(matches!(
+            create_new_with(without_hard_links(), &path, b"second"),
+            Err(CreateNewError::AlreadyExists)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn concurrent_create_new_without_hard_links_has_exactly_one_winner() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let winners: usize = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..16)
+                .map(|i| {
+                    let path = path.clone();
+                    s.spawn(move || {
+                        match create_new_with(
+                            without_hard_links(),
+                            &path,
+                            format!("{i}").as_bytes(),
+                        ) {
+                            Ok(()) => true,
+                            Err(CreateNewError::AlreadyExists) => false,
+                            Err(e) => panic!("a loser must find the path occupied: {e:?}"),
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok())
+                .filter(|won| *won)
+                .count()
+        });
+        assert_eq!(winners, 1);
+        assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_link_refused_for_permission_is_reported_and_never_renamed() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let denied = Publisher {
+            link: |_, _| Err(std::io::Error::from_raw_os_error(nix::libc::EACCES)),
+            rename_no_replace: |_, _| panic!("a denied permission must not reach the rename"),
+        };
+        match create_new_with(denied, &path, b"x") {
+            Err(CreateNewError::Io(e)) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied)
+            }
+            other => panic!("expected the permission error itself, got {other:?}"),
+        }
+        assert!(!path.exists());
+        assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_filesystem_with_links_never_reaches_the_rename() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let linking = Publisher {
+            rename_no_replace: |_, _| panic!("a filesystem that links must publish by link"),
+            ..Publisher::native()
+        };
+        create_new_with(linking, &path, b"x").unwrap();
+        assert!(matches!(
+            create_new_with(linking, &path, b"y"),
+            Err(CreateNewError::AlreadyExists)
+        ));
+    }
+
+    #[test]
+    fn where_neither_mode_is_made_the_publish_is_refused_naming_the_filesystem() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let neither = Publisher {
+            link: |_, _| Err(no_hard_links_error()),
+            rename_no_replace: |_, _| Err(no_rename_no_replace_error()),
+        };
+        let Err(CreateNewError::NoExclusivePublish(e)) = create_new_with(neither, &path, b"x")
+        else {
+            panic!("expected the named refusal");
+        };
+        assert_eq!(
+            crate::refusal::kind_of(&e),
+            Some(crate::refusal::RefusalKind::FilesystemWithoutExclusivePublish)
+        );
+        let text = format!("{e:#}");
+        assert!(text.contains(&filesystem_of(tmp.path())), "{text}");
+        assert!(text.contains("hard links"), "{text}");
+        assert!(!path.exists());
+        assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_temp_no_writer_holds_is_removed_by_the_next_publish_of_its_name() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f.lock");
+        let abandoned = tmp.path().join(temp_name("f.lock.takeover.7", 99));
+        std::fs::write(&abandoned, b"half").unwrap();
+        let unrelated = tmp.path().join(temp_name("g", 99));
+        std::fs::write(&unrelated, b"other").unwrap();
+        let foreign = tmp.path().join("f.lock.tmp.notes");
+        std::fs::write(&foreign, b"a user's").unwrap();
+
+        create_new(&path, b"x").unwrap();
+
+        assert!(!abandoned.exists(), "an abandoned temp must be removed");
+        assert!(
+            unrelated.exists(),
+            "a temp of another file is not this publish's"
+        );
+        assert!(
+            foreign.exists(),
+            "a name rwv does not make is never removed"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_temp_its_writer_still_holds_is_left() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let staged = staged_temp(&path, b"in flight").unwrap();
+        replace(&path, b"x").unwrap();
+        assert!(staged.path.exists(), "a held temp must not be swept");
+        drop(staged);
     }
 
     /// As long as the slowest held section seen on a Windows host with eight

@@ -114,8 +114,10 @@ nix = { version = "0.31", default-features = false, features = ["process", "sign
 
 [target.'cfg(windows)'.dependencies]
 # rwv-each joins a kill-on-close job object so its children die with it if it
-# is killed, and disarms that on a normal exit.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+# is killed, and disarms that on a normal exit. Storage_FileSystem gives the
+# rename that refuses an occupied target, rwv's exclusive publish on a volume
+# without hard links, and the volume's filesystem name for its refusal.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -132,6 +132,7 @@ impl FetchClaim {
                     claim = path,
                 );
             }
+            Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),
             Err(crate::durable_file::ClaimError::Io(e)) => Err(anyhow::Error::new(e).context(
                 format!("failed to claim the object store of {}", repo.display()),
             )),

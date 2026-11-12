@@ -374,6 +374,7 @@ fn take_within(
                     anyhow::Error::new(e).context(format!("failed to claim '{target}' at {path}"))
                 )
             }
+            Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
             Err(CreateNewError::AlreadyExists) => {}
         }
         let seen = match path.read() {
@@ -514,6 +515,7 @@ fn remove_dead(
             Ok(()) => break,
             Err(CreateNewError::AlreadyExists) => {}
             Err(CreateNewError::Io(e)) => return Err(e.into()),
+            Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
         }
         let held = match std::fs::read(&guard) {
             Ok(held) => held,

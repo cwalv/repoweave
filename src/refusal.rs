@@ -98,6 +98,12 @@ pub enum RefusalKind {
     MarkerBindingDisagreement,
     /// A peer process holds the state-file claim past the wait budget.
     StateClaimHeld,
+    /// A landing claim, or a takeover guard beside one, holds bytes this rwv
+    /// cannot read: a newer release's, or corrupt.
+    ClaimUnreadable,
+    /// The filesystem makes neither a hard link nor a no-replace rename, so
+    /// rwv's records and claims cannot be published on it exclusively.
+    FilesystemWithoutExclusivePublish,
     /// An attested input changed while the file was being generated.
     DerivationInputsMoved,
     /// Attested generated files hold content rwv never accepted, no consent

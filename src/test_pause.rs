@@ -16,6 +16,21 @@ pub(crate) fn point(name: &str) {
     let _ = name;
 }
 
+/// Whether a test withholds the filesystem capability `capability` from this
+/// process, as if the filesystem it writes to lacked it: `RWV_TEST_WITHHOLD`
+/// lists the withheld ones, comma-separated. Always false unless the crate is
+/// built with the `test-pause` feature.
+pub(crate) fn withheld(capability: &str) -> bool {
+    #[cfg(feature = "test-pause")]
+    return std::env::var("RWV_TEST_WITHHOLD")
+        .is_ok_and(|listed| listed.split(',').any(|named| named == capability));
+    #[cfg(not(feature = "test-pause"))]
+    {
+        let _ = capability;
+        false
+    }
+}
+
 #[cfg(feature = "test-pause")]
 mod armed {
     use std::path::Path;
