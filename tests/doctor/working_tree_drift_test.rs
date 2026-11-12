@@ -408,6 +408,121 @@ fn sync_post_refresh_clears_stale_working_tree() {
     );
 }
 
+/// A drifted checkout stopped in a revert is left as it stands by the sync's
+/// post-refresh: the revert's staged state and the stale path alike.
+#[test]
+fn sync_leaves_drift_in_a_checkout_stopped_in_a_revert() {
+    let tmp = common::tempdir().unwrap();
+
+    let primary_root = tmp.path().join("primary");
+    std::fs::create_dir_all(primary_root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(primary_root.join("projects")).unwrap();
+
+    let server_primary = primary_root.join(SERVER_PATH);
+    let c1 = init_repo(&server_primary);
+    let origin = tmp.path().join("server-origin.git");
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            &server_primary.to_string_lossy(),
+            &origin.to_string_lossy(),
+        ],
+    );
+    let server_url = common::file_url(&origin);
+
+    let project_primary = primary_root.join("projects/web-app");
+    init_repo(&project_primary);
+    write_manifest(&project_primary, &[(SERVER_PATH, &server_url)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, &server_url, &c1)]);
+    common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
+    common::record_trunk(&project_primary);
+
+    let ww_root = tmp.path().join(".workweaves").join("primary--ww");
+    std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(ww_root.join("projects")).unwrap();
+
+    let server_ww = ww_root.join(SERVER_PATH);
+    common::git_in(
+        &server_primary,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "ww/project",
+            &server_ww.to_string_lossy(),
+        ],
+    );
+
+    let project_ww = ww_root.join("projects/web-app");
+    common::git_in(
+        &project_primary,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "ww/project",
+            &project_ww.to_string_lossy(),
+        ],
+    );
+    common::record_feature(&project_ww, "ww/project", "main");
+
+    let primary_canon = repoweave::path_spelling::resolve(&primary_root)
+        .unwrap()
+        .display()
+        .to_string();
+    let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
+    std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
+    // Action verbs need the primary's pointer (or --project); in the
+    // workweave the marker names the project, and a root carrying both files
+    // is refused at resolution.
+    std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
+
+    // Primary commits C2 and updates lock.
+    let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, &server_url, &c2)]);
+    common::git_in(&project_primary, &["add", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
+
+    // Mirror the lock advance in the workweave's own project worktree so
+    // that sync's CWD-lock-freshness precondition passes once the server
+    // ref is advanced below. (The workweave's freshness check reads its
+    // own committed lock, not primary's.)
+    common::fixture_lock(&project_ww, &[(SERVER_PATH, &server_url, &c2)]);
+    common::git_in(&project_ww, &["add", "rwv.lock"]);
+    common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
+
+    common::git_in(&server_ww, &["revert", "--no-commit", "HEAD"]);
+    advance_ww_branch(&server_primary, "ww/project", &c2);
+    let state = |repo: &Path| {
+        format!(
+            "{}\n{}\n{:?}\n{:?}",
+            common::git_in(repo, &["ls-files", "-s"]),
+            common::git_in(repo, &["status", "--porcelain"]),
+            std::fs::read(repo.join("README.md")).ok(),
+            std::fs::read(repo.join("advance.txt")).ok(),
+        )
+    };
+    let before = state(&server_ww);
+
+    let out = rwv()
+        .args(["sync", "--history", "linear"])
+        .current_dir(&ww_root)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(state(&server_ww), before, "{stderr}");
+    assert!(
+        !common::git_in(&server_ww, &["rev-parse", "-q", "--verify", "REVERT_HEAD"]).is_empty(),
+        "the revert is still in progress:\n{stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 5: 3+ worktrees
 // ---------------------------------------------------------------------------
