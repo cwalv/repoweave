@@ -1205,6 +1205,104 @@ pub enum RefRestoreOutcome {
     },
 }
 
+/// Why a planned hard move of a checkout back to its savepoint is the op's
+/// to make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoredFrom {
+    Intent,
+    Converged,
+    /// A foreign tip the operator gave up, kept as an `abandoned` backup
+    /// first.
+    Abandoned,
+}
+
+/// What restoring a checkout to its savepoint would do, judged from what
+/// the checkout holds before anything moves. Each step names the state it
+/// expects, and executing it writes nothing where the checkout no longer
+/// holds that state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutRestorePlan {
+    NoSavepoint,
+    /// Stopped in an operation the op never starts there: left as it is,
+    /// its savepoint dropped.
+    LeaveStopped {
+        stopped: ConflictOp,
+    },
+    /// At its savepoint: the savepoint is dropped.
+    Untouched {
+        at: CommitId,
+    },
+    /// Move the checkout hard from `from` to its savepoint.
+    Reset {
+        from: CommitId,
+        savepoint: CommitId,
+        why: RestoredFrom,
+    },
+    /// Cancel the operation the checkout is stopped in, keeping first what
+    /// a hard move to `keep_edits_to` discards; where the VCS refuses the
+    /// cancel, `abandon` ends it by a hard move instead.
+    Cancel {
+        stopped: ConflictOp,
+        keep_edits_to: Option<CommitId>,
+        abandon: bool,
+        then: Box<CheckoutRestorePlan>,
+    },
+    /// Put the checkout back where its savepoint was taken: onto `onto`, or
+    /// detached at the savepoint where `onto` is `None`.
+    SwitchBack {
+        off: Option<RawRefName>,
+        from: CommitId,
+        onto: Option<RawRefName>,
+        savepoint: CommitId,
+        keep_detached_as_abandoned: bool,
+        /// Whether edits that keep it from switching may be kept as a
+        /// backup and discarded.
+        discard_blocking_edits: bool,
+        then: Box<CheckoutRestorePlan>,
+    },
+    /// Something abort may not move past: the outcome that says what, with
+    /// nothing of this checkout touched.
+    Blocked(VerifiedRestoreOutcome),
+}
+
+impl CheckoutRestorePlan {
+    /// What stops the plan, where something does.
+    pub fn blocked(&self) -> Option<&VerifiedRestoreOutcome> {
+        match self {
+            Self::Blocked(outcome) => Some(outcome),
+            Self::Cancel { then, .. } | Self::SwitchBack { then, .. } => then.blocked(),
+            Self::NoSavepoint
+            | Self::LeaveStopped { .. }
+            | Self::Untouched { .. }
+            | Self::Reset { .. } => None,
+        }
+    }
+
+    /// The branches this plan switches the checkout off.
+    pub fn switches_off(&self) -> Vec<&RawRefName> {
+        match self {
+            Self::SwitchBack { off, then, .. } => off.iter().chain(then.switches_off()).collect(),
+            Self::Cancel { then, .. } => then.switches_off(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// What restoring a branch moved as a ref to its savepoint would do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefRestorePlan {
+    /// At its savepoint: the savepoint is dropped.
+    Untouched,
+    /// Move the branch from `from` to its savepoint by compare-and-swap,
+    /// keeping `from` as an `abandoned` backup first where `abandon`.
+    Restore { from: CommitId, abandon: bool },
+    /// Left as it is: gone, checked out, or at a tip the op did not write.
+    Blocked {
+        observed: Option<CommitId>,
+        why: String,
+    },
+}
+
 // ===========================================================================
 // Backups
 // ===========================================================================
@@ -3637,6 +3735,31 @@ pub trait Vcs: Send + Sync {
         saved: &RefSavepoint,
         wrote: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<RefRestoreOutcome, VcsError> {
+        let plan = self.plan_ref_restore(repo, saved, wrote, foreign_tip_policy, &[])?;
+        self.execute_ref_restore(repo, key, saved, &plan)
+    }
+
+    /// What [`Vcs::restore_ref_savepoint`] would do, writing nothing. A
+    /// checkout in `freed` is one the caller switches off the branch first,
+    /// so it does not hold it.
+    fn plan_ref_restore(
+        &self,
+        repo: &Path,
+        saved: &RefSavepoint,
+        wrote: Option<&CommitId>,
+        foreign_tip_policy: ForeignTipPolicy,
+        freed: &[PathBuf],
+    ) -> Result<RefRestorePlan, VcsError>;
+
+    /// Carry out `plan`, writing nothing where the branch is no longer
+    /// where the plan found it or a checkout now holds it.
+    fn execute_ref_restore(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        saved: &RefSavepoint,
+        plan: &RefRestorePlan,
     ) -> Result<RefRestoreOutcome, VcsError>;
 
     /// The operator-spellable, VCS-native name of the savepoint reference
@@ -3712,6 +3835,32 @@ pub trait Vcs: Send + Sync {
         key: &SavepointKey,
         attribution: &Attribution<'_>,
         foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<VerifiedRestoreOutcome, VcsError> {
+        let plan = self.plan_checkout_restore(repo, key, attribution, foreign_tip_policy)?;
+        self.execute_checkout_restore(repo, key, &plan, attribution.edits_here)
+    }
+
+    /// What [`Vcs::verified_restore_savepoint`] would do, writing nothing:
+    /// each step it would take, judged against the state the steps before
+    /// it leave.
+    fn plan_checkout_restore(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        attribution: &Attribution<'_>,
+        foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<CheckoutRestorePlan, VcsError>;
+
+    /// Carry out `plan` up to the first step it blocks at. A step whose
+    /// checkout no longer holds the state the plan expects writes nothing
+    /// and ends the restore of that checkout as a
+    /// [`VerifiedRestoreOutcome::ForeignTip`] at the tip it holds.
+    fn execute_checkout_restore(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+        plan: &CheckoutRestorePlan,
+        edits_here: bool,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
     /// Where canceling the operation `repo` is stopped in would leave HEAD;

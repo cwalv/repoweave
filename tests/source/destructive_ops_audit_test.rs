@@ -388,7 +388,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "\"--hard\"",
         count: 4,
         callers: &[
-            ("reset_and_drop_savepoint", 3),
+            ("reset_and_drop_savepoint", 1),
             ("hard_reset", 1),
             ("discard_edits_kept", 1),
             ("finish_refused_cancel", 1),
@@ -402,12 +402,14 @@ const ALLOWLIST: &[Allowed] = &[
             backs up another repo or tip, so the rewind is type-gated and \
             the commits it leaves stay reachable from the backup. \
             (2) reset_and_drop_savepoint(): \
-            shared helper factored from verified_restore_savepoint(); called \
-            from the intent branch and the branch for any other tip the op \
+            its one caller executes a planned Reset, which the restore plan \
+            makes for a tip the op's replay wrote or any other tip the op \
             wrote — each gated on the tip being one the record attributes to \
-            the op — and from the foreign-tip branch under \
+            the op — and for a foreign tip under \
             ForeignTipPolicy::Abandon, which is the operator's \
-            --abandon-foreign-tip naming that one repo. That third branch \
+            --abandon-foreign-tip naming that one repo; the executor first \
+            checks the checkout still holds the tip the plan judged. The \
+            abandoned case \
             waives the attributability precondition and no other: it keeps \
             the observed tip as an `abandoned` backup first (a \
             BackupWitness it holds before the reset), so the commits it \

@@ -659,15 +659,25 @@ impl Vcs for FakeVcs {
         unsupported("drop_ref_savepoint")
     }
 
-    fn restore_ref_savepoint(
+    fn plan_ref_restore(
+        &self,
+        _repo: &Path,
+        _saved: &RefSavepoint,
+        _wrote: Option<&CommitId>,
+        _foreign_tip_policy: ForeignTipPolicy,
+        _freed: &[PathBuf],
+    ) -> Result<crate::vcs::RefRestorePlan, VcsError> {
+        unsupported("plan_ref_restore")
+    }
+
+    fn execute_ref_restore(
         &self,
         _repo: &Path,
         _key: &SavepointKey,
         _saved: &RefSavepoint,
-        _wrote: Option<&CommitId>,
-        _foreign_tip_policy: ForeignTipPolicy,
+        _plan: &crate::vcs::RefRestorePlan,
     ) -> Result<RefRestoreOutcome, VcsError> {
-        unsupported("restore_ref_savepoint")
+        unsupported("execute_ref_restore")
     }
 
     fn savepoint_label(&self, _key: &SavepointKey) -> String {
@@ -690,14 +700,24 @@ impl Vcs for FakeVcs {
         unsupported("drop_checkout_savepoint")
     }
 
-    fn verified_restore_savepoint(
+    fn plan_checkout_restore(
         &self,
         _repo: &Path,
         _key: &SavepointKey,
         _attribution: &crate::vcs::Attribution<'_>,
         _foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<crate::vcs::CheckoutRestorePlan, VcsError> {
+        unsupported("plan_checkout_restore")
+    }
+
+    fn execute_checkout_restore(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+        _plan: &crate::vcs::CheckoutRestorePlan,
+        _edits_here: bool,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        unsupported("verified_restore_savepoint")
+        unsupported("execute_checkout_restore")
     }
 
     fn cancel_returns_to(&self, _repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
