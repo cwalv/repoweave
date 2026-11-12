@@ -2598,3 +2598,81 @@ pub fn declared_mode_rename_retire() -> Scenario {
     ]);
     scenario("a declared-mode branch is renamed and retired", steps)
 }
+
+pub fn dc25_url_provenance() -> Scenario {
+    Scenario {
+        name: "dc25: a mirror url on another branch is no placement disagreement",
+        seed: Seed::default().mirrors(),
+        steps: vec![
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "-c", "stable"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-url", "local/remotes/lib", "url:mirror-keeping:lib"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["doctor", "--all"]).claim(Claim::OutputLacks("placement-disagreement")),
+        ],
+    }
+}
+
+pub fn url_change_raw_merge() -> Scenario {
+    Scenario {
+        name: "a raw merge carrying lib's url change is reported until published",
+        seed: Seed::default().mirrors(),
+        steps: vec![
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "-c", "mirror-url"]),
+            Step::rwv(&a(), &["branch", "set-mode", "mirror-url", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-url", "local/remotes/lib", "url:mirror-keeping:lib"])
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "main"]),
+            Step::git(&a(), Repo::Proj, &["merge", "-q", "--no-ff", "-m", "merge", "mirror-url"]),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed url:")),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed url:")),
+        ],
+    }
+}
+
+pub fn set_branch_new() -> Scenario {
+    scenario(
+        "set-branch: a typo and an unfetched branch refuse, --new creates and pins",
+        vec![
+            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "dve"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("name no-such-branch"))
+                .claim(Claim::OutputContains("--new"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "hold", "--new"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "hold",
+                }),
+            Step::rwv(&a(), &["member", "set-branch", "local/remotes/lib", "main", "--new"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("name exists")),
+        ],
+    )
+}
+
+pub fn member_pin_behind() -> Scenario {
+    scenario(
+        "member pin behind: reported until the next lock records the tip forward",
+        vec![
+            Step::commit(&a(), Repo::Lib, "lib-two"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "lib-three"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "other"]),
+            Step::rwv(&a(), &["branch", "set-mode", "other", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", "local/remotes/lib", "HEAD~1", "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib]),
+            Step::rwv(&a(), &["status"]).claim(Claim::OutputContains("pin ahead")),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ],
+    )
+}

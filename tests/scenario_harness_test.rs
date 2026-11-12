@@ -2082,3 +2082,23 @@ fn a_pruned_branch_records_no_superseded_tip_and_leaves_the_rename_unnamed() {
 fn a_declared_mode_branch_is_renamed_and_retired_and_protected_only_against_rewrites() {
     runner::run(scenarios::declared_mode_rename_retire()).assert_fully_decided_green();
 }
+
+#[test]
+fn dc25_url_provenance() {
+    runner::run(scenarios::dc25_url_provenance()).assert_green();
+}
+
+#[test]
+fn url_change_raw_merge() {
+    runner::run(scenarios::url_change_raw_merge()).assert_green();
+}
+
+#[test]
+fn set_branch_new() {
+    runner::run(scenarios::set_branch_new()).assert_green();
+}
+
+#[test]
+fn member_pin_behind() {
+    runner::run(scenarios::member_pin_behind()).assert_green();
+}

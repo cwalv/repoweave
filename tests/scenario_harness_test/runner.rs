@@ -930,7 +930,28 @@ impl Run<'_> {
                 (true, commit)
             }
             Action::Rwv { at, args } => {
-                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let expanded: Vec<String> = args
+                    .iter()
+                    .map(|arg| match arg.strip_prefix("url:") {
+                        Some(spec) => {
+                            let (kind, repo) = spec.split_once(':').expect("url:<kind>:<repo>");
+                            let repo = Repo::MEMBERS
+                                .into_iter()
+                                .find(|m| m.name() == repo)
+                                .expect("a member");
+                            let remote = match kind {
+                                "origin" => Remote::origin(repo),
+                                "fork" => Remote::fork(repo),
+                                "mirror-keeping" => Remote::keeping_mirror(repo),
+                                "mirror-pruning" => Remote::pruning_mirror(repo),
+                                other => panic!("no remote kind {other}"),
+                            };
+                            sb.remote_url(remote)
+                        }
+                        None => arg.clone(),
+                    })
+                    .collect();
+                let args: Vec<&str> = expanded.iter().map(String::as_str).collect();
                 let out = sb.rwv(&sb.place_root(at), &args);
                 self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))

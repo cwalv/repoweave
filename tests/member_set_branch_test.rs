@@ -420,3 +420,40 @@ fn a_url_change_a_raw_merge_carried_is_reported_and_relinks_at_the_next_aligning
     let again = succeeded(&run(&w, &["update"]));
     assert!(again.contains("member-changed url:"), "reported until published:\n{again}");
 }
+
+#[test]
+fn placement_disagreement_compares_with_the_url_on_the_default_branch() {
+    let w = two_members();
+    let proj = project(&w);
+    let on_default = manifest_text(&w).replace(
+        &w.manifest_bares
+            .iter()
+            .find(|(p, _)| p == LIB)
+            .map(|(_, b)| common::file_url(b))
+            .unwrap(),
+        "github/acme/lib",
+    );
+    std::fs::write(proj.join("rwv.toml"), on_default).unwrap();
+    git_in(&proj, &["commit", "-qam", "lib by shorthand"]);
+    git_in(&proj, &["push", "-q", "origin", "main"]);
+    git_in(&proj, &["remote", "set-head", "origin", "main"]);
+    git_in(&proj, &["switch", "-q", "-c", "stable"]);
+    let moved = manifest_text(&w).replace("github/acme/lib\"\n", "github/acme/lib\"\n").replacen(
+        "url = \"github/acme/lib\"",
+        "url = \"github/mirror/lib\"",
+        1,
+    );
+    assert_ne!(moved, manifest_text(&w));
+    std::fs::write(proj.join("rwv.toml"), moved).unwrap();
+    git_in(&proj, &["commit", "-qam", "stable: mirror url"]);
+    common::record_feature(&proj, "stable", "main");
+
+    let findings = common::doctor_findings(&w.workspace);
+
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.contains("placement-disagreement") && f.contains(LIB)),
+        "a mirror url on another branch tripped it: {findings:?}"
+    );
+}
