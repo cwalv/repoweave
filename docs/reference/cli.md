@@ -517,11 +517,11 @@ Create a weave branch, record how one is used, list the weave branches with thei
 
 ### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]`
 
-Create `<W>`, write its record, and switch the workspace to it, as the VCS's own branch creation switches: uncommitted edits are carried, an uncommitted `rwv.toml` included. A bare create is a `feature` onto the checked-out branch, which must have a record that reads (`target` `unrecorded` otherwise); a feature's `owned` and `fork` members get branches `<W>` at their pins. A `declared` branch's members keep following the branches its entries declare. Every repo is judged first and nothing is written while any is refused.
+Create `<W>`, write its record, and switch the workspace to it, as the VCS's own branch creation switches: uncommitted edits are carried, an uncommitted `rwv.toml` included. A bare create is a `feature` onto the checked-out branch, which must have a record that reads (`target` `unrecorded` otherwise), starting at that branch's tip as `--target` does; a feature's `owned` and `fork` members get branches `<W>` at their pins. A `declared` branch's members keep following the branches its entries declare. Every repo is judged first and nothing is written while any is refused.
 
 | Flag | Effect |
 |---|---|
-| `--target <T>` | A `feature` onto `<T>`, which must have a record that reads. Starts at `<T>`'s tip |
+| `--target <T>` | A `feature` onto `<T>`, which must have a record that reads. Starts at `<T>`'s tip: the newer of `<T>` and its upstream as last fetched |
 | `--declared` | A `declared` branch, starting at the checked-out commit |
 | `--set-branch <m>=<b>` | Declare the existing branch `<b>` for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch` does; repeat per member |
 | `--set-new-branch <m>=<b>` | Create `<b>` and declare it for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch --new` does; repeat per member |

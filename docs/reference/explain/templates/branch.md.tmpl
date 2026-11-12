@@ -40,7 +40,8 @@ edits, and the members are aligned.
   `rwv.toml` entries declare, and no member gets a branch of its name.
 - `<W>` starts at `--at <rev>`; else a `--declared` create starts at the
   checked-out commit, and a bare create or `--target` at the tip of the branch
-  it lands into (a bare create's is the checked-out one). Members start at the
+  it lands into (a bare create's is the checked-out one): the newer of that
+  branch and its upstream as last fetched. Members start at the
   pins of that commit's lock. A feature's `owned` and `fork` members get
   branches `<W>` at their pins.
 - From a detached project repo a spelling is required (`--target` or
