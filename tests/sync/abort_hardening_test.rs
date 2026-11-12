@@ -476,6 +476,64 @@ fn abort_converged_resets_to_savepoint_and_keeps_nothing_the_op_made() {
     );
 }
 
+/// The savepoint holds `saved` at `path`; the op's converged tip removed it
+/// (and ignores `ign.txt`). Someone then made `made`, holding `text`, which
+/// the reset to the savepoint destroys: abort keeps it as a backup first.
+fn abort_keeps_what_the_reset_destroys(path: &str, made: &str, text: &str) {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+    let op_id = "20991231T000013Z";
+    let dir = &ws.server_dir;
+    let saved = dir.join(path);
+    std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    std::fs::write(&saved, "saved\n").unwrap();
+    common::git_in(dir, &["add", path]);
+    common::git_in(dir, &["commit", "-qm", "saved path"]);
+    let savepoint = common::git_in(dir, &["rev-parse", "HEAD"]);
+    common::git_in(dir, &["rm", "-rq", path]);
+    std::fs::write(dir.join(".gitignore"), "ign.txt\n").unwrap();
+    common::git_in(dir, &["add", ".gitignore"]);
+    common::git_in(dir, &["commit", "-qm", "converged"]);
+    let converged = common::git_in(dir, &["rev-parse", "HEAD"]);
+    let made_at = dir.join(made);
+    std::fs::create_dir_all(made_at.parent().unwrap()).unwrap();
+    std::fs::write(&made_at, format!("{text}\n")).unwrap();
+    plant_savepoint(dir, op_id, &savepoint);
+    let project_pre = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+    plant_savepoint(&ws.project_dir, op_id, &project_pre);
+    plant_owner_record(&ws.root, op_id, "relock", &[(SERVER_PATH, &converged)]);
+
+    let out = common::cli::run(&["abort"], &ws.root);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("its uncommitted edits are kept as backup"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    assert_eq!(common::git_in(dir, &["rev-parse", "HEAD"]), savepoint);
+    let backups = refs_under(dir, BACKUP);
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    assert_eq!(
+        common::git_in(dir, &["show", &format!("{}:{made}", backups[0].1)]),
+        text
+    );
+}
+
+#[test]
+fn abort_keeps_an_ignored_file_at_a_path_the_savepoint_tracks() {
+    abort_keeps_what_the_reset_destroys("ign.txt", "ign.txt", "ignored edit");
+}
+
+#[test]
+fn abort_keeps_an_untracked_file_where_the_savepoint_has_a_directory() {
+    abort_keeps_what_the_reset_destroys("d/file", "d", "file edit");
+}
+
+#[test]
+fn abort_keeps_an_untracked_directory_where_the_savepoint_has_a_file() {
+    abort_keeps_what_the_reset_destroys("p", "p/inner", "dir edit");
+}
+
 // ---------------------------------------------------------------------------
 // Case 3: Mid-op — repo is in a VCS-native rebase
 // ---------------------------------------------------------------------------

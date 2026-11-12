@@ -200,7 +200,28 @@ impl GitVcs {
             repo,
         )?;
         let head = Self::ref_tip(repo, "HEAD")?;
-        let outcome = Self::snapshot_into(repo, &index_path, head.as_ref());
+        let outcome = Self::snapshot_into(repo, &index_path, head.as_ref(), &[]);
+        let _ = std::fs::remove_file(&index_path);
+        outcome
+    }
+
+    /// [`Self::snapshot_working_tree`], the ignored paths `forced` names
+    /// included.
+    pub(super) fn snapshot_working_tree_forcing(
+        repo: &Path,
+        forced: &[String],
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        let index_path = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &format!("rwv-backup-index-{}", std::process::id()),
+            ],
+            repo,
+        )?;
+        let head = Self::ref_tip(repo, "HEAD")?;
+        let outcome = Self::snapshot_into(repo, &index_path, head.as_ref(), forced);
         let _ = std::fs::remove_file(&index_path);
         outcome
     }
@@ -209,6 +230,7 @@ impl GitVcs {
         repo: &Path,
         index_path: &str,
         head: Option<&ResolvedRevisionId>,
+        forced: &[String],
     ) -> Result<Option<ResolvedRevisionId>, VcsError> {
         let in_index = |args: &[&str]| -> Result<String, VcsError> {
             let output = git_command()
@@ -233,6 +255,11 @@ impl GitVcs {
             in_index(&["read-tree", "HEAD"])?;
         }
         in_index(&["add", "-A"])?;
+        if !forced.is_empty() {
+            let mut add = vec!["add", "-f", "--"];
+            add.extend(forced.iter().map(String::as_str));
+            in_index(&add)?;
+        }
         let tree = in_index(&["write-tree"])?;
         if let Some(head) = head {
             let head_tree = Self::run_trimmed(["rev-parse", "HEAD^{tree}"], repo)?;

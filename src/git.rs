@@ -5174,7 +5174,8 @@ impl GitVcs {
 
     /// Before a hard move of `repo`'s checkout to `to`: keep its uncommitted
     /// edits as a backup where the move would discard any (a tracked change,
-    /// or an untracked file at a path `to` tracks), once per restore, and the
+    /// or an untracked or ignored file or directory where `to` has a path),
+    /// the ignored ones it would discard included, once per restore, and the
     /// commits a detached HEAD holds that no branch reaches.
     fn keep_before_discarding(
         &self,
@@ -5182,11 +5183,14 @@ impl GitVcs {
         to: &ResolvedRevisionId,
         kept: &mut Vec<KeptWork>,
     ) -> Result<(), VcsError> {
-        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_)))
-            && Self::hard_move_discards(repo, to)?
-        {
-            if let Some(edits) = self.backup_edits(repo)? {
-                kept.push(KeptWork::Edits(edits));
+        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
+            if let Some(ignored) = Self::hard_move_discards(repo, to)? {
+                if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
+                    let source = self.head_backup_source(repo)?;
+                    kept.push(KeptWork::Edits(
+                        self.create_backup(repo, &source, &snapshot, None)?,
+                    ));
+                }
             }
         }
         if let Some(commits) = self.backup_unpreserved_head(repo)? {
@@ -5306,20 +5310,78 @@ impl GitVcs {
         Self::run(["reset", "--hard", "HEAD"], repo).map(|_| ())
     }
 
-    fn hard_move_discards(repo: &Path, to: &ResolvedRevisionId) -> Result<bool, VcsError> {
-        if !Self::dirty_file_names_inner(repo, StatusReach::Tracked)?.is_empty() {
-            return Ok(true);
-        }
-        let untracked = Self::run(["ls-files", "--others", "--exclude-standard", "-z"], repo)?;
-        let untracked: BTreeSet<&str> = untracked.split('\0').filter(|p| !p.is_empty()).collect();
+    /// Whether a hard move of `repo`'s checkout to `to` discards anything
+    /// uncommitted: a tracked change, or an untracked file or directory
+    /// (ignored or not) at a path `to` has, inside one, or holding one. Where
+    /// it does, the ignored paths it discards, which a snapshot adds only by
+    /// name.
+    fn hard_move_discards(
+        repo: &Path,
+        to: &ResolvedRevisionId,
+    ) -> Result<Option<Vec<String>>, VcsError> {
+        let tracked_dirt = !Self::dirty_file_names_inner(repo, StatusReach::Tracked)?.is_empty();
+        let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
+            Ok(Self::run(args.to_vec(), repo)?
+                .split('\0')
+                .filter(|p| !p.is_empty())
+                .map(str::to_owned)
+                .collect())
+        };
+        let untracked = listed(&["ls-files", "--others", "--directory", "-z"])?;
         if untracked.is_empty() {
-            return Ok(false);
+            return Ok(tracked_dirt.then(Vec::new));
         }
-        let tracked = Self::run(
-            ["ls-tree", "-r", "-z", "--name-only", to.id().as_str()],
-            repo,
-        )?;
-        Ok(tracked.split('\0').any(|path| untracked.contains(path)))
+        let ignored: BTreeSet<String> = listed(&[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ])?
+        .into_iter()
+        .collect();
+        let tracked = listed(&["ls-tree", "-r", "-z", "--name-only", to.id().as_str()])?;
+        let mut discarded = false;
+        let mut forced = Vec::new();
+        for path in &untracked {
+            let bare = path.trim_end_matches('/');
+            let collides = |t: &String| {
+                t == bare
+                    || t.strip_prefix(bare)
+                        .is_some_and(|rest| rest.starts_with('/'))
+                    || bare
+                        .strip_prefix(t.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            };
+            let hits: Vec<&String> = tracked.iter().filter(|t| collides(t)).collect();
+            if hits.is_empty() {
+                continue;
+            }
+            let untracked_file = !path.ends_with('/');
+            let directory_at_a_tracked_file =
+                path.ends_with('/') && hits.iter().any(|t| *t == bare);
+            let inside: Vec<String> = if path.ends_with('/') && !directory_at_a_tracked_file {
+                listed(&["ls-files", "--others", "-z", "--", bare])?
+                    .into_iter()
+                    .filter(|u| tracked.contains(u))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !(untracked_file || directory_at_a_tracked_file || !inside.is_empty()) {
+                continue;
+            }
+            discarded = true;
+            if ignored.contains(path) {
+                if inside.is_empty() {
+                    forced.push(bare.to_owned());
+                } else {
+                    forced.extend(inside);
+                }
+            }
+        }
+        Ok((discarded || tracked_dirt).then_some(forced))
     }
 
     fn restore_checkout_savepoint(
