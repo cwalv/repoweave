@@ -254,7 +254,7 @@ src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	4
-src/sync.rs	(untokened:internal-invariant)	-	13
+src/sync.rs	(untokened:internal-invariant)	-	14
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	checkout in a raw worktree	-	1
 src/sync.rs	checkout in another workspace	-	1
