@@ -670,6 +670,56 @@
               "$ref": "#/definitions/CommitId"
             }
           }
+        },
+        {
+          "description": "A field of the target's entry for `path`, or of its top-level settings, changed from `was` to `now`, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "field",
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-changed"
+              ]
+            },
+            "now": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The target's entry for `path` removed, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-removed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
         }
       ]
     },

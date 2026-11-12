@@ -107,9 +107,17 @@ feature's, then the rebind onto each live weave branch whose entries match the
 feature's, the setter that keeps the target's value here, and last the
 consent, which says it changes the target. Adding a member is no change, and
 the other top-level tables (`[integrations]`, `[workweave]`) land as content.
-A named backward pin is reported `re-pinned`, and the lock commit records each
-named re-pin by name. A name the landing changes nothing for refuses as
-`inapplicable-flag`.
+Each named change is reported, with the target's value and the landed one, at
+the start and again on each `--continue`, and under `--json` in `reports` as
+`entry-changed` or `entry-removed`. A named backward pin is reported `re-pinned`, and the lock commit
+records each named re-pin by name. A name the landing changes nothing for
+refuses as `inapplicable-flag`.
+
+A landing stopped on a conflict judges again on `--continue`: `rwv.toml` as
+the resolution leaves it, against the target's tip the landing read, under the
+names it started with. A change none of them covers refuses as `target`
+`member changes`, the op still stopped, offering a rerun with
+`--allow-member-change <m>`, which adds the name, and `rwv abort`.
 
 A `dependency` or `reference` member takes the feature's pin where the feature
 changed it since the merge base, which the branch it sits on in the target must
@@ -191,13 +199,13 @@ relock is what makes the lock it lands agree with the tips it lands.
 
 ```
 rwv land [--target <T>] [--allow-member-change <repo>]... [--strategy <ff|rebase>] [--retire] [--json] [-j <N>] [--project <name>]
-rwv land --continue [--json] [--project <name>]
+rwv land --continue [--allow-member-change <repo>]... [--json] [--project <name>]
 ```
 
 - `--target <T>` — land into `T` instead of the record's target, for one run.
 - `--allow-member-change <repo>` — let the landing change the target's entry
   for this member, or with `projects/<p>` its top-level `history`. Repeat per
-  repo.
+  repo. With `--continue`, adds to the names the landing started with.
 - `--strategy` — how a member holding work its receiving branch lacks is
   composed: `rebase` (the default) replays it onto that branch's tip; `ff`
   refuses unless the feature already contains the target's tip. The
@@ -922,6 +930,56 @@ Schema:
             },
             "was": {
               "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
+          "description": "A field of the target's entry for `path`, or of its top-level settings, changed from `was` to `now`, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "field",
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-changed"
+              ]
+            },
+            "now": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The target's entry for `path` removed, named by `--allow-member-change`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "entry-removed"
+              ]
+            },
+            "path": {
+              "type": "string"
             }
           }
         }
