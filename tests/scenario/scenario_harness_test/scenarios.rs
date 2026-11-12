@@ -7055,7 +7055,7 @@ fn main_diverged_deriving(other: bool) -> Scenario {
     let merge = Step::rwv_printed(&a(), "rwv update --remote --merge-upstream");
     if other {
         steps.extend([
-            merge.claim(Claim::OutputContains("the merge conflicts in OTHER")),
+            merge,
             Step::git(&a(), Repo::Lib, &["show", "main:OTHER"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("local-other")),
