@@ -169,7 +169,7 @@ Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock
 
 ## Branch records
 
-Lives on the `rwv-records` branch of the project repo: an orphan branch with no working tree and no history in common with any weave branch, so it carries no `rwv.toml` and is no weave branch. `rwv branch set-mode` writes it, and so do `rwv init`, `rwv clone` and `rwv workweave create`; every verb that aligns members, locks, lands or publishes reads it. It holds one file per weave branch, at the branch's name (`feat/x` is the file `x` in the directory `feat`). Each commit on it ends with a trailer naming the release that wrote it:
+Lives on the `rwv-records` branch of the project repo: an orphan branch with no working tree and no history in common with any weave branch, so it carries no `rwv.toml` and is no weave branch. `rwv branch set-mode` writes it, and so do `rwv init`, `rwv clone` and `rwv workweave create`; every verb that aligns members, locks, lands or publishes reads it. It holds one file per weave branch, in one flat tree, named for the branch with `%` written `%25` and `/` written `%2F` (`feat/x` is the file `feat%2Fx`), so a branch and a branch below its name (`a` and `a/b`) each keep their own file. A file whose name is not one a branch name encodes to (a directory, a raw `/`, any other `%` sequence) is not read as a record, and rwv never changes or removes it. Each commit on it ends with a trailer naming the release that wrote it:
 
 ```
 records: set feat-x feature

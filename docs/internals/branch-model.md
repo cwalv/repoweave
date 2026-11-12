@@ -799,9 +799,10 @@ tip the last fetch saw.
 from every remote as last fetched, with no workspace aligned for it, is dropped
 in the write that follows (`Store::write_dropping`). A remote's drop is undone
 for a branch that exists here, and an entry brought in by a merge is not
-dropped. An entry is a file at its branch's name, so a stale `a` and a new `a/b` cannot
-stand together: a commit lists the removal before the addition, and git's
-index replaces the one with the other either way.
+dropped. An entry's path is its branch's name with `%` and `/` escaped
+(`records::entry_path`, `records::entry_name`), in one flat tree, so `a` and
+`a/b` are the files `a` and `a%2Fb` and stand together; a path that decodes to
+no name is never read into a snapshot, so no write names it.
 
 **No receipts.** Nothing records that rwv created a ref. The workweave index
 carries no `receipts` at all; an index an earlier release kept at the old path

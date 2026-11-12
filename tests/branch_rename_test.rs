@@ -104,7 +104,7 @@ fn has_branch(repo: &Path, name: &str) -> bool {
 
 fn record_of(ws: &Path, branch: &str) -> Option<String> {
     let out = common::git()
-        .args(["show", &format!("rwv-records:{branch}")])
+        .args(["show", &format!("rwv-records:{}", common::records::path(branch))])
         .current_dir(project_dir(ws))
         .output()
         .unwrap();

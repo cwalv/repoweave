@@ -135,7 +135,7 @@ fn bare_of<'a>(w: &'a common::PushWorkspace, member: &str) -> &'a Path {
 
 fn recorded(ws: &Path, branch: &str) -> bool {
     common::git()
-        .args(["cat-file", "-e", &format!("rwv-records:{branch}")])
+        .args(["cat-file", "-e", &format!("rwv-records:{}", common::records::path(branch))])
         .current_dir(project_dir(ws))
         .output()
         .unwrap()

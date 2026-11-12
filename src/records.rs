@@ -1,8 +1,8 @@
 //! Branch records: how each weave branch is used, kept on the records branch
 //! of the project repo.
 //!
-//! The records branch holds one small TOML file per weave branch, named for
-//! the branch. A reader folds the records of every records remote into the
+//! The records branch holds one small TOML file per weave branch, in one flat
+//! tree, named for the branch with `%` and `/` escaped. A reader folds the records of every records remote into the
 //! local branch entry by entry; a writer commits that fold first, then its own
 //! change, and moves the local branch with a compare-and-swap, so two verbs
 //! writing at once lose nothing: the one that loses reads again and applies
@@ -257,8 +257,49 @@ impl Entry {
 /// The files of one records commit, by branch name.
 pub type Snapshot = BTreeMap<String, Vec<u8>>;
 
+/// The path of `name`'s entry: the name with `%` written `%25` and `/`
+/// written `%2F`, so no entry's path is a prefix of another's.
+pub fn entry_path(name: &str) -> String {
+    let mut path = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '%' => path.push_str("%25"),
+            '/' => path.push_str("%2F"),
+            c => path.push(c),
+        }
+    }
+    path
+}
+
+/// The branch name `path` is the entry of, or `None` for a path no name
+/// encodes to: one with a `/`, or a `%` not starting `%25` or `%2F`.
+pub fn entry_name(path: &str) -> Option<String> {
+    if path.is_empty() || path.contains('/') {
+        return None;
+    }
+    let mut name = String::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(at) = rest.find('%') {
+        name.push_str(&rest[..at]);
+        let escape = rest.get(at..at + 3)?;
+        name.push(match escape {
+            "%25" => '%',
+            "%2F" => '/',
+            _ => return None,
+        });
+        rest = &rest[at + 3..];
+    }
+    name.push_str(rest);
+    Some(name)
+}
+
+/// The entries of a records commit. A path that is not an entry's is not
+/// read, and no write touches it.
 fn snapshot_of(files: Vec<CommittedFile>) -> Snapshot {
-    files.into_iter().map(|f| (f.path, f.content)).collect()
+    files
+        .into_iter()
+        .filter_map(|f| entry_name(&f.path).map(|name| (name, f.content)))
+        .collect()
 }
 
 fn same_entry(left: &[u8], right: &[u8]) -> bool {
@@ -318,7 +359,7 @@ fn changes_between(from: &Snapshot, to: &Snapshot) -> Vec<FileChange> {
         .keys()
         .filter(|name| !to.contains_key(*name))
         .map(|name| FileChange {
-            path: name.clone(),
+            path: entry_path(name),
             content: None,
         })
         .collect();
@@ -326,7 +367,7 @@ fn changes_between(from: &Snapshot, to: &Snapshot) -> Vec<FileChange> {
         to.iter()
             .filter(|(name, bytes)| from.get(*name) != Some(*bytes))
             .map(|(name, bytes)| FileChange {
-                path: name.clone(),
+                path: entry_path(name),
                 content: Some(bytes.clone()),
             }),
     );
@@ -915,7 +956,7 @@ impl<'a> Store<'a> {
         for tip in tips {
             if let Some(message) =
                 self.vcs
-                    .last_message_touching(self.repo, &tip, branch.as_str())?
+                    .last_message_touching(self.repo, &tip, &entry_path(branch.as_str()))?
             {
                 let release = message.lines().rev().find_map(|line| {
                     line.strip_prefix(WRITER_TRAILER)
@@ -993,19 +1034,56 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_lists_the_removal_of_a_name_before_the_addition_below_it() {
+    fn every_name_round_trips_through_its_path_and_no_path_is_below_another() {
+        let alphabet = ['a', '/', '%', '2', 'F', '5', '.'];
+        let mut names: Vec<String> = vec![String::new()];
+        for _ in 0..4 {
+            let longer: Vec<String> = names
+                .iter()
+                .flat_map(|n| alphabet.iter().map(move |c| format!("{n}{c}")))
+                .collect();
+            names.extend(longer);
+        }
+        names.sort();
+        names.dedup();
+        let names: Vec<String> = names.into_iter().filter(|n| !n.is_empty()).collect();
+        for name in &names {
+            let path = entry_path(name);
+            assert!(!path.contains('/'), "{name:?} -> {path:?}");
+            assert_eq!(entry_name(&path).as_deref(), Some(name.as_str()));
+        }
+        assert_eq!(entry_path("a/b%c"), "a%2Fb%25c");
+    }
+
+    #[test]
+    fn a_path_no_name_encodes_to_is_no_entry() {
+        for path in ["", "a/b", "a%2fb", "a%", "a%2", "%41", "%2Fb/c"] {
+            assert_eq!(entry_name(path), None, "{path:?}");
+        }
+        let files = vec![
+            CommittedFile {
+                path: "a%2Fb".to_owned(),
+                content: b"x".to_vec(),
+            },
+            CommittedFile {
+                path: "stray/dir".to_owned(),
+                content: b"y".to_vec(),
+            },
+        ];
+        assert_eq!(snapshot_of(files), snapshot(&[("a/b", b"x".to_vec())]));
+    }
+
+    #[test]
+    fn a_name_and_a_name_below_it_are_written_side_by_side() {
         let from = snapshot(&[("a", b"declared".to_vec())]);
-        let to = snapshot(&[("a/b", b"declared".to_vec())]);
+        let to = snapshot(&[("a", b"declared".to_vec()), ("a/b", b"declared".to_vec())]);
 
         let paths: Vec<(String, bool)> = changes_between(&from, &to)
             .into_iter()
             .map(|c| (c.path, c.content.is_some()))
             .collect();
 
-        assert_eq!(
-            paths,
-            vec![("a".to_owned(), false), ("a/b".to_owned(), true)]
-        );
+        assert_eq!(paths, vec![("a%2Fb".to_owned(), true)]);
     }
 
     fn feature(target: &str, as_mode: Mode) -> Record {

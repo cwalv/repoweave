@@ -730,7 +730,7 @@ fn push_publishes_a_recorded_feature_branch_from_the_primary() {
         on_bare, head,
         "the recorded branch is on the project remote"
     );
-    let record = common::git_in(&ws.project_bare, &["show", "rwv-records:feat/x"]);
+    let record = common::git_in(&ws.project_bare, &["show", "rwv-records:feat%2Fx"]);
     assert!(
         record.contains("feature") && record.contains("main"),
         "the remote holds the branch's record beside it; got: {record}"

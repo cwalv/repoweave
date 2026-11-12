@@ -117,7 +117,7 @@ impl Weave {
     }
 
     fn entry(&self, branch: &str) -> String {
-        common::git_in(self.project(), &["show", &format!("{RECORDS}:{branch}")])
+        common::git_in(self.project(), &["show", &format!("{RECORDS}:{}", common::records::path(branch))])
     }
 
     /// A branch of the project repo with the same files as `main`.
@@ -826,7 +826,7 @@ fn entries_changed_on_both_sides_are_stored_as_a_conflict_that_set_mode_settles(
 impl Weave {
     fn has_entry(&self, branch: &str) -> bool {
         common::git()
-            .args(["cat-file", "-e", &format!("{RECORDS}:{branch}")])
+            .args(["cat-file", "-e", &format!("{RECORDS}:{}", common::records::path(branch))])
             .current_dir(self.project())
             .output()
             .unwrap()
@@ -848,8 +848,6 @@ fn deleting_a_branch_drops_its_record_so_a_name_below_it_can_be_recorded() {
         "the deleted branch's entry is dropped"
     );
 
-    // An entry is a file at the branch's name, so a stale `a` would make `a/b`
-    // a file inside a file.
     weave.branch("a/b");
     succeed(&["branch", "set-mode", "a/b", "declared"], &weave.ws);
     assert_eq!(weave.entry("a/b"), DECLARED.trim_end());
@@ -1013,4 +1011,28 @@ fn an_entry_for_a_branch_a_workspace_is_aligned_for_is_kept() {
         "this workspace last aligned its members for wip, so its record stays"
     );
     assert!(!weave.has_entry("other"));
+}
+
+#[test]
+fn a_record_and_a_record_below_its_name_are_both_kept() {
+    let weave = Weave::new();
+    weave.with_origin();
+    let project = weave.project();
+    weave.branch("fix");
+    common::git_in(&project, &["push", "-q", "origin", "fix"]);
+    common::git_in(&project, &["branch", "-D", "fix"]);
+    let base = weave.records_tip().unwrap();
+    weave.remote_records("origin", Some(&base), &[("fix", &feature("main", "declared"))]);
+
+    weave.branch("fix/part2");
+    succeed(&["branch", "set-mode", "fix/part2", "declared"], &weave.ws);
+
+    let listing = succeed(&["branch", "list"], &weave.ws);
+    let fix = listing
+        .lines()
+        .find(|l| l.split_whitespace().any(|w| w == "fix"))
+        .unwrap_or_else(|| panic!("no `fix` line:\n{listing}"));
+    assert!(fix.contains("feature onto main"), "{listing}");
+    let part2 = listing.lines().find(|l| l.contains("fix/part2")).unwrap();
+    assert!(part2.contains("declared"), "{listing}");
 }

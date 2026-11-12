@@ -8,6 +8,11 @@ use std::process::Stdio;
 /// The records branch's name.
 pub const BRANCH: &str = "rwv-records";
 
+/// The file holding `branch`'s entry: its name with `%` and `/` escaped.
+pub fn path(branch: &str) -> String {
+    branch.replace('%', "%25").replace('/', "%2F")
+}
+
 fn git_stdin(dir: &Path, args: &[&str], input: &[u8]) -> String {
     let mut command = super::git();
     command
