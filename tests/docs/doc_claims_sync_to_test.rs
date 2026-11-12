@@ -417,7 +417,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     assert!(
         savepoint_refs(&primary.server_dir)
             .iter()
-            .any(|r| r.ends_with("-target")),
+            .any(|r| r.contains("-target/")),
         "the parked op must hold a target-side (-target) savepoint; refs: {:?}",
         savepoint_refs(&primary.server_dir)
     );

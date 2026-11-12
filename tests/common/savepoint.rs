@@ -63,18 +63,3 @@ pub fn checkout_tip(repo: &Path, key: &str) -> Option<String> {
         })
         .map(|(_, tip)| tip)
 }
-
-/// Every ref under the savepoint namespace in `repo`'s store.
-pub fn every_ref(repo: &Path) -> Vec<String> {
-    git_in(
-        repo,
-        &[
-            "for-each-ref",
-            "--format=%(refname)",
-            &format!("{NAMESPACE}/"),
-        ],
-    )
-    .lines()
-    .map(str::to_owned)
-    .collect()
-}

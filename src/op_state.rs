@@ -2031,7 +2031,7 @@ mod tests {
         let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
-  "schema": 3,
+  "schema": 4,
   "release": "{release}",
   "id": "1779769917405921588",
   "verb": "land",
@@ -2268,7 +2268,7 @@ mod tests {
   "phase": "replay",
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2297,7 +2297,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2328,7 +2328,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2353,7 +2353,7 @@ mod tests {
   "advanced_tips": {{}},
   "converged_tips": {{}},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }}
 "#
         )
@@ -2408,7 +2408,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2434,7 +2434,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2556,7 +2556,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -2574,7 +2574,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "strategy": "rebase", "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
-                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 3, "release": "0.0.0", "take_in": null}}"#
+                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");

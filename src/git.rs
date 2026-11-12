@@ -2942,7 +2942,6 @@ impl Vcs for GitVcs {
         wrote: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<RefRestoreOutcome, VcsError> {
-        let filed = ref_savepoint_ref(key, &saved.branch);
         let now = self
             .resolve_local_branch_tip(repo, &saved.branch)?
             .map(|tip| tip.id().clone());
@@ -2953,7 +2952,7 @@ impl Vcs for GitVcs {
             });
         };
         if now == saved.at {
-            Self::run(["update-ref", "-d", &filed], repo)?;
+            self.drop_ref_savepoint(repo, key, &saved.branch)?;
             return Ok(RefRestoreOutcome::Untouched);
         }
         let held = self.checkouts_of_branch(repo, &saved.branch)?;
@@ -2971,7 +2970,7 @@ impl Vcs for GitVcs {
         }
         if Some(&now) == wrote {
             Self::update_branch_ref(repo, &saved.branch, &now, &saved.at)?;
-            Self::run(["update-ref", "-d", &filed], repo)?;
+            self.drop_ref_savepoint(repo, key, &saved.branch)?;
             return Ok(RefRestoreOutcome::Restored);
         }
         if foreign_tip_policy == ForeignTipPolicy::Abandon {
@@ -2982,7 +2981,7 @@ impl Vcs for GitVcs {
                 Some(BackupMark::Abandoned),
             )?;
             Self::update_branch_ref(repo, &saved.branch, &now, &saved.at)?;
-            Self::run(["update-ref", "-d", &filed], repo)?;
+            self.drop_ref_savepoint(repo, key, &saved.branch)?;
             return Ok(RefRestoreOutcome::AbandonedForeignTip {
                 abandoned_tip: now,
                 backup,
@@ -6922,7 +6921,13 @@ mod branch_model_tests {
             GitVcs.create_savepoint(p.path(), &key).unwrap();
 
             assert_eq!(
-                git(p.path(), &["rev-parse", &format!("refs/rwv/pre-op/{leaf}")]),
+                git(
+                    p.path(),
+                    &[
+                        "rev-parse",
+                        &format!("refs/rwv/pre-op/{leaf}/checkout/main")
+                    ]
+                ),
                 head.id().as_str()
             );
             assert_eq!(

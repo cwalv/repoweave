@@ -423,11 +423,12 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 7,
+        count: 10,
         callers: &[],
-        justification: "(1) savepoint create, (2) savepoint drop, both \
-            namespaced under refs/rwv/pre-op/<op-id> (relocated from \
-            sync.rs). (3) create_unpopulated_submodule(): \
+        justification: "(1)-(2) savepoint creates, a checkout's and a \
+            branch's moved as a ref; (A)-(C) savepoint drops: every one \
+            under a key, a checkout's, one branch's. All five write or delete \
+            only under refs/rwv/pre-op/<key>/ (relocated from sync.rs). (3) create_unpopulated_submodule(): \
             detaches HEAD, with --no-deref, in a submodule repository the \
             same call cloned an instant before and that nothing else has \
             seen; its branches are left as the clone made them. (4) \
@@ -436,7 +437,7 @@ const ALLOWLIST: &[Allowed] = &[
             old one, names the old tip under refs/rwv/superseded/<remote>/ \
             <branch>/<old tip>. The ref's name ends in the commit it points \
             at, so the call only adds a name for a commit the fetch had \
-            just dropped one; it moves and deletes nothing. None of (1)-(4) \
+            just dropped one; it moves and deletes nothing. None of (1)-(4) or (A)-(C) \
             touch user refs. (5) delete_branch: `update-ref -d <ref> \
             <tip>`, where the old value is a compare-and-swap, so a branch \
             that moved since the proof was made is left. Reachable only \
