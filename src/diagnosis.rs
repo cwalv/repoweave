@@ -783,9 +783,10 @@ impl State {
                 name: "ahead",
                 means: "its push branch is an ancestor of the branch, as last fetched: the \
                         branch holds commits the remote lacks",
-                refused_by: "`rwv status` reports it; `rwv push` publishes it",
+                refused_by: "`rwv status` reports it, and `rwv land` for the branch it \
+                             landed into; `rwv push` publishes it",
                 offers: &[Form::C7Push, Form::C7PushRepo],
-                verb_offers: &[],
+                verb_offers: &[("land", Form::C7PushBranch)],
             },
             Self::PushBranchGone => &StateRow {
                 axis: Axis::PushBranch,
@@ -1207,7 +1208,7 @@ impl State {
                 refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
                              reports it; `rwv activate`, `rwv update` and `rwv pull` refuse it \
                              as `on branch` is refused",
-                offers: &[Form::C15, Form::C14Keep],
+                offers: &[Form::C15OntoCheckedOut, Form::C14Keep],
                 verb_offers: &[],
             },
             Self::AlignmentDetachedElsewhere => &StateRow {
@@ -1229,7 +1230,7 @@ impl State {
                 refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
                              reports it; `rwv activate`, `rwv update` and `rwv pull` refuse it \
                              as `on branch` is refused",
-                offers: &[Form::C14Keep, Form::C15],
+                offers: &[Form::C14Keep, Form::C15OntoCheckedOut],
                 verb_offers: &[],
             },
             Self::AlignmentUnaligned => &StateRow {
@@ -1996,6 +1997,7 @@ pub enum Form {
     C14Return,
     C15,
     C15AtCherryPick,
+    C15OntoCheckedOut,
     C16Switch,
     C16WorkweaveDelete,
     C16Raw,
@@ -2046,7 +2048,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 78] = [
+    pub const ALL: [Form; 79] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2086,6 +2088,7 @@ impl Form {
         Self::C14Return,
         Self::C15,
         Self::C15AtCherryPick,
+        Self::C15OntoCheckedOut,
         Self::C16Switch,
         Self::C16WorkweaveDelete,
         Self::C16Raw,
@@ -2364,6 +2367,12 @@ impl Form {
             Self::C15AtCherryPick => &FormRow {
                 choice: C::C15,
                 steps: &[Vcs(A::CherryPick), Then(Self::C40)],
+                at: W::WhereBranchCheckedOut,
+                shipped: true,
+            },
+            Self::C15OntoCheckedOut => &FormRow {
+                choice: C::C15,
+                steps: &[Vcs(A::CherryPickOntoCheckedOut), Then(Self::C5Lock)],
                 at: W::WhereBranchCheckedOut,
                 shipped: true,
             },

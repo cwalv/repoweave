@@ -554,20 +554,23 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let source = match newer(vcs, dir, &source_branch, url_remote.as_ref())? {
         Ok(Some(tip)) => tip.id().clone(),
         Ok(None) => {
-            let state = match sync.from {
-                SyncFrom::Target(_) => State::TargetGone,
-                SyncFrom::From(_) => State::NameNoSuchBranch,
+            let judging = match &sync.from {
+                SyncFrom::Target(target) => crate::branch::target_gone(
+                    vcs,
+                    &sync.project,
+                    dir,
+                    &crate::branch::named(vcs, &sync.project, dir, &sync.branch)?,
+                    &crate::branch::named(vcs, &sync.project, dir, target)?,
+                )?,
+                SyncFrom::From(_) => State::NameNoSuchBranch
+                    .of(&label)
+                    .project_repo()
+                    .subject(sync.source_name())
+                    .bind("<W>", &sync.branch)
+                    .bind("<T>", sync.source_name())
+                    .checkout(dir),
             };
-            return Err(state
-                .of(&label)
-                .project_repo()
-                .subject(sync.source_name())
-                .bind("<W>", &sync.branch)
-                .bind("<T>", sync.source_name())
-                .checkout(dir)
-                .by_verb("sync")
-                .judge(vcs)
-                .refused());
+            return Err(judging.by_verb("sync").judge(vcs).refused());
         }
         Err(diverged) => {
             let (ahead, behind) =

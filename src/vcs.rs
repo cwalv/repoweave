@@ -395,7 +395,8 @@ pub struct RangeListing {
 ///
 /// A spelling may hold `<placeholder>` words, which core fills from what the
 /// refusal judged and leaves standing where the operator chooses the value.
-/// `<checkout>` is the repo's checkout directory. No action may drop a commit
+/// `<checkout>` is the repo's checkout directory, and `<b-checkout>` the
+/// checkout of the same repo that has `<b>` checked out. No action may drop a commit
 /// or an edit, or name a force, reset, delete, reflog or another hint's
 /// commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -408,6 +409,7 @@ pub enum VcsAction {
     SwitchTo,
     SwitchDetached,
     CherryPick,
+    CherryPickOntoCheckedOut,
     Revert,
     MergeNoFastForward,
     PushCommitAs,
@@ -420,7 +422,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 17] = [
+    pub const ALL: [VcsAction; 18] = [
         Self::Commit,
         Self::Stash,
         Self::Status,
@@ -429,6 +431,7 @@ impl VcsAction {
         Self::SwitchTo,
         Self::SwitchDetached,
         Self::CherryPick,
+        Self::CherryPickOntoCheckedOut,
         Self::Revert,
         Self::MergeNoFastForward,
         Self::PushCommitAs,

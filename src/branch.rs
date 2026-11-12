@@ -204,6 +204,34 @@ pub(crate) fn write_refusal(
     }
 }
 
+/// `target` gone as `feature`'s record names it: the target-gone recovery
+/// rebinds onto another target, the nearest candidate bound and every
+/// candidate listed, since rebinding onto the target that is gone would refuse
+/// again.
+pub(crate) fn target_gone(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    feature: &BranchName,
+    target: &BranchName,
+) -> anyhow::Result<Judging> {
+    let view = view_of(&Store::open(vcs, dir)?)?;
+    let candidates = target_candidates(vcs, dir, &view, feature)?;
+    let mut judging = State::TargetGone
+        .of(label(project))
+        .project_repo()
+        .subject(target)
+        .checkout(dir)
+        .bind("<W>", feature);
+    if let Some(nearest) = candidates.first() {
+        judging = judging.bind("<T>", nearest).listing([format!(
+            "--target candidates, nearest first: {}",
+            candidates.join(", ")
+        )]);
+    }
+    Ok(judging)
+}
+
 pub(crate) fn view_of(store: &Store<'_>) -> anyhow::Result<View> {
     store
         .view()

@@ -1447,14 +1447,25 @@ impl Aligner {
                 None,
             ),
         };
+        let wanted = self.wanted(m.entry.role, m.entry).0;
         let mut judging = state
             .of(repo)
             .member()
             .listing(listing)
             .checkout(m.dir)
             .bind("<m>", m.path)
-            .bind("<b>", self.wanted(m.entry.role, m.entry).0)
+            .bind("<b>", &wanted)
             .bind("<ids>", ids.join(" "));
+        if !commits.is_empty() {
+            let onto = checked_out_elsewhere(m, &wanted)
+                .unwrap_or_default()
+                .into_iter()
+                .next();
+            judging = match onto {
+                Some(onto) => judging.bind_place("<b-checkout>", &onto),
+                None => judging.only(&[crate::diagnosis::ChoiceId::C14]),
+            };
+        }
         if let Some(subject) = subject {
             judging = judging.subject(subject);
         }

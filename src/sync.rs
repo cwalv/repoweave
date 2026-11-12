@@ -2693,6 +2693,34 @@ fn judge_source_relations(
     }
 }
 
+fn source_lock_class(project: &Project, root: &Path) -> LockClassification {
+    let (resolved, unresolvable) = match project.lock.as_ref() {
+        Some(raw) => {
+            let (resolved, failures) = raw.clone().resolve_versions(root);
+            (Some(resolved), failures)
+        }
+        None => (None, Vec::new()),
+    };
+    classify_lock_relations(root, &project.manifest, resolved.as_ref(), unresolvable)
+}
+
+/// The source's own refusals, which a landing owes whatever its target: edits
+/// in its checkouts and where each stands to the source's lock.
+pub(crate) fn judge_landing_source(
+    ctx: &WorkspaceContext,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let project = ctx.require_bound_project()?.clone();
+    let root = ctx.active_path();
+    let dir = project_dir(root, &project);
+    let vcs = project_vcs();
+    let source = Project::from_dir(&dir, project)?;
+    judge_edits_source_preflight(vcs.as_ref(), &source, root, &dir, report);
+    let class = source_lock_class(&source, root);
+    judge_source_relations(&class, root, &source.manifest, report);
+    Ok(())
+}
+
 /// Where each checkout of `T`'s workspace stands to the lock that workspace
 /// has checked out, never the upstream's, whose moves the landing takes in:
 /// one beyond its pin by commits no live lock and no remote reaches refuses
@@ -2809,13 +2837,6 @@ fn run_preconditions_after_acquire(
         cwd_project_dir,
         &mut report,
     );
-    judge_edits_target_preflight(
-        project_vcs,
-        &cwd_project,
-        dest_workspace_dir,
-        dest_project_dir,
-        &mut report,
-    );
     if retire {
         if let Checkout::Workweave { dir, project, .. } = &cwd_ctx.checkout {
             let dirty = crate::workweave::judge_dirty_checkouts(
@@ -2849,19 +2870,7 @@ fn run_preconditions_after_acquire(
         ClassifySource::Relations,
     )?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
-    let (resolved, unresolvable) = match cwd_project.lock.as_ref() {
-        Some(raw) => {
-            let (resolved, failures) = raw.clone().resolve_versions(cwd_workspace_dir);
-            (Some(resolved), failures)
-        }
-        None => (None, Vec::new()),
-    };
-    let cwd_class = classify_lock_relations(
-        cwd_workspace_dir,
-        &cwd_project.manifest,
-        resolved.as_ref(),
-        unresolvable,
-    );
+    let cwd_class = source_lock_class(&cwd_project, cwd_workspace_dir);
     judge_source_relations(
         &cwd_class,
         cwd_workspace_dir,
@@ -2921,6 +2930,14 @@ fn run_preconditions_after_acquire(
         },
         &mut report,
     )?;
+    judge_edits_target_preflight(
+        project_vcs,
+        &cwd_project,
+        plan.receiving.keys(),
+        dest_workspace_dir,
+        dest_project_dir,
+        &mut report,
+    );
     if strategy == SyncStrategy::Ff {
         hold(
             refuse_members_that_need_composing(&cwd_project.manifest, cwd_workspace_dir, &plan),
@@ -3054,6 +3071,11 @@ fn guard_and_mark<'a>(
         }
     };
     let _ = acquired;
+    if emit_text {
+        for line in plan.fact_lines(&landing.target) {
+            eprintln!("land: {line}");
+        }
+    }
 
     // Savepoints on both sides: the source's repos replay, the target's
     // fast-forward, and `rwv abort` restores either. The target's are filed
@@ -3362,6 +3384,10 @@ fn load_continuing_context<'a>(
         judge_edits_target_preflight(
             project_vcs.as_ref(),
             &cwd_project_preflight,
+            take_in.upstream_tips.keys().filter_map(|key| match key {
+                RepoKey::Member(path) => Some(path),
+                RepoKey::Project => None,
+            }),
             &dest_workspace_dir,
             &dest_project_dir,
             &mut edits,
@@ -3580,9 +3606,10 @@ fn refuse_members_that_need_composing(
     );
 }
 
-/// land dirty-target preflight: refuse if the target workweave has
-/// uncommitted **tracked** changes that advance-target would fast-forward
-/// over.
+/// land dirty-target preflight: refuse if a repo of the target workspace that
+/// advance-target fast-forwards, the project repo and each `moving` member,
+/// has uncommitted **tracked** changes. A member the landing does not move is
+/// left as it is, edits and all.
 ///
 /// Untracked files are not scanned here — a fast-forward only ever touches
 /// paths the incoming tree writes, so a target-side untracked file is safe
@@ -3590,14 +3617,18 @@ fn refuse_members_that_need_composing(
 /// doesn't have an answer until replay has picked CWD's tips, which is after
 /// this preflight runs; [`ff_advance_repo`] catches an actual collision at
 /// advance time instead, where git itself refuses to clobber it.
-fn judge_edits_target_preflight(
+fn judge_edits_target_preflight<'m>(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
+    moving: impl IntoIterator<Item = &'m RepoPath>,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
     report: &mut Report,
 ) {
-    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
+    for repo_path in moving {
+        let Some(entry) = cwd_project.manifest.get_entry(repo_path) else {
+            continue;
+        };
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         if target_repo.exists() {
             let vcs = vcs_for(entry.vcs_type);
@@ -5108,6 +5139,10 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
+    if emit_text {
+        report_target_ahead(ctx);
+    }
+
     let target_savepoint = ctx.target_savepoint_key();
     settle_members(
         &ctx.dest_workspace_dir,
@@ -5244,6 +5279,43 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()
     }
     op_state::write_owner(&ctx.owner_workspace_dir, &owner)
         .context("failed to record a fast-forward of the target")
+}
+
+/// `T`, once it holds the landing, judged against its push branch where it is
+/// ahead of it: the landing is not published until `T` is pushed.
+fn report_target_ahead(ctx: &OpContext<'_>) {
+    let vcs = ctx.project_vcs.as_ref();
+    let Ok(target) = landed_into(ctx, &ctx.cwd_project_name) else {
+        return;
+    };
+    let url_remote = vcs.project_url_remote(&ctx.dest_project_dir).ok().flatten();
+    let Ok((standing, _)) = crate::push_branch::standing_of_branch(
+        vcs,
+        &ctx.dest_project_dir,
+        &crate::vcs::RawRefName::new(target.as_str()),
+        url_remote.as_ref(),
+    ) else {
+        return;
+    };
+    if standing != crate::push_branch::Standing::Ahead {
+        return;
+    }
+    let label = project_rel_path(&ctx.cwd_project_name);
+    let mut report = Report::default();
+    report.add(
+        State::PushBranchAhead
+            .of(&label)
+            .project_repo()
+            .subject(format!(
+                "'{target}' holds the landing, and its push branch does not"
+            ))
+            .bind("<W>", &target)
+            .elsewhere(&ctx.dest_workspace_dir)
+            .by_verb("land")
+            .only_forms(&[crate::diagnosis::Form::C7PushBranch])
+            .judge(vcs),
+    );
+    eprint!("{}", report.render("land"));
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.

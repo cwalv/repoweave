@@ -19,7 +19,7 @@ use crate::vcs::{
     Site, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// A landing of the checked-out feature into its target, as resolved before
@@ -53,6 +53,31 @@ pub struct Plan {
     /// For each named declared-branch change, the commits `T`'s pin reaches
     /// that the new receiving branch lacks.
     pub left_behind: Vec<LeftBehind>,
+    /// The commits each moved member's receiving branch holds beyond `T`'s
+    /// pin, which the landing pins into `T` with the member's work.
+    pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
+}
+
+impl Plan {
+    /// The facts the landing reports before it composes, one line each.
+    pub fn fact_lines(&self, target: &BranchName) -> Vec<String> {
+        self.beyond_pin
+            .iter()
+            .filter(|(_, commits)| !commits.is_empty())
+            .map(|(path, commits)| {
+                format!(
+                    "{path}: the branch it lands on holds {} commit(s) beyond '{target}''s pin, \
+                     which the landing pins into '{target}': {}",
+                    commits.len(),
+                    commits
+                        .iter()
+                        .map(|c| format!("{} {}", c.id.short(), c.subject))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })
+            .collect()
+    }
 }
 
 /// A receiving branch `U`, its tip as the landing read it (the newer of it
@@ -155,7 +180,7 @@ pub fn resolve(
                     .by_verb("land")
                     .judge(vcs),
             );
-            return Err(refusal(judged));
+            return Err(refused_before_target(ctx, &feature, None, judged));
         }
         (Record::Feature { .. }, Some(flag)) => {
             (crate::branch::named(vcs, &project, &dir, flag)?, None)
@@ -192,7 +217,7 @@ pub fn resolve(
     if target_flag.is_none() {
         if let Some(gone) = judge_unrelated_target(vcs, &project, &dir, &feature, &target)? {
             judged.add(gone);
-            return Err(refusal(judged));
+            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
         }
     }
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
@@ -206,17 +231,11 @@ pub fn resolve(
         Newer::Tip(tip) => tip.id().clone(),
         Newer::Nowhere => {
             judged.add(
-                State::TargetGone
-                    .of(&label)
-                    .project_repo()
-                    .subject(&target)
-                    .bind("<W>", &feature)
-                    .bind("<T>", &target)
-                    .checkout(&dir)
+                crate::branch::target_gone(vcs, &project, &dir, &feature, &target)?
                     .by_verb("land")
                     .judge(vcs),
             );
-            return Err(refusal(judged));
+            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
         }
         Newer::Diverged {
             local,
@@ -244,7 +263,7 @@ pub fn resolve(
         Ok(workspace) => workspace,
         Err(refused) => {
             judged.add(refused);
-            return Err(refusal(judged));
+            return Err(refused_before_target(ctx, &feature, Some(&target), judged));
         }
     };
     Ok(Landing {
@@ -257,6 +276,92 @@ pub fn resolve(
         judged,
         allow_member_change,
     })
+}
+
+/// The refusal of a landing with nothing to land into: what refused it, and
+/// beside it every refusal the source owes on its own.
+fn refused_before_target(
+    ctx: &WorkspaceContext,
+    feature: &BranchName,
+    target: Option<&BranchName>,
+    mut judged: Report,
+) -> anyhow::Error {
+    if let Err(e) = judge_source(ctx, feature, target, &mut judged) {
+        judged.note(format!("{e:#}"));
+    }
+    refusal(judged)
+}
+
+/// The refusals the source owes whatever it lands into: its edits, where its
+/// checkouts stand to its lock and to the branch they are aligned for, and
+/// the weave branches landing into `feature`.
+fn judge_source(
+    ctx: &WorkspaceContext,
+    feature: &BranchName,
+    target: Option<&BranchName>,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    crate::sync::judge_landing_source(ctx, report)?;
+    let project = ctx.require_bound_project()?;
+    judge_source_members(ctx.active_path(), project, feature, target, report)?;
+    Ok(())
+}
+
+/// The members of the source refused for their alignment, each judged into
+/// `report`, after the weave branches that land into `feature`.
+fn judge_source_members(
+    source_root: &Path,
+    project: &ProjectName,
+    feature: &BranchName,
+    target: Option<&BranchName>,
+    report: &mut Report,
+) -> anyhow::Result<BTreeSet<RepoPath>> {
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let dir = project_dir(source_root, project);
+    let label = project_rel_path(project);
+    for dependent in crate::merge_upstream::dependents_of(vcs, &dir, feature.as_str())? {
+        let mut judging = State::TargetDependents
+            .of(&label)
+            .project_repo()
+            .subject(format!("{dependent} lands into {feature}"))
+            .bind("<dep>", &dependent)
+            .bind("<W>", &dependent)
+            .checkout(&dir)
+            .by_verb("land");
+        if let Some(target) = target {
+            judging = judging.bind("<T>", target);
+        }
+        report.add(judging.judge(vcs));
+    }
+    let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+    let head = vcs.head_revision(&dir)?.id().clone();
+    let our_lock = lock_at(vcs, &dir, &head);
+    let aligner = crate::alignment::Aligner::open(
+        source_root,
+        project,
+        crate::alignment::Accounting::default(),
+    )?;
+    let mut refused = BTreeSet::new();
+    for (path, entry) in ours.iter_entries() {
+        let mdir = source_root.join(path.as_path());
+        let mvcs = vcs_for(entry.vcs_type);
+        if !mvcs.is_repo(&mdir) {
+            continue;
+        }
+        let checked = crate::alignment::Member {
+            path,
+            entry,
+            dir: &mdir,
+            vcs: mvcs.as_ref(),
+        };
+        let aligned = aligner.plan(&checked, our_lock.as_ref())?;
+        if let Some(off) = aligner.refusal(&checked, &aligned, path)? {
+            report.add(off);
+            refused.insert(path.clone());
+        }
+    }
+    Ok(refused)
 }
 
 fn refusal(report: Report) -> anyhow::Error {
@@ -315,13 +420,8 @@ fn judge_unrelated_target(
         )
     };
     Ok(Some(
-        State::TargetGone
-            .of(project_rel_path(project))
-            .project_repo()
+        crate::branch::target_gone(vcs, project, dir, feature, target)?
             .subject(why)
-            .bind("<W>", feature)
-            .bind("<T>", target)
-            .checkout(dir)
             .by_verb("land")
             .judge(vcs),
     ))
@@ -471,28 +571,16 @@ pub fn judge(
         &landing.target,
         report,
     )?;
-    for dependent in crate::merge_upstream::dependents_of(vcs, &dir, landing.feature.as_str())? {
-        report.add(
-            State::TargetDependents
-                .of(&label)
-                .project_repo()
-                .subject(format!("{dependent} lands into {}", landing.feature))
-                .bind("<dep>", &dependent)
-                .bind("<W>", &dependent)
-                .bind("<T>", &landing.target)
-                .checkout(&dir)
-                .by_verb("land")
-                .judge(vcs),
-        );
-    }
+    let off_alignment = judge_source_members(
+        source_root,
+        &landing.project,
+        &landing.feature,
+        Some(&landing.target),
+        report,
+    )?;
     let accounting = crate::alignment::Accounting::scan(primary)?;
     let target_aligner = crate::alignment::Aligner::open(
         &landing.target_workspace,
-        &landing.project,
-        crate::alignment::Accounting::default(),
-    )?;
-    let source_aligner = crate::alignment::Aligner::open(
-        source_root,
         &landing.project,
         crate::alignment::Accounting::default(),
     )?;
@@ -501,18 +589,7 @@ pub fn judge(
     for (path, entry) in sides.ours.iter_entries() {
         let mdir = source_root.join(path.as_path());
         let mvcs = vcs_for(entry.vcs_type);
-        if !mvcs.is_repo(&mdir) {
-            continue;
-        }
-        let checked = crate::alignment::Member {
-            path,
-            entry,
-            dir: &mdir,
-            vcs: mvcs.as_ref(),
-        };
-        let aligned = source_aligner.plan(&checked, sides.our_lock.as_ref())?;
-        if let Some(off) = source_aligner.refusal(&checked, &aligned, path)? {
-            report.add(off);
+        if !mvcs.is_repo(&mdir) || off_alignment.contains(path) {
             continue;
         }
         let member = Member {
@@ -1026,6 +1103,7 @@ fn judge_member(
         && their_entry.branch.local_counterpart().as_str() != receiving.as_str();
     let head = vcs.head_revision(dir)?.id().clone();
     let pin = pin_of(sides.their_lock.as_ref(), path);
+    let lands_on = |tip: &CommitId| vcs.is_ancestor(dir, &rev(&head), &rev(tip));
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
     let (tip, created) = match crate::push_branch::newer_of_branch_and_upstream(
         vcs,
@@ -1046,6 +1124,9 @@ fn judge_member(
             upstream_tip,
             ..
         } => {
+            if !declared_changed && lands_on(local.id())? && lands_on(upstream_tip.id())? {
+                return Ok(());
+            }
             let (ahead, behind) = vcs.ahead_behind(dir, upstream_tip.id(), local.id());
             report.add(
                 State::PushBranchDiverged
@@ -1086,10 +1167,21 @@ fn judge_member(
         Vec::new()
     };
     let follows = declared_changed && new_work.is_empty();
-    if let (Some(pin), false) = (&pin, declared_changed) {
-        if vcs.resolve_revision(dir, pin.as_str()).is_ok()
-            && !vcs.is_ancestor(dir, &rev(pin), &rev(&tip))?
-        {
+    let lands = lands_on(&tip)?;
+    if lands && !declared_changed && !created {
+        return Ok(());
+    }
+    let moved = !follows && !lands;
+    let reachable_pin = pin
+        .as_ref()
+        .filter(|pin| vcs.resolve_revision(dir, pin.as_str()).is_ok());
+    if let (Some(pin), false, true) = (reachable_pin, declared_changed, moved) {
+        if vcs.is_ancestor(dir, &rev(pin), &rev(&tip))? {
+            plan.beyond_pin.insert(
+                path.clone(),
+                vcs.commits_beyond(dir, &rev(&tip), &rev(pin))?,
+            );
+        } else {
             report.add(
                 State::PinNotOnDeclaredBranch
                     .of(path)
@@ -1109,7 +1201,6 @@ fn judge_member(
             );
         }
     }
-    let moved = !follows && !vcs.is_ancestor(dir, &rev(&head), &rev(&tip))?;
     if moved {
         judge_moved(
             landing, sides, member, &attached, &receiving, &head, &tip, accounting, report,

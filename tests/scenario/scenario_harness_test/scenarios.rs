@@ -5203,7 +5203,8 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
 
 /// A landing that would run into nothing moves nothing: the target checked out
 /// in no workspace refuses until the landing as refs exists, naming the
-/// workweave that opens it.
+/// workweave that opens it, and the source's own refusals come in the same
+/// report.
 pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
     scenario(
         "land into a target checked out nowhere",
@@ -5211,8 +5212,10 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::git(&a(), Repo::Proj, &["switch", "--detach"]),
+            Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib", "lib edited"),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Proj, State::TargetNotCheckedOut))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
                 .claim(Claim::OutputContains(
                     "rwv workweave create <ww> --branch main",
                 ))
@@ -5403,8 +5406,16 @@ pub fn land_never_resolves_a_published_record_to_an_unrelated_branch() -> Scenar
             ],
         )
         .expect(Exit::Succeeds),
+        Step::hand_edit(
+            &b_ww("r"),
+            Repo::App,
+            "feat-app.txt",
+            "feat-app",
+            "uncommitted",
+        ),
         Step::rwv(&b_ww("r"), &["land"])
             .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+            .claim(Claim::Judged(Repo::App, State::EditsDirty))
             .claim(Claim::OutputContains("does not take in"))
             .claim(Claim::LocalStateUnchanged(b())),
     ]);
@@ -5435,7 +5446,8 @@ pub fn land_refuses_work_built_on_another_lineage() -> Scenario {
 }
 
 /// A landing lands a feature only: a declared-mode project branch is never
-/// rebased onto another, `--target` or not.
+/// rebased onto another, `--target` or not; the workspace's own refusals come
+/// in the same report.
 pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
     scenario(
         "land never rewrites a declared-mode branch",
@@ -5443,8 +5455,10 @@ pub fn land_never_rewrites_a_declared_mode_branch() -> Scenario {
             Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::App, "stable-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "lib edited"),
             Step::rwv(&a(), &["land", "--target", "main"])
                 .expect(Exit::refuses(Repo::Proj, State::TargetNoTarget))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
                 .claim(Claim::LocalStateUnchanged(a())),
         ],
     )
@@ -6858,6 +6872,224 @@ pub fn continue_reports_a_created_receiving_branch() -> Scenario {
                     repo: Repo::Lib,
                     rev: "lib-next",
                     mark: "w-lib",
+                }),
+        ],
+    )
+}
+
+fn main_lock() -> LockSite {
+    LockSite::Checkout(a(), Repo::Proj, "main".to_owned())
+}
+
+/// A record whose target exists nowhere refuses as the target gone, with the
+/// source's own refusals in the same report; the target-gone recovery rebinds
+/// onto the nearest candidate, and the landing then goes there.
+pub fn land_into_a_target_that_exists_nowhere() -> Scenario {
+    scenario(
+        "land into a target that exists nowhere",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "stable"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "branch", "set-mode", "proj--w", "feature", "--target", "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "-D", "stable"]),
+            Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib", "lib edited"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+                .claim(Claim::Judged(Repo::Lib, State::EditsDirty))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-mode proj--w feature --target main",
+                ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "branch", "set-mode", "proj--w", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib edited", "lib"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    )
+}
+
+/// Where the target is checked out, a landing judges edits only in the repos
+/// it moves: an edit in a member it composes refuses, one in a member it
+/// leaves where it is stays as it is.
+pub fn land_judges_target_edits_only_where_it_moves() -> Scenario {
+    scenario(
+        "land judges target edits only where it moves",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "app edited"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::EditsDirty))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::hand_edit(&a(), Repo::App, "README", "app edited", "app"),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib", "lib edited"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+            Step::git(&a(), Repo::Lib, &["diff", "--name-only"]).claim(Claim::OutputLine("README")),
+        ],
+    )
+}
+
+/// `main` pins `lib` at a commit its `main` does not reach, held only by the
+/// primary's detached checkout: `lib`'s `main` was moved back under the pin.
+fn main_pins_lib_off_its_branch() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::commit(&a(), Repo::Lib, "a-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
+        Step::git(&a(), Repo::Lib, &["branch", "-f", "main", "HEAD~1"])
+            .may_rewind(&[Repo::Lib])
+            .may_rewrite(&[Repo::Lib]),
+    ]
+}
+
+/// A member the landing does not move keeps the target's pin, whether or not
+/// its declared branch reaches that pin: `pin` not on declared branch judges
+/// moved members only.
+pub fn land_judges_the_pin_on_its_branch_only_for_moved_members() -> Scenario {
+    let mut steps = main_pins_lib_off_its_branch();
+    steps.extend([
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: main_lock(),
+                member: Repo::Lib,
+                mark: "a-lib",
+            })
+            .claim(Claim::PinContains {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "w-app",
+            }),
+    ]);
+    scenario(
+        "land judges the pin on its branch only for moved members",
+        steps,
+    )
+}
+
+/// A moved member whose receiving branch does not reach the target's pin
+/// refuses the landing; re-pinning it on its declared branch where the target
+/// is checked out, as printed, lets the landing go.
+pub fn land_refuses_a_moved_member_whose_branch_lacks_the_pin() -> Scenario {
+    let mut steps = main_pins_lib_off_its_branch();
+    steps.extend([
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+            .claim(Claim::OutputContains(
+                "rwv member pin local/remotes/lib <rev> --commit",
+            ))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &a(),
+            &["member", "pin", "local/remotes/lib", "main", "--commit"],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::Lib]),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinContains {
+                site: main_lock(),
+                member: Repo::Lib,
+                mark: "w-lib",
+            }),
+    ]);
+    scenario(
+        "land refuses a moved member whose branch lacks the pin",
+        steps,
+    )
+}
+
+/// The receiving branch of a moved member holds commits beyond the target's
+/// pin: the landing lists them as a fact and pins them with the work. A member
+/// it does not move keeps the target's pin though its branch moved on, so a
+/// landing that composes nothing (`--strategy ff`) lands the rest.
+pub fn land_reports_what_it_pins_beyond_the_target() -> Scenario {
+    scenario(
+        "land reports what it pins beyond the target",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "forge-lib",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--strategy", "ff"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/lib: ff-advanced"))
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::App,
+                    mark: "w-app",
+                }),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: the branch it lands on holds 1 commit(s) beyond 'main''s \
+                     pin",
+                ))
+                .claim(Claim::OutputContains("forge-lib"))
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "forge-lib",
+                }),
+        ],
+    )
+}
+
+/// A landing leaves the target ahead of its push branch and says so, naming
+/// the push that publishes it; running it publishes the landing.
+pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {
+    scenario(
+        "land reports the target ahead of its push branch",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Judged(Repo::Proj, State::PushBranchAhead))
+                .claim(Claim::OutputContains("rwv push --branch main")),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "main"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "w-app",
                 }),
         ],
     )

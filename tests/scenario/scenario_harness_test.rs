@@ -563,6 +563,12 @@ every_scenario!(
     land_never_resolves_a_published_record_to_an_unrelated_branch,
     land_refuses_work_built_on_another_lineage,
     land_never_rewrites_a_declared_mode_branch,
+    land_into_a_target_that_exists_nowhere,
+    land_judges_target_edits_only_where_it_moves,
+    land_judges_the_pin_on_its_branch_only_for_moved_members,
+    land_refuses_a_moved_member_whose_branch_lacks_the_pin,
+    land_reports_what_it_pins_beyond_the_target,
+    land_reports_the_target_ahead_of_its_push_branch,
     dc01_mid_operation_land,
     deletion_offline_unpublished,
     dc01_mid_operation(scenarios::Stopped::Rebase),
@@ -3382,4 +3388,39 @@ holding_rwv! {
 #[test]
 fn dc11_safe_drift_is_refreshed_before_edits_are_judged_and_the_moved_tip_lands() {
     runner::run(scenarios::dc11_drift_before_dirt()).assert_green();
+}
+
+#[test]
+fn land_into_a_target_that_exists_nowhere_scenario() {
+    runner::run(scenarios::land_into_a_target_that_exists_nowhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn land_judges_target_edits_only_where_it_moves_scenario() {
+    runner::run(scenarios::land_judges_target_edits_only_where_it_moves())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_judges_the_pin_on_its_branch_only_for_moved_members_scenario() {
+    runner::run(scenarios::land_judges_the_pin_on_its_branch_only_for_moved_members())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_refuses_a_moved_member_whose_branch_lacks_the_pin_scenario() {
+    runner::run(scenarios::land_refuses_a_moved_member_whose_branch_lacks_the_pin())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_reports_what_it_pins_beyond_the_target_scenario() {
+    runner::run(scenarios::land_reports_what_it_pins_beyond_the_target())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_reports_the_target_ahead_of_its_push_branch_scenario() {
+    runner::run(scenarios::land_reports_the_target_ahead_of_its_push_branch())
+        .assert_fully_decided_green();
 }
