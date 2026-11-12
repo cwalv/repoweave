@@ -106,7 +106,7 @@ fn weave() -> Weave {
 }
 
 #[test]
-fn update_remote_commit_refuses_project_repo_dirt_before_anything_moves() {
+fn update_remote_commit_leaves_project_repo_dirt_out_of_its_commit() {
     let weave = weave();
     std::fs::write(weave.project().join("notes.txt"), "committed\n").unwrap();
     common::git_in(weave.project(), &["add", "notes.txt"]);
@@ -122,32 +122,25 @@ fn update_remote_commit_refuses_project_repo_dirt_before_anything_moves() {
     common::git_in(&weave.forge, &["commit", "-m", "upstream"]);
     common::git_in(&weave.forge, &["push", "origin", "main"]);
 
-    let lock_before = std::fs::read(weave.project().join("rwv.lock")).unwrap();
-    let member_before = common::git_in(weave.member(), &["rev-parse", "HEAD"]);
-
     let out = weave.rwv(&["update", "--remote", "--commit"]);
 
-    assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(&format!("projects/{PROJECT}: edits dirty"))
-            && stderr.contains("notes.txt"),
-        "{stderr}"
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("notes.txt (edited)"), "{stderr}");
+    let committed = common::git_in(
+        weave.project(),
+        &["show", "--name-only", "--format=", "HEAD"],
     );
-    assert_eq!(
-        std::fs::read(weave.project().join("rwv.lock")).unwrap(),
-        lock_before,
-        "the lock is not written before the refusal"
-    );
+    assert!(committed.contains("rwv.lock"), "{committed}");
+    assert!(!committed.contains("notes.txt"), "{committed}");
     assert_eq!(
         common::git_in(weave.member(), &["rev-parse", "HEAD"]),
-        member_before,
-        "no member is advanced before the refusal"
+        common::git_in(weave.member(), &["rev-parse", "refs/remotes/origin/main"]),
+        "the member is advanced"
     );
     assert_eq!(
-        common::git_in(weave.member(), &["rev-parse", "refs/remotes/origin/main"]),
-        member_before,
-        "nothing is fetched before the refusal"
+        std::fs::read_to_string(weave.project().join("notes.txt")).unwrap(),
+        "edited and uncommitted\n"
     );
 }
 

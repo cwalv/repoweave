@@ -570,7 +570,7 @@ fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files
 
     common::git_in(w.checkout(), &["add", "-A"]);
     common::git_in(w.checkout(), &["commit", "--quiet", "-m", "recommitted"]);
-    rwv(&w.workweave, &["lock", "--repo", MEMBER, "--commit"]);
+    rwv(&w.workweave, &["member", "pin", MEMBER, "HEAD", "--commit"]);
     assert_eq!(findings(&w.workweave, false), Vec::<String>::new());
     assert_eq!(findings(&w.primary, true), Vec::<String>::new());
 }

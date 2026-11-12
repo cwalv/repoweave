@@ -115,25 +115,27 @@ fn remove_commits_the_removal_and_the_dropped_pin() {
 }
 
 #[test]
-fn a_member_verb_refuses_unrelated_project_edits_before_it_changes_anything() {
+fn a_member_verb_leaves_unrelated_project_edits_out_of_its_commit() {
     let w = two_members();
     std::fs::write(project(&w).join("README"), "edited\n").unwrap();
     git_in(project(&w), &["add", "README"]);
     git_in(project(&w), &["commit", "-qm", "readme"]);
     std::fs::write(project(&w).join("README"), "dirty\n").unwrap();
-    let before = (commits(&w), manifest(&w));
 
     for args in [
         &["member", "set-role", LIB, "fork"][..],
         &["member", "set-recurse-submodules", LIB, "false"][..],
         &["member", "remove", LIB][..],
     ] {
-        let text = refused(&run(&w, args));
-        assert!(text.contains("edits dirty"), "{args:?}: {text}");
+        let before = commits(&w);
+        let text = succeeded(&run(&w, args));
+        assert!(text.contains("README (edited)"), "{args:?}: {text}");
+        assert_eq!(commits(&w), before + 1, "{args:?}");
+        let committed = git_in(project(&w), &["show", "--name-only", "--format=", "HEAD"]);
+        assert!(!committed.contains("README"), "{args:?}: {committed}");
         assert_eq!(
-            (commits(&w), manifest(&w)),
-            before,
-            "{args:?} changed something"
+            std::fs::read_to_string(project(&w).join("README")).unwrap(),
+            "dirty\n"
         );
     }
 }

@@ -4948,7 +4948,7 @@ fn unresolvable_lock_refusal(
         ));
         remedies.push_str(&format!(
             "\n  {repo_path}: `rwv fetch` brings in history that may hold it; to record the \
-             checkout's commit instead, by name: `rwv lock --repo {repo_path} --commit \
+             checkout's commit instead, by name: `rwv member pin {repo_path} HEAD --commit \
              --project {project_name}`"
         ));
     }
@@ -5019,7 +5019,7 @@ fn lock_relation_refusal(
     for repo in &by_name {
         msg.push_str(&format!(
             "\nFor {repo}, whose HEAD is behind or diverged from its pin, record the current HEAD \
-             by name with `rwv lock --repo {repo} --commit`; a plain `rwv lock` refuses to move a \
+             by name with `rwv member pin {repo} HEAD --commit`; `rwv lock` refuses to move a \
              pin backward.\n"
         ));
     }
@@ -9165,13 +9165,13 @@ mod tests {
         .expect("non-empty offending set yields a refusal");
         assert!(
             msg.contains(
-                "record the current HEAD by name with `rwv lock --repo github/org/lib --commit`"
+                "record the current HEAD by name with `rwv member pin github/org/lib HEAD --commit`"
             ),
-            "diverged repo must earn the record-by-name `rwv lock --repo` hint: {msg}"
+            "diverged repo must earn the record-by-name `rwv member pin` hint: {msg}"
         );
     }
 
-    // The unresolvable-lock (corrupt lock) refusal names `rwv lock --repo … --commit`.
+    // The unresolvable-lock (corrupt lock) refusal names `rwv member pin … HEAD --commit`.
     #[test]
     fn unresolvable_lock_refusal_hint_names_lock_commit() {
         let msg = unresolvable_lock_refusal(
@@ -9185,8 +9185,8 @@ mod tests {
         )
         .expect("non-empty entries yield a refusal");
         assert!(
-            msg.contains("rwv lock --repo github/org/lib --commit"),
-            "unresolvable-lock hint must name `rwv lock --repo … --commit`: {msg}"
+            msg.contains("rwv member pin github/org/lib HEAD --commit"),
+            "unresolvable-lock hint must name `rwv member pin … HEAD --commit`: {msg}"
         );
     }
 

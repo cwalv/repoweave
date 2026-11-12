@@ -40,7 +40,7 @@ Commands:
   switch       Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one is refused until `rwv branch set-mode` records it; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
-  lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
+  lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included; `rwv member pin` moves a pin backward by name. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
   log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
   abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them

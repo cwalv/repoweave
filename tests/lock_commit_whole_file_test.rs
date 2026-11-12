@@ -102,7 +102,7 @@ fn every_refusal_is_judged_before_anything_is_written() {
     let text = refused(&run(&w, &["lock", "--commit"]));
 
     assert!(text.contains("name no-such-branch (nowhere)"), "{text}");
-    assert!(text.contains("projects/proj: edits dirty"), "{text}");
+    assert!(!text.contains("projects/proj: edits"), "{text}");
     assert!(
         text.contains("rwv fetch") && text.contains("--new"),
         "the refusal names the fetch and the creating spelling:\n{text}"
@@ -177,7 +177,7 @@ fn a_hand_removed_member_is_committed_removed_and_its_checkout_is_kept() {
 }
 
 #[test]
-fn a_whole_file_commit_refuses_project_edits_before_it_writes_the_lock() {
+fn a_whole_file_commit_leaves_other_project_edits_out_of_its_commit() {
     let w = two_members();
     let hand = format!(
         "{}\n[integrations.vscode-workspace]\nenabled = false\n",
@@ -189,14 +189,13 @@ fn a_whole_file_commit_refuses_project_edits_before_it_writes_the_lock() {
     git_in(project(&w), &["commit", "-qm", "readme"]);
     std::fs::write(project(&w).join("README"), "dirty\n").unwrap();
     commit_in(&member(&w, APP), "app-ahead");
-    let before = (commits(&w), manifest(&w), lock_text(&w));
+    let before = commits(&w);
 
-    let text = refused(&run(&w, &["lock", "--commit"]));
+    let text = succeeded(&run(&w, &["lock", "--commit"]));
 
-    assert!(text.contains("projects/proj: edits dirty"), "{text}");
-    assert_eq!(
-        (commits(&w), manifest(&w), lock_text(&w)),
-        before,
-        "the lock was written before the refusal"
-    );
+    assert_eq!(commits(&w), before + 1, "{text}");
+    assert!(text.contains("README (edited)"), "{text}");
+    let committed = git_in(project(&w), &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(!committed.contains("README"), "{committed}");
+    assert!(git_in(project(&w), &["diff", "--name-only"]).contains("README"));
 }

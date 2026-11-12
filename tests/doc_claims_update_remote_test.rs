@@ -610,9 +610,9 @@ fn update_filtered_commit_is_lock_only() {
 }
 
 /// Staging the authored set must not become `commit -a`: work in progress
-/// the verb did not produce still blocks the auto-commit.
+/// the verb did not produce stays out of the commit, edited, and is named.
 #[test]
-fn update_commit_still_refuses_unrelated_dirt() {
+fn update_commit_leaves_unrelated_dirt_out_of_its_commit() {
     let repos = [("local/org/a", "owned")];
     let ws = build_workspace("alpha", &repos);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
@@ -629,17 +629,21 @@ fn update_commit_still_refuses_unrelated_dirt() {
         .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
-        .failure()
+        .success()
         .stderr(predicates::str::contains(
-            "rwv update: projects/alpha: edits dirty\n    notes.md\n",
+            "projects/alpha: uncommitted files left as they are: notes.md (edited)",
         ));
+    assert!(
+        !files_in_head_commit(&project_dir).contains(&"notes.md".to_string()),
+        "the edit to notes.md was committed"
+    );
 }
 
 /// A staged rename onto a path the verb authors still names the path it
-/// came from, which the verb does not own, so the commit is refused rather
-/// than carrying that path's removal.
+/// came from, which the verb does not own, so the commit carries the
+/// authored path and not that path's removal, which stays staged.
 #[test]
-fn update_commit_refuses_a_rename_onto_an_authored_path() {
+fn update_commit_leaves_out_a_renames_removal_onto_an_authored_path() {
     let repos = [("local/org/a", "owned")];
     let ws = build_workspace("alpha", &repos);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
@@ -662,14 +666,11 @@ fn update_commit_refuses_a_rename_onto_an_authored_path() {
         .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
-        .failure()
+        .success()
         .stderr(predicates::str::contains(
-            "rwv update: projects/alpha: edits dirty\n    notes.md\n",
+            "projects/alpha: uncommitted files left as they are: notes.md (staged)",
         ));
-    assert!(
-        files_in_head_commit(&project_dir).contains(&"notes.md".to_string()),
-        "the rename's removal of notes.md was not committed"
-    );
+    common::git_in(&project_dir, &["cat-file", "-e", "HEAD:notes.md"]);
 }
 
 /// A generated file the operator chose to gitignore is not part of the

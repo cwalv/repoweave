@@ -923,14 +923,16 @@ impl GitVcs {
         if born {
             in_index(&["read-tree", "HEAD"], &[])?;
         }
-        let mut listing = vec!["ls-files", "-s", "-z", "--"];
+        let mut listing = vec!["ls-files", "-s", "-z", "--full-name", "--"];
         listing.extend_from_slice(paths);
         let staged = Self::run_bytes_in(&listing, repo, &[], &[])?;
+        let prefix = Self::run_trimmed(["rev-parse", "--show-prefix"], repo)?;
         let present: Vec<String> = staged
             .split(|byte| *byte == 0)
             .filter_map(|entry| {
                 let tab = entry.iter().position(|byte| *byte == b'\t')?;
-                Some(String::from_utf8_lossy(&entry[tab + 1..]).into_owned())
+                let full = String::from_utf8_lossy(&entry[tab + 1..]).into_owned();
+                Some(full.strip_prefix(&prefix).unwrap_or(&full).to_owned())
             })
             .collect();
         if !present.is_empty() {
@@ -2354,7 +2356,7 @@ impl Vcs for GitVcs {
             ],
             repo,
         )?;
-        let born = !matches!(self.head_attachment(repo)?, HeadAttachment::Unborn(_));
+        let born = Self::run_trimmed(["rev-parse", "--verify", "--quiet", "HEAD"], repo).is_ok();
         let outcome = Self::commit_through_own_index(repo, &index, born, paths, message);
         let _ = std::fs::remove_file(&index);
         outcome

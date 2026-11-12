@@ -1283,11 +1283,11 @@ fn lock_commit_message_summarizes_repos() {
 }
 
 // ---------------------------------------------------------------------------
-// 16. --commit flag: dirty check refuses non-lock uncommitted changes
+// 16. --commit flag: non-lock uncommitted changes stay out of the commit
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_commit_dirty_check_refuses_non_lock_changes() {
+fn lock_commit_leaves_non_lock_changes_out_of_its_commit() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1331,21 +1331,19 @@ fn lock_commit_dirty_check_refuses_non_lock_changes() {
     run_git(&["commit", "-m", "add work file"]);
     std::fs::write(root.join("work.txt"), "uncommitted change\n").unwrap();
 
-    // --commit must refuse because work.txt has uncommitted changes.
     rwv_cmd()
         .args(["lock", "--commit"])
         .current_dir(&project_dir)
         .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("uncommitted")
-                .or(predicate::str::contains("outside"))
-                .or(predicate::str::contains("stash")),
-        );
+        .success()
+        .stderr(predicate::str::contains("work.txt (edited)"));
+    let committed = run_git(&["show", "--name-only", "--format=", "HEAD"]);
+    assert!(!committed.contains("work.txt"), "{committed}");
+    assert!(run_git(&["diff", "--name-only"]).contains("work.txt"));
 }
 
 #[test]
-fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
+fn lock_commit_leaves_staged_non_lock_changes_staged() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1384,7 +1382,6 @@ fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
     run_git(&["add", "."]);
     run_git(&["commit", "-m", "initial"]);
 
-    // Stage a new file (would be bundled into the lock commit without the check).
     std::fs::write(root.join("staged.txt"), "staged\n").unwrap();
     run_git(&["add", "staged.txt"]);
 
@@ -1392,12 +1389,10 @@ fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
         .args(["lock", "--commit"])
         .current_dir(&project_dir)
         .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("uncommitted")
-                .or(predicate::str::contains("outside"))
-                .or(predicate::str::contains("stash")),
-        );
+        .success();
+    let committed = run_git(&["show", "--name-only", "--format=", "HEAD"]);
+    assert!(!committed.contains("staged.txt"), "{committed}");
+    assert_eq!(run_git(&["diff", "--cached", "--name-only"]), "staged.txt");
 }
 
 // ============================================================================

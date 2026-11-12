@@ -318,7 +318,9 @@ fn pull_refuses_while_the_project_repo_has_uncommitted_changes_the_branch_would_
 
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains(&format!("projects/{PROJECT}: edits dirty")),
+        stderr(&out).contains(&format!(
+            "projects/{PROJECT}: edits rwv.toml or rwv.lock uncommitted"
+        )),
         "{}",
         stderr(&out)
     );

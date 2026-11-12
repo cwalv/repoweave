@@ -239,7 +239,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 3,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -254,7 +254,10 @@ const ALLOWLIST: &[Allowed] = &[
             untracked, or added with nothing staged its working file does \
             not show. Any other state returns an outcome and touches nothing, \
             so what is deleted is always a byte-for-byte copy of what the \
-            caller holds.",
+            caller holds. commit_only: removes the private index file it \
+            wrote under the git directory, named for this process, once the \
+            commit through it is made or refused; the repo's own index and \
+            working files are never it.",
     },
     Allowed {
         file: "git.rs",
