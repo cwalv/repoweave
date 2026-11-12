@@ -1383,7 +1383,24 @@ fn act(
     let resets_project = resets.iter().any(|r| matches!(r, RepoOperand::Project(_)));
     let vcs = sync.vcs.as_ref();
     let head = vcs.head_revision(&sync.dir)?.id().clone();
-    if sync.merging() || take_in.merged.contains(&RepoKey::Project) {
+    let project_merges = sync.merging()
+        || take_in.merged.contains(&RepoKey::Project)
+        || (!resets_project
+            && vcs.mid_op(&sync.dir).is_none()
+            && !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))?
+            && !vcs.is_ancestor(&sync.dir, &rev(&head), &rev(&source))?
+            && {
+                let (now, merged) =
+                    integration_now(sync, op, None, &sync.dir, vcs, &head, &source)?;
+                if let Some(merge) = merged {
+                    say(
+                        output,
+                        &crate::set_history::merged_line(&sync.label(), &merge),
+                    );
+                }
+                now == Integration::Merge
+            });
+    if project_merges {
         if !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))?
             || vcs.merge_in_flight(&sync.dir)?.is_some()
         {
@@ -1542,7 +1559,26 @@ fn take_member(
     if vcs.is_ancestor(dir, &src, &head)? {
         return Ok(head.id().clone());
     }
-    if sync.merging() || how == Integration::Merge {
+    let mut merges = sync.merging() || how == Integration::Merge;
+    let mut follows = false;
+    if !merges && !vcs.is_ancestor(dir, &head, &src)? {
+        let pins = PinHistory::of(
+            sync.vcs.as_ref(),
+            &sync.dir,
+            take_in_tip(op)?.as_ref().unwrap_or(source),
+        )
+        .map(|h| h.of_member(path))
+        .unwrap_or_default();
+        follows = crate::lineage::new_work(vcs, dir, head.id(), Some(source), &pins)?.is_empty();
+        if !follows {
+            let (now, merged) = integration_now(sync, op, Some(path), dir, vcs, head.id(), source)?;
+            merges = now == Integration::Merge;
+            if let Some(merge) = merged {
+                say(output, &crate::set_history::merged_line(path, &merge));
+            }
+        }
+    }
+    if merges {
         let message = format!(
             "Merge {}'s pin of {path} into {}",
             sync.source_name(),
@@ -1586,15 +1622,7 @@ fn take_member(
         );
         return Ok(source.clone());
     }
-    let pins = PinHistory::of(
-        sync.vcs.as_ref(),
-        &sync.dir,
-        take_in_tip(op)?.as_ref().unwrap_or(source),
-    )
-    .map(|h| h.of_member(path))
-    .unwrap_or_default();
-    let new_work = crate::lineage::new_work(vcs, dir, head.id(), Some(source), &pins)?;
-    if new_work.is_empty() {
+    if follows {
         let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
         vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
         journal(source)?;
@@ -1652,6 +1680,83 @@ fn report_dropped_derived(
              {e:#}"
         ),
     }
+}
+
+/// How a repo whose branch and source have each moved takes the source in,
+/// judged from the repository as it stands, so a `--continue` re-judges what
+/// a stop let the operator change: the target's setting at the tip taken in
+/// (the member's entry, else the top level), else the run's `--history`; a
+/// range holding a merge is merged; a rebase refuses a declared branch and a
+/// branch with dependents. `repo` is the member, `None` for the project.
+fn integration_now(
+    sync: &Sync<'_>,
+    op: &Op,
+    repo: Option<&RepoPath>,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    head: &CommitId,
+    source: &CommitId,
+) -> anyhow::Result<(Integration, Option<CommitId>)> {
+    let label = repo.map_or_else(|| sync.label(), ToString::to_string);
+    let scoped = |state: State| {
+        let judging = state.of(&label);
+        let judging = match repo {
+            Some(path) => judging.member().bind("<m>", path),
+            None => judging.project_repo(),
+        };
+        judging
+            .checkout(dir)
+            .bind("<T>", sync.source_name())
+            .by_verb("sync")
+    };
+    let theirs = take_in_tip(op)?.and_then(|tip| manifest_at(sync.vcs.as_ref(), &sync.dir, &tip));
+    let recorded = theirs.and_then(|m| match repo {
+        Some(path) => m.history_for(path),
+        None => m.history,
+    });
+    let history =
+        crate::set_history::governing(recorded, sync.history, repo.is_some(), &scoped, vcs)
+            .map_err(|judged| judged.refused())?;
+    let in_range = crate::set_history::merge_in_range(vcs, dir, head, source)?;
+    let (how, merged) = crate::set_history::integration(history, in_range);
+    if how == Integration::Merge {
+        return Ok((how, merged));
+    }
+    let mut report = Report::default();
+    if let (Some(path), HeadAttachment::Attached(on)) = (repo, vcs.head_attachment(dir)?) {
+        let on = on.to_string();
+        let declarers =
+            crate::alignment::Accounting::scan(sync.ctx.primary_path())?.declarers(path, &on);
+        if !declarers.is_empty() {
+            report.add(
+                scoped(State::ProtectedDeclared)
+                    .subject(&on)
+                    .listing(declarers)
+                    .judge(vcs),
+            );
+        }
+    }
+    let dependents =
+        crate::merge_upstream::dependents_of(sync.vcs.as_ref(), &sync.dir, &sync.branch)?;
+    if !dependents.is_empty() {
+        report.add(
+            State::TargetDependents
+                .of(sync.label())
+                .project_repo()
+                .checkout(&sync.dir)
+                .bind("<W>", &sync.branch)
+                .bind("<T>", sync.source_name())
+                .listing(dependents.iter().map(|d| {
+                    format!(
+                        "{d} lands into {}, which this sync would rewrite",
+                        sync.branch
+                    )
+                }))
+                .judge(sync.vcs.as_ref()),
+        );
+    }
+    report.into_result()?;
+    Ok((how, merged))
 }
 
 fn take_in_tip(op: &Op) -> anyhow::Result<Option<CommitId>> {

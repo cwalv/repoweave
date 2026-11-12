@@ -10924,6 +10924,98 @@ pub fn history_published_rebase() -> Scenario {
     )
 }
 
+/// A target recording `history` that moved in `app` and `lib`, and a seat whose `app`
+/// edit conflicts with `main`'s: `sync` stops on `app`'s merge before `lib`,
+/// planned a fast-forward, is reached. The operator resolves `app` and
+/// commits in `lib` during the stop.
+fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+        Step::commit(&a(), Repo::Lib, "main-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&ww("w"), Repo::App, &["add", "README"]),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib-stop"),
+    ]
+}
+
+/// `sync --continue` re-judges a repo the stop changed: `lib`, planned a
+/// fast-forward, now holds the operator's commit, and under `merge` it takes
+/// `main` in by a merge commit, the seat's branch first, never by a rebase.
+pub fn sync_continue_merges_a_repo_the_stop_diverged() -> Scenario {
+    let mut steps = sync_stopped_then_lib_committed("merge");
+    steps.push(
+        Step::rwv(&ww("w"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("rebased"))
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "proj--w^1",
+                mark: "w-lib-stop",
+            })
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "proj--w^2",
+                mark: "main-lib",
+            })
+            .claim(Claim::NoBackup {
+                repo: Repo::Lib,
+                mark: "w-lib-stop",
+            }),
+    );
+    scenario("sync --continue merges a repo the stop diverged", steps)
+}
+
+/// `sync --continue` under `linear` never flattens a merge the stop left:
+/// `lib`, planned a fast-forward, now holds the operator's merge, so it takes
+/// `main` in by a merge commit, reported `merged`.
+pub fn sync_continue_merges_a_range_the_stop_gave_a_merge() -> Scenario {
+    let mut steps = sync_stopped_then_lib_committed("linear");
+    steps.extend([
+        Step::git(&ww("w"), Repo::Lib, &["switch", "-c", "side", "HEAD~1"]),
+        Step::commit(&ww("w"), Repo::Lib, "side-lib"),
+        Step::git(&ww("w"), Repo::Lib, &["switch", "proj--w"]),
+        Step::git(
+            &ww("w"),
+            Repo::Lib,
+            &["merge", "--no-ff", "-m", "stop-merge", "side"],
+        ),
+        Step::rwv(&ww("w"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: merged: the commits a rebase",
+            ))
+            .claim(Claim::OutputLacks("local/remotes/lib: rebased"))
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "proj--w^1^2",
+                mark: "side-lib",
+            })
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::Lib,
+                rev: "proj--w^2",
+                mark: "main-lib",
+            }),
+    ]);
+    scenario(
+        "sync --continue merges a range the stop gave a merge",
+        steps,
+    )
+}
+
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
 /// conflict, printing each field's setter with each side's value. That the

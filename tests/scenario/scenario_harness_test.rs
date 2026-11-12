@@ -652,6 +652,8 @@ macro_rules! every_scenario {
 every_scenario!(
     solo_workweave,
     dc04_conflict_setter,
+    sync_continue_merges_a_repo_the_stop_diverged,
+    sync_continue_merges_a_range_the_stop_gave_a_merge,
     landing_names_every_field,
     history_unset_fast_forward,
     history_unset_moved,
@@ -4339,6 +4341,18 @@ fn history_disagreement_is_reported_and_each_project_lands_by_its_own() {
 #[test]
 fn history_member_override_is_stored_and_a_fast_forward_reads_neither() {
     runner::run(scenarios::history_member_override()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_merges_a_repo_the_stop_diverged_scenario() {
+    runner::run(scenarios::sync_continue_merges_a_repo_the_stop_diverged())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_merges_a_range_the_stop_gave_a_merge_scenario() {
+    runner::run(scenarios::sync_continue_merges_a_range_the_stop_gave_a_merge())
+        .assert_fully_decided_green();
 }
 
 #[test]
