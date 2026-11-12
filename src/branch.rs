@@ -179,7 +179,7 @@ pub(crate) fn write_refusal(
             judged(&target, Lookup::Unrecorded)
         }
         WriteError::TargetUnreadable(target, lookup) => judged(&target, lookup),
-        WriteError::Busy => anyhow::Error::msg(WriteError::Busy.to_string()),
+        WriteError::Busy => crate::untokened!(EnvironmentPassthrough, "{}", WriteError::Busy),
         WriteError::Vcs(e) => anyhow::Error::new(e).context("could not write the branch record"),
     }
 }

@@ -2058,10 +2058,11 @@ impl WorkweaveMarker {
             .with_context(|| format!("failed to parse .rwv-workweave at {path}"))?;
         let raw = docs
             .first()
-            .ok_or_else(|| anyhow::anyhow!("{path} is not a YAML mapping"))?;
+            .ok_or_else(|| crate::untokened!(Owed, "{path} is not a YAML mapping"))?;
         let field = |key: &str| raw.as_mapping_get(key).and_then(|v| v.as_str());
-        let primary = field("primary")
-            .ok_or_else(|| anyhow::anyhow!("{path} is missing the required `primary:` field"))?;
+        let primary = field("primary").ok_or_else(|| {
+            crate::untokened!(Owed, "{path} is missing the required `primary:` field")
+        })?;
         let project = field("project")
             .and_then(|p| ProjectName::new(p).ok())
             .expect(

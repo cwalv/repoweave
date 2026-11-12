@@ -191,11 +191,13 @@ fn judge_set_url(
     let vcs = crate::vcs::vcs_for(entry.vcs_type);
     let located = loaded.checkout(ctx, member);
     let dir = located.dir.as_path();
-    anyhow::ensure!(
-        dir.exists(),
-        "{member}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
+    if !dir.exists() {
+        return Err(crate::untokened!(
+            Owed,
+            "{member}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
          `rwv {VERB}`"
-    );
+        ));
+    }
     let same = clone_url(&entry.url)?.names_same_remote(&clone_url(new)?);
     let relink = if same {
         None

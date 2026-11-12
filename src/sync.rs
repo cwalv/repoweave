@@ -1729,7 +1729,8 @@ fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
     let savepoint = vcs
         .resolve_savepoint(&ctx.cwd_project_dir, &ctx.savepoint_key())
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            crate::untokened!(
+                InternalInvariant,
                 "internal: no savepoint under op {} in {}",
                 ctx.op_id.as_str(),
                 ctx.cwd_project_dir.display(),
@@ -2637,7 +2638,8 @@ impl OpContext<'_> {
     /// Convenience: the active phase recorded on the owner record.
     fn current_phase(&self) -> anyhow::Result<op_state::OpPhase> {
         let record = op_state::read_owner(&self.owner_workspace_dir)?.ok_or_else(|| {
-            anyhow::anyhow!(
+            crate::untokened!(
+                InternalInvariant,
                 "internal: owner record disappeared at {} mid-op",
                 self.owner_workspace_dir.display()
             )
@@ -2938,7 +2940,8 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> 
     } else {
         ("s", "them", "are")
     };
-    anyhow::bail!(
+    Err(crate::untokened!(
+        Tally,
         "{verb} completed: replay and relock finished and op-state is cleared, so `rwv abort` \
          does not apply. Pruning was refused for {n} member checkout{s} the manifest no longer \
          names, and {them} {are} still on disk:\n  {list}\n\
@@ -2949,7 +2952,7 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> 
             .map(RepoPath::as_str)
             .collect::<Vec<_>>()
             .join("\n  "),
-    )
+    ))
 }
 
 /// The op-scope completion claim, made where the machine is terminal for this
@@ -3776,12 +3779,13 @@ fn guard_and_mark<'a>(
                          check it before re-running."
                     ),
                 };
-                anyhow::bail!(
+                return Err(crate::untokened!(
+                    EnvironmentPassthrough,
                     "the op-start relock in {} could not commit, so the op did not start and \
                      nothing was changed: {e:#}\n\n{behind}\n\n\
                      Clear what refused the commit, then re-run.{restore_note}",
                     cwd_project_dir.display(),
-                );
+                ));
             }
         };
         if emit_text {
@@ -5234,13 +5238,20 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .project_vcs
             .head_revision(&ctx.cwd_project_dir)
             .context("failed to read project HEAD after Phase 1'")?;
-        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
-            .ok_or_else(|| anyhow::anyhow!("internal: owner record missing after Phase 1'"))?;
+        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+            crate::untokened!(
+                InternalInvariant,
+                "internal: owner record missing after Phase 1'"
+            )
+        })?;
         owner
             .tips
             .advanced_mut()
             .ok_or_else(|| {
-                anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
+                crate::untokened!(
+                    InternalInvariant,
+                    "internal: advanced_tips write after convergence post Phase 1'"
+                )
             })?
             .insert(RepoKey::Project, project_tip.id().clone());
         op_state::write_owner(&ctx.owner_workspace_dir, &owner)
@@ -5415,13 +5426,17 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .collect();
         if !entry_tips.is_empty() {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-                anyhow::anyhow!("internal: owner record missing during replay entry write")
+                crate::untokened!(
+                    InternalInvariant,
+                    "internal: owner record missing during replay entry write"
+                )
             })?;
             owner
                 .tips
                 .advanced_mut()
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
+                    crate::untokened!(
+                        InternalInvariant,
                         "internal: advanced_tips write after convergence at replay entry"
                     )
                 })?
@@ -5490,10 +5505,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .collect();
         if !post_join_tips.is_empty() {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-                anyhow::anyhow!("internal: owner record missing during post-fan-out write")
+                crate::untokened!(
+                    InternalInvariant,
+                    "internal: owner record missing during post-fan-out write"
+                )
             })?;
             let advanced = owner.tips.advanced_mut().ok_or_else(|| {
-                anyhow::anyhow!("internal: advanced_tips write after convergence post fan-out")
+                crate::untokened!(
+                    InternalInvariant,
+                    "internal: advanced_tips write after convergence post fan-out"
+                )
             })?;
             for (repo_path, tip) in post_join_tips {
                 advanced.insert(repo_path, tip);
@@ -5822,8 +5843,12 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// them into the owner record's `converged_tips` map. Used by advance-target
 /// and (sibling .4) abort's HEAD-verified restore.
 fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::Result<()> {
-    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
-        .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
+    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: owner record missing during relock"
+        )
+    })?;
     // Build the converged table from post-replay HEADs...
     let mut converged: std::collections::BTreeMap<RepoKey, CommitId> =
         std::collections::BTreeMap::new();
@@ -6395,7 +6420,8 @@ fn rewind_project_repo(
     let savepoint = vcs
         .resolve_savepoint_ref(&ctx.cwd_project_dir, &ctx.savepoint_key())
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            crate::untokened!(
+                InternalInvariant,
                 "internal: --discard-local-commits reached Phase 1' with no savepoint under \
                  op {} in {}; refusing to discard commits that `rwv abort` could not restore",
                 ctx.op_id.as_str(),
@@ -6487,7 +6513,10 @@ fn apply_project_strategy(
                     ),
                     None => String::new(),
                 };
-                anyhow::bail!("project repo fast-forward failed{shape}: {e:#}");
+                return Err(crate::untokened!(
+                    EnvironmentPassthrough,
+                    "project repo fast-forward failed{shape}: {e:#}"
+                ));
             }
         }
         SyncStrategy::Rebase => {
@@ -6537,7 +6566,12 @@ fn apply_project_strategy(
                         )
                     );
                 }
-                Err(e) => anyhow::bail!("project repo rebase failed: {e:#}"),
+                Err(e) => {
+                    return Err(crate::untokened!(
+                        EnvironmentPassthrough,
+                        "project repo rebase failed: {e:#}"
+                    ))
+                }
             }
         }
     }
@@ -6824,7 +6858,7 @@ pub fn run_abort(
         );
     }
     if tally.any_failure {
-        anyhow::bail!("abort completed with failures");
+        return Err(crate::untokened!(Tally, "abort completed with failures"));
     }
 
     Ok(())

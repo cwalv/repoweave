@@ -215,7 +215,11 @@ impl Integration for StaticFiles {
             // always have a single offending entry, so a focused message is
             // more actionable than a comma-joined list. check() reports them
             // all individually for `rwv doctor`.
-            anyhow::bail!("{}", collision_message(&collisions[0]));
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "{}",
+                collision_message(&collisions[0])
+            ));
         }
 
         for file in checked_at_output_dir(&cfg, ctx) {

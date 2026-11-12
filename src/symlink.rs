@@ -76,10 +76,9 @@ pub const WINDOWS_PERMISSION_REMEDY: &str =
 pub fn create(target: &Path, link: &Path, kind: LinkTarget) -> anyhow::Result<()> {
     platform_symlink(target, link, kind).map_err(|e| {
         let (kind, message) = refusal(&e, target, link, cfg!(windows));
-        let err = anyhow::Error::msg(message);
         match kind {
-            Some(kind) => crate::refusal::refusing(kind, err),
-            None => err,
+            Some(kind) => crate::refusal::refusal(kind, message),
+            None => crate::untokened!(EnvironmentPassthrough, "{message}"),
         }
     })
 }

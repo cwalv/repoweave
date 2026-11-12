@@ -482,7 +482,10 @@ impl Aligner {
             (None, _) => Mode::Declared,
             (Some(_), Some(branch)) => {
                 let name = BranchName::parse(vcs.as_ref(), branch).map_err(|e| {
-                    anyhow::anyhow!("`{branch}` is not a usable weave branch name: {e:?}")
+                    crate::untokened!(
+                        InternalInvariant,
+                        "`{branch}` is not a usable weave branch name: {e:?}"
+                    )
                 })?;
                 let store = Store::open(vcs.as_ref(), &project_dir)?;
                 match store.view()?.lookup(&name) {
@@ -1089,7 +1092,11 @@ impl Aligner {
                 HeadAttachment::Attached(a) => m.vcs.detach_head(&a, at, departure)?,
                 HeadAttachment::Detached(was) => m.vcs.advance_detached_head(&was, at)?,
                 HeadAttachment::Unborn(_) => {
-                    anyhow::bail!("{}: an unborn branch cannot be detached", m.path)
+                    return Err(crate::untokened!(
+                        InternalInvariant,
+                        "{}: an unborn branch cannot be detached",
+                        m.path
+                    ))
                 }
             },
             Target::Branch {

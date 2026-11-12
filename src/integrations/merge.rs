@@ -357,11 +357,12 @@ pub fn merge_activate<D: ManagedDoc>(
 /// place for all of them.
 pub fn write_parseable<D: ManagedDoc>(path: &Path, text: &str) -> Result<()> {
     if let Err(e) = D::parse(text) {
-        anyhow::bail!(
+        return Err(crate::untokened!(
+            IntegrationChannel,
             "refusing to write {}: the content generated for it does not parse ({e:#}); \
              the file is left as it was",
             path.display()
-        );
+        ));
     }
     write_unless_held(path, text)
 }
@@ -672,7 +673,12 @@ impl<M: JsonMarker> ManagedDoc for JsonDoc<M> {
             let v: serde_json::Value = serde_json::from_str(text).context("invalid JSON")?;
             match v {
                 serde_json::Value::Object(m) => m,
-                _ => anyhow::bail!("top-level JSON must be an object"),
+                _ => {
+                    return Err(crate::untokened!(
+                        IntegrationChannel,
+                        "top-level JSON must be an object"
+                    ))
+                }
             }
         };
         Ok(JsonDoc {

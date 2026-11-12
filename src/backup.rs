@@ -74,12 +74,14 @@ fn repo_named(
 ) -> anyhow::Result<BackupRepo> {
     match operand {
         RepoOperand::Project(named) => {
-            anyhow::ensure!(
-                named == project,
-                "`{operand}` is the repo of project `{named}`, not of `{project}`; \
+            if named != project {
+                return Err(crate::untokened!(
+                    Owed,
+                    "`{operand}` is the repo of project `{named}`, not of `{project}`; \
                  name this project's repo as `{}`",
-                RepoOperand::Project(project.clone())
-            );
+                    RepoOperand::Project(project.clone())
+                ));
+            }
             Ok(BackupRepo {
                 operand: operand.clone(),
                 member: None,
@@ -91,11 +93,13 @@ fn repo_named(
         RepoOperand::Member(path) => {
             let dir = ctx.primary_path().join(path.as_path());
             let vcs = crate::vcs::probe_vcs();
-            anyhow::ensure!(
-                vcs.is_repo(&dir),
-                "`{operand}` is no repo in this weave; `rwv backup list` names the repos \
+            if !vcs.is_repo(&dir) {
+                return Err(crate::untokened!(
+                    Owed,
+                    "`{operand}` is no repo in this weave; `rwv backup list` names the repos \
                  that hold backups"
-            );
+                ));
+            }
             Ok(BackupRepo {
                 operand: operand.clone(),
                 member: Some(path.clone()),

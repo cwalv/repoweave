@@ -122,9 +122,10 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
         eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
     }
     if error_count > 0 {
-        anyhow::bail!(
+        return Err(crate::untokened!(
+            Tally,
             "activate: {error_count} integration error(s); aborting before any symlinks change"
-        );
+        ));
     }
     Ok(())
 }
@@ -424,7 +425,8 @@ fn strip_disabled_integrations(
             names.join(", ")
         );
         if !remaining.is_empty() {
-            anyhow::bail!(
+            return Err(crate::untokened!(
+                InternalInvariant,
                 "{}: strip left {} behind; the finding that named this verb would \
                  fire again",
                 artifacts.integration,
@@ -433,7 +435,7 @@ fn strip_disabled_integrations(
                     .map(|p| p.name())
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
+            ));
         }
     }
     strip_disabled_links(root, manifest, ctx_base)
@@ -956,11 +958,12 @@ fn fit_to_host(
         eprintln!("[error] {}: {}", issue.source, issue.message);
     }
     if !issues.is_empty() {
-        anyhow::bail!(
+        return Err(crate::untokened!(
+            Tally,
             "{} integration(s) could not bring host-dependent settings to this host; \
              the install hooks were not run",
             issues.len()
-        );
+        ));
     }
     Ok(())
 }
@@ -1180,12 +1183,13 @@ fn refuse_over_malformed_settings(
         .iter()
         .map(|issue| format!("\n  {}: {}", issue.source, issue.message))
         .collect::<String>();
-    anyhow::bail!(
+    Err(crate::untokened!(
+        Tally,
         "{refused}. {} `[integrations.<name>]` block(s) in rwv.toml yielded no \
          settings, and {because}:{listed}\n\
          Edit rwv.toml at the field each line names, then re-run.",
         malformed.len()
-    );
+    ))
 }
 
 /// Report integration activate-hook issues to stderr and bail if any are
@@ -1210,11 +1214,12 @@ fn report_and_check_activate_hook_issues(
         eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
     }
     if error_count > 0 {
-        anyhow::bail!(
+        return Err(crate::untokened!(
+            Tally,
             "activate: {error_count} integration activate-hook error(s); \
              workspace may be partially activated — \
              run `rwv doctor --fix` to repair symlinks and re-run install hooks"
-        );
+        ));
     }
     Ok(())
 }

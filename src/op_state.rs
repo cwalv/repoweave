@@ -915,7 +915,8 @@ fn resolve_with<T>(
 ) -> anyhow::Result<Option<(T, CanonicalPath)>> {
     if OwnerRecord::path_in(workspace_dir).exists() {
         let record = read(workspace_dir)?.ok_or_else(|| {
-            anyhow::anyhow!(
+            crate::untokened!(
+                InternalInvariant,
                 "internal: owner record disappeared at {}",
                 workspace_dir.display()
             )
@@ -993,7 +994,10 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
 }
 
 fn unparseable_record(path: &StatePath, parse_error: &str, advice: &str) -> anyhow::Error {
-    anyhow::anyhow!("failed to parse owner record at {path}: {parse_error}. {advice}")
+    crate::untokened!(
+        Owed,
+        "failed to parse owner record at {path}: {parse_error}. {advice}"
+    )
 }
 
 /// Read the `.rwv-op` file from `workspace_dir` as `rwv abort` needs it.
@@ -1065,7 +1069,8 @@ pub fn read_owner_header(workspace_dir: &Path) -> anyhow::Result<Option<OwnerHea
 /// phase is the other, so this is not ordered.
 pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
-        anyhow::anyhow!(
+        crate::untokened!(
+            InternalInvariant,
             "no owner record found at {} to advance phase",
             workspace_dir.display()
         )

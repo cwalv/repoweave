@@ -45,11 +45,13 @@ pub(crate) fn judge(
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     let vcs = project_vcs();
-    anyhow::ensure!(
-        vcs.is_repo(project_dir),
-        "{} is not a repository, so there is nowhere to commit the change",
-        project_dir.display()
-    );
+    if !vcs.is_repo(project_dir) {
+        return Err(crate::untokened!(
+            Owed,
+            "{} is not a repository, so there is nowhere to commit the change",
+            project_dir.display()
+        ));
+    }
     crate::op_state::check_no_op_in_progress(&[project_dir])?;
     let mut report = crate::diagnosis::Report::default();
     report.extend(crate::lock::unrelated_dirt_line(

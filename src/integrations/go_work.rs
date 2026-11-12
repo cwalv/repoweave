@@ -471,7 +471,7 @@ fn activate_via_go_tool(
             .current_dir(workspace_root)
             .status()?;
         if !status.success() {
-            anyhow::bail!("go work init failed");
+            return Err(crate::untokened!(IntegrationChannel, "go work init failed"));
         }
     }
 
@@ -482,7 +482,10 @@ fn activate_via_go_tool(
             .current_dir(workspace_root)
             .status()?;
         if !status.success() {
-            anyhow::bail!("go work edit -go={ver} failed");
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "go work edit -go={ver} failed"
+            ));
         }
     }
 
@@ -517,7 +520,10 @@ fn activate_via_go_tool(
         if !status.success() {
             // Clean up on failure.
             let _ = std::fs::remove_file(&work_tmp);
-            anyhow::bail!("go work use {use_path} failed");
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "go work use {use_path} failed"
+            ));
         }
     }
 

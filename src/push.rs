@@ -624,7 +624,7 @@ fn fetch_all(
                     .unconfirmed
                     .insert(job.label.clone(), done.unconfirmed);
             }
-            Err(message) => anyhow::bail!("{message}"),
+            Err(message) => return Err(crate::untokened!(EnvironmentPassthrough, "{message}")),
         }
     }
     for (member, planned) in members.iter().zip(&adds) {
@@ -792,7 +792,10 @@ fn judge(
     );
     if !failures.is_empty() {
         if refusals.is_empty() {
-            return Err((reported, anyhow::anyhow!("{}", failures.join("\n"))));
+            return Err((
+                reported,
+                crate::untokened!(Tally, "{}", failures.join("\n")),
+            ));
         }
         for failure in &failures {
             refusals.note(failure);
@@ -936,7 +939,7 @@ fn judge_member(
     if let Some(aligner) = aligner {
         let aligned_plan = aligner
             .plan(&aligned, pushed.lock.as_ref())
-            .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+            .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{path}: {e:#}"))?;
         if let Some(off) = aligner.refusal(&aligned, &aligned_plan, path)? {
             refusals.add(off);
         }
@@ -1110,11 +1113,14 @@ fn target_lock_of(pushed: &Pushed, pvcs: &dyn Vcs) -> anyhow::Result<Option<Lock
             None => Some(tip),
             Some(held) if pvcs.is_ancestor(&pushed.project_dir, &held, &tip)? => Some(tip),
             Some(held) if pvcs.is_ancestor(&pushed.project_dir, &tip, &held)? => Some(held),
-            Some(_) => anyhow::bail!(
-                "rwv push: {target} and its upstream have diverged, so its tip, whose lock \
+            Some(_) => {
+                return Err(crate::untokened!(
+                    InternalInvariant,
+                    "rwv push: {target} and its upstream have diverged, so its tip, whose lock \
                  says what {} holds beyond it, is not one commit; take theirs in first",
-                pushed.branch
-            ),
+                    pushed.branch
+                ))
+            }
         };
     }
     let Some(tip) = newest else {
@@ -1813,11 +1819,12 @@ fn publish(
                 outln!("{out}");
             }
         }
-        anyhow::bail!(
+        return Err(crate::untokened!(
+            EnvironmentPassthrough,
             "project-repo push failed after all member repos pushed cleanly: {message}. \
              Member-side state is published; the lock carrier is not. \
              Retry `rwv push` once the project-repo issue is resolved."
-        );
+        ));
     }
 
     if output.is_json() {

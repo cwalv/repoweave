@@ -710,7 +710,11 @@ impl Integration for CargoWorkspace {
         let (members, excluded, nested_conflicts) = Self::partition(ctx, &cfg)?;
 
         if !nested_conflicts.is_empty() {
-            anyhow::bail!("{}", nested_workspace_error(&nested_conflicts));
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "{}",
+                nested_workspace_error(&nested_conflicts)
+            ));
         }
 
         // `output_dir = project_dir` — the committed `Cargo.toml`
@@ -856,12 +860,13 @@ impl Integration for CargoWorkspace {
         // into the context path.
         let managed = ctx.output_dir().join("Cargo.toml");
         if !managed.exists() {
-            anyhow::bail!(
+            return Err(crate::untokened!(
+                IntegrationChannel,
                 "cargo-workspace managed file missing: {}; this command does not \
                  rewrite integration workspace files to pick up rwv.toml changes — \
                  run `rwv doctor --fix` to regenerate",
                 managed.display()
-            );
+            ));
         }
 
         // Precheck: cargo cannot resolve members that are not on disk yet, and
@@ -927,14 +932,15 @@ impl Integration for CargoWorkspace {
         };
 
         if !status.success() {
-            anyhow::bail!(
+            return Err(crate::untokened!(
+                IntegrationChannel,
                 "cargo {subcommand} failed (exit {status}); \
                  if the error names duplicate crate names across workspace members, \
                  resolve by one of: (a) opt a repo out via \
                  `integrations.cargo-workspace.exclude` in rwv.toml, or (b) use \
                  `integrations.cargo-workspace.members.<repo>` with an `include:` \
                  list to contribute sub-paths instead of the repo root"
-            );
+            ));
         }
 
         // The ACCEPT moment: rwv just ran the generator, so what cargo wrote is
@@ -2162,7 +2168,12 @@ impl CargoWorkspace {
         });
         let patch_table = match patch {
             toml_edit::Item::Table(t) => t,
-            _ => anyhow::bail!("`patch` is present but is not a table"),
+            _ => {
+                return Err(crate::untokened!(
+                    IntegrationChannel,
+                    "`patch` is present but is not a table"
+                ))
+            }
         };
 
         for entry in patches {
@@ -2172,7 +2183,12 @@ impl CargoWorkspace {
                 .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
             let sub_table = match sub {
                 toml_edit::Item::Table(t) => t,
-                _ => anyhow::bail!("`patch.{registry}` is present but is not a table"),
+                _ => {
+                    return Err(crate::untokened!(
+                        IntegrationChannel,
+                        "`patch.{registry}` is present but is not a table"
+                    ))
+                }
             };
 
             // Verify-and-warn: if the user already authored this entry (no
@@ -2370,7 +2386,12 @@ impl CargoWorkspace {
             .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
         let build_table = match build {
             toml_edit::Item::Table(t) => t,
-            _ => anyhow::bail!("`build` is present but is not a table"),
+            _ => {
+                return Err(crate::untokened!(
+                    IntegrationChannel,
+                    "`build` is present but is not a table"
+                ))
+            }
         };
 
         let user_holds_pen = build_table.contains_key("rustc-wrapper")

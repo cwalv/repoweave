@@ -46,7 +46,7 @@ use crate::workspace::{
     project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
 };
 use crate::workweave_index;
-use anyhow::{anyhow, bail, Context};
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 /// Whether the member slot at `path` is a symlink, dangling or not.
@@ -1698,11 +1698,12 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
         walked.push(component);
         match std::fs::symlink_metadata(&walked) {
             Ok(meta) if meta.file_type().is_symlink() => {
-                anyhow::bail!(
+                return Err(crate::untokened!(
+                    Owed,
                     "refusing to carry {}: {} is a symlink",
                     rel.display(),
                     walked.display()
-                );
+                ));
             }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
@@ -2185,9 +2186,8 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                 cleanup_failures.join("\n  ")
             )
         };
-        bail!(
-            "workweave create completed with {failed} failure(s) out of {total} repo(s){cleanup_note}"
-        );
+        return Err(crate::untokened!(Tally, "workweave create completed with {failed} failure(s) out of {total} repo(s){cleanup_note}"
+        ));
     }
 
     if !submodule_warnings.is_empty() {
@@ -2283,10 +2283,11 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                         cleanup_failures.join("\n  ")
                     )
                 };
-                bail!(
+                return Err(crate::untokened!(
+                    EnvironmentPassthrough,
                     "could not create project worktree projects/{}: {e:#}{hook_hint}{cleanup_note}",
                     project.as_str()
-                );
+                ));
             }
         }
     } else if project_dir.exists() {
@@ -4157,7 +4158,10 @@ fn delete_workweave_inner_at(
     if !errors.is_empty() {
         let total = manifest.len() + 1;
         let failed = errors.len();
-        bail!("workweave delete completed with {failed} failure(s) out of {total} repo(s)")
+        return Err(crate::untokened!(
+            Tally,
+            "workweave delete completed with {failed} failure(s) out of {total} repo(s)"
+        ));
     }
 
     let rule = rule.map(crate::deletion::Rule::apply).transpose()?;
@@ -4384,7 +4388,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
         Some(HookEvent::WorktreeCreate) => {
             let cwd = input
                 .cwd
-                .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
+                .ok_or_else(|| crate::untokened!(HookInput, "missing cwd in hook input"))?;
 
             let ws_ctx =
                 crate::workspace::WorkspaceContext::resolve_invocation(Path::new(&cwd), None)?;
@@ -4417,9 +4421,9 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             outln!("{}", path.display());
         }
         Some(HookEvent::WorktreeRemove) => {
-            let worktree_path = input
-                .worktree_path
-                .ok_or_else(|| anyhow!("missing worktree_path in hook input"))?;
+            let worktree_path = input.worktree_path.ok_or_else(|| {
+                crate::untokened!(HookInput, "missing worktree_path in hook input")
+            })?;
 
             // Fire-and-forget: log errors but always succeed.
             if let Ok(Some(marker)) = WorkweaveMarker::read(Path::new(&worktree_path)) {
@@ -4462,13 +4466,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // Always exit 0.
         }
         Some(other) => {
-            anyhow::bail!(
-                "`{other}` is not a workweave hook event: `rwv workweave --claude-hook` handles {} and {}",
+            return Err(crate::untokened!(HookInput, "`{other}` is not a workweave hook event: `rwv workweave --claude-hook` handles {} and {}",
                 HookEvent::WORKWEAVE[0],
                 HookEvent::WORKWEAVE[1]
-            );
+            ));
         }
-        None => anyhow::bail!("missing hook_event_name in hook input"),
+        None => {
+            return Err(crate::untokened!(
+                HookInput,
+                "missing hook_event_name in hook input"
+            ))
+        }
     }
 
     Ok(())

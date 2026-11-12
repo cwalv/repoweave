@@ -561,12 +561,14 @@ fn judge_commit_of_add(
     project_dir: &Path,
     manifest: &Manifest,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        crate::vcs::project_vcs().is_repo(project_dir),
-        "{} is not a repository, so `rwv member add` has nowhere to commit the member and its \
+    if !crate::vcs::project_vcs().is_repo(project_dir) {
+        return Err(crate::untokened!(
+            Owed,
+            "{} is not a repository, so `rwv member add` has nowhere to commit the member and its \
          first pin; `rwv init` makes a project repo",
-        project_dir.display()
-    );
+            project_dir.display()
+        ));
+    }
     crate::lock::judge_unrelated_dirt(
         crate::vcs::project_vcs().as_ref(),
         project,
@@ -1283,7 +1285,10 @@ impl Removal {
             (false, false) => Ok(Self::Unregister),
             (true, false) => Ok(Self::DeleteCheckout),
             (true, true) => Ok(Self::DeleteCheckoutAndSharedClone),
-            (false, true) => anyhow::bail!("`--delete-shared-clone` requires `--delete`"),
+            (false, true) => Err(crate::untokened!(
+                InternalInvariant,
+                "`--delete-shared-clone` requires `--delete`"
+            )),
         }
     }
 
@@ -1898,21 +1903,27 @@ pub fn run_add_new(
             HeadAttachment::Unborn(u) => TrackingRef::parse(u.name().clone()),
             HeadAttachment::Attached(a) => TrackingRef::try_from(&a),
             HeadAttachment::Detached(_) => match cloned_from {
-                Some(upstream) => anyhow::bail!(
+                Some(upstream) => {
+                    return Err(crate::untokened!(
+                    InternalInvariant,
                     "rwv member add: the clone at {} has a detached HEAD right after creation, \
                      taken from the upstream at {upstream}; point that upstream's HEAD at a \
                      branch (`git -C {upstream} symbolic-ref HEAD refs/heads/<branch>`) \
                      before retrying `rwv member add {address} --new`",
                     dest.display(),
                     upstream = upstream.display(),
-                ),
-                None => anyhow::bail!(
-                    "rwv member add: repo at {} has a detached HEAD right after creation; \
+                ))
+                }
+                None => {
+                    return Err(crate::untokened!(
+                        InternalInvariant,
+                        "rwv member add: repo at {} has a detached HEAD right after creation; \
                      inspect with `git -C {} status` before retrying `rwv member add {} --new`",
-                    dest.display(),
-                    dest.display(),
-                    address
-                ),
+                        dest.display(),
+                        dest.display(),
+                        address
+                    ))
+                }
             },
         };
 

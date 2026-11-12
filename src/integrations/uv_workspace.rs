@@ -209,7 +209,13 @@ impl UvWorkspace {
                 .as_table_mut()
                 .get_mut("tool")
                 .and_then(|i| i.as_table_mut())
-                .ok_or_else(|| anyhow::anyhow!("tool is not a table in {}", path.display()))?;
+                .ok_or_else(|| {
+                    crate::untokened!(
+                        IntegrationChannel,
+                        "tool is not a table in {}",
+                        path.display()
+                    )
+                })?;
 
             if !tool.contains_key("uv") {
                 let mut t = toml_edit::Table::new();
@@ -219,7 +225,13 @@ impl UvWorkspace {
             let uv = tool
                 .get_mut("uv")
                 .and_then(|i| i.as_table_mut())
-                .ok_or_else(|| anyhow::anyhow!("[tool.uv] is not a table in {}", path.display()))?;
+                .ok_or_else(|| {
+                    crate::untokened!(
+                        IntegrationChannel,
+                        "[tool.uv] is not a table in {}",
+                        path.display()
+                    )
+                })?;
 
             if !uv.contains_key("sources") {
                 let mut t = toml_edit::Table::new();
@@ -230,7 +242,11 @@ impl UvWorkspace {
                 .get_mut("sources")
                 .and_then(|i| i.as_table_mut())
                 .ok_or_else(|| {
-                    anyhow::anyhow!("[tool.uv.sources] is not a table in {}", path.display())
+                    crate::untokened!(
+                        IntegrationChannel,
+                        "[tool.uv.sources] is not a table in {}",
+                        path.display()
+                    )
                 })?;
 
             // Only set the entry if it doesn't already exist OR if it already
@@ -577,7 +593,11 @@ impl Integration for UvWorkspace {
         };
 
         if !status.success() {
-            anyhow::bail!("uv sync failed (exit {})", status);
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "uv sync failed (exit {})",
+                status
+            ));
         }
 
         Ok(HookOutcome::Done)

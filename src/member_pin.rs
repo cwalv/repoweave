@@ -57,11 +57,13 @@ pub fn run_pin(
         crate::workspace::member_checkout_dir(&path, ctx.primary_path(), workweave_dir.as_deref());
     let dir = checkout.path();
     let aligns = workweave_dir.is_none() || checkout.is_workweave_slot();
-    anyhow::ensure!(
-        dir.exists(),
-        "{path}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
+    if !dir.exists() {
+        return Err(crate::untokened!(
+            Owed,
+            "{path}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
          `rwv member pin`"
-    );
+        ));
+    }
     let vcs = vcs_for(entry.vcs_type);
     let member = Member {
         path: &path,

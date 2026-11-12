@@ -139,7 +139,7 @@ pub fn generate_lock(
         // says the commit does not exist.
         let detached = match vcs
             .head_attachment(repo_dir)
-            .map_err(|e| anyhow::anyhow!("{}: {:#}", repo_path, e))?
+            .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {:#}", repo_path, e))?
         {
             HeadAttachment::Attached(_) | HeadAttachment::Unborn(_) => None,
             HeadAttachment::Detached(d) => Some(d),
@@ -150,7 +150,7 @@ pub fn generate_lock(
         // the repo path and the fix.
         let version = vcs
             .head_revision(repo_dir)
-            .map_err(|e| anyhow::anyhow!("{}: {:#}", repo_path, e))?;
+            .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {:#}", repo_path, e))?;
 
         // Detached HEAD: warn but do not refuse. Lock runs inside automation
         // (sync auto-relock) so a hard gate would break legitimate flows.
@@ -560,7 +560,7 @@ fn judge_member(
     };
     let plan = aligner
         .plan(&member, old)
-        .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+        .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{path}: {e:#}"))?;
     let mut lines: Vec<Judged> = Vec::new();
 
     if !relocking.dirty {
@@ -595,7 +595,7 @@ fn judge_member(
     }
     let head = vcs
         .head_revision(dir)
-        .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+        .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{path}: {e:#}"))?;
 
     let how = match &plan.pin {
         Pin::None
@@ -796,7 +796,7 @@ pub(crate) fn relock(
     }
     if !failures.is_empty() {
         if refusals.is_empty() {
-            anyhow::bail!("{}", failures.join("\n"));
+            return Err(crate::untokened!(Tally, "{}", failures.join("\n")));
         }
         for failure in &failures {
             refusals.note(failure);

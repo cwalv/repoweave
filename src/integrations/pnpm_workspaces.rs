@@ -208,7 +208,11 @@ impl Integration for PnpmWorkspaces {
         };
 
         if !status.success() {
-            anyhow::bail!("pnpm install failed (exit {})", status);
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "pnpm install failed (exit {})",
+                status
+            ));
         }
 
         Ok(HookOutcome::Done)

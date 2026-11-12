@@ -401,7 +401,8 @@ fn unknown_verb_error(verb: &str) -> anyhow::Error {
 /// could not be spawned. The OS error (permission denied, ENOEXEC, etc.)
 /// is preserved so operators can diagnose without a second attempt.
 fn exec_failure_error(verb: &str, plugin: &ToolProgram, err: std::io::Error) -> anyhow::Error {
-    anyhow::anyhow!(
+    crate::untokened!(
+        EnvironmentPassthrough,
         "failed to exec `rwv-{verb}` ({}): {err:#}",
         plugin.path().display(),
     )

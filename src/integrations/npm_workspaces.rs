@@ -282,7 +282,11 @@ impl Integration for NpmWorkspaces {
         };
 
         if !status.success() {
-            anyhow::bail!("npm install failed (exit {})", status);
+            return Err(crate::untokened!(
+                IntegrationChannel,
+                "npm install failed (exit {})",
+                status
+            ));
         }
 
         Ok(HookOutcome::Done)

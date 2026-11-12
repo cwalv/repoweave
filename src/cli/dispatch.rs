@@ -1560,7 +1560,11 @@ pub fn run() -> anyhow::Result<()> {
                  the External variant is constructed",
             );
             let verb = verb_os.to_str().ok_or_else(|| {
-                anyhow::anyhow!("external verb name is not valid UTF-8: {:?}", verb_os)
+                crate::untokened!(
+                    ArgvShim,
+                    "external verb name is not valid UTF-8: {:?}",
+                    verb_os
+                )
             })?;
             let plugin_args: Vec<OsString> = iter.collect();
 

@@ -297,6 +297,40 @@ macro_rules! refuse {
     };
 }
 
+/// Why an error carries no [`RefusalKind`]. Every error rwv mints outside the
+/// refusal constructors names one, through [`untokened!`](crate::untokened).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Untokened {
+    /// A VCS, filesystem or tool call failed: rwv was stopped, it did not
+    /// decline.
+    EnvironmentPassthrough,
+    /// An integration's own failure, which the operator reads as that
+    /// integration's report.
+    IntegrationChannel,
+    /// Reaching it is a bug; there is no operator exit to document.
+    InternalInvariant,
+    /// A count of failures already reported one by one; nothing was withheld.
+    Tally,
+    /// Malformed input from the harness that invoked a hook, not from an
+    /// operator.
+    HookInput,
+    /// An argument rejected before any verb runs.
+    ArgvShim,
+    /// rwv declined on purpose and the refusal has no token yet. Giving it one
+    /// is owed.
+    Owed,
+}
+
+/// `anyhow!` for an error outside the refusal class, naming its
+/// [`Untokened`] class. It renders exactly as `anyhow!` does.
+#[macro_export]
+macro_rules! untokened {
+    ($class:ident, $($arg:tt)+) => {{
+        let _: $crate::refusal::Untokened = $crate::refusal::Untokened::$class;
+        ::anyhow::anyhow!($($arg)+)
+    }};
+}
+
 /// The kind this error carries, outermost first.
 ///
 /// A wrapping `.context()` sits above the tag rather than replacing it, so a

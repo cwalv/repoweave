@@ -36,16 +36,21 @@ impl BranchEntry {
     /// Read `<m>=<b>[@<rev>]`.
     pub fn parse(spec: &str, creation: Creation) -> anyhow::Result<Self> {
         let Some((member, rest)) = spec.split_once('=') else {
-            anyhow::bail!("'{spec}' is not `<member>=<branch>[@<rev>]`");
+            return Err(crate::untokened!(
+                Owed,
+                "'{spec}' is not `<member>=<branch>[@<rev>]`"
+            ));
         };
         let (branch, rev) = match rest.split_once('@') {
             Some((branch, rev)) => (branch, Some(rev.to_owned())),
             None => (rest, None),
         };
-        anyhow::ensure!(
-            !branch.is_empty() && rev.as_deref() != Some(""),
-            "'{spec}' is not `<member>=<branch>[@<rev>]`"
-        );
+        if branch.is_empty() || rev.as_deref() == Some("") {
+            return Err(crate::untokened!(
+                Owed,
+                "'{spec}' is not `<member>=<branch>[@<rev>]`"
+            ));
+        }
         Ok(Self {
             member: RepoPath::new(member)?,
             branch: branch.to_owned(),
@@ -210,11 +215,13 @@ pub(crate) fn judge_entry(
     let vcs = vcs.as_ref();
     let located = loaded.checkout(ctx, member);
     let dir = located.dir.as_path();
-    anyhow::ensure!(
-        dir.exists(),
-        "{member}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
+    if !dir.exists() {
+        return Err(crate::untokened!(
+            Owed,
+            "{member}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
          `rwv {verb}`"
-    );
+        ));
+    }
     let owned_in_feature = loaded.in_feature() && matches!(entry.role, Role::Owned | Role::Fork);
     if owned_in_feature && request.rev.is_some() {
         crate::refuse!(
@@ -526,8 +533,9 @@ fn target_pin(
     let Mode::Feature { branch } = &loaded.aligner.mode else {
         return Ok(TargetPin::Lacks);
     };
-    let name = crate::records::BranchName::parse(vcs, branch)
-        .map_err(|e| anyhow::anyhow!("`{branch}` is not a usable weave branch name: {e:?}"))?;
+    let name = crate::records::BranchName::parse(vcs, branch).map_err(|e| {
+        crate::untokened!(Owed, "`{branch}` is not a usable weave branch name: {e:?}")
+    })?;
     let crate::records::Record::Feature { target, .. } =
         crate::branch::recorded_value(vcs, &loaded.project, dir, &name)?
     else {

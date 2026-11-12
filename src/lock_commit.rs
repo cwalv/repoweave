@@ -199,10 +199,11 @@ pub(crate) fn run(
     for path in &changes.added {
         let located = loaded.checkout(ctx, path);
         if !located.dir.exists() {
-            anyhow::bail!(
+            return Err(crate::untokened!(
+                Owed,
                 "{path}: the manifest lists a member whose directory is absent; run `rwv update` \
                  to materialize it, then re-run `rwv lock --commit`"
-            );
+            ));
         }
     }
     let skipping: BTreeSet<RepoPath> = moving.iter().map(|m| m.member.clone()).collect();
