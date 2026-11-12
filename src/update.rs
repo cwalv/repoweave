@@ -419,7 +419,6 @@ fn update_members_for(
         Ok(_) => align_checkouts(
             ctx,
             &aligner,
-            &name,
             &project_dir,
             selection,
             jobs,
@@ -958,14 +957,12 @@ fn refuse_detached_project(aligner: &Aligner, verb: &'static str) -> anyhow::Res
 fn align_checkouts(
     ctx: &WorkspaceContext,
     aligner: &Aligner,
-    project: &crate::manifest::ProjectName,
     project_dir: &Path,
     selection: &MemberSelection,
     jobs: usize,
     output: OutputMode,
     verb: &str,
 ) -> anyhow::Result<AlignRun> {
-    let _ = project;
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
     let lock_path = LockFile::path_in(project_dir);
     let lock = if lock_path.exists() {

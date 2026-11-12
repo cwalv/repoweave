@@ -751,7 +751,8 @@ fn no_branch_here(
     let raw = RawRefName::new(branch.as_str());
     let mut report = Report::default();
     let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME)).ok();
-    let mut members: Vec<(String, PathBuf, Box<dyn Vcs>, Option<RemoteTip>)> = Vec::new();
+    type Holder = (String, PathBuf, Box<dyn Vcs>, Option<RemoteTip>);
+    let mut members: Vec<Holder> = Vec::new();
     for (path, entry) in manifest.iter().flat_map(|m| m.iter_entries()) {
         let member_dir = ctx.active_path().join(path.as_path());
         let member_vcs = vcs_for(entry.vcs_type);
