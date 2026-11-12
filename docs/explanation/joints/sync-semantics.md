@@ -216,13 +216,17 @@ choices. A `merge` setting never rewrites the branch, so its dependents never
 block it.
 
 **Backups.** Before a rebase rewrites a branch, rwv keeps its tip as a
-`rebased` backup. One of a branch that was not published goes when the
-operation completes: the rebased commits hold its work. One of a published
-branch stays until it is republished: that branch's push then shows it
-diverged, and `rwv push` prints `rwv push --overwrite <repo>`, leased to the
-tip the backup holds, as the way to republish it; once that push lands, the
-backup goes. A machine that did not make the rebase sees only the ordinary
-choices for a diverged branch.
+`rebased` backup. A branch is published when its push target holds a copy of
+its name, whether or not it takes in from it. The backup of a branch that was
+not published goes when the operation completes: the rebased commits hold its
+work. The backup of a published branch stays until it is republished: that
+branch's push then shows it diverged, and `rwv sync` and `rwv push` print
+`rwv push --overwrite <repo>`, leased to the tip the backup holds, as the way
+to republish it; once that push lands, the backup goes, and so does one that a
+push leased to a newer tip left behind. Deleting the branch, as retiring a
+landed workweave does, drops its `rebased` backups too, unless a live lock
+pins a commit only one reaches. A machine that did not make the rebase sees
+only the ordinary choices for a diverged branch.
 
 ## Named overrides
 

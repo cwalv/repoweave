@@ -205,7 +205,10 @@ asymmetry is the whole shape of the thing.
 - **Derived content.** `<path> merge=rwv-ours` declares a path derived.
   Nothing defines `rwv-ours` durably: rwv's own replays define it inline, per
   git process, as `true` — the shell command that leaves the target side's
-  copy standing — through the derived-content policy the replay states. A
+  copy standing — through the derived-content policy the replay states. The
+  merges `sync` and `land` compose run in the checkout of the work being
+  integrated, so they define it as the shell command that copies the merged-in
+  side over it: the receiving side's copy stands, as after a rebase onto it. A
   merge or rebase run outside rwv resolves the path as an ordinary textual
   conflict. That is noisy, not dangerous: the content is derived, so
   regenerate afterwards and the repo's own drift gate judges the result on
