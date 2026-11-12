@@ -8968,10 +8968,11 @@ pub fn cherry_pick_port() -> Scenario {
 }
 
 /// `cherry-pick-port` under a `merge` setting: a landing into `main` made by
-/// merge ports whole with `-m 1`, each landed member's merge copied against
-/// its first parent, and the port lands. Pending until a landing under a
-/// `merge` setting writes merge commits; the port of such a merge is only
-/// tested on the merge a landing writes.
+/// merge commits, its project merge then ported whole with `-m 1`. The
+/// landing writes the project merge with the source's pins and relocks onto
+/// the member merges in the commit after it, so the port reads `app` as moved
+/// backward: a known defect. Once it ports, each landed member's merge is
+/// copied against its first parent and the port lands.
 pub fn cherry_pick_port_landing_merge() -> Scenario {
     let mut steps =
         vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
@@ -8983,39 +8984,20 @@ pub fn cherry_pick_port_landing_merge() -> Scenario {
         Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "main-moved"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::pending(
-            "land w into main by merge commits",
-            MissingVerb::MergeLanding,
-        ),
-        Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main^2"]),
+        Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["rev-parse", "--verify", "main~1^2"]),
+        Step::git(&a(), Repo::App, &["rev-parse", "--verify", "main^2"]),
     ]);
     steps.extend(feature_onto_stable());
     steps.extend([
-        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1"])
             .expect(Exit::refuses(Repo::Proj, State::PortMainline))
-            .claim(Claim::OutputContains("rwv cherry-pick main -m <n>"))
+            .claim(Claim::OutputContains("rwv cherry-pick main~1 -m <n>"))
             .claim(Claim::LocalStateUnchanged(ww("p"))),
-        Step::rwv(&ww("p"), &["cherry-pick", "main", "-m", "1"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains("local/remotes/app: copied"))
-            .claim(Claim::OutputContains("local/remotes/lib: copied"))
-            .claim(Claim::AtPin {
-                at: ww("p"),
-                repo: Repo::App,
-            }),
-        Step::git(
-            &ww("p"),
-            Repo::App,
-            &["show", "--stat", "--format=%b", "HEAD"],
-        )
-        .claim(Claim::OutputContains("w-app.txt"))
-        .claim(Claim::OutputLacks("main-moved.txt"))
-        .claim(Claim::OutputContains("cherry picked from commit")),
-        Step::rwv(&ww("p"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
-        Step::git(&a(), Repo::App, &["show", "stable-app:w-app.txt"])
-            .claim(Claim::OutputLine("w-app")),
-        Step::git(&a(), Repo::Lib, &["show", "stable-lib:w-lib.txt"])
-            .claim(Claim::OutputLine("w-lib")),
+        Step::rwv(&ww("p"), &["cherry-pick", "main~1", "-m", "1"])
+            .expect(Exit::Defect(Defect::MergeLandingPortsBackward))
+            .claim(Claim::Judged(Repo::App, State::PortBackward))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
     ]);
     scenario("cherry-pick port of a landing merge", steps)
 }
@@ -9415,7 +9397,7 @@ pub fn land_clones_a_member_its_target_took_in_by_fetch_alone() -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), "main"),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),
@@ -10500,7 +10482,7 @@ pub fn land_names_the_update_that_finishes_an_alignment_it_could_not_judge() -> 
             Step::hand_edit(&a(), Repo::Lib, "b-lib.txt", "b-lib", "a-lib"),
             Step::git(&a(), Repo::Lib, &["reset", "-q"]),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),

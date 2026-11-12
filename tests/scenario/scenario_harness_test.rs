@@ -1032,7 +1032,6 @@ pending_on!(
     shared_member_pinned_behind => Land,
     main_change_into_stable => Land,
     cherry_pick_onto_stable => CherryPick,
-    cherry_pick_port_landing_merge => MergeLanding,
 );
 
 #[test]
@@ -4297,6 +4296,11 @@ fn cherry_pick_runs_the_printed_relock_of_an_unpinned_member_scenario() {
 fn cherry_pick_refuses_a_pin_this_clone_lacks_scenario() {
     runner::run(scenarios::cherry_pick_refuses_a_pin_this_clone_lacks())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_port_landing_merge_scenario() {
+    runner::run(scenarios::cherry_pick_port_landing_merge()).assert_fully_decided_green();
 }
 
 #[test]

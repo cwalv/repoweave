@@ -327,7 +327,7 @@ fn a_landing_keeps_the_targets_re_pin_by_name_over_an_unchanged_commit_pin() {
     common::fixture_lock(&project, &[(DEP, &dep_url, "v2.0.0")]);
     common::git_in(&project, &["commit", "-am", "re-pin dep by its tag"]);
 
-    succeed(&seat, &["land"]);
+    succeed(&seat, &["land", "--history", "linear"]);
 
     let lock_path = project.join("rwv.lock");
     assert_eq!(

@@ -20,9 +20,6 @@ pub enum MissingVerb {
     Land,
     /// Port a project commit into a feature or a line.
     CherryPick,
-    /// Land a feature into a branch recording `history = "merge"` by merge
-    /// commits, the project's and each landed member's.
-    MergeLanding,
 }
 
 impl MissingVerb {
@@ -31,7 +28,6 @@ impl MissingVerb {
             MissingVerb::Review => "materialize someone else's pushed branch",
             MissingVerb::Land => "take in or land a feature by its record",
             MissingVerb::CherryPick => "port a project commit into a feature or a line",
-            MissingVerb::MergeLanding => "land a feature by merge commits under a merge history",
         }
     }
 }
@@ -280,6 +276,11 @@ pub enum Defect {
     /// clone lacking it refuses a landing in that member as `pin`
     /// unreachable, with no printed choice that clears it.
     HistoryPinNoRefKeeps,
+    /// A landing under a `merge` setting commits its project merge holding
+    /// the source's pins and relocks onto the member merges in a commit
+    /// after it, so `cherry-pick <merge> -m 1` reads each member the landing
+    /// merged as moved backward, off the merge it lands at.
+    MergeLandingPortsBackward,
 }
 
 impl Defect {
@@ -287,6 +288,10 @@ impl Defect {
         match self {
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
+            }
+            Defect::MergeLandingPortsBackward => {
+                "a landing's project merge pins the source's commits, so its port reads them as \
+                 backward"
             }
         }
     }
