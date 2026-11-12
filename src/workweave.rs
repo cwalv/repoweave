@@ -3311,8 +3311,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
 ///
 /// An `is_ancestor` query whose operands live in different object DAGs is
 /// silently unsound (docs/explanation/joints/clone-topology.md), so a baseline
-/// whose canonical store differs is simply not a baseline here — the same
-/// refusal-to-vouch [`collect_diverged_paths`] makes.
+/// whose canonical store differs is simply not a baseline here.
 fn baseline_tips_in_store(
     vcs: &dyn Vcs,
     store: &Path,
