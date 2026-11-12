@@ -87,7 +87,11 @@ leases no workspace, still keeps others off what it moved. It is given up when
 the record moves to `retire` and when an op with no retire ends
 (`release_target`), the lease on the target's workspace first, and by `rwv
 abort` by op id, whatever the record holds. A release removes the claim only
-while it names its own op.
+while it names its own op. A `rwv land --continue` or `rwv abort` that took
+the claim, or a lease, its op did not hold when the command began puts back
+what it took when it is refused (`LandingClaim::put_back`, `Retaken`), so a
+landing that had released its target never blocks it again by being refused;
+one that held the claim before keeps it.
 
 A carry takes the same claim on every dependent it moves
 (`Carrier::carry` in `src/stack.rs`), before it composes any of them, so a

@@ -832,6 +832,9 @@ every_scenario!(
     a_landing_meets_a_stopped_landing_in_a_checkout,
     a_landing_killed_before_its_plan_releases_its_claim_on_abort,
     a_landing_ending_has_released_its_target,
+    a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Landed),
+    a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Retire),
+    a_refused_continue_of_a_released_landing_leaves_the_target_free,
     landing_as_refs,
     landing_as_refs_unpinned,
     lost_race_abort,
@@ -2870,6 +2873,18 @@ holding_rwv! {
     /// A landing without retire releases its target's lease before its claim.
     fn a_landing_ending_has_released_its_target() {
         runner::run(scenarios::a_landing_ending_has_released_its_target())
+            .assert_fully_decided_green();
+    }
+
+    /// A refused abort or `--continue` puts back the claim and the lease it
+    /// took, and only those: a landing that had released its target leaves
+    /// it free, and one that held it still holds it.
+    fn a_refused_command_puts_back_what_it_took() {
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::a_refused_abort_puts_back_what_it_took(stop))
+                .assert_fully_decided_green();
+        }
+        runner::run(scenarios::a_refused_continue_of_a_released_landing_leaves_the_target_free())
             .assert_fully_decided_green();
     }
 }

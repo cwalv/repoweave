@@ -11019,6 +11019,79 @@ pub fn a_landing_killed_before_its_plan_releases_its_claim_on_abort() -> Scenari
     )
 }
 
+/// A landing stopped once it landed, and its `rwv abort` refused on a commit
+/// made in the source after the stop. The abort puts back only what it took:
+/// a landing stopped in its retire had released its target, so another
+/// landing into it lands; one stopped before its retire still held it, so
+/// another landing refuses on its claim.
+pub fn a_refused_abort_puts_back_what_it_took(stop: LandedStop) -> Scenario {
+    let second = Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"]);
+    let second = match stop {
+        LandedStop::Retire => second
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w2"))),
+        LandedStop::Landed => second
+            .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+            .claim(Claim::LocalStateUnchanged(ww("w2"))),
+    };
+    scenario(
+        "a refused abort puts back what it took",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                stop.point(),
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::commit(&ww("w1"), Repo::App, "after-the-stop"),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            second,
+        ],
+    )
+}
+
+/// A landing with no retire killed once it released its target, after
+/// another landing built on it: its `rwv land --continue` takes the claim
+/// back, and when it is refused it leaves the target released, so a third
+/// landing into it lands.
+pub fn a_refused_continue_of_a_released_landing_leaves_the_target_free() -> Scenario {
+    scenario(
+        "a refused continue of a released landing leaves the target free",
+        vec![
+            create("w1"),
+            create("w2"),
+            create("w3"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::commit(&ww("w3"), Repo::Lib, "w3-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear"],
+                "ending",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::rwv(&ww("w1"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
+            Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w3"))),
+        ],
+    )
+}
+
 /// A landing with no retire releases the target's workspace and its claim
 /// before it cleans up, lease first: a second landing that runs while the
 /// first is held between the two lands, rather than meeting the first one's

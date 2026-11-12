@@ -426,7 +426,9 @@ the claim then finds no lease of an op whose owner workweave retire removes.
 An op with no retire does the same as it ends, before its cleanup. `rwv
 abort` of a landing takes the claim and the lease on the target's workspace
 back first (`retake_target`): held already before `retire`, retaken at
-`retire`, refusing while another op holds either. It then restores ref by ref;
+`retire`, refusing while another op holds either. An abort refused after that
+puts back what it retook (`Retaken::put_back`): the claim and each lease the op
+did not hold when the abort began. It then restores ref by ref;
 a ref another landing built on since is a foreign tip. Typed in the target's
 workspace after the release, it finds the landing by the record that names
 that workspace as its target (`landing_released_into`).

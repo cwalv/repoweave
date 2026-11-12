@@ -2047,6 +2047,13 @@ pub fn clear_lease_owned_by(workspace_dir: &Path, owner: &Path) {
     }
 }
 
+/// Whether a lease [`acquire_lease`] returned was there before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Leased {
+    Before,
+    Now,
+}
+
 /// Lease `workspace_dir` to the op `record` is the owner record of, which
 /// `owner_workspace_dir` holds: done when the lease is this op's already,
 /// refused with the standard in-flight refusal when another op's state is
@@ -2055,9 +2062,9 @@ pub fn acquire_lease(
     workspace_dir: &Path,
     owner_workspace_dir: &Path,
     id: &OpId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Leased> {
     if read_lease(workspace_dir)?.is_some_and(|lease| lease.id == *id) {
-        return Ok(());
+        return Ok(Leased::Before);
     }
     if let Some(err) = in_flight_refusal_for(workspace_dir)? {
         return Err(err);
@@ -2070,7 +2077,7 @@ pub fn acquire_lease(
     let json = serde_json::to_string_pretty(&lease).context("failed to serialize lease record")?;
     let path = LeaseRecord::path_in(workspace_dir);
     match path.create(json.as_bytes()) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(Leased::Now),
         Err(CreateNewError::AlreadyExists) => Err(in_flight_refusal_for(workspace_dir)?
             .unwrap_or_else(|| {
                 crate::refusal::refusal(

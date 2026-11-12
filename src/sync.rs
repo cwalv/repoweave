@@ -4293,7 +4293,7 @@ fn load_continuing_context<'a>(
             );
         }
     }
-    let mut take_in = record
+    let take_in = record
         .take_in
         .clone()
         .filter(|take_in| take_in.receiving.contains_key(&RepoKey::Project))
@@ -4347,122 +4347,139 @@ fn load_continuing_context<'a>(
         }
     };
 
-    // A target that moved after the landing composed is a plan the landing no
-    // longer describes: only `rwv abort` and a fresh landing judge the new
-    // tips.
-    if !matches!(record.phase, op_state::OpPhase::Retire) {
-        let composed = record.tips.converged().filter(|tips| !tips.is_empty());
-        if let Some(moved) = target_moved(
-            &cwd_project_name,
-            dest_workspace_dir.as_deref(),
-            &owner_workspace_dir,
-            &SavepointKey::LandTarget(op_id.clone()),
-            &take_in,
-            composed,
-        )? {
-            return Err(moved.refused());
-        }
-    }
-
-    rejudge_entries(
-        &record,
-        &mut take_in,
-        &owner_workspace_dir,
-        allow_member_change,
-    )?;
-
-    handler.record_resumed(record.phase.clone());
-    let entry_phase = resume_entry_phase(&record.phase, &take_in);
-    if entry_phase != record.phase {
-        op_state::set_phase(&owner_workspace_dir, entry_phase.clone())
-            .context("failed to record the phase this resume re-enters")?;
-    }
-    if emit_text {
-        if entry_phase == record.phase {
-            eprintln!(
-                "continuing {verb_str} (op {op_id}, mid `{phase}`)",
-                verb_str = record.verb,
-                phase = record.phase,
-            );
-        } else {
-            eprintln!(
-                "continuing {verb_str} (op {op_id}, mid `{phase}`); re-entering `{entry_phase}` \
-                 first so the lock this lands pins the tips it lands",
-                verb_str = record.verb,
-                phase = record.phase,
-            );
-        }
-    }
-    report_left_behind(handler, &take_in.left_behind);
-    for report in &take_in.reports {
-        emit_landing_report(handler, &record.project, report);
-    }
-
-    let target_tip = take_in
-        .receiving
-        .get(&RepoKey::Project)
-        .map(|r| ResolvedRevisionId::from(r.tip.clone()));
-    let primary = invocation_ctx.primary_path();
-    let snapshot = match (&dest_project_dir, &dest_workspace_dir) {
-        (Some(project_dir), Some(workspace)) => pin_source_snapshot(
-            project_vcs.as_ref(),
-            project_dir,
-            workspace,
-            primary,
-            target_tip,
-            ClassifySource::Relations,
-        )?,
-        _ => pin_source_snapshot(
-            project_vcs.as_ref(),
-            &cwd_project_dir,
-            primary,
-            primary,
-            target_tip,
-            ClassifySource::Refs,
-        )?,
-    };
-
-    // From relock onward the remaining phase that reads the target's worktree
-    // is advance-target, whose fast-forward a dirty target blocks: refused
-    // here, before relock commits. Retire re-entry is exempt: its own check
-    // refuses any uncommitted state, untracked included.
-    if let (
-        op_state::OpPhase::Relock | op_state::OpPhase::AdvanceTarget,
-        Some(dest_workspace_dir),
-        Some(dest_project_dir),
-    ) = (&entry_phase, &dest_workspace_dir, &dest_project_dir)
-    {
-        let cwd_project_preflight =
-            Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
-                .context("failed to load CWD project for the resumed op's dirt scan")?;
-        let mut edits = Report::default();
-        let mut drifted = Vec::new();
-        judge_edits_target_preflight(
-            &cwd_project_preflight,
-            take_in
-                .receiving
-                .keys()
-                .chain(&take_in.realigned)
-                .chain(take_in.upstream_tips.keys())
-                .filter_map(|key| match key {
-                    RepoKey::Member(path) => Some(path),
-                    RepoKey::Project => None,
-                })
-                .collect::<std::collections::BTreeSet<_>>(),
-            dest_workspace_dir,
-            dest_project_dir,
-            &mut edits,
-            &mut drifted,
-        );
-        let refusing = !edits.is_empty() || drifted.iter().any(|d| !d.edits.is_empty());
-        for report in settle_drift(&drifted, refusing, &mut edits)? {
-            if op_state::journal_report(&owner_workspace_dir, &report)? {
-                emit_landing_report(handler, &record.project, &report);
+    // A refusal from here on puts back a claim this `--continue` took: a
+    // landing that had released its target and cannot go on leaves it free.
+    let under_claim = (|| -> anyhow::Result<(op_state::TakeInRecord, _)> {
+        let mut take_in = take_in;
+        // A target that moved after the landing composed is a plan the landing no
+        // longer describes: only `rwv abort` and a fresh landing judge the new
+        // tips.
+        if !matches!(record.phase, op_state::OpPhase::Retire) {
+            let composed = record.tips.converged().filter(|tips| !tips.is_empty());
+            if let Some(moved) = target_moved(
+                &cwd_project_name,
+                dest_workspace_dir.as_deref(),
+                &owner_workspace_dir,
+                &SavepointKey::LandTarget(op_id.clone()),
+                &take_in,
+                composed,
+            )? {
+                return Err(moved.refused());
             }
         }
-        edits.note(parked_note(record.verb));
-        edits.into_result()?;
-    }
+
+        rejudge_entries(
+            &record,
+            &mut take_in,
+            &owner_workspace_dir,
+            allow_member_change,
+        )?;
+
+        handler.record_resumed(record.phase.clone());
+        let entry_phase = resume_entry_phase(&record.phase, &take_in);
+        if entry_phase != record.phase {
+            op_state::set_phase(&owner_workspace_dir, entry_phase.clone())
+                .context("failed to record the phase this resume re-enters")?;
+        }
+        if emit_text {
+            if entry_phase == record.phase {
+                eprintln!(
+                    "continuing {verb_str} (op {op_id}, mid `{phase}`)",
+                    verb_str = record.verb,
+                    phase = record.phase,
+                );
+            } else {
+                eprintln!(
+                    "continuing {verb_str} (op {op_id}, mid `{phase}`); re-entering `{entry_phase}` \
+                     first so the lock this lands pins the tips it lands",
+                    verb_str = record.verb,
+                    phase = record.phase,
+                );
+            }
+        }
+        report_left_behind(handler, &take_in.left_behind);
+        for report in &take_in.reports {
+            emit_landing_report(handler, &record.project, report);
+        }
+
+        let target_tip = take_in
+            .receiving
+            .get(&RepoKey::Project)
+            .map(|r| ResolvedRevisionId::from(r.tip.clone()));
+        let primary = invocation_ctx.primary_path();
+        let snapshot = match (&dest_project_dir, &dest_workspace_dir) {
+            (Some(project_dir), Some(workspace)) => pin_source_snapshot(
+                project_vcs.as_ref(),
+                project_dir,
+                workspace,
+                primary,
+                target_tip,
+                ClassifySource::Relations,
+            )?,
+            _ => pin_source_snapshot(
+                project_vcs.as_ref(),
+                &cwd_project_dir,
+                primary,
+                primary,
+                target_tip,
+                ClassifySource::Refs,
+            )?,
+        };
+
+        // From relock onward the remaining phase that reads the target's worktree
+        // is advance-target, whose fast-forward a dirty target blocks: refused
+        // here, before relock commits. Retire re-entry is exempt: its own check
+        // refuses any uncommitted state, untracked included.
+        if let (
+            op_state::OpPhase::Relock | op_state::OpPhase::AdvanceTarget,
+            Some(dest_workspace_dir),
+            Some(dest_project_dir),
+        ) = (&entry_phase, &dest_workspace_dir, &dest_project_dir)
+        {
+            let cwd_project_preflight =
+                Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
+                    .context("failed to load CWD project for the resumed op's dirt scan")?;
+            let mut edits = Report::default();
+            let mut drifted = Vec::new();
+            judge_edits_target_preflight(
+                &cwd_project_preflight,
+                take_in
+                    .receiving
+                    .keys()
+                    .chain(&take_in.realigned)
+                    .chain(take_in.upstream_tips.keys())
+                    .filter_map(|key| match key {
+                        RepoKey::Member(path) => Some(path),
+                        RepoKey::Project => None,
+                    })
+                    .collect::<std::collections::BTreeSet<_>>(),
+                dest_workspace_dir,
+                dest_project_dir,
+                &mut edits,
+                &mut drifted,
+            );
+            let refusing = !edits.is_empty() || drifted.iter().any(|d| !d.edits.is_empty());
+            for report in settle_drift(&drifted, refusing, &mut edits)? {
+                if op_state::journal_report(&owner_workspace_dir, &report)? {
+                    emit_landing_report(handler, &record.project, &report);
+                }
+            }
+            edits.note(parked_note(record.verb));
+            edits.into_result()?;
+        }
+        Ok((take_in, snapshot))
+    })();
+    let (take_in, snapshot) = match under_claim {
+        Ok(resumed) => resumed,
+        Err(e) => {
+            if let Some(claim) = landing_claim {
+                if let Err(released) = claim.put_back() {
+                    eprintln!("warning: {released:#}");
+                }
+            }
+            return Err(e);
+        }
+    };
 
     Ok(OpContext {
         cwd_ctx,
@@ -7929,6 +7946,19 @@ pub fn run_abort(
     ctx: &WorkspaceContext,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
 ) -> anyhow::Result<()> {
+    let mut retaken = None;
+    let aborted = abort_op(ctx, abandon, &mut retaken);
+    if let (Err(_), Some(retaken)) = (&aborted, retaken) {
+        retaken.put_back();
+    }
+    aborted
+}
+
+fn abort_op(
+    ctx: &WorkspaceContext,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    retaken: &mut Option<Retaken>,
+) -> anyhow::Result<()> {
     // resolve_for_abort follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
     // the same record.
@@ -8012,7 +8042,7 @@ pub fn run_abort(
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }
     if header.verb == OpVerb::Land {
-        retake_target(&reading, &owner_workspace, &cwd_project_dir)?;
+        *retaken = Some(retake_target(&reading, &owner_workspace, &cwd_project_dir)?);
     }
 
     if let op_state::OwnerReading::Whole(_) = &reading {
@@ -8660,6 +8690,28 @@ impl MemberStores {
     }
 }
 
+/// What `retake_target` took: the claim, and each lease it made. An abort
+/// refused after it puts these back, so a landing that had released its
+/// target leaves it released, and one that held it still holds it.
+struct Retaken {
+    owner: PathBuf,
+    claim: Option<crate::landing_claim::LandingClaim>,
+    leased_now: Vec<PathBuf>,
+}
+
+impl Retaken {
+    fn put_back(self) {
+        for leased in &self.leased_now {
+            op_state::clear_lease_owned_by(leased, &self.owner);
+        }
+        if let Some(claim) = self.claim {
+            if let Err(e) = claim.put_back() {
+                eprintln!("warning: {e:#}");
+            }
+        }
+    }
+}
+
 /// Before `rwv abort` restores anything a landing moved, it holds what the
 /// landing held while it moved it: the claim on the target and the lease on
 /// the target's workspace. A landing stopped before its retire still holds
@@ -8671,7 +8723,7 @@ fn retake_target(
     reading: &op_state::OwnerReading,
     owner_workspace: &CanonicalPath,
     project_dir_here: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Retaken> {
     let header = reading.header();
     let target = match reading {
         op_state::OwnerReading::Whole(record) => record
@@ -8681,10 +8733,6 @@ fn retake_target(
             .map(|receiving| receiving.branch.clone()),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
-    let released = matches!(
-        reading,
-        op_state::OwnerReading::Whole(record) if record.phase == op_state::OpPhase::Retire
-    );
     let claim = match &target {
         Some(target) => Some(crate::landing_claim::LandingClaim::take(
             project_vcs().as_ref(),
@@ -8721,18 +8769,22 @@ fn retake_target(
         .chain(in_place)
         .filter(|leased| CanonicalPath::of(leased) != *owner_workspace)
         .collect();
-    let leased = leasing.iter().try_for_each(|leased| {
-        op_state::acquire_lease(leased, owner_workspace.as_path(), &header.id)
-    });
-    if let (Err(_), true) = (&leased, released) {
-        for taken in &leasing {
-            op_state::clear_lease_owned_by(taken, owner_workspace.as_path());
-        }
-        if let Some(claim) = claim {
-            claim.release()?;
+    let mut retaken = Retaken {
+        owner: owner_workspace.as_path().to_path_buf(),
+        claim,
+        leased_now: Vec::new(),
+    };
+    for leased in leasing {
+        match op_state::acquire_lease(&leased, owner_workspace.as_path(), &header.id) {
+            Ok(op_state::Leased::Now) => retaken.leased_now.push(leased),
+            Ok(op_state::Leased::Before) => {}
+            Err(e) => {
+                retaken.put_back();
+                return Err(e);
+            }
         }
     }
-    leased
+    Ok(retaken)
 }
 
 /// Put back each branch a landing moved or created as a ref, once every

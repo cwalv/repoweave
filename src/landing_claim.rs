@@ -53,6 +53,7 @@ impl Holder {
 pub struct LandingClaim {
     path: StatePath,
     op: OpId,
+    held_before: bool,
 }
 
 fn claims_dir(vcs: &dyn Vcs, project_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
@@ -138,6 +139,14 @@ impl LandingClaim {
         release_if_held(&self.path, &self.op)
     }
 
+    /// Undo this take: release the claim unless its op held it before it.
+    pub fn put_back(self) -> anyhow::Result<()> {
+        if self.held_before {
+            return Ok(());
+        }
+        self.release()
+    }
+
     /// Remove every landing claim `op` holds in the store of `project_dir`,
     /// whatever target it is on: what `rwv abort` does, whether or not the
     /// op's record names its target.
@@ -182,6 +191,7 @@ fn take_within(
                 return Ok(LandingClaim {
                     path,
                     op: op.clone(),
+                    held_before: false,
                 })
             }
             Err(CreateNewError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -204,6 +214,7 @@ fn take_within(
                 return Ok(LandingClaim {
                     path,
                     op: op.clone(),
+                    held_before: true,
                 })
             }
             Standing::Dead(dead) => {
@@ -420,6 +431,7 @@ mod tests {
         let stale = LandingClaim {
             path: path.clone(),
             op: op(1),
+            held_before: false,
         };
         let held = take_within(path.clone(), "t", &op(2), &owner, Duration::ZERO).unwrap();
         stale.release().unwrap();
