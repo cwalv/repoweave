@@ -7616,7 +7616,7 @@ fn apply_workspace_repairs(
         // appending alongside it, and is a no-op once the new line is the
         // only one.
         match vcs.set_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
-            Ok(()) => {
+            Ok(_) => {
                 if let Some(migration) = migration {
                     // The invariant reads the *committed* form, so a migration
                     // that stops at the working tree is not yet in effect. A

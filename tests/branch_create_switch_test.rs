@@ -673,6 +673,8 @@ fn a_first_project_publishes_to_its_only_remote_and_a_second_remote_needs_a_push
     );
     succeed(&["push"], &ws);
     assert!(remote_has(&first, "main"));
+    let published = common::git_in(&first, &["show", "main:.gitattributes"]);
+    assert!(published.contains("rwv.lock merge=rwv-ours"), "{published}");
 
     succeed(&["branch", "create", "feat-x"], &ws);
     succeed(&["push"], &ws);

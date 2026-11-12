@@ -391,10 +391,11 @@ pub enum VcsAction {
     SetDefaultRemote,
     AddRemote,
     UnsetUpstream,
+    SetCommitIdentity,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 16] = [
+    pub const ALL: [VcsAction; 17] = [
         Self::Commit,
         Self::Stash,
         Self::Status,
@@ -411,6 +412,7 @@ impl VcsAction {
         Self::SetDefaultRemote,
         Self::AddRemote,
         Self::UnsetUpstream,
+        Self::SetCommitIdentity,
     ];
 }
 
@@ -2902,6 +2904,12 @@ pub trait Vcs: Send + Sync {
     /// for `paths`, and `git commit` runs over it, hooks included.
     fn commit_only(&self, repo: &Path, paths: &[&str], message: &str) -> Result<bool, VcsError>;
 
+    /// Whether a commit made in `dir` has an author to record. `dir` need not
+    /// be a repository; outside one the user-level setting answers.
+    ///
+    /// For git: `git var GIT_COMMITTER_IDENT` succeeds.
+    fn has_commit_identity(&self, dir: &Path) -> Result<bool, VcsError>;
+
     /// Return the tag name pointing at HEAD, if any.
     ///
     /// When multiple tags point at HEAD the implementation may return any one
@@ -3088,7 +3096,10 @@ pub trait Vcs: Send + Sync {
     /// Phase 3, so carrying user lock-edits through a rebase would only
     /// produce noise. Configuring this once (in `rwv init`) replaces the
     /// custom cherry-pick loop that previously did per-commit exclusion.
-    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>;
+    ///
+    /// Returns the file it rewrote, relative to `repo`, or `None` when the
+    /// configuration was already in place and nothing was written.
+    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<Option<PathBuf>, VcsError>;
 
     /// How [`set_replay_exclusion`] stands for `path` in `repo`, from one
     /// read.

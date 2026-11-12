@@ -1857,3 +1857,68 @@ fn prune_of_an_unregistered_path_changes_nothing() {
     assert_eq!(outcome, RegistrationPrune::NotRegistered);
     assert!(registers(&store, &worktree));
 }
+
+// ============================================================================
+// Vcs::stage_paths then Vcs::commit_only: a commit of named paths' working
+// content, as `rwv init` makes one
+// ============================================================================
+
+fn status(repo: &Path) -> String {
+    let out = common::git()
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn names_at_head(repo: &Path) -> String {
+    common::git_in(repo, &["ls-tree", "-r", "--name-only", "HEAD"])
+}
+
+/// Another staged file, an untracked file, and `ours.txt` written for the
+/// commit.
+fn seed_unrelated_work(p: &Path) {
+    fs::write(p.join("staged.txt"), "staged").unwrap();
+    common::git_in(p, &["add", "staged.txt"]);
+    fs::write(p.join("loose.txt"), "loose").unwrap();
+    fs::write(p.join("ours.txt"), "ours").unwrap();
+}
+
+fn commit_ours(p: &Path) -> bool {
+    let vcs = git_vcs();
+    vcs.stage_paths(p, &["ours.txt"]).unwrap();
+    vcs.commit_only(p, &["ours.txt"], "ours").unwrap()
+}
+
+#[test]
+fn a_named_path_commit_leaves_other_staged_edited_and_untracked_work_as_it_was() {
+    let dir = init_repo();
+    let p = dir.path();
+    seed_unrelated_work(p);
+    fs::write(p.join("README.md"), "edited").unwrap();
+    let parent = common::git_in(p, &["rev-parse", "HEAD"]);
+
+    assert!(commit_ours(p));
+
+    assert_eq!(common::git_in(p, &["rev-parse", "HEAD~1"]), parent);
+    assert_eq!(names_at_head(p), "README.md\nours.txt");
+    assert_eq!(common::git_in(p, &["show", "HEAD:README.md"]), "init");
+    assert_eq!(status(p), " M README.md\nA  staged.txt\n?? loose.txt\n");
+}
+
+#[test]
+fn a_named_path_commit_before_the_first_commit_leaves_other_staged_work_staged() {
+    let dir = common::tempdir().unwrap();
+    let p = dir.path();
+    common::git_in(p, &["init", "-q", "-b", "main"]);
+    common::git_in(p, &["config", "user.email", "test@test.com"]);
+    common::git_in(p, &["config", "user.name", "Test"]);
+    seed_unrelated_work(p);
+
+    assert!(commit_ours(p));
+
+    assert_eq!(common::git_in(p, &["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(names_at_head(p), "ours.txt");
+    assert_eq!(status(p), "A  staged.txt\n?? loose.txt\n");
+}

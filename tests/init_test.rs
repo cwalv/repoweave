@@ -106,10 +106,7 @@ fn init_creates_empty_rwv_yaml() {
 }
 
 /// After `rwv init`, projects/<name>/rwv.toml must exist, be non-empty,
-/// and parse cleanly via the manifest loader.  This is the exact
-/// precondition that `rwv workweave create` depends on — the file must
-/// be present at the time of the initial `git commit` so the commit
-/// captures it.
+/// and parse cleanly via the manifest loader.
 #[test]
 fn init_rwv_yaml_parses_via_manifest_loader() {
     let tmp = common::tempdir().unwrap();
@@ -966,4 +963,205 @@ fn adopt_bootstraps_empty_directory() {
         toplevel.contains(".git"),
         "adopted project must be a git repo"
     );
+}
+
+// ============================================================================
+// The project's first commit
+// ============================================================================
+
+fn tree_at(repo: &Path, rev: &str) -> Vec<String> {
+    common::git_in(repo, &["ls-tree", "-r", "--name-only", rev])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn commit_count(repo: &Path) -> String {
+    common::git_in(repo, &["rev-list", "--count", "HEAD"])
+        .trim()
+        .to_owned()
+}
+
+#[test]
+fn init_commits_exactly_the_files_it_wrote_and_leaves_the_tree_clean() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    rwv()
+        .args(["init", "my-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project = ws.join("projects/my-app");
+    assert_eq!(commit_count(&project), "1");
+    assert_eq!(
+        tree_at(&project, "HEAD"),
+        [".gitattributes", "my-app.code-workspace", "rwv.toml"]
+    );
+    let attrs = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
+    assert!(attrs.contains("rwv.lock merge=rwv-ours"), "{attrs}");
+    assert_eq!(
+        common::git_in(
+            &project,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        ""
+    );
+}
+
+#[test]
+fn a_rerun_init_refuses_and_makes_no_second_commit() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    rwv()
+        .args(["init", "again"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let project = ws.join("projects/again");
+    let before = common::git_in(&project, &["rev-parse", "HEAD"]);
+
+    let out = rwv()
+        .args(["init", "again"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), before);
+    assert_eq!(commit_count(&project), "1");
+}
+
+#[test]
+fn init_without_a_commit_identity_refuses_before_writing_anything() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let out = rwv()
+        .args(["init", "nobody"])
+        .current_dir(&ws)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &home)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("EMAIL")
+        .envs(common::git_config_env(&[("user.useConfigOnly", "true")]))
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no author is configured"), "{stderr}");
+    assert!(stderr.contains("user.email"), "{stderr}");
+    assert!(!ws.join("projects/nobody").exists());
+}
+
+#[test]
+fn adopt_commits_only_its_own_files_onto_the_adopted_history() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_bare_repo(tmp.path(), "with-attrs");
+    let seed = tmp.path().join("with-attrs-seed");
+    common::git_in(
+        tmp.path(),
+        &["init", "-q", "-b", "main", seed.to_str().unwrap()],
+    );
+    std::fs::write(seed.join(".gitattributes"), "*.png binary\n").unwrap();
+    std::fs::write(seed.join("README.md"), "# seed\n").unwrap();
+    common::git_in(&seed, &["add", "-A"]);
+    common::git_in(
+        &seed,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "seed",
+        ],
+    );
+    common::git_in(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
+    let seeded = common::git_in(&seed, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args(["init", "--adopt", &common::file_url(&bare)])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project = ws.join("projects/with-attrs");
+    assert_eq!(common::git_in(&project, &["rev-parse", "HEAD~1"]), seeded);
+    assert_eq!(
+        common::git_in(&project, &["diff", "--name-only", "HEAD~1", "HEAD"]),
+        ".gitattributes\nrwv.toml"
+    );
+    let attrs = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
+    assert_eq!(attrs, "*.png binary\nrwv.lock merge=rwv-ours");
+    assert_eq!(
+        common::git_in(
+            &project,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        ""
+    );
+}
+
+#[test]
+fn adopt_of_a_repo_with_no_commits_makes_its_first_commit() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_bare_repo(tmp.path(), "unborn");
+
+    rwv()
+        .args(["init", "--adopt", &common::file_url(&bare)])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project = ws.join("projects/unborn");
+    assert_eq!(commit_count(&project), "1");
+    assert_eq!(tree_at(&project, "HEAD"), [".gitattributes", "rwv.toml"]);
+}
+
+#[test]
+fn adopt_of_a_repo_that_already_carries_rwvs_files_makes_no_commit() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_bare_repo(tmp.path(), "carried");
+    let seed = tmp.path().join("carried-seed");
+    common::git_in(
+        tmp.path(),
+        &["init", "-q", "-b", "main", seed.to_str().unwrap()],
+    );
+    std::fs::write(seed.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    std::fs::write(seed.join("rwv.toml"), "[repositories]\n").unwrap();
+    common::git_in(&seed, &["add", "-A"]);
+    common::git_in(
+        &seed,
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "seed",
+        ],
+    );
+    common::git_in(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
+    let seeded = common::git_in(&seed, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args(["init", "--adopt", &common::file_url(&bare)])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project = ws.join("projects/carried");
+    assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), seeded);
 }

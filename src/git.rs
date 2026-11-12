@@ -132,6 +132,8 @@ pub(crate) use under_both_line_endings;
 /// resolves the role it plays.
 const GIT_FIRST_REMOTE_NAME: &str = "origin";
 
+const ATTRIBUTES_FILE: &str = ".gitattributes";
+
 /// The local-config key recording the project repo's url remote.
 const PROJECT_URL_REMOTE_KEY: &str = "rwv.url-remote";
 
@@ -2361,6 +2363,9 @@ impl Vcs for GitVcs {
         let _ = std::fs::remove_file(&index);
         outcome
     }
+    fn has_commit_identity(&self, dir: &Path) -> Result<bool, VcsError> {
+        Self::has_identity(dir)
+    }
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
         let path = GitArg::from_path(path, "path")?;
         match Self::run(
@@ -2463,6 +2468,9 @@ impl Vcs for GitVcs {
             VcsAction::SetDefaultRemote => "git -C <checkout> config checkout.defaultRemote <r>",
             VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
             VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
+            VcsAction::SetCommitIdentity => {
+                "git config --global user.name <name> && git config --global user.email <email>"
+            }
         }
     }
 
@@ -2670,8 +2678,8 @@ impl Vcs for GitVcs {
         )?))
     }
 
-    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
-        let attrs_path = repo.join(".gitattributes");
+    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<Option<PathBuf>, VcsError> {
+        let attrs_path = repo.join(ATTRIBUTES_FILE);
         let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
         let needle = rwv_replay_exclusion_needle(path_arg.as_str());
         let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
@@ -2700,7 +2708,7 @@ impl Vcs for GitVcs {
         let has_legacy = existing.lines().any(|line| line.trim() == legacy_needle);
         let has_new = existing.lines().any(|line| line.trim() == needle);
         if has_new && !has_legacy {
-            return Ok(());
+            return Ok(None);
         }
 
         let (mut next, migrated) = if has_legacy {
@@ -2751,7 +2759,7 @@ impl Vcs for GitVcs {
             ctx: format!("failed to write {}", attrs_path.display()),
             source: e,
         })?;
-        Ok(())
+        Ok(Some(PathBuf::from(ATTRIBUTES_FILE)))
     }
 
     fn replay_exclusion_state(
@@ -2759,7 +2767,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         path: &Path,
     ) -> Result<ReplayExclusionState, VcsError> {
-        let attrs_path = repo.join(".gitattributes");
+        let attrs_path = repo.join(ATTRIBUTES_FILE);
         let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
         let needle = rwv_replay_exclusion_needle(path_arg.as_str());
         let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());

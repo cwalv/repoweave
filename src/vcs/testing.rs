@@ -447,6 +447,10 @@ impl Vcs for FakeVcs {
         unsupported("commit_only")
     }
 
+    fn has_commit_identity(&self, _dir: &Path) -> Result<bool, VcsError> {
+        unsupported("has_commit_identity")
+    }
+
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RawRefName>, VcsError> {
         unsupported("tag_at_head")
     }
@@ -513,7 +517,11 @@ impl Vcs for FakeVcs {
         unsupported("changed_paths_between")
     }
 
-    fn set_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<(), VcsError> {
+    fn set_replay_exclusion(
+        &self,
+        _repo: &Path,
+        _path: &Path,
+    ) -> Result<Option<PathBuf>, VcsError> {
         unsupported("set_replay_exclusion")
     }
 
