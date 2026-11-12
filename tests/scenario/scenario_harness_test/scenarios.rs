@@ -9335,3 +9335,52 @@ pub fn cherry_pick_project_conflict_aborts() -> Scenario {
     ]);
     scenario("cherry-pick project conflict aborted", steps)
 }
+
+/// A port killed after each step moved a repo and before it recorded the
+/// move: `--continue` finds the copy, then the project commit, the run made,
+/// takes each as made, and reports the port.
+pub fn cherry_pick_killed_after_each_move() -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(port_me_on_main());
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv_paused(
+            &ww("p"),
+            &["cherry-pick", "main"],
+            "cherry-pick-member-copied",
+            "pick",
+        ),
+        Step::kill("pick"),
+        Step::rwv_paused(
+            &ww("p"),
+            &["cherry-pick", "--continue"],
+            "cherry-pick-project-committed",
+            "resume",
+        ),
+        Step::kill("resume"),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported"))
+            .claim(Claim::AtPin {
+                at: ww("p"),
+                repo: Repo::App,
+            }),
+        Step::git(&ww("p"), Repo::App, &["log", "-3", "--format=%s"])
+            .claim(Claim::OutputInOrder(&["fix-app-2", "fix-app-1"])),
+        Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%s", "HEAD~2"])
+            .claim(Claim::OutputLacks("fix-app")),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["log", "-1", "--format=%s", "HEAD~1"],
+        )
+        .claim(Claim::OutputLacks("port-me")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-me.txt"])
+            .claim(Claim::OutputLine("port-me")),
+    ]);
+    Scenario {
+        name: "cherry-pick killed after each move",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}

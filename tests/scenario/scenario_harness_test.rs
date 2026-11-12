@@ -797,6 +797,7 @@ every_scenario!(
     cherry_pick_continue_rechecks_members,
     cherry_pick_project_conflict,
     cherry_pick_project_conflict_aborts,
+    cherry_pick_killed_after_each_move,
     pr_closed_unmerged,
     feature_whose_target_moved,
     feature_branches_in_some_members,
@@ -4098,6 +4099,13 @@ holding_rwv! {
     /// before copying onto it, so abort restores it.
     fn cherry_pick_killed_in_its_op_start_savepoints_each_member_before_copying() {
         runner::run(scenarios::cherry_pick_op_start_killed()).assert_fully_decided_green();
+    }
+
+    /// A port killed after a copy, then after the project commit, each made
+    /// and not yet recorded: `--continue` takes each as made, copying
+    /// nothing twice, and reports the port.
+    fn cherry_pick_killed_after_each_move_continues_with_what_it_made() {
+        runner::run(scenarios::cherry_pick_killed_after_each_move()).assert_fully_decided_green();
     }
 }
 

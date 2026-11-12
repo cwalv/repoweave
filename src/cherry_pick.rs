@@ -148,11 +148,16 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
     ResolvedRevisionId::from(commit.clone())
 }
 
-fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
-    let text = vcs
-        .read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
-        .ok()?;
-    Manifest::from_other_commit(&text).ok()
+/// `commit`'s `rwv.toml`; `None` where it has none. One that does not parse
+/// is an error, never read as declaring nothing.
+fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> anyhow::Result<Option<Manifest>> {
+    let Ok(text) = vcs.read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
+    else {
+        return Ok(None);
+    };
+    Manifest::from_other_commit(&text)
+        .map(Some)
+        .with_context(|| format!("the rwv.toml of {} does not parse", commit.short()))
 }
 
 fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
@@ -574,11 +579,12 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     let parent = judge_mainline(here, args, &commit, &parents)?;
 
     let empty = Manifest::from_toml_str("[repositories]\n")?;
-    let theirs = manifest_at(vcs, dir, &commit).unwrap_or_else(|| empty.clone());
-    let base = parent
-        .as_ref()
-        .and_then(|p| manifest_at(vcs, dir, p))
-        .unwrap_or_else(|| empty.clone());
+    let theirs = manifest_at(vcs, dir, &commit)?.unwrap_or_else(|| empty.clone());
+    let base = match &parent {
+        Some(p) => manifest_at(vcs, dir, p)?,
+        None => None,
+    }
+    .unwrap_or_else(|| empty.clone());
     let p0s = pins_of(parent.as_ref().and_then(|p| lock_at(vcs, dir, p)).as_ref());
     let p1s = pins_of(lock_at(vcs, dir, &commit).as_ref());
 
@@ -1504,8 +1510,8 @@ fn act(
     reported: &mut CherryPickJsonOutput,
 ) -> anyhow::Result<()> {
     let pre_head = record.head.clone();
-    let ours = manifest_at(here.vcs.as_ref(), &here.dir, &pre_head)
-        .context("the project's rwv.toml did not parse when the port began")?;
+    let ours = manifest_at(here.vcs.as_ref(), &here.dir, &pre_head)?
+        .context("the project had no rwv.toml when the port began")?;
     if resumed {
         recheck(here, &ours, &mut record)?;
         save(op, &record)?;
@@ -1607,9 +1613,11 @@ fn copy_members(
             } else if vcs.mid_operation(&dir).is_none() {
                 record.members[i].copying = true;
                 save(op, record)?;
-                crate::test_pause::point("cherry-pick-member-copy");
-                vcs.copy_commit(&dir, &next, record.members[i].mainline)
-                    .map_err(|e| held(path.as_str(), next.short(), &e))?
+                let copied = vcs
+                    .copy_commit(&dir, &next, record.members[i].mainline)
+                    .map_err(|e| held(path.as_str(), next.short(), &e))?;
+                crate::test_pause::point("cherry-pick-member-copied");
+                copied
             } else {
                 let busy = crate::diagnosis::judge_edits(vcs, &path, &dir, Vec::new(), None)
                     .context("a checkout in an operation is judged busy")?;
@@ -1753,11 +1761,12 @@ fn commit_project(
         None => parents.first().cloned(),
     };
     let empty = Manifest::from_toml_str("[repositories]\n")?;
-    let theirs = manifest_at(vcs, dir, &commit).unwrap_or_else(|| empty.clone());
-    let base = parent
-        .as_ref()
-        .and_then(|p| manifest_at(vcs, dir, p))
-        .unwrap_or_else(|| empty.clone());
+    let theirs = manifest_at(vcs, dir, &commit)?.unwrap_or_else(|| empty.clone());
+    let base = match &parent {
+        Some(p) => manifest_at(vcs, dir, p)?,
+        None => None,
+    }
+    .unwrap_or_else(|| empty.clone());
     let ported = ported_tables(&base, &theirs, ours);
 
     let mut conflicted = match start_project_copy(here, op, ours, record)? {
@@ -1868,7 +1877,6 @@ fn commit_project(
             RepoKey::Project => None,
         }),
     );
-    crate::test_pause::point("cherry-pick-project-commit");
     let made = crate::repin::commit_annotated(
         vcs,
         dir,
@@ -1885,6 +1893,7 @@ fn commit_project(
         vcs.cancel_in_flight_op(dir);
         return Ok(None);
     }
+    crate::test_pause::point("cherry-pick-project-committed");
     let tip = vcs.head_revision(dir)?.id().clone();
     crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
     let before = pins_of(held_lock.as_ref());
