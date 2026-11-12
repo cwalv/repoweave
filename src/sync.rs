@@ -762,11 +762,11 @@ pub enum LandingReportOutput {
         files: Vec<String>,
         index_entries: Vec<String>,
     },
-    /// The commits `path`'s new pin in `target` holds beyond the pin `target`
-    /// held, pinned into `target` with the feature's work.
+    /// The commits `path`'s new pin in the branch `into` holds beyond the pin
+    /// `into` held, pinned there with the feature's work.
     BeyondPin {
         path: String,
-        target: String,
+        into: String,
         commits: Vec<LeftCommitOutput>,
     },
     /// `branch` holds the landing and its push branch does not: the landing
@@ -893,7 +893,7 @@ impl LandingReportOutput {
                 commits,
             } => Self::BeyondPin {
                 path: repo.to_string(),
-                target: target.clone(),
+                into: target.clone(),
                 commits: commits
                     .iter()
                     .map(|c| LeftCommitOutput {

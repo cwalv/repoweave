@@ -1879,6 +1879,18 @@ fn landing_reports() -> Vec<LandingReportOutput> {
         LandingReportOutput::EntryRemoved {
             path: "local/remotes/docs".to_owned(),
         },
+        LandingReportOutput::BeyondPin {
+            path: "local/remotes/lib".to_owned(),
+            into: "main".to_owned(),
+            commits: vec![LeftCommitOutput {
+                sha: id('e'),
+                subject: "upstream fix".to_owned(),
+            }],
+        },
+        LandingReportOutput::PushBranchAhead {
+            path: "(project)".to_owned(),
+            branch: "main".to_owned(),
+        },
         LandingReportOutput::TakenIn {
             path: "(project)".to_owned(),
             branch: "main".to_owned(),

@@ -512,7 +512,7 @@ fn a_gone_upstream_is_marked_only_while_the_branch_holds_unpushed_commits() {
         "its commits are listed: {stdout}"
     );
     assert!(
-        stdout.contains("copy these commits onto"),
+        stdout.contains("keep this work on a branch"),
         "and so is the choice to keep them: {stdout}"
     );
 }

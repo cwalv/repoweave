@@ -395,10 +395,10 @@ fn refusal(report: Report) -> anyhow::Error {
 
 /// A record published on a remote names a target this machine resolves only
 /// through that remote: its branch published there, and a local branch of
-/// that name taking in from that branch there, or, taking in from nowhere,
-/// configured to publish there. Anything else, a local branch taking in from
-/// another branch included, is that target gone here, never an unrelated
-/// branch that happens to share its name.
+/// that name taking in from that branch there, or configured to publish there
+/// and taking in from no branch of another name. Anything else, a local
+/// branch with a foreign upstream included, is that target gone here, never
+/// an unrelated branch that happens to share its name.
 fn judge_unrelated_target(
     vcs: &dyn Vcs,
     project: &ProjectName,
@@ -422,8 +422,9 @@ fn judge_unrelated_target(
     let same_branch_there = match &local {
         None => true,
         Some(_) => match vcs.upstream_of(dir, &target_ref)? {
-            Some(up) => holding.contains(&up.remote) && up.branch.as_str() == target.as_str(),
-            None => vcs
+            Some(up) if up.branch.as_str() != target.as_str() => false,
+            Some(up) if holding.contains(&up.remote) => true,
+            _ => vcs
                 .push_target_of(dir, &target_ref, None)?
                 .is_some_and(|remote| holding.contains(&remote)),
         },

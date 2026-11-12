@@ -489,7 +489,7 @@ fn update_reports_and_leaves_a_member_on_a_branch_holding_commits_nothing_else_d
 }
 
 #[test]
-fn lock_refuses_a_member_holding_stray_commits_naming_the_branch_they_are_copied_onto() {
+fn lock_refuses_a_member_holding_stray_commits_naming_where_to_keep_them() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
 
@@ -510,8 +510,8 @@ fn lock_refuses_a_member_holding_stray_commits_naming_the_branch_they_are_copied
         text.contains("github/acme/a: alignment on branch with stray commits (wip)"),
         "{text}"
     );
-    assert!(text.contains("copy these commits onto `main`"), "{text}");
-    assert!(!text.contains("<b>"), "{text}");
+    assert!(text.contains("keep this work on a branch"), "{text}");
+    assert!(!text.contains("copy these commits onto"), "{text}");
 }
 
 #[test]
