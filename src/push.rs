@@ -958,7 +958,137 @@ fn judge_into(
         &mut plan,
     )?;
     judge_overwrites(pushed, members, &live, push_project, refusals, &mut plan)?;
+    if push_project {
+        report_pins_held_by_no_branch(
+            pushed,
+            members,
+            pvcs,
+            project_url_remote,
+            fetched,
+            reported,
+        )?;
+    }
     Ok(plan)
+}
+
+/// Each commit an `owned` or `fork` member is pinned at by a project commit
+/// of the declared branch's pushed range that no branch or remote-tracking
+/// branch reaches, with the project commits pinning it, the backups holding
+/// it, and whether the pushed tip's pin holds a recorded copy of it.
+fn report_pins_held_by_no_branch(
+    pushed: &Pushed,
+    members: &[Member],
+    pvcs: &dyn Vcs,
+    project_url_remote: Option<&RemoteHandle>,
+    fetched: &Fetched,
+    reported: &mut Report,
+) -> anyhow::Result<()> {
+    if pushed.is_feature() {
+        return Ok(());
+    }
+    let range = locks_of_unpushed_range(
+        pvcs,
+        &pushed.project_dir,
+        &pushed.raw,
+        &pushed.tip,
+        project_url_remote,
+    )?;
+    for member in members {
+        if !member.acting
+            || !member.dir.exists()
+            || !matches!(member.entry.role, Role::Owned | Role::Fork)
+        {
+            continue;
+        }
+        let vcs = member.vcs.as_ref();
+        let mut pinned_by: BTreeMap<crate::vcs::CommitId, Vec<crate::vcs::CommitId>> =
+            BTreeMap::new();
+        for (project_commit, lock) in &range {
+            let Some(pin) = lock.get_entry(&member.path).and_then(|entry| {
+                vcs.resolve_revision(&member.dir, entry.version.as_str())
+                    .ok()
+            }) else {
+                continue;
+            };
+            pinned_by
+                .entry(pin.id().clone())
+                .or_default()
+                .push(project_commit.clone());
+        }
+        let tip_pin = pushed
+            .lock
+            .as_ref()
+            .and_then(|lock| lock.get_entry(&member.path))
+            .and_then(|entry| {
+                vcs.resolve_revision(&member.dir, entry.version.as_str())
+                    .ok()
+            });
+        let mut backups = None;
+        for (pin, project_commits) in pinned_by {
+            let at = ResolvedRevisionId::from(pin.clone());
+            let unreached =
+                vcs.reached_by_no_branch(&member.dir, &at, crate::vcs::RemoteTracking::Counted)?;
+            if !unreached.iter().any(|commit| commit.id == pin) {
+                continue;
+            }
+            let backups = match &mut backups {
+                Some(listed) => listed,
+                None => backups
+                    .insert(vcs.list_backups(&member.dir, crate::vcs::RemoteTracking::Counted)?),
+            };
+            let mut listing: Vec<String> = project_commits
+                .iter()
+                .map(|commit| {
+                    format!(
+                        "pinned by projects/{} {} of the range being pushed",
+                        pushed.project,
+                        commit.short()
+                    )
+                })
+                .collect();
+            let holding: Vec<String> = backups
+                .iter()
+                .filter(|listed| listed.held.iter().any(|commit| commit.id == pin))
+                .map(|listed| listed.backup.name.to_string())
+                .collect();
+            listing.push(match holding.as_slice() {
+                [] => "held by no backup".to_owned(),
+                names => format!("held by backup {}", names.join(", ")),
+            });
+            if let Some(tip_pin) = &tip_pin {
+                if !vcs
+                    .copied_into(&member.dir, std::slice::from_ref(&pin), tip_pin)?
+                    .is_empty()
+                {
+                    listing.push(format!(
+                        "the pushed tip's pin {} carries a recorded copy of it",
+                        tip_pin.id().short()
+                    ));
+                }
+            }
+            let remote = vcs
+                .push_target_of(
+                    &member.dir,
+                    &RawRefName::new(member.entry.branch.local_counterpart().as_str()),
+                    fetched.url_remote(&member.path),
+                )
+                .ok()
+                .flatten();
+            let mut judging = State::PinHeldByNoBranch
+                .of(&member.path)
+                .member()
+                .checkout(&member.dir)
+                .subject(pin.short())
+                .listing(listing)
+                .bind("<m>", member.path.as_str())
+                .bind("<sha>", pin.short());
+            if let Some(remote) = remote {
+                judging = judging.bind("<r>", remote);
+            }
+            reported.add(judging.judge(vcs));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1222,6 +1352,30 @@ fn unpushed_project_range(
             .map(|copy| copy.tip),
     };
     Ok(pvcs.pushed_range(project_dir, tip, on_target.as_ref())?)
+}
+
+/// Each commit of the project branch `raw` its push branch lacks, oldest
+/// first, with the lock it records; a commit whose lock does not parse is
+/// left out.
+pub(crate) fn locks_of_unpushed_range(
+    pvcs: &dyn Vcs,
+    project_dir: &Path,
+    raw: &RawRefName,
+    tip: &ResolvedRevisionId,
+    project_url_remote: Option<&RemoteHandle>,
+) -> anyhow::Result<Vec<(crate::vcs::CommitId, LockFile)>> {
+    Ok(
+        unpushed_project_range(pvcs, project_dir, raw, tip, project_url_remote)?
+            .into_iter()
+            .filter_map(|commit| {
+                let at = ResolvedRevisionId::from(commit.id.clone());
+                let text = pvcs
+                    .read_file_at_revision(project_dir, &at, Path::new(LockFile::FILE_NAME))
+                    .ok()?;
+                Some((commit.id, LockFile::from_json_str(&text).ok()?))
+            })
+            .collect(),
+    )
 }
 
 /// Every branch a commit of the project branch `raw` its push branch lacks

@@ -137,7 +137,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv update --remote`, for a member; `rwv branch create` and `rwv workweave create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
+| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv update --remote`, for a member, and with `--merge-upstream` for a member branch a commit of the unpushed project range declares, checked out nowhere, whose merge as refs would conflict; `rwv branch create` and `rwv workweave create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
 | `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
 | `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it, and `rwv land` for the branch it landed into; `rwv push` publishes it |
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
@@ -157,6 +157,9 @@ The others follow.
 | `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv push` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
 | `diverged`, for `rwv sync` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
+| `diverged`, for `rwv update --remote` | C3: take theirs; yours is kept in a backup | then `rwv update --remote --reset-to-upstream <repo>` | any workspace | backup first |
+| `diverged`, for `rwv update --remote` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick -x <ids>`); then `rwv lock --commit`; then `rwv update --remote --reset-to-upstream <repo>` | where `<b>` is checked out | a copy adds only |
+| `diverged`, for `rwv update --remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`); then `rwv update --remote --reset-to-upstream <repo>` | any workspace | creates or fast-forwards |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |

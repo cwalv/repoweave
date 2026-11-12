@@ -32,6 +32,8 @@ use crate::vcs::{Vcs, VcsAction};
 /// the project would have to clear.
 pub const ACTIVATE: &str = "activate";
 
+pub const UPDATE_REMOTE: &str = "update --remote";
+
 /// What a refusal judged a repo on. Its token is the kind `rwv explain`
 /// serves; the order here is the order a repo's lines print in.
 #[derive(
@@ -549,6 +551,7 @@ pub enum State {
     MissingLockMergeDriverConfigAbsent,
     MissingLockMergeDriverConfigLegacy,
     PinWouldBeUnreachable,
+    PinHeldByNoBranch,
     TargetNoTarget,
     TargetUnrecorded,
     TargetConflict,
@@ -612,7 +615,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 82] = [
+    pub const ALL: [State; 83] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -640,6 +643,7 @@ impl State {
         Self::PinUnmerged,
         Self::PinWaived,
         Self::PinWouldBeUnreachable,
+        Self::PinHeldByNoBranch,
         Self::ProtectedDeclared,
         Self::ProtectedDeclaredMode,
         Self::NameTaken,
@@ -814,9 +818,11 @@ impl State {
                 means: "the branch and its upstream each hold commits the other lacks, counted \
                         on the line",
                 refused_by: "`rwv pull`, for the project branch; `rwv update --remote`, for a \
-                             member; `rwv branch create` and `rwv workweave create`, for a \
-                             branch that would start at the tip of a branch that has diverged \
-                             from its upstream",
+                             member, and with `--merge-upstream` for a member branch a commit \
+                             of the unpushed project range declares, checked out nowhere, whose \
+                             merge as refs would conflict; `rwv branch create` and `rwv \
+                             workweave create`, for a branch that would start at the tip of a \
+                             branch that has diverged from its upstream",
                 offers: &[
                     Form::C2Pull,
                     Form::C3Pull,
@@ -828,6 +834,9 @@ impl State {
                     ("workweave create", Form::C34),
                     ("push", Form::Republish),
                     ("sync", Form::Republish),
+                    (UPDATE_REMOTE, Form::C3HeldByDeclared),
+                    (UPDATE_REMOTE, Form::C15ThenReset),
+                    (UPDATE_REMOTE, Form::C27ThenReset),
                 ],
             },
             Self::PushBranchBehind => &StateRow {
@@ -1170,6 +1179,18 @@ impl State {
                         listed with the locks that pin it",
                 refused_by: "`rwv backup drop` and `rwv backup prune`",
                 offers: &[Form::C7Push, Form::C27],
+                verb_offers: &[],
+            },
+            Self::PinHeldByNoBranch => &StateRow {
+                axis: Axis::Pin,
+                name: "held by no branch",
+                means: "a project commit of the range being pushed pins the commit named, which \
+                        no branch or remote-tracking branch reaches, listed with the project \
+                        commits pinning it, the backups holding it, and the pushed tip's pin \
+                        where that records a copy of it. Only the pushed tip's pins must be \
+                        reached, so the push publishes the range",
+                refused_by: "nothing refuses; `rwv push` reports it",
+                offers: &[Form::C27],
                 verb_offers: &[],
             },
             Self::TargetNoTarget => &StateRow {
@@ -2156,6 +2177,9 @@ pub enum Form {
     C2UpdateRemote,
     C3Pull,
     C3UpdateRemote,
+    C3HeldByDeclared,
+    C15ThenReset,
+    C27ThenReset,
     C5Lock,
     C6,
     C6Activate,
@@ -2266,7 +2290,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 91] = [
+    pub const ALL: [Form; 94] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2274,6 +2298,9 @@ impl Form {
         Self::C2UpdateRemote,
         Self::C3Pull,
         Self::C3UpdateRemote,
+        Self::C3HeldByDeclared,
+        Self::C15ThenReset,
+        Self::C27ThenReset,
         Self::C5Lock,
         Self::C6,
         Self::C6Activate,
@@ -2406,6 +2433,28 @@ impl Form {
                 choice: C::C3,
                 steps: &[Rwv("rwv update --remote --reset-to-upstream <repo>")],
                 at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C3HeldByDeclared => &FormRow {
+                choice: C::C3,
+                steps: &[Then(Self::C3UpdateRemote)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C15ThenReset => &FormRow {
+                choice: C::C15,
+                steps: &[
+                    Vcs(A::CherryPickOntoCheckedOut),
+                    Then(Self::C5Lock),
+                    Then(Self::C3UpdateRemote),
+                ],
+                at: W::WhereBranchCheckedOut,
+                shipped: true,
+            },
+            Self::C27ThenReset => &FormRow {
+                choice: C::C27,
+                steps: &[Vcs(A::PushCommitAs), Then(Self::C3UpdateRemote)],
+                at: W::Any,
                 shipped: true,
             },
             Self::C5Lock => &FormRow {
@@ -2935,6 +2984,9 @@ impl Form {
             | Self::C1UpdateRemoteCommit
             | Self::C2UpdateRemote
             | Self::C3UpdateRemote
+            | Self::C3HeldByDeclared
+            | Self::C15ThenReset
+            | Self::C27ThenReset
             | Self::C7PushRepo
             | Self::C11SetBranchNew
             | Self::C18
@@ -2976,6 +3028,31 @@ impl Form {
             (Self::CarryAgain, Some("land")) => Self::CarryAgainLand,
             _ => self,
         }
+    }
+
+    /// What the route this form spells keeps, where its choice's phrase
+    /// alone does not say; written to follow the phrase.
+    fn because(self) -> Option<&'static str> {
+        match self {
+            Self::C3HeldByDeclared => Some("; `<b>` already holds each commit only yours has"),
+            Self::C15ThenReset => Some(
+                ", then take theirs: `<b>` keeps a recorded copy of each, the originals only a \
+                 backup",
+            ),
+            Self::C27ThenReset => Some(
+                ", then take theirs: the remote keeps each original under that name, so every \
+                 project commit being pushed stays checkoutable",
+            ),
+            _ => None,
+        }
+    }
+
+    fn phrase(self, bindings: &BTreeMap<&'static str, String>) -> String {
+        let phrase = self.row().choice.row().phrase;
+        fill(
+            &format!("{phrase}{}", self.because().unwrap_or_default()),
+            bindings,
+        )
     }
 
     fn lines(self, vcs: &dyn Vcs, verb: Option<&str>) -> Vec<String> {
@@ -3212,7 +3289,7 @@ impl Judging {
             })
             .map(|form| Offered {
                 choice: form.row().choice,
-                phrase: fill(form.row().choice.row().phrase, &self.bindings),
+                phrase: form.phrase(&self.bindings),
                 at: form.row().at.at(&self.places),
                 run: form
                     .lines(vcs, self.verb)
@@ -3667,7 +3744,7 @@ pub fn choices(
             let row = form.row().choice.row();
             ChoiceOutput {
                 id: row.id.map(str::to_owned),
-                phrase: fill(row.phrase, bindings),
+                phrase: form.phrase(bindings),
                 at: None,
                 run: form
                     .lines(vcs, None)

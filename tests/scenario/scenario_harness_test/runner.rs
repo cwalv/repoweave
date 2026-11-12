@@ -155,12 +155,14 @@ pub enum Action {
     },
     /// The choice line the last rwv step printed that begins `prefix` and
     /// holds `holding`, run at `at` word for word as the terminal shows it:
-    /// by rwv, or by git for a VCS action.
+    /// by rwv, or by git for a VCS action; each placeholder it leaves for
+    /// the operator to choose filled from `fill`.
     RwvPrinted {
         at: Place,
         exact: bool,
         prefix: &'static str,
         holding: &'static str,
+        fill: &'static [(&'static str, &'static str)],
     },
     DropLockEntry {
         at: Place,
@@ -811,6 +813,28 @@ impl Step {
                 exact: false,
                 prefix,
                 holding,
+                fill: &[],
+            },
+            Expect::undecided(),
+        )
+    }
+
+    /// [`Step::rwv_printed_holding`] with each placeholder the line leaves
+    /// for the operator to choose filled as `fill` says.
+    pub fn rwv_printed_filling(
+        at: &Place,
+        prefix: &'static str,
+        holding: &'static str,
+        fill: &'static [(&'static str, &'static str)],
+    ) -> Step {
+        Step::new(
+            format!("the printed `{prefix}...{holding}...`, filled {fill:?}"),
+            Action::RwvPrinted {
+                at: at.clone(),
+                exact: false,
+                prefix,
+                holding,
+                fill,
             },
             Expect::undecided(),
         )
@@ -826,6 +850,7 @@ impl Step {
                 exact: true,
                 prefix: line,
                 holding: "",
+                fill: &[],
             },
             Expect::undecided(),
         )
@@ -1323,6 +1348,7 @@ impl Run<'_> {
                 exact,
                 prefix,
                 holding,
+                fill,
             } => {
                 let Some(line) = self.last_rwv_output.lines().map(str::trim).find(|line| {
                     if *exact {
@@ -1339,7 +1365,11 @@ impl Run<'_> {
                         ),
                     );
                 };
-                let line = line.to_owned();
+                let line = fill
+                    .iter()
+                    .fold(line.to_owned(), |line, (placeholder, value)| {
+                        line.replace(placeholder, value)
+                    });
                 let mut words = line.split_whitespace();
                 let program = words.next();
                 let args: Vec<&str> = words.collect();

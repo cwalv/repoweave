@@ -91,7 +91,23 @@ fn the_printed_reset_of_a_diverged_main_leaves_the_expected_branch_and_its_pin()
 
 #[test]
 fn a_diverged_main_still_stops_on_an_undeclared_path_both_sides_changed() {
-    runner::run(scenarios::main_diverged_still_stops_on_an_undeclared_path()).assert_green();
+    runner::run(scenarios::main_diverged_still_stops_on_an_undeclared_path())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_diverged_main_whose_merge_conflicts_and_whose_commits_the_declared_branch_holds_is_reset() {
+    runner::run(scenarios::main_diverged_conflicting_held()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_diverged_main_whose_merge_conflicts_is_copied_onto_the_declared_branch_then_reset() {
+    runner::run(scenarios::main_diverged_conflicting_copied()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_diverged_main_whose_merge_conflicts_is_published_under_another_name_then_reset() {
+    runner::run(scenarios::main_diverged_conflicting_published()).assert_fully_decided_green();
 }
 
 #[test]
@@ -966,6 +982,9 @@ every_scenario!(
     main_diverged_resolves_derived_to_the_upstream,
     main_diverged_still_stops_on_an_undeclared_path,
     main_diverged_reset_leaves_the_expected_branch,
+    main_diverged_conflicting_held,
+    main_diverged_conflicting_copied,
+    main_diverged_conflicting_published,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,
     backward_pin_reported_in_json,

@@ -327,6 +327,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `unmerged` | a merge commit in the range being pushed joined two pins of one member that its parents changed, each under one declared branch, and the pushed tip pins neither merged with the other: a commit holding both. The merge and the pins are listed. A member the parents declare differently is listed and not refused. A commit at or after the merge that records re-pinning the member backward by name, to a commit reaching neither pin the merge left unmerged, waives it (`pin` waived); a commit made outside rwv records none, and a record that disagrees with what its commit's lock changed waives nothing and is listed. At a landing: the feature and the target each changed a `dependency` or `reference` member's pin since their merge base, and neither pin contains the other | `rwv push`; `rwv land`, before anything moves |
 | `waived` | a merge in the range being pushed left one member's pins unmerged, and a commit in the range at or after it, the merge's own included, records re-pinning the member backward by name to a commit that does not reach the pin the merge left. The merge, the re-pin that waived it and the verb that made it are listed | nothing refuses; `rwv push` reports it and goes on |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
+| `held by no branch` | a project commit of the range being pushed pins the commit named, which no branch or remote-tracking branch reaches, listed with the project commits pinning it, the backups holding it, and the pushed tip's pin where that records a copy of it. Only the pushed tip's pins must be reached, so the push publishes the range | nothing refuses; `rwv push` reports it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -369,6 +370,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `unmerged` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
+| `held by no branch` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Reconcile repos](../how-to/reconcile-repos.md); [Destructive operations](../explanation/destructive-operations.md).
 

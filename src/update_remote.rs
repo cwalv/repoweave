@@ -1150,12 +1150,15 @@ struct DeclaredElsewhere {
     local: ResolvedRevisionId,
     upstream: ResolvedRevisionId,
     relation: Relation,
+    remote: Option<crate::vcs::RemoteHandle>,
 }
 
-/// The branches [`DeclaredElsewhere`] names.
+/// The branches [`DeclaredElsewhere`] names, and each commit of the unpushed
+/// project range with the lock it records.
 #[derive(Default)]
 struct Elsewhere {
     found: Vec<DeclaredElsewhere>,
+    range_locks: Vec<(crate::vcs::CommitId, crate::manifest::LockFile)>,
 }
 
 /// Each branch `named` names, judged as `<m>:<branch>` must be: a branch of
@@ -1246,7 +1249,9 @@ fn declared_elsewhere(
                 m = item.repo_path
             );
         }
-        let Some((_, upstream)) = crate::push_branch::upstream_copy(vcs, dir, branch, None)? else {
+        let Some((upstream_ref, upstream)) =
+            crate::push_branch::upstream_copy(vcs, dir, branch, None)?
+        else {
             crate::refuse!(
                 InapplicableFlag,
                 "`{operand}`: '{branch}' takes in from no upstream",
@@ -1256,15 +1261,150 @@ fn declared_elsewhere(
         if relation == Relation::Even {
             continue;
         }
+        let remote = match upstream_ref {
+            crate::branch_ref::BranchRef::Remote { remote, .. } => Some(remote),
+            crate::branch_ref::BranchRef::Local(_) => None,
+        };
         found.push(DeclaredElsewhere {
             idx,
             branch: branch.clone(),
             local,
             upstream,
             relation,
+            remote,
         });
     }
-    Ok(Elsewhere { found })
+    let range_locks = match found.is_empty() {
+        true => Vec::new(),
+        false => crate::push::locks_of_unpushed_range(
+            pvcs.as_ref(),
+            project_dir,
+            &raw,
+            &tip,
+            url_remote.as_ref(),
+        )?,
+    };
+    Ok(Elsewhere { found, range_locks })
+}
+
+/// `e`'s merge as refs conflicts in `paths`, and no workspace can be opened
+/// with it checked out: the routes that settle it without a merge. Where the
+/// tip's declared branch holds every unpushed commit of `e`'s branch, the
+/// reset alone; else a recorded copy onto it, or publishing the branch under
+/// another name, then the reset. Each project commit of the unpushed range
+/// whose pin a reset leaves only a backup holding is listed.
+fn judge_conflicting_as_refs(
+    item: &WorkItem,
+    e: &DeclaredElsewhere,
+    paths: &[String],
+    range_locks: &[(crate::vcs::CommitId, crate::manifest::LockFile)],
+    project: &ProjectName,
+) -> anyhow::Result<crate::diagnosis::Judged> {
+    use crate::diagnosis::Form;
+    let vcs = item.vcs.as_ref();
+    let dir = item.checkout.path();
+    let declared = RawRefName::new(item.expected.as_str());
+    let unpushed = vcs.unpushed_commits(dir, &e.branch)?;
+    let declared_tip = vcs.resolve_local_branch_tip(dir, &declared)?;
+    let mut off_declared = Vec::new();
+    for commit in &unpushed {
+        let at = ResolvedRevisionId::from(commit.id.clone());
+        let held = match &declared_tip {
+            Some(tip) => vcs.is_ancestor(dir, &at, tip)?,
+            None => false,
+        };
+        if !held {
+            off_declared.push(commit.clone());
+        }
+    }
+    let copied = match &declared_tip {
+        Some(tip) => {
+            let ids: Vec<crate::vcs::CommitId> = off_declared
+                .iter()
+                .map(|commit| commit.id.clone())
+                .collect();
+            vcs.copied_into(dir, &ids, tip)?
+        }
+        None => BTreeSet::new(),
+    };
+    let lacking: Vec<&crate::vcs::CommitSummary> = off_declared
+        .iter()
+        .filter(|commit| !copied.contains(&commit.id))
+        .collect();
+    let (ahead, behind) = vcs.ahead_behind(dir, e.upstream.id(), e.local.id());
+    let mut listing: Vec<String> = Vec::new();
+    for (project_commit, lock) in range_locks {
+        let Some(pin) = lock
+            .get_entry(&item.repo_path)
+            .and_then(|entry| vcs.resolve_revision(dir, entry.version.as_str()).ok())
+        else {
+            continue;
+        };
+        if !off_declared.iter().any(|commit| &commit.id == pin.id()) {
+            continue;
+        }
+        let route = match copied.contains(pin.id()) {
+            true => format!("`{declared}` holds a recorded copy of it"),
+            false => "copied and reset, the tip's pin carries a recorded copy of it".to_owned(),
+        };
+        listing.push(format!(
+            "projects/{project} {} pins {}, which after the reset only a backup holds; {route}",
+            project_commit.short(),
+            pin.id().short()
+        ));
+    }
+    let mut judging = crate::diagnosis::State::PushBranchDiverged
+        .of(&item.repo_path)
+        .member()
+        .checkout(dir)
+        .by_verb(crate::diagnosis::UPDATE_REMOTE)
+        .bind("<m>", item.repo_path.as_str())
+        .bind("<repo>", format!("{}:{}", item.repo_path, e.branch))
+        .bind("<b>", &declared)
+        .subject(format!(
+            "{ahead} ahead, {behind} behind; '{}' is checked out nowhere and its merge as refs \
+             conflicts in {}",
+            e.branch,
+            paths.join(", ")
+        ));
+    if lacking.is_empty() {
+        listing.insert(
+            0,
+            format!(
+                "`{declared}` holds each commit of '{}' its upstream lacks",
+                e.branch
+            ),
+        );
+        return Ok(judging
+            .listing(listing)
+            .only_forms(&[Form::C3HeldByDeclared])
+            .judge(vcs));
+    }
+    let mut lines: Vec<String> = lacking
+        .iter()
+        .map(|commit| format!("{} {}", commit.id.short(), commit.subject))
+        .collect();
+    lines.extend(listing);
+    judging = judging
+        .listing(lines)
+        .bind_list(
+            "<ids>",
+            lacking
+                .iter()
+                .rev()
+                .map(|commit| commit.id.short().to_owned()),
+        )
+        .bind("<sha>", e.local.id().short());
+    let mut forms = Vec::new();
+    if let Some(onto) = vcs.checkouts_of_branch(dir, &declared)?.into_iter().next() {
+        judging = judging.bind_place("<b-checkout>", &onto);
+        forms.push(Form::C15ThenReset);
+    }
+    if let Some(remote) = &e.remote {
+        judging = judging.bind("<r>", remote);
+        forms.push(Form::C27ThenReset);
+    }
+    Ok(judging.only_forms(&forms).judge(vcs))
 }
 
 /// Refuse, all together and before anything moves, each member that has
@@ -1489,12 +1629,13 @@ fn settle_diverged(
             crate::vcs::DerivedContentPolicy::keep_incoming_side(),
             e.upstream.id(),
         )? {
-            report.note(format!(
-                "{}: '{}' is checked out nowhere and its merge conflicts in {}",
-                item.repo_path,
-                e.branch,
-                paths.join(", ")
-            ));
+            report.add(judge_conflicting_as_refs(
+                item,
+                e,
+                &paths,
+                &elsewhere.range_locks,
+                project,
+            )?);
         }
         settling.push((e, reset));
     }
