@@ -195,6 +195,7 @@ pub struct Rule<'a> {
     repos: Vec<Repo>,
     w_record_mode: Option<Mode>,
     target_mode: Mode,
+    unconfirmed: BTreeMap<usize, BTreeMap<String, String>>,
 }
 
 type NamedTip = (BranchRef, ResolvedRevisionId);
@@ -245,8 +246,9 @@ fn branch_tip(
 
 impl<'a> Rule<'a> {
     /// Judge every refusal: the branch exists, its target has a record that
-    /// reads, nothing lands into it, no workspace holds it checked out, and
-    /// the flags make sense together. Nothing is changed.
+    /// reads, nothing lands into it, no workspace holds it checked out, the
+    /// flags make sense together, and, after the pruning fetch, no remote
+    /// delete reaches a declared branch. Only remote-tracking branches move.
     pub fn open(request: Request<'a>) -> anyhow::Result<Self> {
         let project_vcs = project_vcs();
         let project_path = project_dir(request.primary, request.project);
@@ -355,9 +357,13 @@ impl<'a> Rule<'a> {
             repos,
             w_record_mode,
             target_mode,
+            unconfirmed: BTreeMap::new(),
         };
+        let mut rule = rule;
         rule.judge_flags()?;
         rule.judge_checkouts()?;
+        rule.unconfirmed = rule.fetch()?;
+        rule.judge_declared()?;
         Ok(rule)
     }
 
@@ -544,11 +550,10 @@ impl<'a> Rule<'a> {
         Ok(unconfirmed)
     }
 
-    /// Run the rule: fetch, judge each branch that belongs, delete what it
-    /// deletes, and drop the records it leaves without a branch.
-    pub fn apply(mut self) -> anyhow::Result<Outcome> {
-        let unconfirmed = self.fetch()?;
-        self.judge_declared()?;
+    /// Run the rule: judge each branch that belongs, delete what it deletes,
+    /// and drop the records it leaves without a branch.
+    pub fn apply(self) -> anyhow::Result<Outcome> {
+        let unconfirmed = self.unconfirmed.clone();
         let pins = crate::pins::live_pins(self.request.primary)?;
         let mut outcome = Outcome::default();
         let mut member_survives = false;
