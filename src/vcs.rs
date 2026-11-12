@@ -2878,6 +2878,13 @@ pub trait Vcs: Send + Sync {
     /// index column is set, and reports the post-rename name.
     fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
+    /// The tracked paths whose working file differs from what the index
+    /// holds: edits not staged.
+    ///
+    /// For git: the worktree column of
+    /// `git status --porcelain --untracked-files=no`.
+    fn unstaged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
     /// Record everything staged as a new commit with `message`.
     ///
     /// Fails when nothing is staged; call [`Vcs::has_staged_changes`] first.

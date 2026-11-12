@@ -2334,6 +2334,13 @@ impl Vcs for GitVcs {
             .map(|entry| entry.path)
             .collect())
     }
+    fn unstaged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Self::porcelain_status(repo, StatusReach::Tracked)?
+            .into_iter()
+            .filter(|entry| entry.worktree != b' ' && entry.worktree != b'?')
+            .map(|entry| entry.path)
+            .collect())
+    }
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(["commit", "-m", message], repo).map(|_| ())
     }

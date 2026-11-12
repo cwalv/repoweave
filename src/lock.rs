@@ -296,13 +296,31 @@ pub(crate) fn report_left_edits(
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     let left = unrelated_edits(vcs, project_dir, authored)?;
-    if !left.is_empty() {
-        eprintln!(
-            "{}: edited files left as they are: {}",
-            crate::workspace::project_rel_path(project),
-            left.join(", ")
-        );
+    if left.is_empty() {
+        return Ok(());
     }
+    let staged = vcs
+        .staged_paths(project_dir)
+        .context("failed to read project repo status")?;
+    let edited = vcs
+        .unstaged_paths(project_dir)
+        .context("failed to read project repo status")?;
+    let named: Vec<String> = left
+        .iter()
+        .map(|path| {
+            let how = match (staged.contains(path), edited.contains(path)) {
+                (true, true) => "staged and edited",
+                (true, false) => "staged",
+                _ => "edited",
+            };
+            format!("{path} ({how})")
+        })
+        .collect();
+    eprintln!(
+        "{}: uncommitted files left as they are: {}",
+        crate::workspace::project_rel_path(project),
+        named.join(", ")
+    );
     Ok(())
 }
 

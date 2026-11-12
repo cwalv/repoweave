@@ -70,7 +70,7 @@ fn assert_edits_left(w: &PushWorkspace, before: &str, verb: &str, out: &std::pro
     assert!(unstaged.contains("NOTES.md"), "{verb}:\n{unstaged}");
     assert_eq!(staged, "STAGED.md", "{verb}");
     assert!(
-        text.contains("projects/proj: edited files left as they are: NOTES.md, STAGED.md"),
+        text.contains("projects/proj: uncommitted files left as they are: NOTES.md (edited), STAGED.md (staged)"),
         "{verb}:\n{text}"
     );
 }
@@ -129,6 +129,18 @@ fn member_remove_leaves_unrelated_edits_out_of_its_commit() {
     let out = run(&w, &["member", "remove", LIB]);
 
     assert_edits_left(&w, &before, "member remove", &out);
+}
+
+#[test]
+fn member_add_leaves_unrelated_edits_out_of_its_commit() {
+    let w = with_edits();
+    let bare = w._tmp.path().join("extra.git");
+    common::init_bare_repo_with_commit(&bare);
+    let before = head(&w);
+
+    let out = run(&w, &["member", "add", &common::file_url(&bare)]);
+
+    assert_edits_left(&w, &before, "member add", &out);
 }
 
 /// The project repo's remote gains a commit changing `file`.
@@ -195,7 +207,7 @@ fn pull_takes_in_a_change_that_touches_no_edited_file_and_reports_the_edits() {
         "edited\n"
     );
     assert!(
-        text.contains("projects/proj: edited files left as they are: NOTES.md"),
+        text.contains("projects/proj: uncommitted files left as they are: NOTES.md (edited)"),
         "{text}"
     );
 }

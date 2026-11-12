@@ -435,6 +435,10 @@ impl Vcs for FakeVcs {
         unsupported("staged_paths")
     }
 
+    fn unstaged_paths(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("unstaged_paths")
+    }
+
     fn commit(&self, _repo: &Path, _message: &str) -> Result<(), VcsError> {
         unsupported("commit")
     }
