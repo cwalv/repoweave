@@ -2142,6 +2142,8 @@ pub enum Step {
     Rerun(&'static str),
     /// A flag to rerun the refused verb without.
     RerunWithout(&'static str),
+    /// The continue of an operation of this verb.
+    Resume(crate::op_state::OpVerb),
 }
 
 /// One spelling of a choice.
@@ -2254,7 +2256,11 @@ impl FormRow {
         self.shipped
             && self.steps.iter().all(|step| match step {
                 Step::Then(next) => printable(*next),
-                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => true,
+                Step::Rwv(_)
+                | Step::Vcs(_)
+                | Step::Rerun(_)
+                | Step::RerunWithout(_)
+                | Step::Resume(_) => true,
             })
     }
 }
@@ -2356,7 +2362,7 @@ impl Form {
 
     pub fn row(self) -> &'static FormRow {
         use ChoiceId as C;
-        use Step::{Rerun, RerunWithout, Rwv, Then, Vcs};
+        use Step::{Rerun, RerunWithout, Resume, Rwv, Then, Vcs};
         use VcsAction as A;
         use Where as W;
         match self {
@@ -2893,13 +2899,13 @@ impl Form {
             },
             Self::CarryAgain => &FormRow {
                 choice: C::CarryAgain,
-                steps: &[Rwv("rwv sync --continue")],
+                steps: &[Resume(crate::op_state::OpVerb::Sync)],
                 at: W::Here,
                 shipped: true,
             },
             Self::CarryAgainLand => &FormRow {
                 choice: C::CarryAgain,
-                steps: &[Rwv("rwv land --continue")],
+                steps: &[Resume(crate::op_state::OpVerb::Land)],
                 at: W::Here,
                 shipped: true,
             },
@@ -2953,7 +2959,9 @@ impl Form {
             .flat_map(|step| match step {
                 Step::Rwv(command) => vec![*command],
                 Step::Then(next) => next.rwv_commands(),
-                Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) => Vec::new(),
+                Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) | Step::Resume(_) => {
+                    Vec::new()
+                }
             })
             .collect()
     }
@@ -2980,6 +2988,7 @@ impl Form {
                 Step::Then(next) => next.for_verb(verb).lines(vcs, verb),
                 Step::Rerun(flag) => vec![format!("rerun with {flag}")],
                 Step::RerunWithout(flag) => vec![format!("rerun without {flag}")],
+                Step::Resume(verb) => vec![crate::op_state::resume_command(*verb)],
             })
             .collect()
     }
@@ -3990,6 +3999,10 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
             Step::RerunWithout(flag) => {
                 flush(&mut actions, &mut parts);
                 parts.push(format!("rerun without `{flag}`"));
+            }
+            Step::Resume(verb) => {
+                flush(&mut actions, &mut parts);
+                parts.push(format!("`{}`", crate::op_state::resume_command(*verb)));
             }
         }
     }
