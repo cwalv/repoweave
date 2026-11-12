@@ -135,11 +135,34 @@ is provably dead — safe to auto-fix by removing the lease file).
 Elapsed time is surfaced to the operator as observability, never
 consumed as a timeout.
 
+## The landing's plan
+
+`land::resolve` reads the feature's record, its target `T`, `T`'s tip (the
+newer of `T` and its upstream) and the workspace that has `T` checked out,
+before the op is acquired. `land::judge`, inside the guard, plans each
+`owned` or `fork` member's receiving branch `U` and its tip, and judges every
+refusal the landing owes — the record changed elsewhere, `as` against `T`'s
+mode now, the lineage rule, `U` reaching `T`'s pin, `U`'s checkout in `T`'s
+workspace, changes to `T`'s entries, dependents, protection — into one
+report with the edits, alignment and pin judgments of both workspaces.
+Nothing moves until that report is empty.
+
+The plan is written to the owner record's `take_in`: `sync_from` names `T`,
+`upstream_tips` holds `T`'s tip under `(project)` and each planned member's
+receiving-branch tip under its path, and `source_tip` the source's project
+tip once the op-start relock committed. Replay composes each planned member
+onto its tip and nothing else; relock merges pins three ways against the
+merge base of `source_tip` and `T`'s tip, each planned member at its composed
+tip; advance-target fast-forwards only the planned members and the project
+repo. A `--continue` reads the plan back and, before any phase, refuses when
+a branch the plan fast-forwards no longer fast-forwards to what it holds
+(`target` moved mid-operation): the plan no longer describes the landing.
+Advance-target judges the same, per repo, at the moment it moves each one.
+
 ## mark
 
-Update the owner record with any acquisition-time overrides
-(`allow-stale-lock`, `discard-local-commits`) that the preconditions
-determined applied, then continue to Savepoint. The owner record + leases
+Update the owner record with any consents the run was given, then continue
+to Savepoint. The owner record + leases
 themselves were written by the atomic acquisition in the guard step
 above; Mark is the field-refinement write, not the first write.
 Source workspaces are read-only and receive no mark — safe because reads
@@ -203,8 +226,7 @@ back because the source still names it, and a member CWD added, or
 dropped and added back, survives a source that dropped it. Histories with
 no commit in common follow the same rule: Phase 1' replays the whole of
 CWD's history, so CWD's members stay in the manifest.
-`--discard-local-commits` hands CWD the source's manifest, so every member
-that manifest lacks is pruned. Role plays no part.
+Role plays no part.
 
 **Nothing is pruned until every repo has replayed.** The prune runs after
 Phase 2, so an op that parks, on a project-repo conflict or a
@@ -230,7 +252,7 @@ Teaching the ancestry gate to ignore a destination-only lock-only
 commit does not work under `ff` at all: there is no replay to exclude
 `rwv.lock` from, the destination is no longer an ancestor of the
 source, and honoring it would mean resetting past a commit the
-operator made — `--discard-local-commits` minted silently. The
+operator made. The
 `rwv.lock`-excluded property the remedy relies on belongs to replay,
 and `ff` has no replay.
 
@@ -336,15 +358,6 @@ Drop all savepoints and clear the owner record and lease. Cleanup is
 not a persisted phase: a crash before cleanup completes leaves the
 on-disk phase at the last work phase (idempotent), and `--continue`
 re-runs that phase before reaching cleanup again.
-
-Exception: when `--discard-local-commits` discarded project commits
-(recorded as the `discard-local-commits` override), the project
-savepoint is preserved as a tombstone even after the sync completes —
-the only remaining reference to the discarded commits (`rwv abort` will
-refuse once op-state is cleared). `rwv doctor --fix` reports it as a live
-`orphaned-savepoint` and turns it into a backup, which `rwv backup list` shows
-and `rwv backup drop` drops; nothing reads the tombstone as a backup before
-then. Member-repo savepoints are dropped regardless.
 
 ## Abort internals
 
