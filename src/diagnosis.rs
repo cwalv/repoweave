@@ -3197,17 +3197,41 @@ pub fn choices_text(
     bindings: &BTreeMap<&'static str, String>,
 ) -> String {
     let mut out = String::new();
-    for form in forms.iter().filter(|form| form.printable()) {
-        let phrase = fill(form.row().choice.row().phrase, bindings);
-        out.push_str(&format!("  {phrase}\n"));
-        for line in form.lines(vcs, None) {
-            out.push_str(&format!("    {}\n", fill(&line, bindings)));
+    for choice in choices(vcs, forms, bindings) {
+        out.push_str(&format!("  {}\n", choice.phrase));
+        for line in &choice.run {
+            out.push_str(&format!("    {line}\n"));
         }
     }
     if out.is_empty() {
         return out;
     }
     format!("choices:\n{out}")
+}
+
+/// The choices `forms` print, as a `--json` record carries them.
+pub fn choices(
+    vcs: &dyn Vcs,
+    forms: &[Form],
+    bindings: &BTreeMap<&'static str, String>,
+) -> Vec<ChoiceOutput> {
+    forms
+        .iter()
+        .filter(|form| form.printable())
+        .map(|form| {
+            let row = form.row().choice.row();
+            ChoiceOutput {
+                id: row.id.map(str::to_owned),
+                phrase: fill(row.phrase, bindings),
+                at: None,
+                run: form
+                    .lines(vcs, None)
+                    .iter()
+                    .map(|line| fill(line, bindings))
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 /// `dir`'s edits, judged: an operation in progress is the state whether or

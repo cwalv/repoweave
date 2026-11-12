@@ -150,7 +150,7 @@ src/land.rs	target member changes	tests/sync/sync_prune_direction_test.rs	1
 src/land.rs	target mode changed	-	1
 src/land.rs	target no target	-	1
 src/land.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
-src/lock.rs	(untokened:environment-passthrough)	-	4
+src/lock.rs	(untokened:environment-passthrough)	-	5
 src/lock.rs	(untokened:tally)	-	1
 src/lock.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
 src/lock.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1

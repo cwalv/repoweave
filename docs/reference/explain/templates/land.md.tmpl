@@ -219,7 +219,8 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "complete": true,
   "refused": [],
-  "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
+  "project_repo_advance": { "from_sha": "...", "to_sha": "..." },
+  "left_behind": [ { "path": "...", "was": "...", "now": "...", "commits": [ ... ], "choices": [ ... ] }, ... ]
 }
 ```
 
@@ -227,9 +228,13 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 fast-forward that moved a branch is reported as its repo's `step3_advance`, or
 as `project_repo_advance` for the project repo. `target` is the workspace that
 has the target checked out. `complete` is true once every phase ran and
-op-state is cleared. `--continue --json` emits the same envelope with a
+op-state is cleared. `left_behind` holds, for each member whose declared
+branch the landing changes, the commits the target's pin reaches that the new
+branch lacks, newest first, with the copy that ports them; the text output
+prints the same list. `--continue --json` emits the same envelope with a
 `resumed` field naming the phase the stopped landing had reached; a value past
-`replay` leaves `outcomes` empty.
+`replay` leaves `outcomes` empty. A resumed landing lists `left_behind` again,
+in text and under `--json`.
 
 Schema:
 

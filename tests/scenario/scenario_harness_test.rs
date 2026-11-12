@@ -87,6 +87,16 @@ fn roles_in_a_feature_carry_pins_and_a_role_or_backward_pin_change_is_named() {
 }
 
 #[test]
+fn a_landing_lists_left_behind_commits_in_its_json_envelope() {
+    runner::run(scenarios::member_change_left_behind_in_json()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_continued_landing_lists_left_behind_commits_again() {
+    runner::run(scenarios::member_change_left_behind_on_continue()).assert_fully_decided_green();
+}
+
+#[test]
 fn update_remote_in_a_feature_repins_a_named_dependency_and_reference_on_their_declared_branch() {
     runner::run(scenarios::update_remote_repins_dependency_and_reference_in_a_feature())
         .assert_fully_decided_green();
@@ -529,6 +539,8 @@ every_scenario!(
     landing_creates_a_receiving_branch_that_exists_nowhere,
     seat_follows_after_landing,
     member_change_race_listing,
+    member_change_left_behind_in_json,
+    member_change_left_behind_on_continue,
     member_change_choice_order,
     removal_is_member_change,
     dc06_member_set_from_merge,

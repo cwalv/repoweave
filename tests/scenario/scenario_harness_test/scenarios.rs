@@ -6166,6 +6166,78 @@ pub fn member_change_race_listing() -> Scenario {
     )
 }
 
+/// The member change race under `--json`: the envelope lists the fix as a
+/// commit `dev` lacks, with the copy that ports it.
+pub fn member_change_left_behind_in_json() -> Scenario {
+    scenario(
+        "member change left behind in json",
+        vec![
+            create("fix"),
+            create("feat"),
+            Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
+            Step::rwv(&ww("fix"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("feat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::commit(&ww("feat"), Repo::App, "feat-app"),
+            Step::rwv(
+                &ww("feat"),
+                &["land", "--allow-member-change", LIB, "--json"],
+            )
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::OutputInOrder(&[
+                "\"left_behind\": [",
+                "\"path\": \"local/remotes/lib\"",
+                "\"was\": \"main\"",
+                "\"now\": \"dev\"",
+                "lib-fix",
+                "copy these commits onto `dev`",
+                "cherry-pick",
+            ])),
+        ],
+    )
+}
+
+/// The member change race with the landing stopped on a conflict in `app`:
+/// `--continue` lists the fix `dev` lacks again, with its copy, as the start
+/// did.
+pub fn member_change_left_behind_on_continue() -> Scenario {
+    scenario(
+        "member change left behind on continue",
+        vec![
+            create("fix"),
+            create("feat"),
+            Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
+            Step::rwv(&ww("fix"), &["land", "--retire"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("feat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
+            Step::hand_edit(&ww("feat"), Repo::App, "README", "app", "beta"),
+            Step::git(&ww("feat"), Repo::App, &["commit", "-qam", "beta"]),
+            Step::rwv(&ww("feat"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("feat"), &["land", "--allow-member-change", LIB])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_rewind(&[Repo::Lib, Repo::App])
+                .claim(Claim::OutputInOrder(&[
+                    "the target's pin reaches commits 'dev' lacks",
+                    "lib-fix",
+                    "copy these commits onto `dev`",
+                ])),
+            Step::git(&ww("feat"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("feat"), Repo::App, &["add", "README"]),
+            Step::rwv(&ww("feat"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib])
+                .may_strand(&[Repo::App])
+                .claim(Claim::OutputInOrder(&[
+                    "the target's pin reaches commits 'dev' lacks",
+                    "lib-fix",
+                    "copy these commits onto `dev`",
+                ])),
+        ],
+    )
+}
+
 /// `member-change-choice-order`: a hotfix cut from `stable` but spelled onto
 /// `main` would change `main`'s entry for `lib`. The refusal prints the
 /// rebind onto `stable` first, then the setter that keeps `main`'s value,

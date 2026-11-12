@@ -11,12 +11,12 @@ use crate::lineage::{Lineage, PinHistory};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
-use crate::op_state::{CreatedRef, Moves};
+use crate::op_state::{CreatedRef, LeftBehind, Moves};
 use crate::records::{BranchName, Mode, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::vcs::{
-    project_vcs, vcs_for, CommitId, CommitSummary, DestroyProof, HeadAttachment, RawRefName,
-    ResolvedRevisionId, Site, Vcs, VcsError,
+    project_vcs, vcs_for, CommitId, DestroyProof, HeadAttachment, RawRefName, ResolvedRevisionId,
+    Site, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
 use std::collections::BTreeMap;
@@ -72,19 +72,6 @@ impl Plan {
             .iter()
             .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
     }
-}
-
-/// The commits a declared-branch change leaves on the old branch.
-#[derive(Debug, Clone)]
-pub struct LeftBehind {
-    pub member: RepoPath,
-    pub vcs_type: crate::manifest::VcsType,
-    pub was: String,
-    pub now: String,
-    pub commits: Vec<CommitSummary>,
-    /// Where the new branch is checked out once the landing aligns `T`'s
-    /// workspace.
-    pub checkout: PathBuf,
 }
 
 /// How the landing composes a branch that does not contain the tip it lands
@@ -1083,7 +1070,7 @@ fn judge_member(
                 vcs.commits_excluding(dir, &rev(pin), std::slice::from_ref(&tip), false)?;
             if !commits.is_empty() {
                 plan.left_behind.push(LeftBehind {
-                    member: path.clone(),
+                    repo: RepoKey::Member(path.clone()),
                     vcs_type: entry.vcs_type,
                     was: their_entry.branch.local_counterpart().as_str().to_owned(),
                     now: receiving.as_str().to_owned(),

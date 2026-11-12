@@ -6,6 +6,7 @@
   "required": [
     "$schema",
     "complete",
+    "left_behind",
     "members",
     "outcomes",
     "placements",
@@ -20,6 +21,13 @@
     "complete": {
       "description": "True iff the op ran its last phase and cleared its op-state, so nothing remains to `--continue` or `rwv abort`; false when a phase stopped it with its op-state held. A complete op exits 1 when `members` carries a `prune-refused` entry.",
       "type": "boolean"
+    },
+    "left_behind": {
+      "description": "For each declared-branch change the landing makes, the commits the target's pin reaches that the new receiving branch lacks, with the copy that ports them. Empty, not absent, when it leaves none; a resumed op reports the same list its start did.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LeftBehindOutput"
+      }
     },
     "members": {
       "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it. The op still completes, and then exits 1.",
@@ -249,6 +257,11 @@
           ]
         }
       }
+    },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "ConflictOp": {
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.\n\nThe type admits all three variants — [`Vcs::mid_op`] constructs any of them from a repo's on-disk state — but a given field can be narrower than the type: every [`VcsError::RebaseConflict`] raised carries `Rebase`, so `Rebase` is the only value that field will actually carry.",
@@ -552,6 +565,60 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "LeftBehindOutput": {
+      "description": "One declared-branch change's left-behind commits.",
+      "type": "object",
+      "required": [
+        "choices",
+        "commits",
+        "now",
+        "path",
+        "was"
+      ],
+      "properties": {
+        "choices": {
+          "description": "The copy that ports them onto `now`, in the order the text prints it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "commits": {
+          "description": "The commits the target's pin reaches that `now` lacks, newest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LeftCommitOutput"
+          }
+        },
+        "now": {
+          "description": "The receiving branch the landing declares.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The member's manifest-relative path.",
+          "type": "string"
+        },
+        "was": {
+          "description": "The branch the target's entry declared.",
+          "type": "string"
+        }
+      }
+    },
+    "LeftCommitOutput": {
+      "type": "object",
+      "required": [
+        "sha",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "subject": {
+          "type": "string"
         }
       }
     },

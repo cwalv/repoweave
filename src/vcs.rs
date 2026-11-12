@@ -319,7 +319,7 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
 /// `subject` is the first line of the commit message. The type carries no
 /// git-specific spelling, so callers render the same shape regardless of the
 /// underlying VCS.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommitSummary {
     pub id: CommitId,
     pub subject: String,

@@ -524,6 +524,23 @@ pub struct TakeInRecord {
     /// Each branch a landing created, and where.
     #[serde(default)]
     pub created_refs: Vec<CreatedRef>,
+    /// For each declared-branch change a landing makes, the commits the
+    /// target's pin reaches that the new receiving branch lacks.
+    #[serde(default)]
+    pub left_behind: Vec<LeftBehind>,
+}
+
+/// The commits a declared-branch change leaves on the old branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeftBehind {
+    pub repo: RepoKey,
+    pub vcs_type: crate::manifest::VcsType,
+    pub was: String,
+    pub now: String,
+    pub commits: Vec<crate::vcs::CommitSummary>,
+    /// Where the new branch is checked out once the landing aligns the
+    /// target's workspace.
+    pub checkout: PathBuf,
 }
 
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as

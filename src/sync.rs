@@ -656,10 +656,36 @@ pub struct LandJsonOutput {
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_repo_advance: Option<Step3AdvanceOutput>,
+    /// For each declared-branch change the landing makes, the commits the
+    /// target's pin reaches that the new receiving branch lacks, with the copy
+    /// that ports them. Empty, not absent, when it leaves none; a resumed op
+    /// reports the same list its start did.
+    pub left_behind: Vec<LeftBehindOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+}
+
+/// One declared-branch change's left-behind commits.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LeftBehindOutput {
+    /// The member's manifest-relative path.
+    pub path: String,
+    /// The branch the target's entry declared.
+    pub was: String,
+    /// The receiving branch the landing declares.
+    pub now: String,
+    /// The commits the target's pin reaches that `now` lacks, newest first.
+    pub commits: Vec<LeftCommitOutput>,
+    /// The copy that ports them onto `now`, in the order the text prints it.
+    pub choices: Vec<crate::diagnosis::ChoiceOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LeftCommitOutput {
+    pub sha: CommitId,
+    pub subject: String,
 }
 
 /// What replay did with a member checkout outside its per-repo strategy: the
@@ -1831,6 +1857,12 @@ pub trait OutputHandler: Send + Sync {
     ///
     /// Default implementation is a no-op: only the envelopes report it.
     fn record_complete(&self) {}
+
+    /// Record the commits a landing's declared-branch change leaves behind.
+    ///
+    /// Default implementation is a no-op: the text handler prints them at the
+    /// call site.
+    fn record_left_behind(&self, _left: LeftBehindOutput) {}
 }
 
 /// Where an op is running and what it is landing into, as the machine
@@ -2091,19 +2123,16 @@ struct SourceSnapshot {
     source_workspace_root: PathBuf,
 }
 
-/// A named declared-branch change's report: the commits `T`'s pin reaches
-/// that the new receiving branch lacks, and the copy that ports them.
-fn left_behind_text(left: &crate::land::LeftBehind) -> String {
-    let vcs = vcs_for(left.vcs_type);
-    let mut out = format!(
-        "rwv land: {}: branch {} -> {}: the target's pin reaches commits '{}' lacks:\n",
-        left.member, left.was, left.now, left.now
-    );
-    for commit in &left.commits {
-        out.push_str(&format!("    {} {}\n", commit.id.short(), commit.subject));
-    }
+/// The C15 copy that ports a declared-branch change's left-behind commits
+/// onto the new receiving branch.
+fn left_behind_choices(
+    left: &op_state::LeftBehind,
+) -> (
+    &'static [crate::diagnosis::Form],
+    std::collections::BTreeMap<&'static str, String>,
+) {
     let mut bindings = std::collections::BTreeMap::new();
-    bindings.insert("<m>", left.member.to_string());
+    bindings.insert("<m>", left.repo.to_string());
     bindings.insert("<b>", left.now.clone());
     bindings.insert("<checkout>", left.checkout.display().to_string());
     bindings.insert(
@@ -2115,12 +2144,58 @@ fn left_behind_text(left: &crate::land::LeftBehind) -> String {
             .collect::<Vec<_>>()
             .join(" "),
     );
+    (&[crate::diagnosis::Form::C15], bindings)
+}
+
+/// A named declared-branch change's report: the commits the target's pin
+/// reaches that the new receiving branch lacks, and the copy that ports them.
+fn left_behind_text(left: &op_state::LeftBehind) -> String {
+    let vcs = vcs_for(left.vcs_type);
+    let mut out = format!(
+        "rwv land: {}: branch {} -> {}: the target's pin reaches commits '{}' lacks:\n",
+        left.repo, left.was, left.now, left.now
+    );
+    for commit in &left.commits {
+        out.push_str(&format!("    {} {}\n", commit.id.short(), commit.subject));
+    }
+    let (forms, bindings) = left_behind_choices(left);
     out.push_str(&crate::diagnosis::choices_text(
         vcs.as_ref(),
-        &[crate::diagnosis::Form::C15],
+        forms,
         &bindings,
     ));
     out
+}
+
+impl LeftBehindOutput {
+    fn of(left: &op_state::LeftBehind) -> Self {
+        let (forms, bindings) = left_behind_choices(left);
+        LeftBehindOutput {
+            path: left.repo.to_string(),
+            was: left.was.clone(),
+            now: left.now.clone(),
+            commits: left
+                .commits
+                .iter()
+                .map(|commit| LeftCommitOutput {
+                    sha: commit.id.clone(),
+                    subject: commit.subject.clone(),
+                })
+                .collect(),
+            choices: crate::diagnosis::choices(vcs_for(left.vcs_type).as_ref(), forms, &bindings),
+        }
+    }
+}
+
+/// Each declared-branch change's left-behind commits, as the handler reports
+/// them: printed in text, recorded under `--json`.
+fn report_left_behind(handler: &dyn OutputHandler, left_behind: &[op_state::LeftBehind]) {
+    for left in left_behind {
+        if handler.emit_text() {
+            eprint!("{}", left_behind_text(left));
+        }
+        handler.record_left_behind(LeftBehindOutput::of(left));
+    }
 }
 
 /// The branch the landing lands into, as its op record names it.
@@ -3004,11 +3079,8 @@ fn guard_and_mark<'a>(
             },
         );
     }
-    if emit_text {
-        for left in &plan.left_behind {
-            eprint!("{}", left_behind_text(left));
-        }
-    }
+    take_in.left_behind = plan.left_behind.clone();
+    report_left_behind(handler, &take_in.left_behind);
     let mut record = op_state::read_owner(&owner_workspace_dir)?
         .context("the op record vanished as the landing began")?;
     record.take_in = Some(take_in.clone());
@@ -3153,6 +3225,7 @@ fn load_continuing_context<'a>(
             );
         }
     }
+    report_left_behind(handler, &take_in.left_behind);
 
     let target_tip = take_in
         .receiving

@@ -102,9 +102,9 @@ use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, MemberOutput, ReplayBaseline,
-    Step3AdvanceOutput, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL,
-    SYNC_JSON_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, LandJsonOutput, LeftBehindOutput,
+    LeftCommitOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput, SyncFailureOutput,
+    SyncJsonOutput, SyncOutcomeOutput, LAND_JSON_SCHEMA_URL, SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::update::{
     MemberOutcomeOutput, MemberOutcomeStatus, UpdateJsonOutput, UPDATE_SCHEMA_URL,
@@ -1761,6 +1761,24 @@ fn workweave_corpus() -> Vec<(&'static str, Value)> {
     ]
 }
 
+fn left_behind() -> Vec<LeftBehindOutput> {
+    vec![LeftBehindOutput {
+        path: "local/remotes/lib".to_owned(),
+        was: "main".to_owned(),
+        now: "dev".to_owned(),
+        commits: vec![LeftCommitOutput {
+            sha: repoweave::vcs::CommitId::parse(&sha('d')).expect("a full commit id"),
+            subject: "fix".to_owned(),
+        }],
+        choices: vec![ChoiceOutput {
+            id: Some("C15".to_owned()),
+            phrase: "copy these commits onto `dev`".to_owned(),
+            at: None,
+            run: vec!["git -C /ws/local/remotes/lib cherry-pick dddddddddddd".to_owned()],
+        }],
+    }]
+}
+
 fn sync_to_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -1779,6 +1797,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 complete: true,
                 refused: Vec::new(),
                 project_repo_advance: Some(advance()),
+                left_behind: left_behind(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1799,6 +1818,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 complete: false,
                 refused: judged_on_every_axis(),
                 project_repo_advance: None,
+                left_behind: Vec::new(),
                 resolution: None,
             }),
         ),
@@ -1821,6 +1841,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 complete: false,
                 refused: Vec::new(),
                 project_repo_advance: Some(advance()),
+                left_behind: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1839,6 +1860,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 complete: false,
                 refused: Vec::new(),
                 project_repo_advance: None,
+                left_behind: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -1857,6 +1879,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 complete: true,
                 refused: Vec::new(),
                 project_repo_advance: None,
+                left_behind: Vec::new(),
                 resolution: Some(resolution()),
             }),
         ),
