@@ -19,12 +19,13 @@ fn commit_entry(
     project: &crate::manifest::ProjectName,
     project_dir: &std::path::Path,
     repo_path: &RepoPath,
+    before: &Manifest,
     apply: impl Fn(&mut crate::manifest::RepoEntry),
     message: String,
 ) -> anyhow::Result<()> {
     let on_disk = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
     let authored: BTreeSet<String> =
-        crate::activate::owned_paths(ctx.active_path(), project, &on_disk);
+        crate::manifest_commit::authored_across(ctx, project, &[before, &on_disk]);
     let member = repo_path.clone();
     let edit = move |manifest: &mut Manifest| {
         if let Some(mut entry) = manifest.get_entry(&member).cloned() {
@@ -87,6 +88,7 @@ pub fn run_set_role(
         );
     };
     let was = entry.role;
+    let before = manifest.clone();
     judge_commit(ctx, &project, &project_dir, &manifest)?;
     let vcs = vcs_for(entry.vcs_type);
     let member = ctx.active_path().join(repo_path.as_path());
@@ -121,6 +123,7 @@ pub fn run_set_role(
             &project,
             &project_dir,
             &repo_path,
+            &before,
             |entry| entry.role = role,
             format!("member set-role {repo_path} {role}\n\n  - {repo_path}: role {role}"),
         )?;
@@ -156,6 +159,7 @@ pub fn run_set_role(
             &project,
             &project_dir,
             &repo_path,
+            &before,
             |entry| entry.role = role,
             format!("member set-role {repo_path} {role}\n\n  - {repo_path}: role {was} -> {role}"),
         )
@@ -200,6 +204,7 @@ pub fn run_set_recurse_submodules(
     };
     let was = entry.recurse_submodules;
     let recurse = bool::from(recursion);
+    let before = manifest.clone();
     judge_commit(ctx, &project, &project_dir, &manifest)?;
     if was == recursion {
         settle_manifest(ctx, &project, None, &[], opts)?;
@@ -208,6 +213,7 @@ pub fn run_set_recurse_submodules(
             &project,
             &project_dir,
             &repo_path,
+            &before,
             |entry| entry.recurse_submodules = recursion,
             format!(
                 "member set-recurse-submodules {repo_path} {recurse}\n\n  - {repo_path}: \
@@ -230,6 +236,7 @@ pub fn run_set_recurse_submodules(
             &project,
             &project_dir,
             &repo_path,
+            &before,
             |entry| entry.recurse_submodules = recursion,
             format!(
                 "member set-recurse-submodules {repo_path} {recurse}\n\n  - {repo_path}: \

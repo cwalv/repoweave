@@ -59,7 +59,7 @@ fn fields_between(was: &RepoEntry, now: &RepoEntry) -> Vec<FieldChange> {
     fields
 }
 
-fn between(
+pub(crate) fn between(
     before: &BTreeMap<String, RepoEntry>,
     after: &BTreeMap<String, RepoEntry>,
 ) -> Vec<MemberChange> {
@@ -85,7 +85,7 @@ fn between(
     changes
 }
 
-fn entries_of(manifest: &Manifest) -> BTreeMap<String, RepoEntry> {
+pub(crate) fn entries_of(manifest: &Manifest) -> BTreeMap<String, RepoEntry> {
     manifest
         .iter_entries()
         .map(|(path, entry)| (path.to_string(), entry.clone()))

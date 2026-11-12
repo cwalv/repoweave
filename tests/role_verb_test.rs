@@ -470,12 +470,6 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
     let other = weave.create("other");
 
     succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
-    let seat_project = weave.project_dir(&seat);
-    common::git_in(&seat_project, &["add", "-A"]);
-    common::git_in(
-        &seat_project,
-        &["commit", "-qm", "beta becomes a reference"],
-    );
     succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
     succeed(&["sync-to", &weave.ws.to_string_lossy()], &seat);

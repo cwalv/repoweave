@@ -2,15 +2,12 @@
 //! for `--set-branch` and `--set-new-branch`: declare a branch for a member,
 //! pin the member on it, and switch the member onto it.
 
-use crate::alignment::{
-    Accounting, Aligner, Applied, Found, Member, Mode, Pin, Plan, ProjectStanding, Target,
-};
+use crate::alignment::{Accounting, Aligner, Applied, Found, Member, Mode, Pin, Plan, Target};
 use crate::diagnosis::{ChoiceId, Report, State};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoEntry, RepoPath, Role};
 use crate::refusal::RefusalKind;
 use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, RawRefName, Relation, ResolvedRevisionId, TrackingRef,
-    Vcs,
+    project_vcs, vcs_for, RawRefName, Relation, ResolvedRevisionId, TrackingRef, Vcs,
 };
 use crate::workspace::{project_dir, WorkspaceContext};
 use anyhow::Context;
@@ -540,6 +537,75 @@ fn target_pin(
     })
 }
 
+/// Judge the move of a member onto the branch `step` declares: the lines that
+/// say why it cannot leave where it is.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn judge_move(
+    loaded: &Loaded,
+    vcs: &dyn Vcs,
+    member: &RepoPath,
+    dir: &Path,
+    after: &RepoEntry,
+    step: &EntryStep,
+    lock: &LockFile,
+    refusals: &mut Report,
+) -> anyhow::Result<()> {
+    let candidate = Member {
+        path: member,
+        entry: after,
+        dir,
+        vcs,
+    };
+    let plan = candidate_plan(&loaded.aligner, &candidate, step, lock)?;
+    for line in loaded.aligner.blocked(&candidate, &plan, member)? {
+        refusals.add(line);
+    }
+    Ok(())
+}
+
+/// Put the member where `lock` and its entry say, reporting what that found.
+/// The notes are what the verb adds to its own report.
+pub(crate) fn align_member(
+    loaded: &Loaded,
+    vcs: &dyn Vcs,
+    member: &RepoPath,
+    dir: &Path,
+    after: &RepoEntry,
+    lock: &LockFile,
+    verb: &str,
+) -> anyhow::Result<Vec<String>> {
+    let candidate = Member {
+        path: member,
+        entry: after,
+        dir,
+        vcs,
+    };
+    let plan = loaded.aligner.plan(&candidate, Some(lock))?;
+    let mut notes = Vec::new();
+    let mut report = Report::default();
+    match loaded.aligner.apply(&candidate, &plan, member)? {
+        Applied::Aligned {
+            facts, notes: more, ..
+        } => {
+            for fact in &facts {
+                notes.push(crate::diagnosis::fact_text(fact));
+            }
+            for line in more {
+                report.add(line);
+            }
+        }
+        Applied::Left { judged } => {
+            for line in judged {
+                report.add(line);
+            }
+        }
+    }
+    if !report.is_empty() {
+        eprint!("{}", report.render(verb));
+    }
+    Ok(notes)
+}
+
 /// The arguments of `rwv member set-branch`.
 pub struct SetBranch<'a> {
     pub repo: &'a str,
@@ -616,7 +682,7 @@ pub fn run_set_branch(
     let vcs = vcs.as_ref();
 
     let authored =
-        crate::activate::owned_paths(ctx.active_path(), &loaded.project, &loaded.manifest);
+        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
     if let Err(e) = crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored) {
         crate::member_url::merge_refusal(&mut refusals, e)?;
     }
@@ -658,16 +724,7 @@ pub fn run_set_branch(
             );
         }
         if located.aligns && !owned_in_feature {
-            let candidate = Member {
-                path: &member,
-                entry: &after,
-                dir: &dir,
-                vcs,
-            };
-            let plan = candidate_plan(&loaded.aligner, &candidate, step, &new_lock)?;
-            for line in loaded.aligner.blocked(&candidate, &plan, &member)? {
-                refusals.add(line);
-            }
+            judge_move(&loaded, vcs, &member, &dir, &after, step, &new_lock, &mut refusals)?;
         }
     }
     refusals.into_result()?;
@@ -715,34 +772,7 @@ pub fn run_set_branch(
         ));
     }
     if located.aligns && !owned_in_feature {
-        let candidate = Member {
-            path: &member,
-            entry: &after,
-            dir: &dir,
-            vcs,
-        };
-        let plan = loaded.aligner.plan(&candidate, Some(&new_lock))?;
-        match loaded.aligner.apply(&candidate, &plan, &member)? {
-            Applied::Aligned { facts, notes: more, .. } => {
-                for fact in &facts {
-                    notes.push(crate::diagnosis::fact_text(fact));
-                }
-                let mut report = Report::default();
-                for line in more {
-                    report.add(line);
-                }
-                if !report.is_empty() {
-                    eprint!("{}", report.render(VERB));
-                }
-            }
-            Applied::Left { judged } => {
-                let mut report = Report::default();
-                for line in judged {
-                    report.add(line);
-                }
-                eprint!("{}", report.render(VERB));
-            }
-        }
+        notes.extend(align_member(&loaded, vcs, &member, &dir, &after, &new_lock, VERB)?);
     }
     if let Some(relink) = &relink {
         relink.apply(vcs, &dir)?;
@@ -792,7 +822,7 @@ pub fn run_set_branch(
         }
     };
     let settled_authored =
-        crate::activate::owned_paths(ctx.active_path(), &loaded.project, &manifest);
+        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest, &manifest]);
     let touches_lock = step.pin.is_some() || new_url.is_some();
     crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
         project: &loaded.project,
@@ -830,6 +860,5 @@ pub fn run_set_branch(
              (`rwv member set-branch {member} <b> --new --at <rev>`)"
         );
     }
-    let _ = (ProjectStanding::Aligned, HeadAttachment::Detached);
     Ok(())
 }

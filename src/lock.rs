@@ -408,7 +408,13 @@ pub fn lock(
         first_pins: FirstPins::Withheld,
         unaligned: Unaligned::Refused,
         by_name: !acting.is_empty(),
+        whole: WholeFile::default(),
     };
+    if commit.is_some() {
+        if let Some(whole) = crate::lock_commit::plan(ctx, &relocking)? {
+            return crate::lock_commit::run(ctx, &relocking, whole, commit);
+        }
+    }
     match relock(ctx, &relocking, commit)? {
         Some(pending) => commit_project_lock(&pending, &BTreeSet::new()),
         None => Ok(()),
@@ -444,6 +450,18 @@ pub(crate) struct Relocking<'a> {
     /// Whether a member `acting` selects may move its pin backward: the
     /// operator named it.
     pub(crate) by_name: bool,
+    pub(crate) whole: WholeFile<'a>,
+}
+
+/// What a relock that commits the whole of `rwv.toml` adds to the plain one.
+#[derive(Default)]
+pub(crate) struct WholeFile<'a> {
+    /// Members a setter's step moves first: judged and recorded by it.
+    pub(crate) skipping: Option<&'a BTreeSet<RepoPath>>,
+    /// The files the commit carries beside `rwv.toml` and `rwv.lock`.
+    pub(crate) authored: Option<&'a BTreeSet<String>>,
+    /// Judge, write nothing.
+    pub(crate) judge_only: bool,
 }
 
 /// How a member's new pin stands to its old one.
@@ -739,6 +757,13 @@ pub(crate) fn relock(
             continue;
         }
         acted += 1;
+        if relocking
+            .whole
+            .skipping
+            .is_some_and(|skipping| skipping.contains(path))
+        {
+            continue;
+        }
         let checkout = crate::workspace::member_checkout_dir(
             path,
             ctx.primary_path(),
@@ -779,7 +804,7 @@ pub(crate) fn relock(
             project_vcs().as_ref(),
             &project_name,
             &project_dir,
-            &BTreeSet::new(),
+            relocking.whole.authored.unwrap_or(&BTreeSet::new()),
         )?);
     }
     if !failures.is_empty() {
@@ -791,6 +816,9 @@ pub(crate) fn relock(
         }
     }
     refusals.into_result()?;
+    if relocking.whole.judge_only {
+        return Ok(None);
+    }
 
     let new = with_pins(
         &project.manifest,

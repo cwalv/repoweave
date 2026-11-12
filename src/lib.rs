@@ -112,6 +112,7 @@ pub mod integration;
 pub mod integration_runner;
 pub mod integrations;
 pub mod lock;
+pub mod lock_commit;
 pub mod log;
 pub mod manifest;
 pub mod manifest_commit;

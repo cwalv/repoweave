@@ -532,7 +532,7 @@ pub fn run_add(
 /// The first pin of a member just added: the commit its clone's HEAD is at,
 /// where HEAD sits on the declared branch or that branch's upstream reaches
 /// it; none where HEAD is unborn or holds commits only the clone has.
-fn first_pin(
+pub(crate) fn first_pin(
     vcs: &dyn Vcs,
     clone: &Path,
     entry: &RepoEntry,
@@ -1323,6 +1323,7 @@ pub fn run_remove(
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
+    let before = manifest.clone();
     let removed = manifest.remove_repo(&repo_path);
     let vcs_type = match &removed {
         Some(entry) => entry.vcs_type,
@@ -1353,7 +1354,7 @@ pub fn run_remove(
         Some(plan) if plan.removes_anything() => std::slice::from_ref(&repo_path),
         _ => &[],
     };
-    let authored = crate::activate::owned_paths(ctx.active_path(), &project, &manifest);
+    let authored = crate::manifest_commit::authored_across(ctx, &project, &[&before, &manifest]);
     crate::manifest_commit::judge(&project, &project_dir, &authored)?;
     let settled = settle_manifest(
         ctx,
@@ -1364,7 +1365,7 @@ pub fn run_remove(
     );
     let on_disk = Manifest::from_path(&manifest_path).ok();
     if on_disk.is_some_and(|m| !m.contains_repo(&repo_path)) {
-        commit_removal(ctx, &project, &project_dir, &repo_path)?;
+        commit_removal(ctx, &project, &project_dir, &repo_path, &before)?;
     }
     settled?;
 
@@ -1396,9 +1397,10 @@ fn commit_removal(
     project: &ProjectName,
     project_dir: &Path,
     repo_path: &RepoPath,
+    before: &Manifest,
 ) -> anyhow::Result<()> {
     let on_disk = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
-    let authored = crate::activate::owned_paths(ctx.active_path(), project, &on_disk);
+    let authored = crate::manifest_commit::authored_across(ctx, project, &[before, &on_disk]);
     let lock_path = LockFile::path_in(project_dir);
     if let Some(mut lock) = crate::lock::read_old_lock(&lock_path, "member remove") {
         if lock.repositories.remove(repo_path).is_some() {

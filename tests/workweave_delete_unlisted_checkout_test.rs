@@ -76,7 +76,9 @@ fn succeed(dir: &Path, args: &[&str]) {
 fn commit_all(workspace: &Path, message: &str) {
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::commit_staged(&project, message);
+    if !common::git_in(&project, &["status", "--porcelain", "--untracked-files=no"]).is_empty() {
+        common::commit_staged(&project, message);
+    }
 }
 
 /// A primary weave whose project names `lib` and `extra`, both owned.

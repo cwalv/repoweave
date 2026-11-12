@@ -222,9 +222,6 @@ fn a_member_the_source_dropped_is_pruned() {
 
     succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
-    let project = project_dir(&weave.root);
-    common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project, &["commit", "-m", "drop extra"]);
 
     let stdout = succeed(&s1, &["sync", "primary"]);
     assert!(
@@ -278,12 +275,9 @@ fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
 }
 
 /// `rwv member remove` (checkout kept), `rwv lock`, then commit both files.
-fn drop_and_commit(workspace: &Path, message: &str) {
+fn drop_and_commit(workspace: &Path, _message: &str) {
     succeed(workspace, &["member", "remove", EXTRA]);
     succeed(workspace, &["lock"]);
-    let project = project_dir(workspace);
-    common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project, &["commit", "-m", message]);
 }
 
 fn commit_note(repo: &Path, text: &str) {

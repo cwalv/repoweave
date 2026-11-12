@@ -146,7 +146,8 @@ pub fn run_set_url(
     let new: RepoUrl = url.parse()?;
     let mut refusals = Report::default();
     let step = judge_set_url(ctx, &loaded, &member, &new, &mut refusals)?;
-    let authored = crate::activate::owned_paths(ctx.active_path(), &loaded.project, &loaded.manifest);
+    let authored =
+        crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
     if let Err(e) = crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored) {
         merge_refusal(&mut refusals, e)?;
     }
@@ -258,8 +259,11 @@ impl SetUrl {
             relink.apply(vcs.as_ref(), &dir)?;
         }
 
-        let authored =
-            crate::activate::owned_paths(ctx.active_path(), &loaded.project, &manifest);
+        let authored = crate::manifest_commit::authored_across(
+            ctx,
+            &loaded.project,
+            &[&loaded.manifest, &manifest],
+        );
         let url_for_manifest = new.clone();
         let url_for_lock = new.clone();
         let member_for_manifest = member.clone();

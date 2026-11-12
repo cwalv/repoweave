@@ -18,6 +18,20 @@ pub(crate) struct MemberCommit<'a> {
     pub(crate) message: &'a str,
 }
 
+/// The files a regeneration across `manifests` may rewrite: the owned paths
+/// of each, since a regeneration rewrites what the new manifest declares and
+/// strips what only the old one did.
+pub(crate) fn authored_across(
+    ctx: &crate::workspace::WorkspaceContext,
+    project: &ProjectName,
+    manifests: &[&Manifest],
+) -> BTreeSet<String> {
+    manifests
+        .iter()
+        .flat_map(|manifest| crate::activate::owned_paths(ctx.active_path(), project, manifest))
+        .collect()
+}
+
 /// What a commit would leave out, judged before the verb writes anything.
 pub(crate) fn judge(
     project: &ProjectName,
@@ -41,7 +55,7 @@ pub(crate) fn judge(
     report.into_result()
 }
 
-fn committed_manifest(vcs: &dyn Vcs, project_dir: &Path) -> anyhow::Result<Option<Manifest>> {
+pub(crate) fn committed_manifest(vcs: &dyn Vcs, project_dir: &Path) -> anyhow::Result<Option<Manifest>> {
     let Ok(head) = vcs.head_revision(project_dir) else {
         return Ok(None);
     };

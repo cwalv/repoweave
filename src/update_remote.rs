@@ -420,6 +420,7 @@ fn update_for_project(
             first_pins: lock::FirstPins::Taken,
             unaligned: lock::Unaligned::Left,
             by_name: false,
+            whole: lock::WholeFile::default(),
         },
         commit,
     )
