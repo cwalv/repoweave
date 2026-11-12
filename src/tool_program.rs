@@ -80,10 +80,8 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
             let path = dir.join(name);
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
         }
         #[cfg(windows)]
         std::fs::write(
@@ -151,21 +149,7 @@ mod tests {
 
         let program =
             ToolProgram::find_in("scripttool", &search(&[tmp.path()]), tmp.path()).unwrap();
-        // A sibling test's fork can hold the just-written script open for
-        // writing until its exec, which the kernel reports as busy.
-        let out = (0..50)
-            .map(|_| program.command().output())
-            .find(|r| {
-                let busy = r
-                    .as_ref()
-                    .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy);
-                if busy {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                !busy
-            })
-            .expect("the script stops being busy")
-            .unwrap();
+        let out = program.command().output().unwrap();
 
         assert!(out.status.success(), "{out:?}");
         assert!(

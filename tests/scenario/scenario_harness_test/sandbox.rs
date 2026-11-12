@@ -409,12 +409,7 @@ impl Sandbox {
         let hooks = self.remote_store(remote).join("hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("update");
-        std::fs::write(&hook, refuse_records_hook()).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&hook, refuse_records_hook());
     }
 
     /// The directory holding `machine`'s weave root and workweave container.
@@ -550,7 +545,6 @@ impl Sandbox {
     /// for everything else.
     #[cfg(unix)]
     fn install_git_shim(&self) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let real = String::from_utf8(
             Command::new("sh")
                 .args(["-c", "command -v git"])
@@ -571,8 +565,8 @@ impl Sandbox {
             real.trim()
         );
         let path = dir.join("git");
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, script);
+
         dir
     }
 

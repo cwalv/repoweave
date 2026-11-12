@@ -274,8 +274,6 @@ fn an_authoring_verb_takes_over_a_resolver_only_cargo_toml_and_defers_to_unmarke
 #[cfg(unix)]
 #[test]
 fn an_unmarked_wrapper_key_is_deferred_to_and_a_config_without_rwv_keys_is_taken_over() {
-    use std::os::unix::fs::PermissionsExt;
-
     const UNMARKED_WRAPPER: &str = "[net]\n\
                                     git-fetch-with-cli = true\n\
                                     \n\
@@ -288,8 +286,8 @@ fn an_unmarked_wrapper_key_is_deferred_to_and_a_config_without_rwv_keys_is_taken
     let bin = tmp.path().join("bin");
     let stand_in_path = common::cargo_stand_in_path(&bin);
     let sccache = bin.join("sccache");
-    std::fs::write(&sccache, "#!/bin/sh\nexec \"$@\"\n").unwrap();
-    std::fs::set_permissions(&sccache, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&sccache, "#!/bin/sh\nexec \"$@\"\n");
+
     let path = Some(stand_in_path.as_os_str());
     let config = ws.join("projects/app/.cargo/config.toml");
     let file = "config.toml";

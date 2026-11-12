@@ -9,7 +9,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::common;
@@ -26,8 +25,7 @@ fn git_init_with_commit(dir: &Path) {
 
 fn install_sccache(bin: &Path) {
     let sccache = bin.join("sccache");
-    std::fs::write(&sccache, "#!/bin/sh\nexec \"$@\"\n").unwrap();
-    std::fs::set_permissions(&sccache, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&sccache, "#!/bin/sh\nexec \"$@\"\n");
 }
 
 fn uninstall_sccache(bin: &Path) {

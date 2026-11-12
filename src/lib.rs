@@ -87,6 +87,45 @@ pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
     tempfile::TempDir::new_in(root)
 }
 
+/// Write `contents` to `path` as a program a test will run, mode 0o755.
+///
+/// The counterpart to `write_executable` in `tests/common/mod.rs`. Exec fails
+/// with ETXTBSY while any process holds the file open for writing, and a
+/// write handle this process held is inherited by every child another test
+/// thread forks until that child execs; a rename does not help, since the
+/// inherited handle is to the file. So a child process writes it, and this
+/// process never holds a write handle to it.
+#[cfg(test)]
+pub(crate) fn write_executable(path: &std::path::Path, contents: impl AsRef<[u8]>) {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let mut writer = std::process::Command::new("sh")
+            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(path)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| {
+                panic!("writing {} through sh failed to start: {e}", path.display())
+            });
+        writer
+            .stdin
+            .take()
+            .expect("the writer's stdin is piped")
+            .write_all(contents.as_ref())
+            .unwrap_or_else(|e| panic!("feeding {} failed: {e}", path.display()));
+        let status = writer.wait().expect("the writer is waited on");
+        assert!(
+            status.success(),
+            "writing {} exited {status}",
+            path.display()
+        );
+    }
+    #[cfg(not(unix))]
+    std::fs::write(path, contents)
+        .unwrap_or_else(|e| panic!("writing {} failed: {e}", path.display()));
+}
+
 #[macro_use]
 mod stdout;
 pub mod activate;

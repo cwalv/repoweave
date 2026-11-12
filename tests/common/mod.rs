@@ -103,6 +103,81 @@ fn assert_listed_once(name: &TestName) {
     checked.lock().unwrap().insert(name.as_str().to_string());
 }
 
+/// Write `contents` to `path` as a program a test will run, mode 0o755.
+///
+/// Exec fails with ETXTBSY while any process holds the file open for
+/// writing, and a write handle this process held is inherited by every child
+/// another test thread forks until that child execs — so a script written
+/// here and run at once is refused at random under a parallel runner. A
+/// rename into place does not help: the inherited handle is to the file, not
+/// to its name. The file is written by a child process instead, which this
+/// process waits on, so no write handle to it ever exists in this process.
+pub fn write_executable(path: &std::path::Path, contents: impl AsRef<[u8]>) {
+    write_program(path, contents.as_ref(), 0o755);
+}
+
+/// [`write_executable`] with an explicit mode, for a fixture whose subject
+/// is what the OS makes of its permission bits.
+pub fn write_program(path: &std::path::Path, contents: &[u8], mode: u32) {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        let mut writer = Command::new("sh")
+            .args(["-c", "cat > \"$1\" && chmod \"$2\" \"$1\"", "sh"])
+            .arg(path)
+            .arg(format!("{mode:o}"))
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| {
+                panic!("writing {} through sh failed to start: {e}", path.display())
+            });
+        writer
+            .stdin
+            .take()
+            .expect("the writer's stdin is piped")
+            .write_all(contents)
+            .unwrap_or_else(|e| panic!("feeding {} failed: {e}", path.display()));
+        let status = writer.wait().expect("the writer is waited on");
+        assert!(
+            status.success(),
+            "writing {} exited {status}",
+            path.display()
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        std::fs::write(path, contents)
+            .unwrap_or_else(|e| panic!("writing {} failed: {e}", path.display()));
+    }
+}
+
+/// Copy `from` to `to` as a program a test will run, on the terms
+/// [`write_executable`] states.
+pub fn copy_executable(from: &std::path::Path, to: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        let status = Command::new("sh")
+            .args(["-c", "cp -- \"$1\" \"$2\" && chmod 755 \"$2\"", "sh"])
+            .arg(from)
+            .arg(to)
+            .status()
+            .unwrap_or_else(|e| panic!("copying {} failed to start: {e}", from.display()));
+        assert!(
+            status.success(),
+            "copying {} to {} exited {status}",
+            from.display(),
+            to.display()
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(from, to).unwrap_or_else(|e| {
+            panic!("copying {} to {} failed: {e}", from.display(), to.display())
+        });
+    }
+}
+
 /// How many tests of this binary libtest's `filter` selects.
 pub fn tests_listed(filter: &str) -> usize {
     let exe = std::env::current_exe().expect("this test binary's own path");
@@ -207,44 +282,25 @@ pub fn skip_without_tool(tool: &str) -> bool {
 /// whose interpreter cannot open it. That second shape is the residue — the OS
 /// begins it and it fails — and this reports it present, because the reading
 /// that would catch it also rejects Go.
-///
-/// `ETXTBSY` is retried rather than believed. It says the file could not be
-/// TRIED, which is not an answer about whether the OS would run it, and a
-/// sibling test forking while a freshly written fixture is still open provokes
-/// it.
 pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
     let Ok(resolved) = which::which(tool) else {
         report_skip(&format!("`{tool}` not found on PATH"));
         return None;
     };
 
-    for _ in 0..50 {
-        let started = Command::new(&resolved)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        if started
-            .as_ref()
-            .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy)
-        {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            continue;
-        }
-        if let Err(e) = started {
-            report_skip(&format!(
-                "`{tool}` resolves to {}, which this host will not start: {e}",
-                resolved.display()
-            ));
-            return None;
-        }
-        return Some(resolved);
+    let started = Command::new(&resolved)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Err(e) = started {
+        report_skip(&format!(
+            "`{tool}` resolves to {}, which this host will not start: {e}",
+            resolved.display()
+        ));
+        return None;
     }
-    report_skip(&format!(
-        "`{tool}` resolves to {}, which stayed unrunnable for a second",
-        resolved.display()
-    ));
-    None
+    Some(resolved)
 }
 
 /// A temporary directory whose path is already canonical. Drop-in for
@@ -771,18 +827,9 @@ pub fn refuse_pushes_to(bare: &std::path::Path, refname: &str) {
     let hooks = bare.join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("update");
-    std::fs::write(
-        &hook,
-        format!(
+    write_executable(&hook, format!(
             "#!/bin/sh\nif [ \"$1\" = {refname} ]; then\n    echo refused >&2\n    exit 1\nfi\nexit 0\n"
-        ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+        ));
 }
 
 /// Initialize a bare repo and seed it with one commit on `main` so it can
@@ -1415,8 +1462,6 @@ pub fn rwv_std() -> Command {
 /// too.
 #[cfg(unix)]
 pub fn cargo_stand_in_path(bin: &std::path::Path) -> std::ffi::OsString {
-    use std::os::unix::fs::PermissionsExt;
-
     std::fs::create_dir_all(bin).expect("the stand-in bin directory should be creatable");
     let git = which::which("git").expect("git must be resolvable to run these tests");
     let linked = bin.join("git");
@@ -1425,7 +1470,7 @@ pub fn cargo_stand_in_path(bin: &std::path::Path) -> std::ffi::OsString {
     }
 
     let cargo = bin.join("cargo");
-    std::fs::write(
+    write_executable(
         &cargo,
         r#"#!/bin/sh
 case "$1" in
@@ -1434,10 +1479,7 @@ case "$1" in
 esac
 exit 0
 "#,
-    )
-    .expect("the cargo stand-in should be writable");
-    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
-        .expect("the cargo stand-in should be executable");
+    );
 
     bin.as_os_str().to_owned()
 }
@@ -1453,11 +1495,10 @@ exit 0
 pub fn write_plugin(dir: &std::path::Path, name: &str, sh: &str, cmd: &str) -> PathBuf {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let _ = cmd;
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{sh}")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&path, format!("#!/bin/sh\n{sh}"));
+
         path
     }
     #[cfg(windows)]

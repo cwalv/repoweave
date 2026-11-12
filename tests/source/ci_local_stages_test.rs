@@ -30,7 +30,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -70,8 +69,7 @@ fn stub_bin_dir() -> tempfile::TempDir {
     let dir = common::tempdir().expect("tempdir");
     for (name, body) in [("cargo", STUB_CARGO), ("rustup", STUB_RUSTUP)] {
         let path = dir.path().join(name);
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, body);
     }
     dir
 }
@@ -136,17 +134,7 @@ fn run_script(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    // A sibling test's fork can still hold a just-written script open for
-    // writing; exec then fails with ETXTBSY until that child execs or exits.
-    for _ in 0..100 {
-        match cmd.output() {
-            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                std::thread::sleep(std::time::Duration::from_millis(20))
-            }
-            result => return result.expect("ci-local.sh should run"),
-        }
-    }
-    panic!("ci-local.sh stayed busy (ETXTBSY) for 2s")
+    cmd.output().expect("ci-local.sh should run")
 }
 
 fn stdout_of(out: &Output) -> String {
@@ -571,14 +559,12 @@ fn ci_local_beside_a_stub_wine_script() -> (tempfile::TempDir, PathBuf) {
     let scripts = dir.path().join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     let ci_local = scripts.join("ci-local.sh");
-    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    common::copy_executable(&ci_local_sh(), &ci_local);
     let wine = scripts.join("windows-wine.sh");
-    std::fs::write(
+    common::write_executable(
         &wine,
         "#!/bin/sh\nprintf 'STUB_WINDOWS_WINE: %s\\n' \"$*\"\nexit \"${CI_LOCAL_TEST_WINE_EXIT:-0}\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&wine, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     (dir, ci_local)
 }
 
@@ -855,11 +841,9 @@ fn run_recording_tmpdir(
     extra_stub: &[(&str, &str)],
 ) -> (Vec<SeenTmpdir>, Output) {
     let stub = stub_bin_dir();
-    std::fs::write(stub.path().join("cargo"), STUB_CARGO_RECORDING_TMPDIR).unwrap();
+    common::write_executable(&stub.path().join("cargo"), STUB_CARGO_RECORDING_TMPDIR);
     for (name, body) in extra_stub {
-        let path = stub.path().join(name);
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&stub.path().join(name), body);
     }
     let log_dir = common::tempdir().expect("tempdir");
     let log = log_dir.path().join("seen");

@@ -639,12 +639,8 @@ fn park_in_relock_after_a_refused_prune(
     let hooks = weave.root.parent().unwrap().join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("commit-msg");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&hook, "#!/bin/sh\nexit 1\n");
+
     common::git_in(
         project_dir(&weave.root),
         &["config", "core.hooksPath", &hooks.to_string_lossy()],

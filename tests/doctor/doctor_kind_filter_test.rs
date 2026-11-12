@@ -331,8 +331,6 @@ fn a_violations_kind_is_the_tag_serialization_emits_for_the_whole_corpus() {
 #[cfg(unix)]
 #[test]
 fn kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let root = two_kind_fixture(tmp.path());
     let member = root.join("github/acme/server");
@@ -346,8 +344,7 @@ fn kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it() {
     std::fs::create_dir_all(&with_npm).unwrap();
     std::os::unix::fs::symlink(which::which("git").unwrap(), with_npm.join("git")).unwrap();
     let npm = with_npm.join("npm");
-    std::fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&npm, "#!/bin/sh\nexit 0\n");
 
     let run = |args: &[&str], path: &Path| {
         rwv()
@@ -435,8 +432,6 @@ fn issue_kinds_are_admissible_and_share_no_name_with_violation_kinds() {
 #[cfg(unix)]
 #[test]
 fn a_clone_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let seed = |name: &str, file: &str, body: &str, pinned: &[(&str, &str)]| -> String {
         let bare = tmp.path().join(format!("{name}.git"));
@@ -495,8 +490,7 @@ fn a_clone_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
     std::fs::create_dir_all(&with_npm).unwrap();
     std::os::unix::fs::symlink(which::which("git").unwrap(), with_npm.join("git")).unwrap();
     let npm = with_npm.join("npm");
-    std::fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&npm, "#!/bin/sh\nexit 0\n");
 
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();

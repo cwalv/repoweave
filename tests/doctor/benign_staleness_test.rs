@@ -266,12 +266,8 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
 fn block_commits(repo: &Path, hooks_dir: &Path) {
     std::fs::create_dir_all(hooks_dir).unwrap();
     let hook = hooks_dir.join("pre-commit");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&hook, "#!/bin/sh\nexit 1\n");
+
     common::git_in(
         repo,
         &["config", "core.hooksPath", &hooks_dir.to_string_lossy()],

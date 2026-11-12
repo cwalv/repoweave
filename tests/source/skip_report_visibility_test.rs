@@ -94,44 +94,22 @@ fn a_tool_that_is_there_is_not_announced() {
 #[cfg(unix)]
 #[test]
 fn the_guards_resolver_accepts_files_the_os_will_not_run() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let dir = tmp.path();
 
     // The child's own diagnostics go nowhere: one of these shapes reaches a
     // shell that reports it cannot open the file, and a gate log carrying that
     // line beside a passing test is a reader's false alarm.
-    //
-    // ETXTBSY IS RETRIED, and it is not hypothetical here. A sibling test in
-    // this binary that forks while this thread still holds the freshly written
-    // file open makes the kernel refuse to execute it — a race that appeared
-    // the moment this file grew to seven concurrent tests, and that would
-    // otherwise redden the control below at random. Retrying is correct rather
-    // than tolerant: ETXTBSY says the file could not be TRIED, which is not an
-    // answer about whether the OS would run it.
     let run = |exe: &std::path::Path| {
-        for _ in 0..50 {
-            let done = std::process::Command::new(exe)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            if done
-                .as_ref()
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy)
-            {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                continue;
-            }
-            return done;
-        }
-        panic!("{} stayed ETXTBSY for a second", exe.display())
+        std::process::Command::new(exe)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
     };
 
     let plant = |name: &str, body: &str, mode: u32| {
         let path = dir.join(name);
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        common::write_program(&path, body.as_bytes(), mode);
         path
     };
 
@@ -240,13 +218,10 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
 #[cfg(unix)]
 #[test]
 fn the_location_guard_refuses_what_the_os_will_not_start() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let plant = |name: &str, body: &str, mode: u32| {
         let path = tmp.path().join(name);
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        common::write_program(&path, body.as_bytes(), mode);
         path
     };
     fn spelled(p: &std::path::Path) -> &str {

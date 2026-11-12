@@ -1595,16 +1595,10 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
     let hooks_dir = primary.project_dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-rewrite");
-    std::fs::write(
+    common::write_executable(
         &hook_path,
         "#!/bin/sh\nprintf '[[[not a manifest\\n' > rwv.toml\n",
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
 
     rwv()
         .arg("land")

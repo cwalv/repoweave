@@ -246,8 +246,6 @@ fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
 #[cfg(unix)]
 #[test]
 fn cargo_activate_hook_whose_tool_replaces_the_link_has_its_lock_adopted() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     let bin = tmp.path().join("bin");
@@ -275,12 +273,10 @@ fn cargo_activate_hook_whose_tool_replaces_the_link_has_its_lock_adopted() {
     // A `cargo` that reports success after replacing whatever stands at the
     // lock's root path with a new file.
     let fake_cargo = bin.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &fake_cargo,
         "#!/bin/sh\nrm -f Cargo.lock\nprintf '# fake lock\\n' > Cargo.lock\nexit 0\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&fake_cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let path = format!(
         "{}:{}",
@@ -457,8 +453,6 @@ fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
 #[cfg(unix)]
 #[test]
 fn hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     let bin = tmp.path().join("bin");
@@ -493,15 +487,13 @@ fn hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run() {
     write_file(&ws, ".rwv-active", "app\n");
 
     let cargo = bin.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &cargo,
         format!(
             "#!/bin/sh\necho \"$@\" >> {}\nprintf '# lock\\n' > Cargo.lock\nexit 0\n",
             witness.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let run = |args: &[&str]| {
         let out = common::rwv()

@@ -903,15 +903,13 @@ fn a_detached_upstream_refuses_add_new_naming_the_upstream_to_repair() {
 /// A `PATH` holding `git` and a `cargo` that fails every command.
 #[cfg(unix)]
 fn failing_cargo_path(bin: &Path) -> std::ffi::OsString {
-    use std::os::unix::fs::PermissionsExt;
     let path = common::cargo_stand_in_path(bin);
     let cargo = bin.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &cargo,
         "#!/bin/sh\necho 'stand-in cargo: failing' >&2\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
+
     path
 }
 

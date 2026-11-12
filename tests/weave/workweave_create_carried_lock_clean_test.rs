@@ -15,7 +15,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::common;
@@ -95,16 +94,15 @@ impl Weave {
         std::fs::create_dir_all(&bin).unwrap();
         let witness = root.join("cargo-ran");
         let wrapper = bin.join("cargo");
-        std::fs::write(
+        common::write_executable(
             &wrapper,
             format!(
                 "#!/bin/sh\necho \"$PWD $*\" >> {}\nexec {} \"$@\"\n",
                 witness.display(),
                 which::which("cargo").unwrap().display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
+
         let mut path = bin.into_os_string();
         path.push(":");
         path.push(std::env::var_os("PATH").unwrap_or_default());

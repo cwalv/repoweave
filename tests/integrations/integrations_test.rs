@@ -99,10 +99,8 @@ fn git_init_with_commit(dir: &Path) {
 /// what an executable's name means there before it can port.
 #[cfg(unix)]
 fn write_exit_code_shim(bin_dir: &Path, name: &str, exit_code: i32) {
-    use std::os::unix::fs::PermissionsExt;
     let path = bin_dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&path, format!("#!/bin/sh\nexit {exit_code}\n"));
 }
 
 /// An `rwv.toml` naming one member and enabling exactly one integration.
@@ -214,8 +212,6 @@ fn activate_with_tool_shim(
     exit_code: i32,
     produces: &[&str],
 ) -> (bool, String) {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     let bin = tmp.path().join("bin");
@@ -239,8 +235,7 @@ fn activate_with_tool_shim(
             script.push_str(&format!("printf '' >> {}\n", ws.join(artifact).display()));
         }
         script.push_str(&format!("exit {code}\n"));
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, script);
     };
     let run = |args: &[&str]| {
         common::rwv()

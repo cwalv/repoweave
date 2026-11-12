@@ -42,15 +42,7 @@ fn plant_silent_refusing_hook(repo: &Path) {
     let hooks = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("post-checkout");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    // Nothing to set on Windows: git's own `access()` there masks off X_OK, so
-    // a hook file that exists is one git runs, and git resolves the shebang
-    // itself rather than leaving it to the OS.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&hook, "#!/bin/sh\nexit 1\n");
 }
 
 /// Fail loudly if a fixture smuggles the word in by way of a path, which would

@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use crate::common;
 
 // ---------------------------------------------------------------------------
@@ -215,8 +216,6 @@ fn the_advisory_checks_callers_are_enumerated_where_a_new_one_reddens_it() {
 #[test]
 #[cfg(unix)]
 fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
-    use std::os::unix::fs::PermissionsExt;
-
     let Some(real_cargo) = common::resolve_tool_or_skip("cargo") else {
         return;
     };
@@ -230,7 +229,7 @@ fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
     let shim_dir = tmp.path().join("shim");
     std::fs::create_dir_all(&shim_dir).unwrap();
     let shim = shim_dir.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &shim,
         format!(
             "#!/bin/sh\n\
@@ -239,9 +238,7 @@ fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
             member = member_file.display(),
             real = real_cargo.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let (ok, ran) = rwv_with_path_prefix(&["materialize"], &ws, &shim_dir);
     assert!(ok, "{ran}");

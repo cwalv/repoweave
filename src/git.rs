@@ -5844,15 +5844,7 @@ mod branch_model_tests {
         let hooks = repo.join(".git/hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("post-checkout");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        // Nothing to set on Windows: git's own `access()` there masks off
-        // X_OK, so a hook file that exists is one git runs, and git resolves
-        // the shebang itself rather than leaving it to the OS.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::write_executable(&hook, "#!/bin/sh\nexit 1\n");
     }
 
     #[test]
@@ -7662,19 +7654,11 @@ mod population_tests {
         std::fs::create_dir(&hooks).unwrap();
         let log = repo.join("post-checkout.log");
         let script = hooks.join("post-checkout");
-        std::fs::write(
-            &script,
-            format!(
+        crate::write_executable(&script, format!(
                 "#!/bin/sh\necho \"$* $(basename \"$(pwd)\")\" >> '{}'\necho refused-by-hook >&2\nexit {exit}\n",
                 log.display()
-            ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+            ));
+
         git(repo, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
         log
     }
@@ -8998,12 +8982,7 @@ mod wording_tests {
 
         fn hook(&self, name: &str, body: &str) {
             let hook = self.origin.join("hooks").join(name);
-            std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::write_executable(&hook, format!("#!/bin/sh\n{body}\n"));
         }
     }
 
@@ -9106,12 +9085,8 @@ mod wording_tests {
     fn store_refusing_checkouts() -> (tempfile::TempDir, PathBuf) {
         let (tmp, repo) = repo();
         let hook = repo.join(".git").join("hooks").join("post-checkout");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::write_executable(&hook, "#!/bin/sh\nexit 1\n");
+
         (tmp, repo)
     }
 

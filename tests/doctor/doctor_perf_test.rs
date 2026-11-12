@@ -35,8 +35,6 @@
 use crate::common;
 
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 /// Create a primary workspace with `n_repos` manifest entries and `n_ww`
@@ -119,16 +117,14 @@ impl CountingGitShim {
         fs::create_dir_all(&markers).unwrap();
 
         let script_path = dir.path().join("git");
-        let mut f = fs::File::create(&script_path).unwrap();
-        write!(
-            f,
-            "#!/bin/sh\nmktemp '{markers}/call.XXXXXX' >/dev/null\nexec '{real_git}' \"$@\"\n",
-            markers = markers.display(),
-            real_git = real_git.display(),
-        )
-        .unwrap();
-        drop(f);
-        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(
+            &script_path,
+            format!(
+                "#!/bin/sh\nmktemp '{markers}/call.XXXXXX' >/dev/null\nexec '{real_git}' \"$@\"\n",
+                markers = markers.display(),
+                real_git = real_git.display(),
+            ),
+        );
 
         Self { dir, markers }
     }

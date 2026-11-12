@@ -27,7 +27,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -150,8 +149,7 @@ fn head_sha(root: &Path) -> String {
 }
 
 fn write_executable(path: &Path, body: &str) {
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(path, body);
 }
 
 /// A fixture carrying its own `scripts/ci-local.sh` (copied from this
@@ -163,16 +161,10 @@ fn fixture_repo() -> tempfile::TempDir {
     let root = dir.path();
 
     std::fs::create_dir_all(root.join("scripts")).unwrap();
-    std::fs::copy(
-        repo_root().join("scripts/ci-local.sh"),
-        root.join("scripts/ci-local.sh"),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        root.join("scripts/ci-local.sh"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    common::copy_executable(
+        &repo_root().join("scripts/ci-local.sh"),
+        &root.join("scripts/ci-local.sh"),
+    );
 
     std::fs::copy(
         repo_root().join(".gitattributes"),

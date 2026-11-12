@@ -686,8 +686,6 @@ fn rwv_with_path_prefix(args: &[&str], cwd: &Path, prepend: &Path) -> (bool, Str
 #[test]
 #[cfg(unix)]
 fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
-    use std::os::unix::fs::PermissionsExt;
-
     let Some(real_cargo) = common::resolve_tool_or_skip("cargo") else {
         return;
     };
@@ -715,7 +713,7 @@ fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
     let shim_dir = tmp.path().join("shim");
     std::fs::create_dir_all(&shim_dir).unwrap();
     let shim = shim_dir.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &shim,
         format!(
             "#!/bin/sh\n\"{real}\" \"$@\"\nstatus=$?\ncp '{bumped}' '{helper}'\nexit $status\n",
@@ -723,9 +721,7 @@ fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
             bumped = bumped.display(),
             helper = helper_manifest.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let ledger_before = std::fs::read_to_string(project_dir.join(LEDGER)).unwrap();
     let (ok, refused) = rwv_with_path_prefix(&["materialize"], &ws, &shim_dir);

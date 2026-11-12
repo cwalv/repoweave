@@ -140,8 +140,6 @@ fn owner_record_json(ws: &Path) -> String {
 #[test]
 #[cfg(unix)]
 fn an_op_landing_after_the_check_does_not_stop_the_verb() {
-    use std::os::unix::fs::PermissionsExt;
-
     let Some(real_cargo) = common::resolve_tool_or_skip("cargo") else {
         return;
     };
@@ -158,7 +156,7 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
     let shim_dir = tmp.path().join("shim");
     std::fs::create_dir_all(&shim_dir).unwrap();
     let shim = shim_dir.join("cargo");
-    std::fs::write(
+    common::write_executable(
         &shim,
         format!(
             "#!/bin/sh\n\
@@ -172,9 +170,7 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
             record = record.display(),
             real = real_cargo.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let (ok, materialized) = rwv_with_path_prefix(&["materialize"], &ws, &shim_dir);
     assert!(

@@ -26,7 +26,6 @@
 #![cfg(unix)]
 
 use std::ffi::OsString;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::common;
@@ -58,9 +57,7 @@ fn git_init_with_commit(dir: &Path) {
 fn path_with_sccache_stand_in(bin: &Path) -> OsString {
     std::fs::create_dir_all(bin).expect("stand-in bin dir should be creatable");
     let sccache = bin.join("sccache");
-    std::fs::write(&sccache, "#!/bin/sh\nexec \"$@\"\n").expect("stand-in should be writable");
-    std::fs::set_permissions(&sccache, std::fs::Permissions::from_mode(0o755))
-        .expect("stand-in should be executable");
+    common::write_executable(&sccache, "#!/bin/sh\nexec \"$@\"\n");
 
     let existing = std::env::var_os("PATH").unwrap_or_default();
     let mut joined = bin.as_os_str().to_owned();

@@ -807,17 +807,14 @@ fn materialize_leaves_a_pin_byte_identical() {
 /// what an executable's name means there before it can port.
 #[cfg(unix)]
 fn write_shim(bin_dir: &Path, name: &str, log: &Path, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
     let path = bin_dir.join(name);
-    std::fs::write(
+    common::write_executable(
         &path,
         format!(
             "#!/bin/sh\nprintf '%s %s\\n' {name} \"$*\" >> {}\n{body}\nexit 0\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 /// The complete set of ecosystem commands one `rwv activate` may run.

@@ -384,10 +384,8 @@ const INSTALL_SCRIPT_TOOLS: &[&str] = &[
 
 #[cfg(unix)]
 fn stub(dir: &Path, name: &str, body: &str) {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&path, format!("#!/bin/sh\n{body}"));
 }
 
 /// A directory of links to the host's own `tools`, for a PATH that holds
@@ -626,10 +624,8 @@ fn every_shipped_binary_carries_the_install_script_marker() {
 
 #[cfg(unix)]
 fn write_executable(path: &Path, bytes: &[u8]) {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(path, bytes);
 }
 
 /// The `rwv-each` script v0.23.0 and v0.24.0 told operators to write, at the

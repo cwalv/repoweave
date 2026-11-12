@@ -640,10 +640,9 @@ mod tests {
     fn make_executable(dir: &std::path::Path, name: &str) -> PathBuf {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
             let p = dir.join(name);
-            fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
-            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            crate::write_executable(&p, "#!/bin/sh\necho hi\n");
+
             p
         }
         #[cfg(windows)]

@@ -12,7 +12,6 @@
 
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::common;
@@ -137,15 +136,13 @@ impl Weave {
 
     fn install_npm(&self) {
         let npm = self.bin.join("npm");
-        std::fs::write(
+        common::write_executable(
             &npm,
             format!(
                 "#!/bin/sh\necho \"$PWD\" >> {}\nexit 0\n",
                 self.witness.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
     }
 
     fn commit_project(&self) {

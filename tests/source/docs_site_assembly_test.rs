@@ -14,7 +14,6 @@
 #![cfg(unix)]
 
 use std::collections::BTreeSet;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -172,8 +171,8 @@ fn site(failing: Option<&str>) -> Site {
     let tools = tmp.path().join("tools");
     for (name, body) in [("mdbook", MDBOOK), ("mdbook-mermaid", MDBOOK_MERMAID)] {
         let path = tools.join(name);
-        write(&path, body);
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        common::write_executable(&path, body);
     }
     let out = tmp.path().join("site");
     Site {

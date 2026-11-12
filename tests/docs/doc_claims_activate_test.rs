@@ -585,15 +585,12 @@ fn make_npm_workspace(ws_root: &Path, repo: &str) {
 /// `write_exit_code_shim` in `tests/integrations/integrations_test.rs` to unix.
 #[cfg(unix)]
 fn write_recording_npm(bin_dir: &Path, log: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin_dir).unwrap();
     let path = bin_dir.join("npm");
-    std::fs::write(
+    common::write_executable(
         &path,
         format!("#!/bin/sh\necho \"$@\" >> {}\nexit 0\n", log.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 /// `rwv activate` spawns the ecosystem install command; `--no-materialize`
@@ -661,8 +658,6 @@ fn activate_runs_the_install_hook_and_no_materialize_withholds_it() {
 #[cfg(unix)]
 #[test]
 fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() {
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = common::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     make_npm_workspace(&ws_root, "frontend");
@@ -698,8 +693,8 @@ fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() 
     let failing_bin = tmp.path().join("failing-bin");
     std::fs::create_dir_all(&failing_bin).unwrap();
     let npm = failing_bin.join("npm");
-    std::fs::write(&npm, "#!/bin/sh\necho 'npm: install failed' >&2\nexit 1\n").unwrap();
-    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&npm, "#!/bin/sh\necho 'npm: install failed' >&2\nexit 1\n");
+
     let output = rwv()
         .args(["activate", "npm-proj"])
         .env(

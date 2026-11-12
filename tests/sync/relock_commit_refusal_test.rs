@@ -106,12 +106,7 @@ impl Weave {
 
     fn refuse_commits(&self) {
         let hook = self.hooks.join("commit-msg");
-        std::fs::write(&hook, format!("#!/bin/sh\necho {HOOK_TEXT} >&2\nexit 1\n")).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&hook, format!("#!/bin/sh\necho {HOOK_TEXT} >&2\nexit 1\n"));
     }
 
     fn accept_commits(&self) {

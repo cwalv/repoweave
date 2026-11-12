@@ -115,10 +115,8 @@ impl Weave {
 
     /// Put a stand-in `name` on the runs' `PATH`, running `script`.
     fn stand_in(&self, name: &str, script: &str) {
-        use std::os::unix::fs::PermissionsExt;
         let tool = self.bin.join(name);
-        std::fs::write(&tool, format!("#!/bin/sh\n{script}")).unwrap();
-        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&tool, format!("#!/bin/sh\n{script}"));
     }
 
     /// Replace the lock's link with a real file holding `bytes`: a tool that

@@ -3068,15 +3068,8 @@ fn plant_failing_post_checkout_hook(repo: &Path) -> std::path::PathBuf {
     let hooks_dir = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-checkout");
-    std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
-    // Nothing to set on Windows: git's own `access()` there masks off X_OK, so
-    // a hook file that exists is one git runs, and git resolves the shebang
-    // itself rather than leaving it to the OS.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&hook_path, "#!/bin/sh\nexit 1\n");
+
     hook_path
 }
 
@@ -3288,15 +3281,13 @@ role = "owned"
     let hooks_dir = repo1.join(".git/hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-checkout");
-    std::fs::write(
+    common::write_executable(
         &hook_path,
         "#!/bin/sh\n\
          common=$(git rev-parse --path-format=absolute --git-common-dir)\n\
          chmod 500 \"$common/refs/heads\"\n\
          exit 0\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 
     let refs_heads = repo1.join(".git/refs/heads");
     let project = ProjectName::new("locked-branch".to_string()).unwrap();
@@ -3361,13 +3352,7 @@ fn create_names_hook_config_when_git_hook_rejects_worktree() {
     let hooks_dir = repo_path.join(".git/hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-checkout");
-    std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
-    // Make the hook executable.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&hook_path, "#!/bin/sh\nexit 1\n");
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
