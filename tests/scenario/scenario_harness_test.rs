@@ -698,6 +698,7 @@ every_scenario!(
     update_remote_abort_leaves_a_merge_in_a_member_it_never_merges,
     abort_keeps_edits_made_in_the_target_after_the_stop,
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
+    abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     a_receiving_branch_moved_as_a_ref_loses_its_race(scenarios::RefRace::Advanced),
@@ -2386,6 +2387,14 @@ holding_rwv! {
     /// made there before `rwv abort` resets it are kept as a backup first.
     fn abort_keeps_edits_made_in_the_target_after_the_stop() {
         runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop())
+            .assert_fully_decided_green();
+    }
+
+    /// A receiving branch the landing moved as a ref, deleted before `rwv
+    /// abort`: abort refuses, printing a choice that clears it when run.
+    #[ignore = "the foreign-tip recovery's second choice, ending the operation with the ref left as it is, is the landing-as-refs slice's"]
+    fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
+        runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it())
             .assert_fully_decided_green();
     }
 

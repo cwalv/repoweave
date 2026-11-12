@@ -9784,6 +9784,63 @@ pub fn land_clones_a_member_its_target_took_in_by_fetch_alone() -> Scenario {
     )
 }
 
+/// A landing moved `lib-next` as a ref and was killed after the target's
+/// workspace aligned onto it; someone switches that checkout back to `main`
+/// and deletes `lib-next`. Abort cannot put back a branch that is gone, so it
+/// refuses, and the choice it prints clears that state when run.
+pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Scenario {
+    let steps = vec![
+        create("w"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
+        Step::commit(&a(), Repo::Lib, "dev-own"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &declared_branch_text(Repo::Lib, "lib-next"),
+        ),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["commit", "-qam", "lib onto lib-next"],
+        ),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(
+            &ww("w"),
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::git(&a(), Repo::Lib, &["branch", "-D", "lib-next"]).may_strand(&[Repo::Lib]),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib]),
+        Step::rwv_printed(&ww("w"), "rwv abort ")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::Proj, Repo::Lib]),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ];
+    scenario(
+        "abort over a receiving branch deleted after the landing moved it",
+        steps,
+    )
+}
+
 /// How a landing that changes `lib`'s declared branch to `lib-next` treats `lib-next`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceivingCase {

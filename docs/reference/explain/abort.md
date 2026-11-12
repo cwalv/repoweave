@@ -183,6 +183,9 @@ that clear it, each command on a line of its own:
 
 - a foreign tip: `rwv abort --abandon-foreign-tip <repo>`; the commits are
   kept as an `abandoned` backup.
+- a checkout off the branch its savepoint names, where that branch is gone
+  or checked out elsewhere: the VCS command that puts the branch back at the
+  savepoint, or freeing the other checkout, then `rwv abort`.
 - an operation in progress abort may not cancel: finish or abandon it there
   (the VCS's status command names how), then `rwv abort`; or `rwv abort
   --abandon-foreign-tip <repo>`, which keeps its edits and commits as
@@ -190,6 +193,10 @@ that clear it, each command on a line of its own:
 
 On failure for any repo, `abort` continues to the next repo before exiting
 non-zero.
+
+Once `abort` begins it marks the operation's record, so an abort that refuses
+or is interrupted leaves an operation only `rwv abort` takes up: `--continue`
+refuses it (`resume-contradicts-record`).
 
 ## Exit codes
 

@@ -209,6 +209,7 @@ src/op_state.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
 src/op_state.rs	op-acquisition-raced	-	2
 src/op_state.rs	op-in-progress	tests/docs/refusal_arrival_test.rs	1
 src/op_state.rs	op-parked	-	1
+src/op_state.rs	resume-contradicts-record	-	1
 src/owned_state.rs	derivation-inputs-moved	-	1
 src/owned_state.rs	state-claim-held	-	1
 src/pins.rs	pin ahead	-	1

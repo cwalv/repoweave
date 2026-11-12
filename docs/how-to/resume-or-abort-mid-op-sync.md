@@ -48,6 +48,8 @@ If a commit was made in a repository after the sync paused, `rwv abort` refuses 
   ```
   The abandoned commits are first kept as a backup marked `abandoned`, named for the branch they were on, and abort prints its name. `rwv backup list` shows it with the commits only it holds, and `rwv backup drop github/foo/bar <name>` drops it once they are not wanted. If the foreign agent kept committing between two runs, the rerun keeps the tip as it then stands.
 
+Once `rwv abort` has begun, the operation can only be aborted: `--continue` refuses it, so rerun `rwv abort` after clearing what it refused.
+
 A repository refused because it is stopped in an operation abort did not start prints its own choices: finish or abandon that operation there, then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip <repo>`, which keeps its edits and commits as backups before canceling it.
 
 ### When no operation is in progress
