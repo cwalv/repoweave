@@ -1263,9 +1263,9 @@ fn primary_and_workweave(parent: &Path) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    common::set_up_lock_driver(&project_dir);
     common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git_init_with_commit(&project_dir);
+    common::set_up_lock_driver_committed(&project_dir);
     common::record_trunk(&project_dir);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 

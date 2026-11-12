@@ -605,6 +605,7 @@ fn project_source(tmp: &Path, member_bare: &Path) -> String {
     )
     .unwrap();
     common::fixture_lock_at_remote_tips(&seed, &[(MEMBER, member_url.as_str())]);
+    common::set_up_lock_driver(&seed);
     common::git_in(&seed, &["add", "."]);
     common::git_in(&seed, &["commit", "-m", "project"]);
     common::git_in(&seed, &["push", "origin", "main"]);

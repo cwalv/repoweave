@@ -121,6 +121,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    common::set_up_lock_driver(&work);
 
     // Stage a side workspace that mirrors what the project's first-time
     // author would have on their machine: clone the manifest repos, run

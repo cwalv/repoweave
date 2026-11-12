@@ -77,6 +77,7 @@ fn bootstrap_via_clone(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
         "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    common::set_up_lock_driver(&work);
     common::fixture_lock_at_remote_tips(&work, &[("local/team/dep", &dep_url)]);
     common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&work, &["commit", "-m", "manifest + lock"]);

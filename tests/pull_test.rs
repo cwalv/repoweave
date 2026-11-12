@@ -136,6 +136,7 @@ fn weave() -> Weave {
     )
     .unwrap();
     common::fixture_lock_at_remote_tips(&project, &[(MEMBER, &url)]);
+    common::set_up_lock_driver(&project);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "manifest and lock"]);
     common::git_in(&project, &["push", "origin", "main"]);

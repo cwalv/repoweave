@@ -728,10 +728,6 @@ fn a_recreated_feature_branch_draws_no_doctor_finding() {
 #[test]
 fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_landed() {
     let w = weave(&[LIB]);
-    let project = project_dir(&w.workspace);
-    common::set_up_lock_driver(&project);
-    common::git_in(&project, &["add", ".gitattributes"]);
-    common::git_in(&project, &["commit", "-qm", "replay exclusion"]);
     let ww = create_workweave(&w.workspace, "feat");
     let branch = minted("feat");
     commit_in(&ww.join(LIB), "work.txt");

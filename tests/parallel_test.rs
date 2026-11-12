@@ -92,6 +92,7 @@ fn make_project_source_locked(
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    common::set_up_lock_driver(&work);
     write_lock(&work);
     common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&work, &["commit", "-m", "manifest"]);

@@ -997,7 +997,7 @@ fn init_commits_exactly_the_files_it_wrote_and_leaves_the_tree_clean() {
         [".gitattributes", "my-app.code-workspace", "rwv.toml"]
     );
     let attrs = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
-    assert!(attrs.contains("rwv.lock merge=rwv-ours"), "{attrs}");
+    assert!(attrs.contains("rwv.lock merge=rwv-lock"), "{attrs}");
     assert_eq!(
         common::git_in(
             &project,
@@ -1097,7 +1097,7 @@ fn adopt_commits_only_its_own_files_onto_the_adopted_history() {
         ".gitattributes\nrwv.toml"
     );
     let attrs = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
-    assert_eq!(attrs, "*.png binary\nrwv.lock merge=rwv-ours");
+    assert_eq!(attrs, "*.png binary\nrwv.lock merge=rwv-lock");
     assert_eq!(
         common::git_in(
             &project,
@@ -1134,7 +1134,7 @@ fn adopt_of_a_repo_that_already_carries_rwvs_files_makes_no_commit() {
         tmp.path(),
         &["init", "-q", "-b", "main", seed.to_str().unwrap()],
     );
-    std::fs::write(seed.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    std::fs::write(seed.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
     std::fs::write(seed.join("rwv.toml"), "[repositories]\n").unwrap();
     common::git_in(&seed, &["add", "-A"]);
     common::git_in(

@@ -9029,7 +9029,8 @@ mod tests {
         let stub = findings_page(
             "### `unparseable-project`\n\nhand-written\n\n### `pin`\n\nhand-written\n\n\
              ### `alignment`\n\nhand-written\n\n### `legacy-workweave-index`\n\nhand-written\n\n\
-             ### `history-disagreement`\n\nhand-written\n\n",
+             ### `history-disagreement`\n\nhand-written\n\n\
+             ### `missing-lock-merge-driver`\n\nhand-written\n\n",
         );
         let spliced = splice_finding_entries(&stub).unwrap();
         assert!(spliced.contains(
@@ -9039,6 +9040,7 @@ mod tests {
         assert!(spliced.contains("#### `unreachable`"));
         assert!(spliced.contains("#### `on-branch`"));
         assert!(spliced.contains("#### `old-path`"));
+        assert!(spliced.contains("#### `config-legacy`"));
         assert!(!spliced.contains("hand-written"));
         assert!(spliced.ends_with("### `after`\n\nafter\n"));
         assert_eq!(
