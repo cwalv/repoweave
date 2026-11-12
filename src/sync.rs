@@ -4442,6 +4442,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .context("failed to resolve the target for advance-target")?;
 
     let mut any_ff_failure = false;
+    let mut moved = Report::default();
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
         if !ctx
             .take_in
@@ -4515,7 +4516,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        match ff_advance_repo(vcs.as_ref(), &target_repo, &cwd_repo, &cwd_tip) {
+        match ff_advance_repo(vcs.as_ref(), repo_path, &target_repo, &cwd_repo, &cwd_tip) {
             Ok(advance) => {
                 if emit_text {
                     outln!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
@@ -4530,13 +4531,16 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
-                if emit_text {
-                    eprintln!("  {}: ff-advance failed: {e:#}", repo_path);
+                if let Err(e) = moved.absorb(Err(e)) {
+                    if emit_text {
+                        eprintln!("  {}: ff-advance failed: {e:#}", repo_path);
+                    }
+                    any_ff_failure = true;
                 }
-                any_ff_failure = true;
             }
         }
     }
+    moved.into_result()?;
 
     // The project repo carries the lock, and the lock names the manifest tips.
     // Advancing it while a manifest repo failed to land would leave the target
@@ -4569,6 +4573,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
+        project_rel_path(&ctx.cwd_project_name),
         &ctx.dest_project_dir,
         &ctx.cwd_project_dir,
         &cwd_project_tip,
@@ -4590,6 +4595,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 );
             }
         }
+        Err(e) if crate::diagnosis::report_of(&e).is_some() => return Err(e),
         Err(e) => {
             if emit_text {
                 eprintln!("  {}: ff-advance failed: {e:#}", RepoKey::Project);
@@ -5687,13 +5693,14 @@ fn ff_advance_line(advance: &FfAdvance, tip: &ResolvedRevisionId) -> String {
 /// The `target` moved mid-operation line for one repo the fast-forward found
 /// moved, at `now`, off the tip `composed` it was to receive.
 fn target_moved_line_for(
+    label: impl std::fmt::Display,
     repo: &Path,
     now: &ResolvedRevisionId,
     composed: &ResolvedRevisionId,
 ) -> crate::diagnosis::Judged {
     State::TargetMovedMidOperation
-        .of(repo.display())
-        .subject("it moved after the landing read it")
+        .of(label)
+        .subject(format!("{} moved after the landing read it", repo.display()))
         .listing([format!(
             "now at {}, which does not fast-forward to {}",
             now.id().short(),
@@ -5737,6 +5744,7 @@ fn target_moved_line_for(
 /// someone can route around — it is a call that does not typecheck.
 fn ff_advance_repo(
     vcs: &dyn Vcs,
+    label: impl std::fmt::Display,
     target_repo: &Path,
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
@@ -5827,7 +5835,7 @@ fn ff_advance_repo(
         .unwrap_or(false);
 
     if !is_ancestor {
-        return Err(target_moved_line_for(target_repo, &target_tip, cwd_tip).refused());
+        return Err(target_moved_line_for(label, target_repo, &target_tip, cwd_tip).refused());
     }
 
     // Fast-forward. The witness names both the ref that moves and the repo
@@ -6303,7 +6311,7 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
-        let advance = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+        let advance = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
             .expect("an attached target accepts the landing");
         let landed = advance
             .onto
@@ -6322,25 +6330,24 @@ mod tests {
     }
 
     #[test]
-    fn ff_advance_repo_leads_its_refusal_with_the_containment_verdict() {
+    fn ff_advance_repo_stops_on_a_target_that_moved_as_a_state_with_a_route() {
         let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
         git(&target, &["config", "user.email", "t@t"]);
         git(&target, &["config", "user.name", "T"]);
         commit(&target, "target-only");
 
-        let err = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
             .expect_err("a target holding commits CWD's tip does not must refuse");
-        let msg = format!("{err:#}");
-
-        assert!(
-            msg.contains("diverged from CWD's tip") && msg.contains("(1 ahead, 1 behind)"),
-            "the refusal must lead with the verdict and both counts; got:\n{msg}"
+        let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
+        assert_eq!(
+            report.lines()[0].state(),
+            State::TargetMovedMidOperation,
+            "{err:#}"
         );
         assert!(
-            msg.contains("either the target moved after step 1")
-                || msg.contains("Either the target moved after step 1"),
-            "the two causal hypotheses must survive the verdict; got:\n{msg}"
+            format!("{err:#}").contains("which does not fast-forward to"),
+            "{err:#}"
         );
     }
 
@@ -6357,7 +6364,7 @@ mod tests {
         git(&target, &["checkout", "--detach", "HEAD"]);
         let head_before = git(&target, &["rev-parse", "HEAD"]);
 
-        let err = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
             .expect_err("a detached target has no branch for the landing to advance");
         let msg = format!("{err:#}");
         assert!(
@@ -6393,7 +6400,7 @@ mod tests {
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
         git(&target, &["checkout", "--detach", cwd_tip.id().as_str()]);
 
-        let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+        let landed = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, &cwd_tip)
             .expect("an already-converged target is a no-op, detached or not");
         assert!(
             landed.onto.is_none(),

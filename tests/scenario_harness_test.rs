@@ -32,7 +32,7 @@ use invariants::{
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
-use runner::{Claim, Defect, Exit, Forge, MissingVerb, Outcome, Report, Scenario, Step};
+use runner::{Claim, Exit, Forge, MissingVerb, Outcome, Report, Scenario, Step};
 use sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Store};
 
 fn fired(report: &Report) -> Vec<(&str, Invariant)> {
@@ -2056,7 +2056,7 @@ holding_rwv! {
             Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::commit(&a(), Repo::App, "raced"),
             Step::release("landing")
-                .expect(Exit::Defect(Defect::UnroutedLandingStop))
+                .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::App,
@@ -2078,7 +2078,7 @@ holding_rwv! {
             .find(|record| record.label == "release landing")
             .unwrap();
         assert!(
-            release.output.contains("cannot be fast-forwarded"),
+            release.output.contains("rwv abort") && release.output.contains("rwv land"),
             "{report}\n{}",
             release.output
         );
