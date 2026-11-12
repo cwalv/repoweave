@@ -252,7 +252,7 @@ mod tests {
         let out = GitCommand::new()
             .args(["rev-parse", "--verify", "no-such-revision-here"])
             .env("LANGUAGE", "de")
-            .env("LC_MESSAGES", "de_DE.UTF-8")
+            .env("LC_MESSAGES", "en_US.UTF-8")
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .unwrap();

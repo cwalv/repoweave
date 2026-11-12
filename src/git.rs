@@ -5748,6 +5748,27 @@ mod branch_model_tests {
     }
 
     #[test]
+    fn delete_branch_leaves_the_settings_of_a_branch_named_below_it() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        git(store.path(), &["config", "branch.p--ww.x.remote", "origin"]);
+
+        let proof = landed_on(store.path(), &ww(), &start).expect("landed");
+        GitVcs.delete_branch(proof).unwrap();
+
+        let config = git_command()
+            .args(["config", "--get", "branch.p--ww.x.remote"])
+            .current_dir(store.path())
+            .output()
+            .unwrap();
+        assert!(
+            config.status.success(),
+            "the settings of p--ww.x are not p--ww's"
+        );
+    }
+
+    #[test]
     fn a_proof_keyed_to_a_git_dir_still_names_a_workable_repo() {
         let store = repo();
         let start = GitVcs.head_revision(store.path()).unwrap();
