@@ -4531,6 +4531,33 @@ fn load_continuing_context<'a>(
         }
     };
 
+    let mut leased_now: Vec<PathBuf> = Vec::new();
+    if !matches!(record.phase, op_state::OpPhase::Retire) {
+        let leasing = dest_workspace_dir
+            .iter()
+            .cloned()
+            .chain(
+                take_in
+                    .in_place_workspaces()
+                    .into_iter()
+                    .filter(|dir| dir.is_dir()),
+            )
+            .filter(|leased| {
+                crate::path_spelling::CanonicalPath::of(leased)
+                    != crate::path_spelling::CanonicalPath::of(&owner_workspace_dir)
+            });
+        for leased in leasing {
+            match op_state::acquire_lease(&leased, &owner_workspace_dir, &op_id) {
+                Ok(op_state::Leased::Now) => leased_now.push(leased),
+                Ok(op_state::Leased::Before) => {}
+                Err(e) => {
+                    put_back_continue(landing_claim, &leased_now, &owner_workspace_dir);
+                    return Err(e);
+                }
+            }
+        }
+    }
+
     // A refusal from here on puts back a claim this `--continue` took: a
     // landing that had released its target and cannot go on leaves it free.
     let under_claim = (|| -> anyhow::Result<(op_state::TakeInRecord, _)> {
@@ -4656,11 +4683,7 @@ fn load_continuing_context<'a>(
     let (take_in, snapshot) = match under_claim {
         Ok(resumed) => resumed,
         Err(e) => {
-            if let Some(claim) = landing_claim {
-                if let Err(released) = claim.put_back() {
-                    eprintln!("warning: {released:#}");
-                }
-            }
+            put_back_continue(landing_claim, &leased_now, &owner_workspace_dir);
             return Err(e);
         }
     };
@@ -4686,6 +4709,23 @@ fn load_continuing_context<'a>(
         snapshot,
         landing_claim: std::sync::Mutex::new(landing_claim),
     })
+}
+
+/// What a refused `--continue` gives back: the claim it took and the leases it
+/// took anew.
+fn put_back_continue(
+    claim: Option<crate::landing_claim::LandingClaim>,
+    leased_now: &[PathBuf],
+    owner_workspace_dir: &Path,
+) {
+    for leased in leased_now {
+        op_state::clear_lease_owned_by(leased, owner_workspace_dir);
+    }
+    if let Some(claim) = claim {
+        if let Err(released) = claim.put_back() {
+            eprintln!("warning: {released:#}");
+        }
+    }
 }
 
 /// Judge the source's `rwv.toml`, as the stop's resolution leaves it, against

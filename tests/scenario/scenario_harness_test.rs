@@ -130,6 +130,7 @@ fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on
         scenarios::InPlaceEnd::Drifted,
         scenarios::InPlaceEnd::KilledBeforeThePlan,
         scenarios::InPlaceEnd::Rewound,
+        scenarios::InPlaceEnd::ContinuedAfterRelease,
     ] {
         runner::run(scenarios::in_place_fast_forward(end)).assert_fully_decided_green();
     }
@@ -1020,6 +1021,7 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::Drifted),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlan),
     in_place_fast_forward(scenarios::InPlaceEnd::Rewound),
+    in_place_fast_forward(scenarios::InPlaceEnd::ContinuedAfterRelease),
     removal_is_member_change,
     dc06_member_set_from_merge,
     continue_rejudges_the_resolved_manifest,

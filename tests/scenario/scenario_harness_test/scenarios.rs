@@ -13037,6 +13037,9 @@ pub enum InPlaceEnd {
     /// The primary's checkout is rewound after the landing leased it: the
     /// landing refuses before it files anything, and the commit stays dropped.
     Rewound,
+    /// Killed once it released its leases, then continued: the primary is
+    /// leased again until the landing ends.
+    ContinuedAfterRelease,
 }
 
 /// The primary detached on the project, its members still on `main`: a
@@ -13141,6 +13144,29 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
                 land(),
             ]);
             return scenario("in-place fast-forward: rewound after the lease", steps);
+        }
+        InPlaceEnd::ContinuedAfterRelease => {
+            steps.extend([
+                Step::rwv_paused(
+                    &ww("w"),
+                    &["land", "--history", "linear"],
+                    "ending",
+                    "landing",
+                ),
+                Step::kill("landing"),
+                Step::rwv(&a(), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("in progress")),
+                Step::rwv_paused(&ww("w"), &["land", "--continue"], "advance-target", "again"),
+                Step::rwv(&a(), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("in progress")),
+                Step::release("again").expect(Exit::Succeeds),
+                Step::rwv(&a(), &["status"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("in progress")),
+            ]);
+            return scenario("in-place fast-forward: continued after release", steps);
         }
         InPlaceEnd::AbortedFromTheSource => ww("w"),
         InPlaceEnd::AbortedFromThePrimary => a(),
