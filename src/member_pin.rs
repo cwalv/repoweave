@@ -11,6 +11,50 @@ use crate::workspace::{project_dir, WorkspaceContext};
 use anyhow::Context;
 use std::collections::BTreeSet;
 
+/// What refuses pinning `member` where `candidate` pins it: a commit its
+/// declared branch does not reach, and, where the pin moves the checkout
+/// (`aligns`), a checkout that may not leave where it is. A detached HEAD
+/// holding unpushed commits does not refuse: it is backed up first.
+pub(crate) fn pin_refusals(
+    aligner: &Aligner,
+    member: &Member<'_>,
+    candidate: &LockFile,
+    aligns: bool,
+) -> anyhow::Result<Vec<Judged>> {
+    let mut lines = Vec::new();
+    let plan = aligner.plan(member, Some(candidate))?;
+    if let Target::Detached {
+        why: DetachedBecause::NotOnDeclaredBranch { branch },
+        ..
+    } = &plan.target
+    {
+        lines.push(
+            State::PinNotOnDeclaredBranch
+                .of(member.path)
+                .member()
+                .subject(branch)
+                .checkout(member.dir)
+                .bind("<m>", member.path.as_str())
+                .judge(member.vcs),
+        );
+    }
+    let moving_detached_head = matches!(
+        member.vcs.head_attachment(member.dir)?,
+        HeadAttachment::Detached(_)
+    );
+    if aligns {
+        for line in aligner.blocked(member, &plan, member.path)? {
+            let held_for_backup = moving_detached_head
+                && line.state() == State::AlignmentDetachedUnpushed
+                && member.vcs.mid_operation(member.dir).is_none();
+            if !held_for_backup {
+                lines.push(line);
+            }
+        }
+    }
+    Ok(lines)
+}
+
 /// Execute `rwv member pin <repo> <rev> [--commit]`.
 ///
 /// The pin is written by name, so it may move backward. Where the member
@@ -83,32 +127,8 @@ pub fn run_pin(
             .refused());
     };
     let candidate = lock::with_pins(&project.manifest, old.as_ref(), [(&path, &to)]);
-    let plan = aligner.plan(&member, Some(&candidate))?;
-    if let Target::Detached {
-        why: DetachedBecause::NotOnDeclaredBranch { branch },
-        ..
-    } = &plan.target
-    {
-        refusals.add(
-            State::PinNotOnDeclaredBranch
-                .of(&path)
-                .member()
-                .subject(branch)
-                .checkout(dir)
-                .bind("<m>", path.as_str())
-                .judge(vcs.as_ref()),
-        );
-    }
-    let moving_detached_head = matches!(vcs.head_attachment(dir)?, HeadAttachment::Detached(_));
-    if aligns {
-        for line in aligner.blocked(&member, &plan, &path)? {
-            let held_for_backup = moving_detached_head
-                && line.state() == State::AlignmentDetachedUnpushed
-                && vcs.mid_operation(dir).is_none();
-            if !held_for_backup {
-                refusals.add(line);
-            }
-        }
+    for line in pin_refusals(&aligner, &member, &candidate, aligns)? {
+        refusals.add(line);
     }
     refusals.into_result()?;
 

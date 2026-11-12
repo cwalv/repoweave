@@ -243,12 +243,12 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc.
+    /// Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included; `rwv member pin` moves a pin backward by name. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc.
     Lock {
-        /// Allow locking repos with uncommitted changes
+        /// Record each member's committed HEAD although it has uncommitted changes to tracked files, leaving those edits out of the lock
         #[arg(long)]
         dirty: bool,
-        /// Record only the repos matching this selector, and let one of them move its pin backward. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union.
+        /// Record only the repos matching this selector; it narrows only, and moves no pin backward. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union.
         #[arg(long = "repo", value_name = "REPO")]
         repos: Vec<String>,
         /// Commit rwv.lock after writing it, together with rwv.toml when it has uncommitted changes
@@ -504,7 +504,7 @@ pub enum Commands {
         /// With --remote, resume the update a conflict stopped, from the workspace it runs in
         #[arg(long = "continue", requires = "remote")]
         do_continue: bool,
-        /// Allow update with uncommitted changes in repos when relocking
+        /// Record each member's committed HEAD although it has uncommitted changes to tracked files, leaving those edits out of the lock
         #[arg(long, requires = "remote")]
         dirty: bool,
         /// Commit rwv.lock together with the integration files regenerated against the new tips, and with rwv.toml when it has uncommitted changes

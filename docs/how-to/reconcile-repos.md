@@ -32,7 +32,7 @@ rwv doctor --locked && echo "lock clean"
 
 When a repository is `ahead` or `diverged`, pick the action that matches your intent:
 
-- **Keep the local commits and update the lock:** For a repository `ahead` of its pin, run `rwv lock --commit` to record the current repository tips in `rwv.lock` and commit the updated lock. For one `diverged` from its pin, `rwv lock` refuses (`pin` `backwards`) because it moves a pin forward only; `rwv lock --repo <repo> --commit` records the checkout by name, and `rwv member pin <repo> <rev> --commit` pins a commit you choose.
+- **Keep the local commits and update the lock:** For a repository `ahead` of its pin, run `rwv lock --commit` to record the current repository tips in `rwv.lock` and commit the updated lock. For one `diverged` from its pin, `rwv lock` refuses (`pin` `backwards`) because it moves a pin forward only; `rwv member pin <repo> HEAD --commit` pins the checkout by name, and `rwv member pin <repo> <rev> --commit` pins another commit you choose.
 - **Inspect or build at the locked revision without moving the branch:** Run `git -C <repo> switch --detach <lock-sha>`. `rwv status` reports the detached checkout, and `rwv update` returns it to its branch when it holds nothing a branch lacks.
 - **Discard unintended local commits on the branch:** Run `git -C <repo> reset --hard <lock-sha>`, then verify with `rwv doctor --locked`. `rwv` provides no resting-workspace rewind verb because resting workspaces have no pre-op savepoint to recover discarded commits from; see [Destructive operations](../explanation/destructive-operations.md).
 - **Finish a hand-edited `rwv.toml` removal:** If you deleted a repository entry from `rwv.toml` by hand and its checkout or `rwv.lock` entry is still present, run `rwv member remove <path> [--delete]` to regenerate integration files and remove the leftover checkout, then record the change. When only `rwv.toml` changed, `rwv lock --commit` does it; when the removal also changed a tracked generated file such as the `.code-workspace` file, `rwv lock --commit` refuses, so run `rwv lock` and commit with `git -C projects/<project> commit -am "Remove <path>"`.
@@ -57,7 +57,7 @@ rwv doctor --locked
 When `rwv status` shows `unreachable`, the locked SHA is missing from the local object store:
 
 1. If the remote still holds the commit, run `rwv fetch` to pull the missing objects into every repository, then `rwv update` to align the checkout. `rwv update` alone leaves that repository where it is and reports `pin` `unreachable`, because it does not fetch into an existing checkout.
-2. If upstream rewrote history and the locked SHA no longer exists on the remote, run `rwv member pin <repo> <rev> --commit` with a reachable revision on the declared branch. `rwv lock` and `rwv update --remote` refuse to replace a pin no ref here reaches unless `rwv lock --repo` names it.
+2. If upstream rewrote history and the locked SHA no longer exists on the remote, run `rwv member pin <repo> <rev> --commit` with a reachable revision on the declared branch. `rwv lock` and `rwv update --remote` refuse to replace a pin no ref here reaches, with or without `--repo`.
 
 ## Related
 

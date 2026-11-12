@@ -320,7 +320,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `not on declared branch` | the lock pins a commit that neither the member's declared branch nor its upstream reaches, so the checkout sits detached at the pin | `rwv member pin`, for a commit that neither reaches; `rwv update` and `rwv status` report it |
 | `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv status` reports it |
 | `off remote` | a live lock pins a commit that no remote-tracking branch of the member reaches after the pruning fetch, listed with the locks that pin it. Choices print only in a workspace whose checked-out branch's lock holds the pin: a feature's offers publishing it, a declared branch's offers pinning another commit; elsewhere the state is a fact and offers waiting | nothing refuses; `rwv fetch` and `rwv pull` report it |
-| `backwards` | recording the commit the checkout is at would move the pin to one that does not descend from the pinned commit: it is behind the pin or has diverged from it, or the pinned commit is in no ref here | `rwv lock`, for a member `--repo` does not name; `rwv update --remote` |
+| `backwards` | recording the commit the checkout is at would move the pin to one that does not descend from the pinned commit: it is behind the pin or has diverged from it, or the pinned commit is in no ref here | `rwv lock`, with or without `--repo`; `rwv update --remote`. A pin moves backward only by name: `rwv member pin`, a setter, or a hand edit of the member's entry that `rwv lock --commit` commits |
 | `unmerged` | a merge commit in the range being pushed joined two pins of one member that its parents changed, each under one declared branch, and the pushed tip pins neither merged with the other: a commit holding both. The merge and the pins are listed. A member the parents declare differently is listed and not refused | `rwv push` |
 | `waived` | a merge in the range being pushed left one member's pins unmerged, and a later lock in the range, the merge's own included, re-pinned the member backward by name to a commit that does not reach the pin the merge left. The merge and the re-pin that waived it are listed | nothing refuses; `rwv push` reports it and goes on |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
@@ -337,7 +337,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `unpinned` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `none` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `none` | C1: take in theirs | `rwv update --remote --repo <m> --commit` | any workspace | fast-forward only |
-| `diverged` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
+| `diverged` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
@@ -350,7 +350,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `off remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `backwards` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
+| `backwards` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `unmerged` | C26: merge `<rev>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <rev>`) | the checkout | a merge adds only |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
@@ -367,7 +367,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 
 #### `behind`
 
-**Error. Report-only.** The checkout is at an ancestor of its pin: the lock records commits the checkout lacks. **What to do:** `rwv update` moves the checkout to the pin, or `rwv lock --repo <repo>` records the checkout's commit by name, moving the pin back.
+**Error. Report-only.** The checkout is at an ancestor of its pin: the lock records commits the checkout lacks. **What to do:** `rwv update` moves the checkout to the pin, or `rwv member pin <repo> HEAD` pins the checkout's commit by name, moving the pin back.
 
 #### `ahead`
 
@@ -379,7 +379,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 
 #### `diverged`
 
-**Error. Report-only.** Neither the checkout nor its pin is an ancestor of the other. **What to do:** `rwv lock --repo <repo>` records the checkout's commit by name, `rwv member pin <repo> <rev>` pins a commit you choose, or `rwv update` moves the checkout to the pin once its own commits are kept on a branch.
+**Error. Report-only.** Neither the checkout nor its pin is an ancestor of the other. **What to do:** `rwv member pin <repo> HEAD` pins the checkout's commit by name, `rwv member pin <repo> <rev>` pins another commit you choose, or `rwv update` moves the checkout to the pin once its own commits are kept on a branch.
 
 ### `lock-pinned-by-name`
 

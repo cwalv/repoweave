@@ -228,7 +228,7 @@ rwv push -j 4
   <member> <rev> --commit` gives it one.
 - *`<member>: pin behind`* or *`pin diverged`* — the checkout is behind its pin,
   or has gone its own way. `rwv update` moves a checkout behind its pin;
-  `rwv lock --repo <member> --commit` records the checkout, by name.
+  `rwv member pin <member> HEAD --commit` pins the checkout, by name.
 - *`projects/<name>: name minted`* — the project branch is the name a
   workweave made without a branch of its own carries, which is never
   published. Give the work a branch of its own to publish it.

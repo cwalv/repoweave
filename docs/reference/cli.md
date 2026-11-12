@@ -191,7 +191,7 @@ The lock records the members the run advanced and no others, every other pin as 
 | `--merge-upstream` | Merge each acted-on member branch that has diverged from its upstream. Needs `--remote` |
 | `--reset-to-upstream <repo>` | Move this member's branch to its upstream, keeping the tip it leaves in a backup; repeat per repo. Refused where the upstream is gone, a record lands into the branch, or the checkout has edits. Needs `--remote` |
 | `--continue` | Resume the update a conflict stopped. Needs `--remote` |
-| `--dirty` | Allow update with uncommitted changes in repos when relocking. Needs `--remote` |
+| `--dirty` | Record each member's committed HEAD although it has uncommitted changes to tracked files, leaving those edits out of the lock. Needs `--remote` |
 | `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo stay out of the commit and as they are, named in one line. Needs `--remote` |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--no-materialize` | Skip the install hooks of the regeneration `update --remote` runs at primary; `rwv materialize` runs them later. Inside a workweave `update --remote` runs no hooks either way |
@@ -208,7 +208,7 @@ Record where the member checkouts are as `rwv.lock`'s pins. No network access.
 Reads HEAD from each member the run acts on and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD), moving a pin **forward only**. Every other pin stays as it was.
 
 - A member with no pin **keeps none**, reported as `pin` `none` with the verbs that give a first pin: `rwv member pin`, `rwv update --remote` (and `rwv member add`, which pins what it clones). An unborn member and a lock that does not parse (it pins nothing, and is written afresh) are the same.
-- A member whose HEAD is behind its pin, has diverged from it, or whose pin no ref here reaches is refused as `pin` `backwards`, unless `--repo` names it. The pin then moves, and the run reports `re-pinned`.
+- A member whose HEAD is behind its pin, has diverged from it, or whose pin no ref here reaches is refused as `pin` `backwards`, with or without `--repo`, before anything is written. A pin moves backward only by name: `rwv member pin <m> <rev> [--commit]`, which the refusal prints with `HEAD` as the revision where that would succeed, a setter, or a hand edit of the member's entry that `--commit` commits (reported `re-pinned`).
 - A member not where the checked-out branch's record puts it is refused on the `alignment` axis, `rwv update` being the choice that aligns it. A member the record leaves where it was found, with no pin to place it, keeps its pin.
 - A detached workspace, or a detached project repo, refuses (`alignment` `project detached`): there is no branch to record the pins on.
 - Uncommitted changes to tracked files in a member refuse (`edits` `dirty`); use `--dirty` to bypass. Untracked files are fine.
@@ -219,8 +219,8 @@ A forward move over commits no remote-tracking branch reaches reports them when 
 
 | Flag | Effect |
 |---|---|
-| `--dirty` | Allow locking repos with uncommitted changes to tracked files |
-| `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them move its pin backward. A selector matching no member refuses (`repo-not-in-manifest`) |
+| `--dirty` | Record each member's committed HEAD although it has uncommitted changes to tracked files, leaving those edits out of the lock |
+| `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union); it only narrows, and moves no pin backward. A selector matching no member refuses (`repo-not-in-manifest`) |
 | `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo stay out of the commit and as they are |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |

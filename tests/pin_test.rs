@@ -102,18 +102,23 @@ fn plain_lock_refuses_everything_it_finds_before_it_writes_a_pin() {
     std::fs::write(project(&w).join("README"), "edited\n").unwrap();
     let text = refused(&run(&w, &["lock", "--commit"]));
     assert!(text.contains("github/acme/lib: pin backwards"), "{text}");
-    assert!(text.contains("projects/proj: edits dirty"), "{text}");
+    assert!(!text.contains("projects/proj: edits"), "{text}");
     assert_eq!(lock_text(&project(&w)), before);
 }
 
 #[test]
-fn lock_repo_moves_only_the_named_repo_backward() {
+fn lock_repo_moves_no_pin_backward_and_member_pin_moves_only_the_named_one() {
     let w = both_behind_their_pins();
     let app_pin = pin_of(&project(&w), APP).unwrap();
+    let lib_pin = pin_of(&project(&w), LIB).unwrap();
     let lib_head = git_in(member(&w, LIB), &["rev-parse", "HEAD"]);
-    assert_ne!(pin_of(&project(&w), LIB).unwrap(), lib_head);
+    assert_ne!(lib_pin, lib_head);
 
-    let text = succeeded(&run(&w, &["lock", "--repo", LIB]));
+    let text = refused(&run(&w, &["lock", "--repo", LIB]));
+    assert!(text.contains("github/acme/lib: pin backwards"), "{text}");
+    assert_eq!(pin_of(&project(&w), LIB).unwrap(), lib_pin);
+
+    let text = succeeded(&run(&w, &["member", "pin", LIB, "HEAD"]));
     assert!(text.contains("re-pinned"), "{text}");
     assert_eq!(pin_of(&project(&w), LIB).unwrap(), lib_head);
     assert_eq!(

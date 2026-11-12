@@ -211,6 +211,39 @@ fn a_printed_choice_fills_every_placeholder_its_judging_binds() {
     );
 }
 
+/// `--dirty` is offered for a member's edits at the two verbs that take it,
+/// and never for the project repo's or at another verb.
+#[test]
+fn dirty_is_offered_for_a_members_edits_at_lock_and_update_remote_only() {
+    let vcs = repoweave::git::git_vcs();
+    let lines = |judging: repoweave::diagnosis::Judging| {
+        let mut report = Report::default();
+        report.add(judging.judge(vcs.as_ref()));
+        report.render("verb")
+    };
+    let member = |verb: Option<&'static str>| {
+        let judging = State::EditsDirty.of("github/o/lib").member();
+        lines(match verb {
+            Some(verb) => judging.by_verb(verb),
+            None => judging,
+        })
+    };
+    assert!(member(Some("lock")).contains("    rwv lock --dirty\n"));
+    assert!(member(Some("update --remote")).contains("    rwv update --remote --dirty\n"));
+    for verb in [None, Some("sync"), Some("workweave delete"), Some("pull")] {
+        assert!(!member(verb).contains("--dirty"), "{verb:?}");
+    }
+    for verb in ["lock", "update --remote"] {
+        let project = lines(
+            State::EditsDirty
+                .of("projects/proj")
+                .project_repo()
+                .by_verb(verb),
+        );
+        assert!(!project.contains("--dirty"), "{verb}:\n{project}");
+    }
+}
+
 #[test]
 fn the_placeholder_scan_finds_what_it_must() {
     assert_eq!(placeholders("copy these commits onto `<b>`"), ["<b>"]);
@@ -322,9 +355,18 @@ fn a_verb_named_for_its_own_forms_is_in_the_cli() {
             named += 1;
             let mut at = &cli;
             for word in verb.split(' ') {
-                at = at
-                    .find_subcommand(word)
-                    .unwrap_or_else(|| panic!("`{verb}` is no verb of the CLI (at `{word}`)"));
+                match word.strip_prefix("--") {
+                    Some(flag) => assert!(
+                        at.get_arguments().any(|arg| arg.get_long() == Some(flag)),
+                        "`{verb}`: `{}` takes no `{word}`",
+                        at.get_name()
+                    ),
+                    None => {
+                        at = at.find_subcommand(word).unwrap_or_else(|| {
+                            panic!("`{verb}` is no verb of the CLI (at `{word}`)")
+                        })
+                    }
+                }
             }
         }
     }

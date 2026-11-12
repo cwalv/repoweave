@@ -34,8 +34,11 @@ holds for it. Every other pin stays as it was.
   verb that names the commit: `rwv member add`, `rwv member pin`, `rwv
   update --remote`.
 - **Backward** (the checkout is behind its pin or has diverged from it, or the
-  pin is in no ref here): refused as `pin` `backwards` unless `--repo` names
-  the member, which then moves its pin and is reported `re-pinned`.
+  pin is in no ref here): refused as `pin` `backwards`, with or without
+  `--repo`, before anything is written. A pin moves backward only by name:
+  `rwv member pin <m> <rev> [--commit]` (printed with `HEAD` where it would
+  succeed), a setter, or a hand edit of the entry that `lock --commit`
+  commits, which is reported `re-pinned`.
 - **Not aligned** (the member is not where the checked-out branch's record
   puts it): refused on the `alignment` axis, with `rwv update` as the choice.
 - **Detached workspace or project repo**: refused (`alignment` `project
@@ -93,9 +96,9 @@ gives it a pin.
 A checkout that does not stand at its pin (`rwv doctor` finding `pin`,
 sub-kinds `ahead`, `unpinned`, `behind` and `diverged`) means the current repo
 HEADs no longer match what `rwv.lock` records. Running `rwv lock` clears it for
-a checkout ahead of its pin; one behind or diverged is cleared by `rwv lock
---repo <repo>` (record the checkout) or `rwv update` (move the checkout to the
-pin). A member the lock has no entry for is `pin` `none`, and `rwv lock` gives it
+a checkout ahead of its pin; one behind or diverged is cleared by `rwv member
+pin <repo> HEAD` (pin the checkout by name) or `rwv update` (move the checkout
+to the pin). A member the lock has no entry for is `pin` `none`, and `rwv lock` gives it
 none.
 
 `rwv doctor --locked` is the scriptable precondition check: zero exit iff
@@ -114,8 +117,8 @@ rwv lock [--dirty] [--repo <selector>]... [--commit [-m <MSG>]] [--project <name
   bypasses the check; use only when you deliberately want to record an
   in-flight state (e.g., a workweave that hasn't been cleaned up yet).
 - `--repo <selector>` — record only the members the selector matches (an exact
-  path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them
-  move its pin backward. A selector matching no member refuses with
+  path, `glob:<pat>` or `re:<pat>`; repeat for union). It only narrows: it
+  moves no pin backward. A selector matching no member refuses with
   `repo-not-in-manifest`.
 - `--commit` — after writing `rwv.lock`, stage and commit it from the project
   directory, with an auto-generated message listing which repos advanced or were dropped. A
@@ -158,10 +161,10 @@ Record current HEADs:
 rwv lock
 ```
 
-Record a checkout that is behind its pin, by name:
+Pin a checkout that is behind its pin, by name:
 
 ```
-rwv lock --repo github/acme/server --commit
+rwv member pin github/acme/server HEAD --commit
 ```
 
 Record and commit in one step:
@@ -190,8 +193,8 @@ rwv lock --dirty
 - *workspace could not be resolved* — CWD is not inside a weave or workweave;
   run from within the workspace.
 - *pin backwards* — a member's HEAD is behind the pin, has diverged from it, or
-  the pin is in no ref here. `rwv lock --repo <repo>` records the checkout by
-  name; `rwv update` moves the checkout to the pin instead.
+  the pin is in no ref here. `rwv member pin <repo> HEAD --commit` pins the
+  checkout by name; `rwv update` moves the checkout to the pin instead.
 - *pin none* — the lock has no pin for a member. `rwv member pin <repo> <rev>
   --commit` gives it one.
 - *target unrecorded* — the checked-out branch of the project repo has no record

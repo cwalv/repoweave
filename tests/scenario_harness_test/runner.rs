@@ -39,17 +39,6 @@ impl MissingVerb {
 pub enum Defect {
     /// `sync-to` stopped by a target that moved exits 1 naming no refusal.
     UnroutedLandingStop,
-    /// `update --remote` meets a declared branch that exists nowhere and
-    /// exits 1 naming no refusal, where `name` no-such-branch is decided.
-    NoSuchDeclaredBranchUnjudged,
-    /// A plain `lock --commit` over a hand-declared branch moves the pin
-    /// backward to that branch's tip and does not report the move backward.
-    LockCommitRepinsBackwardUnreported,
-    /// A url change leaves the branch on the old remote when the clone has
-    /// no remote at the new url yet, and says nothing of it.
-    UrlChangeUnrelinkedSilently,
-    /// The stray-commits choice prints its branch placeholder unbound.
-    UnboundBranchPlaceholder,
 }
 
 impl Defect {
@@ -57,18 +46,6 @@ impl Defect {
         match self {
             Defect::UnroutedLandingStop => {
                 "a sync-to stopped by a moved target exits 1 with no route line"
-            }
-            Defect::LockCommitRepinsBackwardUnreported => {
-                "a plain lock --commit re-pins a hand-declared branch backward and does not \
-                 report it backward"
-            }
-            Defect::UrlChangeUnrelinkedSilently => {
-                "a url change with no remote at the new url relinks nothing and says nothing"
-            }
-            Defect::UnboundBranchPlaceholder => "the stray-commits choice prints `<b>` unbound",
-            Defect::NoSuchDeclaredBranchUnjudged => {
-                "update --remote over a declared branch that exists nowhere is not refused \
-                 `name` no-such-branch"
             }
         }
     }

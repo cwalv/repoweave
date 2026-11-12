@@ -117,16 +117,16 @@ fn lock_does_not_run_integration_hooks() {
 //
 // Doc claim, from docs/explanation/joints/lock-as-derived.md:
 //   `rwv lock` records where each member is, moving a pin forward only. A
-//   pin the new commit does not descend from is refused unless `--repo`
-//   names the member.
+//   pin the new commit does not descend from is refused, `--repo`
+//   included; `rwv member pin` moves it by name.
 //
-// We hand-write an rwv.lock with a fabricated SHA no ref reaches. Plain
-// `rwv lock` refuses and writes nothing; `rwv lock --repo` overwrites it
-// with the real HEAD SHA.
+// We hand-write an rwv.lock with a fabricated SHA no ref reaches. `rwv
+// lock`, with or without `--repo`, refuses and writes nothing; `rwv member
+// pin <m> HEAD` overwrites it with the real HEAD SHA.
 // ===========================================================================
 
 #[test]
-fn lock_refuses_a_pin_it_cannot_move_forward_from_and_repo_names_it() {
+fn lock_refuses_a_pin_it_cannot_move_forward_from_and_member_pin_names_it() {
     let tmp = common::tempdir().unwrap();
     let (_root, project_dir, real_sha) = make_workspace_with_repo(tmp.path());
 
@@ -142,33 +142,31 @@ fn lock_refuses_a_pin_it_cannot_move_forward_from_and_repo_names_it() {
     );
     let before = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
 
-    rwv()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("pin backwards"));
-    assert_eq!(
-        std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
-        before,
-        "a refused lock writes nothing"
-    );
+    for args in [&["lock"][..], &["lock", "--repo", "github/acme/server"]] {
+        let out = common::cli::run(args, &project_dir);
+        common::cli::refused(&out, repoweave::diagnosis::State::PinBackwards);
+        assert_eq!(
+            std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
+            before,
+            "{args:?}: a refused lock writes nothing"
+        );
+    }
 
     rwv()
-        .args(["lock", "--repo", "github/acme/server"])
+        .args(["member", "pin", "github/acme/server", "HEAD"])
         .current_dir(&project_dir)
         .assert()
         .success()
-        .stderr(predicates::str::contains("re-pinned"));
+        .stderr(predicates::str::contains("pinned at"));
 
     let lock_content = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
     assert!(
         lock_content.contains(&real_sha),
-        "`rwv lock --repo` must overwrite with the real HEAD SHA {real_sha}; got:\n{lock_content}"
+        "`rwv member pin` must overwrite with the real HEAD SHA {real_sha}; got:\n{lock_content}"
     );
     assert!(
         !lock_content.contains(fake_sha),
-        "`rwv lock --repo` must not preserve the fabricated SHA {fake_sha}; got:\n{lock_content}"
+        "`rwv member pin` must not preserve the fabricated SHA {fake_sha}; got:\n{lock_content}"
     );
 }
 

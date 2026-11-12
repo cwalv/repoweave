@@ -539,7 +539,11 @@ impl State {
                              member that is not aligned for a project the weave root does not \
                              present",
                 offers: &[Form::C13],
-                verb_offers: &[("workweave delete", Form::C13WorkweaveDelete)],
+                verb_offers: &[
+                    ("workweave delete", Form::C13WorkweaveDelete),
+                    ("lock", Form::LockDirty),
+                    ("update --remote", Form::UpdateRemoteDirty),
+                ],
             },
             Self::EditsMidOperation => &StateRow {
                 axis: Axis::Edits,
@@ -1101,7 +1105,7 @@ impl State {
                 means: "neither the checkout's commit nor the commit the lock pins is an \
                         ancestor of the other",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C5LockRepo, Form::C2UpdateRemote],
+                offers: &[Form::C25, Form::C2UpdateRemote],
                 verb_offers: &[],
             },
             Self::PinOffRemote => &StateRow {
@@ -1172,9 +1176,11 @@ impl State {
                 means: "recording the commit the checkout is at would move the pin to one that \
                         does not descend from the pinned commit: it is behind the pin or has \
                         diverged from it, or the pinned commit is in no ref here",
-                refused_by: "`rwv lock`, for a member `--repo` does not name; `rwv update \
-                             --remote`",
-                offers: &[Form::C5LockRepo],
+                refused_by: "`rwv lock`, with or without `--repo`; `rwv update --remote`. \
+                             A pin moves backward only by name: `rwv member pin`, a setter, \
+                             or a hand edit of the member's entry that `rwv lock --commit` \
+                             commits",
+                offers: &[Form::C25],
                 verb_offers: &[],
             },
             Self::TargetDependents => &StateRow {
@@ -1267,6 +1273,7 @@ pub enum ChoiceId {
     OpenIt,
     DoctorFix,
     ConvertIndex,
+    RecordCommitted,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1468,6 +1475,12 @@ impl ChoiceId {
                 phrase: "rewrite the keys an earlier release wrote, committing only that",
                 keeps_work: "commits only the rewrite; other edits stay uncommitted",
             },
+            Self::RecordCommitted => &ChoiceRow {
+                id: None,
+                phrase: "record the committed HEAD, leaving these uncommitted edits out of the \
+                         lock",
+                keeps_work: "the edits stay in the checkout, uncommitted",
+            },
             Self::ConvertIndex => &ChoiceRow {
                 id: None,
                 phrase: "convert the index and move it into the project clone",
@@ -1556,7 +1569,6 @@ pub enum Form {
     C3Pull,
     C3UpdateRemote,
     C5Lock,
-    C5LockRepo,
     C6,
     C6Activate,
     C7Push,
@@ -1617,6 +1629,8 @@ pub enum Form {
     OpenWorkweave,
     DoctorFix,
     ConvertIndex,
+    LockDirty,
+    UpdateRemoteDirty,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -1628,7 +1642,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 69] = [
+    pub const ALL: [Form; 70] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1637,7 +1651,6 @@ impl Form {
         Self::C3Pull,
         Self::C3UpdateRemote,
         Self::C5Lock,
-        Self::C5LockRepo,
         Self::C6,
         Self::C6Activate,
         Self::C7Push,
@@ -1698,6 +1711,8 @@ impl Form {
         Self::OpenWorkweave,
         Self::DoctorFix,
         Self::ConvertIndex,
+        Self::LockDirty,
+        Self::UpdateRemoteDirty,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -1751,12 +1766,6 @@ impl Form {
             Self::C5Lock => &FormRow {
                 choice: C::C5,
                 steps: &[Rwv("rwv lock --commit")],
-                at: W::WithBranch,
-                shipped: true,
-            },
-            Self::C5LockRepo => &FormRow {
-                choice: C::C5,
-                steps: &[Rwv("rwv lock --repo <m> --commit")],
                 at: W::WithBranch,
                 shipped: true,
             },
@@ -2129,6 +2138,18 @@ impl Form {
                 at: W::Here,
                 shipped: true,
             },
+            Self::LockDirty => &FormRow {
+                choice: C::RecordCommitted,
+                steps: &[Rwv("rwv lock --dirty")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::UpdateRemoteDirty => &FormRow {
+                choice: C::RecordCommitted,
+                steps: &[Rwv("rwv update --remote --dirty")],
+                at: W::Here,
+                shipped: true,
+            },
         }
     }
 
@@ -2145,7 +2166,9 @@ impl Form {
             | Self::C3UpdateRemote
             | Self::C7PushRepo
             | Self::C11SetBranchNew
-            | Self::C18 => Some(Scope::Member),
+            | Self::C18
+            | Self::LockDirty
+            | Self::UpdateRemoteDirty => Some(Scope::Member),
             _ => None,
         }
     }

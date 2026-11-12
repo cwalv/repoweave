@@ -378,7 +378,7 @@ fn commit_lock_file(
 ///
 /// Records each member `acting` selects at the commit its checkout is at,
 /// moving a pin forward only: a member with no pin keeps none, and one that
-/// is behind or diverged from its pin is refused unless `--repo` names it.
+/// is behind or diverged from its pin is refused, `--repo` included.
 /// Every member is judged before anything is written.
 ///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
@@ -403,7 +403,6 @@ pub fn lock(
         dirty,
         first_pins: FirstPins::Withheld,
         unaligned: Unaligned::Refused,
-        by_name: !acting.is_empty(),
         whole: WholeFile::default(),
     };
     if commit.is_some() {
@@ -443,9 +442,6 @@ pub(crate) struct Relocking<'a> {
     pub(crate) dirty: bool,
     pub(crate) first_pins: FirstPins,
     pub(crate) unaligned: Unaligned,
-    /// Whether a member `acting` selects may move its pin backward: the
-    /// operator named it.
-    pub(crate) by_name: bool,
     pub(crate) whole: WholeFile<'a>,
 }
 
@@ -464,7 +460,6 @@ enum How {
     First,
     Same,
     Forward,
-    Backward,
 }
 
 struct Recorded {
@@ -494,19 +489,27 @@ impl Judgment {
 
 /// The line for a pin that would move to a commit not descending from the one
 /// it holds.
+///
+/// `repin` is the revision `rwv member pin` would pin the member at, where it
+/// would succeed as printed; with none, no choice is printed.
 pub(crate) fn backwards_line(
     repo: &RepoPath,
     dir: &Path,
     vcs: &dyn Vcs,
     subject: impl std::fmt::Display,
+    repin: Option<&str>,
 ) -> Judged {
-    State::PinBackwards
+    let judging = State::PinBackwards
         .of(repo)
         .member()
         .checkout(dir)
         .bind("<m>", repo.as_str())
-        .subject(subject)
-        .judge(vcs)
+        .subject(subject);
+    match repin {
+        Some(rev) => judging.bind("<rev>", rev),
+        None => judging.only(&[]),
+    }
+    .judge(vcs)
 }
 
 /// How a commit that does not descend from the pin stands to it, in words.
@@ -536,13 +539,16 @@ pub(crate) fn backwards_subject(
 }
 
 /// Judge one member of a relock: what its checkout allows, and what it records.
+#[allow(clippy::too_many_arguments)]
 fn judge_member(
     relocking: &Relocking<'_>,
     aligner: &Aligner,
+    manifest: &Manifest,
     old: Option<&LockFile>,
     path: &RepoPath,
     entry: &crate::manifest::RepoEntry,
     dir: &Path,
+    aligns: bool,
     refusals: &mut Report,
 ) -> anyhow::Result<Judgment> {
     let vcs = vcs_for(entry.vcs_type);
@@ -563,8 +569,10 @@ fn judge_member(
             refusals.add(
                 State::EditsDirty
                     .of(path)
+                    .member()
                     .listing(tracked)
                     .checkout(dir)
+                    .by_verb(relocking.verb)
                     .judge(vcs.as_ref()),
             );
         }
@@ -601,35 +609,35 @@ fn judge_member(
             return Ok(Judgment::kept(lines));
         }
         Pin::None => How::First,
-        Pin::Unreachable => {
-            if !relocking.by_name {
-                refusals.add(backwards_line(
-                    path,
-                    dir,
-                    vcs.as_ref(),
-                    format!(
+        Pin::Unreachable | Pin::At(_) => {
+            let backwards =
+                match &plan.pin {
+                    Pin::At(pin) => match vcs.relation(dir, &head, pin)? {
+                        Relation::Even => None,
+                        Relation::Ahead => None,
+                        relation @ (Relation::Behind | Relation::Diverged) => Some(
+                            backwards_subject(vcs.as_ref(), dir, "HEAD", &head, pin, relation),
+                        ),
+                    },
+                    _ => Some(format!(
                         "the pin {} is in no ref here",
                         was.as_ref().map_or("", |v| v.short_display())
-                    ),
-                ));
-            }
-            How::Backward
-        }
-        Pin::At(pin) => match vcs.relation(dir, &head, pin)? {
-            Relation::Even => How::Same,
-            Relation::Ahead => How::Forward,
-            relation @ (Relation::Behind | Relation::Diverged) => {
-                if !relocking.by_name {
-                    refusals.add(backwards_line(
-                        path,
-                        dir,
-                        vcs.as_ref(),
-                        backwards_subject(vcs.as_ref(), dir, "HEAD", &head, pin, relation),
-                    ));
+                    )),
+                };
+            match backwards {
+                None if matches!(&plan.pin, Pin::At(pin) if *pin == head) => How::Same,
+                None => How::Forward,
+                Some(subject) => {
+                    let candidate = with_pins(manifest, old, [(path, &head)]);
+                    let repin =
+                        crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
+                            .is_empty()
+                            .then_some("HEAD");
+                    refusals.add(backwards_line(path, dir, vcs.as_ref(), subject, repin));
+                    return Ok(Judgment::kept(lines));
                 }
-                How::Backward
             }
-        },
+        }
     };
     Ok(Judgment {
         lines,
@@ -758,13 +766,16 @@ pub(crate) fn relock(
             ));
             continue;
         }
+        let aligns = workweave_dir.is_none() || checkout.is_workweave_slot();
         match judge_member(
             relocking,
             &aligner,
+            &project.manifest,
             old.as_ref(),
             path,
             entry,
             checkout.path(),
+            aligns,
             &mut refusals,
         ) {
             Ok(judgment) => {
@@ -904,15 +915,6 @@ fn report_recorded(
         match one.how {
             How::Same => {}
             How::First => eprintln!("rwv {verb}: {path}: pinned at {to}; it had no pin"),
-            How::Backward => eprintln!(
-                "{}",
-                repinned_line(
-                    verb,
-                    path,
-                    one.was.as_ref().map_or("none", |was| was.short_display()),
-                    to
-                )
-            ),
             How::Forward => {
                 let vcs = vcs_for(one.vcs_type);
                 let Some(was) = one

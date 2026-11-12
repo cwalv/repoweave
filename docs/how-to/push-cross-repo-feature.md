@@ -46,7 +46,7 @@ A branch that was amended or rebased after it was published has diverged from it
 rwv push --overwrite github/chatly/server
 ```
 
-The remote tip is kept as a backup first, and the replacement lands only if the push branch still holds the tip the push read, so a colleague's push in between refuses it. It is refused for a branch some weave branch declares and for a declared-mode project branch (`protected`), and while another live lock pins a commit only the replaced tip reaches. `rwv.lock` is not written; relock the amended member first with `rwv lock --repo <member> --commit`.
+The remote tip is kept as a backup first, and the replacement lands only if the push branch still holds the tip the push read, so a colleague's push in between refuses it. It is refused for a branch some weave branch declares and for a declared-mode project branch (`protected`), and while another live lock pins a commit only the replaced tip reaches. `rwv.lock` is not written; pin the amended member first with `rwv member pin <member> HEAD --commit`.
 
 ## Recover from an unpinned commit
 

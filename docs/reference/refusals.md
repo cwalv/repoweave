@@ -86,6 +86,8 @@ The others follow.
 |---|---|---|---|---|
 | `dirty` | C13: commit your edits, or set them aside | VCS action (git: `git -C <checkout> commit`, `git -C <checkout> stash push`) | the checkout | both keep edits |
 | `dirty`, for `rwv workweave delete` | C13: commit your edits, or set them aside | `rwv workweave delete <ww> --discard-uncommitted` | the primary | both keep edits |
+| `dirty`, for `rwv lock` | record the committed HEAD, leaving these uncommitted edits out of the lock | `rwv lock --dirty` | here | the edits stay in the checkout, uncommitted |
+| `dirty`, for `rwv update --remote` | record the committed HEAD, leaving these uncommitted edits out of the lock | `rwv update --remote --dirty` | here | the edits stay in the checkout, uncommitted |
 | `mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 | `rwv.toml or rwv.lock uncommitted` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
 | `rwv.toml or rwv.lock uncommitted`, for `rwv switch` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
@@ -1077,7 +1079,7 @@ drop.
 **Exits.** `rwv status` and `rwv doctor` judge the same condition per member as
 a [`pin`](./doctor-findings.md#pin) state, each with its own choices.
 `rwv lock --commit` records a checkout that is ahead of its pin;
-`rwv lock --repo <repo> --commit` records one that is behind or has diverged, by
+`rwv member pin <repo> HEAD --commit` pins one that is behind or has diverged, by
 name; `rwv member pin <repo> <rev> --commit` gives a member the lock has no pin
 for one. `--allow-stale-lock` skips the check.
 
@@ -1264,7 +1266,7 @@ checkout with. The replay cannot tell whether the checkout is ahead of, behind
 or diverged from it, so it refuses rather than guess.
 
 **Exits.** `rwv fetch --repo <repo>` brings in the history that may hold the
-revision. If it is gone, `rwv lock --repo <repo> --commit` records the checkout's
+revision. If it is gone, `rwv member pin <repo> HEAD --commit` pins the checkout's
 commit by name, or `rwv member pin <repo> <rev> --commit` pins another.
 `rwv status` and `rwv doctor` judge the same condition as [`pin`](./doctor-findings.md#pin)
 `unreachable`.

@@ -43,8 +43,9 @@ only. A member whose checkout is ahead of its pin takes the checkout's
 commit. A member with no pin keeps none, because the commit a first pin
 names is a choice a verb makes by name (`rwv member add`, `rwv member
 pin`, `rwv update --remote`). A member whose checkout is behind its pin
-or has diverged from it, or whose pin no ref here reaches, is refused
-unless `--repo` names it: moving a pin backward is something you say.
+or has diverged from it, or whose pin no ref here reaches, is refused,
+`--repo` included, which only narrows: moving a pin backward is something
+you say, with `rwv member pin`, a setter, or a hand edit of the entry.
 
 Integration install hooks belong to `rwv activate` and `rwv materialize`,
 which prepare the workspace on disk. `rwv lock` records commits and

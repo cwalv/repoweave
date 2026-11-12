@@ -242,9 +242,9 @@ pub(crate) fn judge(
                 .as_ref()
                 .is_some_and(|tip| vcs.is_ancestor(dir, pin, tip).unwrap_or(false));
             if reaches_pin {
-                judging
+                judging.only(&[ChoiceId::C2])
             } else {
-                judging.only(&[ChoiceId::C5])
+                judging.only(&[])
             }
         }
         Standing::Ahead(beyond) => {

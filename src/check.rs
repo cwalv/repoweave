@@ -1106,7 +1106,7 @@ impl PinKind {
             Self::Behind => {
                 "The checkout is at an ancestor of its pin: the lock records commits the \
                  checkout lacks. **What to do:** `rwv update` moves the checkout to the pin, \
-                 or `rwv lock --repo <repo>` records the checkout's commit by name, moving \
+                 or `rwv member pin <repo> HEAD` pins the checkout's commit by name, moving \
                  the pin back."
             }
             Self::Ahead => {
@@ -1122,8 +1122,8 @@ impl PinKind {
             }
             Self::Diverged => {
                 "Neither the checkout nor its pin is an ancestor of the other. **What to \
-                 do:** `rwv lock --repo <repo>` records the checkout's commit by name, \
-                 `rwv member pin <repo> <rev>` pins a commit you choose, or `rwv update` \
+                 do:** `rwv member pin <repo> HEAD` pins the checkout's commit by name, \
+                 `rwv member pin <repo> <rev>` pins another commit you choose, or `rwv update` \
                  moves the checkout to the pin once its own commits are kept on a branch."
             }
         }
@@ -6259,7 +6259,7 @@ impl CheckViolation {
                     ),
                     PinKind::Behind => format!(
                         "{project}: {repo} {compared}; the checkout is behind its pin: `rwv \
-                         update` moves it to the pin, or `rwv lock --repo {repo}` records the \
+                         update` moves it to the pin, or `rwv member pin {repo} HEAD` pins the \
                          checkout's commit by name"
                     ),
                     PinKind::Ahead => format!(
@@ -6273,7 +6273,7 @@ impl CheckViolation {
                     ),
                     PinKind::Diverged => format!(
                         "{project}: {repo} {compared}; the checkout has diverged from its \
-                         pin: `rwv lock --repo {repo}` records its commit by name, or `rwv \
+                         pin: `rwv member pin {repo} HEAD` pins its commit by name, or `rwv \
                          update` moves it to the pin"
                     ),
                 }

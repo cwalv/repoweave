@@ -161,7 +161,8 @@ takes its upstream's tip as its first pin. A tip that does not descend from the
 pin the lock holds, or a pin no ref here reaches, would move the pin backward:
 the run refuses (`pin` `backwards`) once every member is fetched and before any
 moves, whatever `--repo` names, since only a verb that names the member
-(`rwv member pin`, `rwv lock --repo`) moves a pin backward. A declared branch
+(`rwv member pin`) moves a pin backward; the refusal prints it with the
+upstream's tip where it would succeed. A declared branch
 that exists nowhere after the fetch, locally or on a remote, refuses at the
 same point as `name` `no-such-branch`, the judgment `rwv lock --commit` makes. A member not where
 the checked-out branch's record puts it keeps its pin, reported on the

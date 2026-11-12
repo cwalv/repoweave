@@ -356,7 +356,17 @@ fn update_for_project(
             )
         }),
     };
-    refuse_backwards(&work_items, &fetched, project.lock.as_ref())?;
+    refuse_backwards(
+        &work_items,
+        &fetched,
+        &project,
+        &crate::alignment::Aligner::open(
+            active_root,
+            project_name,
+            crate::alignment::Accounting::scan(primary_root),
+        )?,
+        workweave_dir.is_some(),
+    )?;
     let settled = settle_diverged(ctx, project_name, &work_items, &fetched, state)?;
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |idx, item| {
@@ -509,7 +519,6 @@ fn update_for_project(
             dirty,
             first_pins: lock::FirstPins::Taken,
             unaligned: lock::Unaligned::Left,
-            by_name: false,
             whole: lock::WholeFile::default(),
         },
         commit,
@@ -722,8 +731,11 @@ fn fetch_and_resolve(
 fn refuse_backwards(
     items: &[WorkItem],
     fetched: &[Result<ResolvedRevisionId, String>],
-    lock: Option<&crate::manifest::LockFile>,
+    project: &Project,
+    aligner: &crate::alignment::Aligner,
+    in_workweave: bool,
 ) -> anyhow::Result<()> {
+    let lock = project.lock.as_ref();
     let mut report = crate::diagnosis::Report::default();
     for (item, tip) in items.iter().zip(fetched) {
         let dir = item.checkout.path();
@@ -759,11 +771,24 @@ fn refuse_backwards(
                 ),
             },
         };
+        let member = crate::alignment::Member {
+            path: &item.repo_path,
+            entry: &item.entry,
+            dir,
+            vcs: item.vcs.as_ref(),
+        };
+        let candidate = lock::with_pins(&project.manifest, lock, [(&item.repo_path, tip)]);
+        let aligns = !in_workweave || item.checkout.is_workweave_slot();
+        let rev = tip.id().short().to_owned();
+        let repin = crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
+            .is_empty()
+            .then_some(rev.as_str());
         report.add(lock::backwards_line(
             &item.repo_path,
             dir,
             item.vcs.as_ref(),
             subject,
+            repin,
         ));
     }
     report.into_result()
