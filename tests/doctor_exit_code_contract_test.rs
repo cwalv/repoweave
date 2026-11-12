@@ -53,7 +53,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 /// so `rwv.toml` commits alongside `.gitattributes`.
 fn make_project_repo_clean(project_dir: &Path) {
     common::git_in(project_dir, &["init", "-b", "main"]);
-    common::set_up_lock_driver(&project_dir);
+    common::set_up_lock_driver(project_dir);
     common::git_in(project_dir, &["add", "."]);
     common::git_in(project_dir, &["commit", "-m", "init"]);
 }

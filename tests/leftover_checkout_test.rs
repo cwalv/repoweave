@@ -49,7 +49,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 fn commit_project(project_dir: &Path, message: &str) {
-    common::set_up_lock_driver(&project_dir);
+    common::set_up_lock_driver(project_dir);
     if !project_dir.join(".git").exists() {
         common::git_in(project_dir, &["init", "-b", "main"]);
     }
