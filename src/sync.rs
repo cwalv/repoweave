@@ -8328,14 +8328,9 @@ fn abort_op(
         }
     }
     if let op_state::OwnerReading::Whole(record) = &reading {
-        let moved = judge_carried(record, &owner_workspace);
-        if moved.iter().any(MovedCarry::blocks)
-            || !moved
-                .iter()
-                .filter(|m| m.moved())
-                .all(|m| abandon.covers(&m.carry.repo, &op_project_name))
-        {
-            return refuse_moved_carried(record, &moved);
+        let carried = plan_carried(record, &owner_workspace, &workspace_dir, &cwd_project_dir);
+        if let Some(standing) = carried.carried_blocked(abandon) {
+            return refuse_moved_carried(record, standing);
         }
     }
     if header.verb == OpVerb::Land {
@@ -8458,16 +8453,28 @@ fn abort_op(
 
     if let op_state::OwnerReading::Whole(record) = &reading {
         plan_in_place(record, &op_project_name, &stores, abandon, &mut plan);
+        let carried = plan_carried(record, &owner_workspace, &workspace_dir, &cwd_project_dir);
+        if let Some(standing) = carried.carried_blocked(abandon) {
+            return refuse_moved_carried(record, standing);
+        }
         plan.steps.push(AbortStep::OpRefMoves {
             workspace: workspace_dir.clone(),
             project_dir: cwd_project_dir.clone(),
             moves: record
                 .take_in
                 .as_ref()
-                .map(|take_in| take_in.ref_moves.clone())
+                .map(|take_in| {
+                    take_in
+                        .ref_moves
+                        .iter()
+                        .filter(|m| !carried_move(take_in, m))
+                        .cloned()
+                        .collect()
+                })
                 .unwrap_or_default(),
             project: op_project_name.clone(),
         });
+        plan.steps.push(carried);
         if record.verb == OpVerb::Land {
             members.take_record(record);
             plan_landing_refs(record, &members, &stores, abandon, &mut plan);
@@ -8717,6 +8724,15 @@ pub(crate) enum AbortStep {
         project_dir: PathBuf,
         moves: Vec<op_state::RefMove>,
         project: ProjectName,
+    },
+    /// Each dependent's branch a carry moved, put back as a ref, with how
+    /// each stood when planned.
+    Carried {
+        workspace: PathBuf,
+        project_dir: PathBuf,
+        project: ProjectName,
+        moves: Vec<op_state::RefMove>,
+        standing: Vec<MovedCarry>,
     },
     UndoCreated {
         project: ProjectName,
@@ -9473,18 +9489,18 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
 
 /// A dependent's branch the op carried and moved, standing somewhere other
 /// than the tip the carry wrote.
-struct MovedCarry<'a> {
-    carry: &'a op_state::Carrying,
+pub(crate) struct MovedCarry {
+    carry: op_state::Carrying,
     dir: PathBuf,
-    to: &'a CommitId,
+    to: CommitId,
     now: Option<CommitId>,
     built_on: bool,
     held_at: Vec<PathBuf>,
 }
 
-impl MovedCarry<'_> {
+impl MovedCarry {
     fn moved(&self) -> bool {
-        self.now.as_ref() != Some(self.to)
+        self.now.as_ref() != Some(&self.to)
     }
 
     fn blocks(&self) -> bool {
@@ -9492,13 +9508,67 @@ impl MovedCarry<'_> {
     }
 }
 
+/// The step that puts back each dependent's branch the op's carries moved,
+/// as the source's store stands now; the op's other ref moves are left to
+/// `AbortStep::OpRefMoves`.
+fn plan_carried(
+    record: &op_state::OwnerRecord,
+    source: &CanonicalPath,
+    workspace: &Path,
+    project_dir: &Path,
+) -> AbortStep {
+    AbortStep::Carried {
+        workspace: workspace.to_path_buf(),
+        project_dir: project_dir.to_path_buf(),
+        project: record.project.clone(),
+        moves: record
+            .take_in
+            .as_ref()
+            .map(|take_in| {
+                take_in
+                    .ref_moves
+                    .iter()
+                    .filter(|m| carried_move(take_in, m))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default(),
+        standing: judge_carried(record, source),
+    }
+}
+
+fn carried_move(take_in: &op_state::TakeInRecord, moved: &op_state::RefMove) -> bool {
+    take_in.carries.iter().any(|c| {
+        c.repo == moved.repo && c.branch == moved.branch && c.composed.as_ref() == Some(&moved.to)
+    })
+}
+
+impl AbortStep {
+    /// Whether this carry step cannot put back every branch it names: one
+    /// is gone, held elsewhere, or moved where `abandon` does not cover it.
+    fn carried_blocked(
+        &self,
+        abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    ) -> Option<&[MovedCarry]> {
+        let AbortStep::Carried {
+            standing, project, ..
+        } = self
+        else {
+            return None;
+        };
+        (standing.iter().any(MovedCarry::blocks)
+            || !standing
+                .iter()
+                .filter(|m| m.moved())
+                .all(|m| abandon.covers(&m.carry.repo, project)))
+        .then_some(standing.as_slice())
+    }
+}
+
 /// Each dependent's branch the op moved by a carry that has moved since, is
 /// gone, or is checked out outside the op's workspaces, where abort could
 /// not put it back: read in the source's store, where the carry moved it.
-fn judge_carried<'a>(
-    record: &'a op_state::OwnerRecord,
-    source: &CanonicalPath,
-) -> Vec<MovedCarry<'a>> {
+fn judge_carried(record: &op_state::OwnerRecord, source: &CanonicalPath) -> Vec<MovedCarry> {
     let Some(take_in) = &record.take_in else {
         return Vec::new();
     };
@@ -9546,9 +9616,9 @@ fn judge_carried<'a>(
                 .unwrap_or(false)
             });
             Some(MovedCarry {
-                carry,
+                carry: carry.clone(),
                 dir,
-                to,
+                to: to.clone(),
                 now,
                 built_on,
                 held_at,
@@ -9562,7 +9632,7 @@ fn judge_carried<'a>(
 /// built on, finish the op.
 fn refuse_moved_carried(
     record: &op_state::OwnerRecord,
-    moved: &[MovedCarry<'_>],
+    moved: &[MovedCarry],
 ) -> anyhow::Result<()> {
     let project = &record.project;
     let vcs = crate::vcs::probe_vcs();
@@ -10216,6 +10286,13 @@ fn execute_abort_plan(
                 project_dir,
                 moves,
                 project,
+            } => restore_op_ref_moves(&workspace, &project_dir, &moves, abandon, &project, tally),
+            AbortStep::Carried {
+                workspace,
+                project_dir,
+                moves,
+                project,
+                ..
             } => restore_op_ref_moves(&workspace, &project_dir, &moves, abandon, &project, tally),
             AbortStep::UndoCreated {
                 project,
