@@ -1040,6 +1040,7 @@ fn judge_member(
         branch: branch.as_str(),
         declared: Some(&member.entry.branch),
         member: true,
+        republish: republishable(vcs, &member.dir, &branch, target.as_ref(), &branch_standing),
     };
     let judged = crate::push_branch::judge(vcs, &subject, &branch_standing);
     if pushed.is_feature()
@@ -1422,6 +1423,13 @@ fn judge_project(
         branch: pushed.branch.as_str(),
         declared: None,
         member: false,
+        republish: republishable(
+            pvcs,
+            &pushed.project_dir,
+            &pushed.raw,
+            target.as_ref(),
+            &standing,
+        ),
     };
     let judged = crate::push_branch::judge(pvcs, &subject, &standing);
     let operand = RepoOperand::Project(pushed.project.clone());
@@ -2093,6 +2101,28 @@ impl std::fmt::Display for PublishFailure {
     }
 }
 
+/// Whether the republish recovery applies to `branch`: it has diverged from
+/// its push branch holding unpushed commits, and a `rebased` backup holds the
+/// push branch's tip, so the divergence is rwv's own rebase of it.
+fn republishable(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &RawRefName,
+    target: Option<&RemoteHandle>,
+    standing: &Standing,
+) -> bool {
+    if !standing.diverged_with_unpushed() {
+        return false;
+    }
+    let Some(target) = target else {
+        return false;
+    };
+    vcs.remote_copies(dir, branch)
+        .ok()
+        .and_then(|copies| copies.into_iter().find(|copy| &copy.remote == target))
+        .is_some_and(|copy| crate::backup::rebased_holding(vcs, dir, copy.tip.id()))
+}
+
 /// Publish `r` to `target`. A leased replace keeps the tip it replaces as a
 /// backup of the branch first, so the remote's commits stay reachable here.
 fn publish_ref(
@@ -2102,7 +2132,12 @@ fn publish_ref(
     r: &PublishRef,
     replace: &Replace,
 ) -> Result<(), PublishFailure> {
-    if let Replace::Leased(lease) = replace {
+    let republish = match replace {
+        Replace::Leased(lease) => crate::backup::rebased_holding(vcs, repo, lease.expected().id())
+            .then(|| lease.expected().id().clone()),
+        Replace::FastForwardOnly => None,
+    };
+    if let (Replace::Leased(lease), None) = (replace, &republish) {
         vcs.create_backup(
             repo,
             &BackupSource::Branch(r.name().clone()),
@@ -2112,7 +2147,11 @@ fn publish_ref(
         .map_err(PublishFailure::Backup)?;
     }
     vcs.push_ref(repo, target, r, replace)
-        .map_err(PublishFailure::Push)
+        .map_err(PublishFailure::Push)?;
+    if let Some(replaced) = republish {
+        crate::backup::drop_republished(vcs, repo, &replaced);
+    }
+    Ok(())
 }
 
 /// The pushed branch takes in from its push branch when it takes in from

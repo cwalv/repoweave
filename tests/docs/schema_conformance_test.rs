@@ -1431,7 +1431,7 @@ fn sync_failures() -> Vec<SyncFailureOutput> {
                 message,
                 cause: Some(cause),
             },
-            1 => SyncFailureOutput::FfImpossible { message, cause },
+            1 => SyncFailureOutput::MergeFailed { message, cause },
             _ => SyncFailureOutput::RebaseFailed { message, cause },
         });
     }

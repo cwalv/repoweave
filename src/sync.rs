@@ -12,11 +12,12 @@ use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, ResolvedLockFile,
     WorkweaveName,
 };
-use crate::op_state::{self, OpId, OpVerb, OwnerHeader, OwnerRecord, SavepointKey, SyncStrategy};
+use crate::op_state::{self, OpId, OpVerb, OwnerHeader, OwnerRecord, SavepointKey};
 use crate::parallel::{run_in_parallel, OutputMode};
 use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
+use crate::set_history::Integration;
 use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
@@ -225,9 +226,9 @@ pub enum SyncFailure {
         error: String,
         cause: Option<VcsError>,
     },
-    /// `--strategy ff` cannot proceed (divergence, conflict).
-    FastForwardImpossible { error: String, cause: VcsError },
-    /// `--strategy rebase` failed (conflict or git error).
+    /// A merge commit could not be composed (a conflict or a VCS error).
+    MergeFailed { error: String, cause: VcsError },
+    /// A rebase failed (a conflict or a VCS error).
     RebaseFailed { error: String, cause: VcsError },
 }
 
@@ -237,12 +238,12 @@ pub enum SyncFailure {
 #[serde(rename_all = "kebab-case")]
 pub enum SyncFailureKind {
     HeadUnreadable,
-    FfImpossible,
+    MergeFailed,
     RebaseFailed,
 }
 
 impl SyncFailureKind {
-    pub const ALL: [Self; 3] = [Self::HeadUnreadable, Self::FfImpossible, Self::RebaseFailed];
+    pub const ALL: [Self; 3] = [Self::HeadUnreadable, Self::MergeFailed, Self::RebaseFailed];
 }
 
 impl fmt::Display for SyncFailureKind {
@@ -255,7 +256,7 @@ impl SyncFailure {
     pub fn kind(&self) -> SyncFailureKind {
         match self {
             Self::HeadUnreadable { .. } => SyncFailureKind::HeadUnreadable,
-            Self::FastForwardImpossible { .. } => SyncFailureKind::FfImpossible,
+            Self::MergeFailed { .. } => SyncFailureKind::MergeFailed,
             Self::RebaseFailed { .. } => SyncFailureKind::RebaseFailed,
         }
     }
@@ -263,7 +264,7 @@ impl SyncFailure {
     pub fn error(&self) -> &str {
         match self {
             Self::HeadUnreadable { error, .. }
-            | Self::FastForwardImpossible { error, .. }
+            | Self::MergeFailed { error, .. }
             | Self::RebaseFailed { error, .. } => error,
         }
     }
@@ -271,16 +272,14 @@ impl SyncFailure {
     pub fn cause(&self) -> Option<&VcsError> {
         match self {
             Self::HeadUnreadable { cause, .. } => cause.as_ref(),
-            Self::FastForwardImpossible { cause, .. } | Self::RebaseFailed { cause, .. } => {
-                Some(cause)
-            }
+            Self::MergeFailed { cause, .. } | Self::RebaseFailed { cause, .. } => Some(cause),
         }
     }
 
-    fn for_strategy(strategy: SyncStrategy, error: String, cause: VcsError) -> Self {
-        match strategy {
-            SyncStrategy::Ff => Self::FastForwardImpossible { error, cause },
-            SyncStrategy::Rebase => Self::RebaseFailed { error, cause },
+    fn for_integration(how: Integration, error: String, cause: VcsError) -> Self {
+        match how {
+            Integration::Merge => Self::MergeFailed { error, cause },
+            Integration::Rebase => Self::RebaseFailed { error, cause },
         }
     }
 }
@@ -343,7 +342,7 @@ impl RepoSyncOutcome {
 ///
 /// `message` is the human-readable display string of the failure (free-form
 /// text, not a typed discriminant). `cause` is the structured typed cause —
-/// always present on `ff-impossible` and `rebase-failed`, optional on
+/// always present on `merge-failed` and `rebase-failed`, optional on
 /// `head-unreadable` — and consumers that want to branch on failure mode should
 /// inspect `cause.kind` rather than parsing `message`.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -355,7 +354,7 @@ pub enum SyncFailureOutput {
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
-    FfImpossible {
+    MergeFailed {
         /// Free-form display message for this failure. Not a typed discriminant.
         message: String,
         cause: VcsErrorOutput,
@@ -375,7 +374,7 @@ impl From<&SyncFailure> for SyncFailureOutput {
                 message,
                 cause: cause.as_ref().map(VcsErrorOutput::from),
             },
-            SyncFailure::FastForwardImpossible { cause, .. } => Self::FfImpossible {
+            SyncFailure::MergeFailed { cause, .. } => Self::MergeFailed {
                 message,
                 cause: cause.into(),
             },
@@ -1201,7 +1200,7 @@ fn sync_one_repo(
     repo: &Path,
     target: &ResolvedRevisionId,
     verdicts: ReplayVerdicts,
-    strategy: SyncStrategy,
+    how: Integration,
     pre_replay_tip: Option<&ResolvedRevisionId>,
 ) -> RepoSyncOutcome {
     let ReplayVerdicts {
@@ -1209,6 +1208,26 @@ fn sync_one_repo(
         containment,
         source_position,
     } = verdicts;
+    if how == Integration::Merge {
+        return match compose_merge(vcs, repo, target) {
+            Ok(true) => RepoSyncOutcome::Converged {
+                derived_content_dropped: Vec::new(),
+            },
+            Ok(false) => match containment {
+                Some(Containment::Ahead(commits_ahead)) => RepoSyncOutcome::AlreadyAhead {
+                    commits_ahead,
+                    baseline,
+                    source_position,
+                },
+                _ => RepoSyncOutcome::NoOp,
+            },
+            Err(cause) => RepoSyncOutcome::Failed(SyncFailure::for_integration(
+                how,
+                format!("{cause:#}"),
+                cause,
+            )),
+        };
+    }
     // Replay re-entry (`rwv sync --continue`) can find a manifest repo
     // mid-rebase from a previous phase that stopped on a conflict. HEAD in
     // that state points at the last-applied pick (descended from `target`),
@@ -1217,13 +1236,13 @@ fn sync_one_repo(
     // `apply_strategy` so the `rebase_continue` path drives the rebase
     // forward; the head-equality / AlreadyAhead short-circuits assume a
     // repo not in a mid-op state.
-    if matches!(vcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
-        return match apply_strategy(vcs, repo, target, baseline, None, strategy) {
+    if matches!(vcs.mid_op(repo), Some(ConflictOp::Rebase)) {
+        return match apply_strategy(vcs, repo, target) {
             Ok(()) => RepoSyncOutcome::Converged {
                 derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
             },
             Err(StrategyError { message, cause }) => {
-                RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
+                RepoSyncOutcome::Failed(SyncFailure::for_integration(how, message, cause))
             }
         };
     }
@@ -1240,14 +1259,65 @@ fn sync_one_repo(
         _ => {}
     }
 
-    match apply_strategy(vcs, repo, target, baseline, containment, strategy) {
+    match apply_strategy(vcs, repo, target) {
         Ok(()) => RepoSyncOutcome::Converged {
             derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
         },
         Err(StrategyError { message, cause }) => {
-            RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
+            RepoSyncOutcome::Failed(SyncFailure::for_integration(how, message, cause))
         }
     }
+}
+
+/// Compose in `repo`'s checkout a merge commit joining `onto`, its first
+/// parent, and the branch checked out there, whose tip moves to it; a merge
+/// this stopped on a conflict is finished once nothing is left unmerged.
+/// `false` where `onto` already sits on the branch's first-parent chain, so a
+/// fast-forward lands it; a branch `onto` contains fast-forwards to it.
+pub(crate) fn compose_merge(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    onto: &ResolvedRevisionId,
+) -> Result<bool, VcsError> {
+    let head = vcs.head_revision(repo)?;
+    let conflicted = || VcsError::RebaseConflict {
+        repo: repo.to_path_buf(),
+        op: ConflictOp::Merge,
+    };
+    let message = format!("Merge {} into this branch", onto.id().short());
+    if vcs.merge_in_flight(repo)?.as_ref() == Some(onto.id()) {
+        if !vcs.unmerged_paths(repo)?.is_empty() {
+            return Err(conflicted());
+        }
+        crate::repin::commit_merge(
+            vcs,
+            repo,
+            (onto.id(), head.id()),
+            &message,
+            None,
+            &crate::repin::Naming::Unnamed,
+        )?;
+        return Ok(true);
+    }
+    if vcs.first_parent_chain(repo, head.id())?.contains(onto.id()) {
+        return Ok(false);
+    }
+    if vcs.is_ancestor(repo, &head, onto)? {
+        vcs.advance_if_fast_forward(repo, onto)?;
+        return Ok(true);
+    }
+    if !vcs.start_merge(repo, onto.id())?.is_empty() {
+        return Err(conflicted());
+    }
+    crate::repin::commit_merge(
+        vcs,
+        repo,
+        (onto.id(), head.id()),
+        &message,
+        None,
+        &crate::repin::Naming::Unnamed,
+    )?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,77 +1339,33 @@ impl StrategyError {
             cause: err,
         }
     }
-
-    fn with_message(message: impl Into<String>, cause: VcsError) -> Self {
-        Self {
-            message: message.into(),
-            cause,
-        }
-    }
 }
 
-/// `containment` is the verdict on HEAD against `target` read before this
-/// strategy ran; `None` where no such read was taken (a mid-rebase re-entry
-/// reaches the rebase arm without one).
+/// Replay the checkout's commits onto `target`, or drive a rebase a conflict
+/// stopped forward.
 fn apply_strategy(
     vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
-    baseline: ReplayBaseline,
-    containment: Option<Containment>,
-    strategy: SyncStrategy,
 ) -> Result<(), StrategyError> {
-    match strategy {
-        SyncStrategy::Ff => {
-            if let Err(e) = vcs.advance_if_fast_forward(repo, target) {
-                let shape = match containment {
-                    Some(c) => format!(" (HEAD is {})", c.describe(baseline.label())),
-                    None => String::new(),
-                };
-                let message =
-                    format!("cannot fast-forward{shape}; rerun with --strategy rebase. {e:#}");
-                return Err(StrategyError::with_message(message, e));
-            }
+    // A repo already mid-rebase from a run a conflict stopped is driven
+    // forward by `rebase_continue`: a fresh `rebase` would fail on the rebase
+    // in progress. A mid-op that is not a rebase is not rwv's, and `rebase`
+    // fails loudly on it. Both arms state the same derived-content policy, so
+    // a resume resolves the tail of one operation by the rules of its head.
+    match vcs.mid_op(repo) {
+        Some(ConflictOp::Rebase) => {
+            vcs.rebase_continue(repo, DerivedContentPolicy::keep_target_side())
+                .map_err(StrategyError::from_vcs)?;
         }
-        SyncStrategy::Rebase => {
-            // Route through the Vcs trait so the in-flight conflict signal
-            // (mid-rebase state + RebaseConflict) is the consolidated path
-            // for both manifest and project repos. `git rebase <target>` is
-            // equivalent to `git rebase --onto <target> <target>` — git
-            // computes the merge-base internally to bound the replay set.
-            //
-            // Replay re-entry (`rwv sync --continue`): if the repo is
-            // already mid-rebase from a previous phase that stopped on a
-            // conflict, `Vcs::rebase` would fail immediately ("cannot
-            // rebase: you have unstaged changes" / "another rebase is in
-            // progress"). Route through `Vcs::rebase_continue` instead so
-            // the operator's resolve+stage-then-`rwv sync --continue` loop
-            // actually drives the rebase forward through remaining picks
-            // (including derived-content picks the policy resolves rather
-            // than stopping on). A mid-op state that is NOT rebase
-            // (mid-merge, mid-cherry-pick) is not rwv-initiated for this
-            // path; fall through to `Vcs::rebase` and let it fail loudly.
-            //
-            // Both arms state the same derived-content resolution, and they
-            // have to: a resume finishes the picks the interrupted replay
-            // never reached, so a resume under a different policy than the
-            // replay it resumes would resolve the tail of one operation by
-            // different rules than its head.
-            match vcs.mid_op(repo) {
-                Some(ConflictOp::Rebase) => {
-                    vcs.rebase_continue(repo, DerivedContentPolicy::keep_target_side())
-                        .map_err(StrategyError::from_vcs)?;
-                }
-                _ => {
-                    vcs.rebase(
-                        repo,
-                        target,
-                        target,
-                        DerivedContentPolicy::keep_target_side(),
-                    )
-                    .map_err(StrategyError::from_vcs)?;
-                }
-            }
+        _ => {
+            vcs.rebase(
+                repo,
+                target,
+                target,
+                DerivedContentPolicy::keep_target_side(),
+            )
+            .map_err(StrategyError::from_vcs)?;
         }
     }
     Ok(())
@@ -2380,7 +2406,6 @@ struct OpContext<'a> {
     /// Path arg the operator passed on the CLI (or recorded in op-state),
     /// retained for hint messages that show the original target spelling.
     cli_path: PathBuf,
-    strategy: SyncStrategy,
     /// The landing's plan, read back from the op record: each `owned` or
     /// `fork` member's receiving-branch tip it is composed onto, `T`'s tip,
     /// and the source's tip once the op-start relock committed.
@@ -2538,6 +2563,15 @@ fn target_name(ctx: &OpContext<'_>) -> String {
 }
 
 impl OpContext<'_> {
+    /// How the landing composes `repo` beyond a fast-forward, as it planned.
+    fn integration(&self, repo: &RepoKey) -> Integration {
+        if self.take_in.merged.contains(repo) {
+            Integration::Merge
+        } else {
+            Integration::Rebase
+        }
+    }
+
     /// The key the op's replay-side savepoints are filed under.
     fn savepoint_key(&self) -> SavepointKey {
         SavepointKey::Op(self.op_id.clone())
@@ -2571,7 +2605,8 @@ impl OpContext<'_> {
 pub enum SyncRequest {
     Fresh {
         landing: Box<crate::land::Landing>,
-        strategy: SyncStrategy,
+        /// How a repo whose target records no `history` lands, for this run.
+        history: Option<crate::manifest::History>,
         /// Remove the workweave after a successful landing (`--retire`).
         retire: bool,
         /// Parallel per-repo worker count (resolved `-j N`); `1` runs serially.
@@ -2613,14 +2648,14 @@ fn run_machine(
     let ctx = match request {
         SyncRequest::Fresh {
             landing,
-            strategy,
+            history,
             retire,
             jobs,
         } => guard_and_mark(
             cwd_ctx,
             FreshOp {
                 landing: *landing,
-                strategy,
+                history,
                 retire,
                 jobs,
             },
@@ -3054,7 +3089,7 @@ fn run_preconditions_after_acquire(
     drifted: &mut Vec<DriftedCheckout>,
     project_vcs: &dyn Vcs,
     landing: &crate::land::Landing,
-    strategy: SyncStrategy,
+    history: Option<crate::manifest::History>,
     retire: bool,
     cwd_project_dir: &Path,
     cwd_workspace_dir: &Path,
@@ -3104,12 +3139,6 @@ fn run_preconditions_after_acquire(
                 }
             }
         }
-    }
-    if strategy == SyncStrategy::Ff {
-        hold(
-            check_land_ff_precondition(project_vcs, cwd_project_dir, &landing.target_tip),
-            &mut report,
-        );
     }
     let snapshot = pin_source_snapshot(
         project_vcs,
@@ -3190,15 +3219,7 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let plan = match crate::land::judge(
-        landing,
-        cwd_workspace_dir,
-        match strategy {
-            SyncStrategy::Rebase => crate::land::Composing::Rebase,
-            SyncStrategy::Ff => crate::land::Composing::FastForwardOnly,
-        },
-        &mut report,
-    ) {
+    let plan = match crate::land::judge(landing, history, cwd_workspace_dir, &mut report) {
         Ok(plan) => plan,
         Err(e) => {
             hold(Err(e), &mut report);
@@ -3213,34 +3234,19 @@ fn run_preconditions_after_acquire(
         &mut report,
         drifted,
     );
-    if strategy == SyncStrategy::Ff {
-        hold(
-            refuse_members_that_need_composing(&cwd_project.manifest, cwd_workspace_dir, &plan),
-            &mut report,
-        );
-    }
-    if matches!(strategy, SyncStrategy::Rebase) {
-        hold(
-            crate::lock_driver::refuse_unmigrated(
-                project_vcs,
-                dest_project_dir.display(),
-                dest_project_dir,
-            ),
-            &mut report,
-        );
-    }
+    hold(
+        crate::lock_driver::refuse_unmigrated(
+            project_vcs,
+            dest_project_dir.display(),
+            dest_project_dir,
+        ),
+        &mut report,
+    );
     if let Some(e) = unjudged {
         if report.is_empty() {
             return Err(e);
         }
         report.note(format!("{e:#}"));
-    }
-    if report.lines().is_empty() && !report.notes().is_empty() {
-        crate::refuse!(
-            RefusalKind::NotFastForwardable,
-            "{}",
-            report.notes().join("\n")
-        );
     }
     report.into_result()?;
 
@@ -3256,7 +3262,7 @@ fn run_preconditions_after_acquire(
 /// A [`SyncRequest::Fresh`] as [`guard_and_mark`] consumes it.
 struct FreshOp {
     landing: crate::land::Landing,
-    strategy: SyncStrategy,
+    history: Option<crate::manifest::History>,
     retire: bool,
     jobs: usize,
 }
@@ -3271,7 +3277,7 @@ fn guard_and_mark<'a>(
 ) -> anyhow::Result<OpContext<'a>> {
     let FreshOp {
         landing,
-        strategy,
+        history,
         retire,
         jobs,
     } = op;
@@ -3305,7 +3311,7 @@ fn guard_and_mark<'a>(
     let owner_workspace_dir = cwd_workspace_dir.clone();
     let initial_record = OwnerRecord::new_land(
         &op_id,
-        strategy,
+        history,
         cwd_project_name.clone(),
         &cwd_workspace_dir,
         &dest_workspace_dir,
@@ -3324,7 +3330,7 @@ fn guard_and_mark<'a>(
         &mut drifted,
         project_vcs.as_ref(),
         &landing,
-        strategy,
+        history,
         retire,
         &cwd_project_dir,
         &cwd_workspace_dir,
@@ -3500,6 +3506,7 @@ fn guard_and_mark<'a>(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        merged: plan.merged.iter().cloned().collect(),
         ..op_state::TakeInRecord::default()
     };
     take_in.receiving.insert(
@@ -3527,6 +3534,11 @@ fn guard_and_mark<'a>(
         emit_landing_report(handler, change);
     }
     take_in.reports.extend(plan.landed_changes.iter().cloned());
+    if emit_text {
+        for (repo, merge) in &plan.merged_ranges {
+            eprintln!("rwv land: {}", crate::set_history::merged_line(repo, merge));
+        }
+    }
     let mut record = op_state::read_owner(&owner_workspace_dir)?
         .context("the op record vanished as the landing began")?;
     record.take_in = Some(take_in.clone());
@@ -3543,7 +3555,6 @@ fn guard_and_mark<'a>(
         cwd_project_dir,
         cwd_project_name,
         cli_path,
-        strategy,
         take_in,
         retire,
         retire_left: std::sync::atomic::AtomicBool::new(false),
@@ -3742,7 +3753,6 @@ fn load_continuing_context<'a>(
         cwd_project_dir,
         cwd_project_name,
         cli_path,
-        strategy: record.strategy,
         take_in,
         retire: record.retire,
         retire_left: std::sync::atomic::AtomicBool::new(false),
@@ -4000,75 +4010,6 @@ fn target_moved_line(
 // ---------------------------------------------------------------------------
 // Pre-loop helpers (precondition checks used by guard_and_mark)
 // ---------------------------------------------------------------------------
-
-/// land `--strategy=ff` precondition: CWD must be strictly ahead of
-/// target. If equal: no-op (signaled by `Ok(())` from a caller that then
-/// short-circuits — handled inside `run_replay` via the noop-detection path).
-/// If diverged: refuse before any side effects.
-fn check_land_ff_precondition(
-    vcs: &dyn Vcs,
-    cwd_project_dir: &Path,
-    target_tip: &CommitId,
-) -> anyhow::Result<()> {
-    let cwd_tip = vcs
-        .head_revision(cwd_project_dir)
-        .context("failed to read CWD project HEAD")?;
-    let target_tip = ResolvedRevisionId::from(target_tip.clone());
-    if cwd_tip == target_tip {
-        return Ok(());
-    }
-    let cwd_ahead = vcs
-        .is_ancestor(cwd_project_dir, &target_tip, &cwd_tip)
-        .unwrap_or(false);
-    if !cwd_ahead {
-        crate::refuse!(
-            RefusalKind::NotFastForwardable,
-            "land --strategy ff needs this feature to be ahead of its target, but its project \
-             tip ({}) does not contain the target's tip ({}).\n\
-             Rerun with `--strategy rebase` to compose it onto the target's tip first.",
-            cwd_tip,
-            target_tip,
-        );
-    }
-    Ok(())
-}
-
-/// Under `--strategy ff` nothing is composed, so every member whose branch
-/// does not contain the tip it lands on refuses.
-fn refuse_members_that_need_composing(
-    manifest: &Manifest,
-    root: &Path,
-    plan: &crate::land::Plan,
-) -> anyhow::Result<()> {
-    let mut behind: Vec<String> = Vec::new();
-    for (path, receiving) in plan.composed() {
-        let source = &receiving.tip;
-        let Some(entry) = manifest.get_entry(path) else {
-            continue;
-        };
-        let vcs = vcs_for(entry.vcs_type);
-        let dir = root.join(path.as_path());
-        let Ok(head) = vcs.head_revision(&dir) else {
-            continue;
-        };
-        let source = ResolvedRevisionId::from(source.clone());
-        if !vcs.is_ancestor(&dir, &source, &head).unwrap_or(false) {
-            let shape = Containment::observe(vcs.as_ref(), &dir, &head, &source)
-                .map(|c| c.describe(&format!("the tip it lands on ({})", source.id().short())))
-                .unwrap_or_else(|| format!("not a descendant of {}", source.id().short()));
-            behind.push(format!("{path}: HEAD is {shape}"));
-        }
-    }
-    if behind.is_empty() {
-        return Ok(());
-    }
-    crate::refuse!(
-        RefusalKind::NotFastForwardable,
-        "land --strategy ff composes nothing, and these members do not contain the tip \
-         they land on:\n  {}\nRerun with `--strategy rebase` to compose them onto it first.",
-        behind.join("\n  ")
-    );
-}
 
 /// land dirty-target preflight: refuse if a repo of the target workspace that
 /// advance-target fast-forwards, the project repo and each `moving` member,
@@ -4510,13 +4451,6 @@ fn display_count(n: Option<usize>) -> String {
 fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    // land with `--strategy=ff`: replay is a no-op (CWD is strictly ahead
-    // of target per guard's ff precondition). The advance-target phase does
-    // all the work.
-    if matches!(ctx.verb, op_state::OpVerb::Land) && ctx.strategy == SyncStrategy::Ff {
-        return Ok(());
-    }
-
     if emit_text {
         eprintln!(
             "land: composing this workspace onto {} ({})...",
@@ -4539,12 +4473,21 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === Phase 1' (project repo) — strategy on the project repo ===
 
+    if ctx.integration(&RepoKey::Project) == Integration::Rebase {
+        keep_before_rebase(
+            ctx,
+            ctx.project_vcs.as_ref(),
+            &ctx.cwd_project_dir,
+            &snapshot.source_project_tip,
+            RepoKey::Project,
+        )?;
+    }
     let phase1_outcome = apply_project_strategy(
         ctx.project_vcs.as_ref(),
         &ctx.cwd_project_dir,
         &snapshot.source_project_tip,
         &cwd_project_tip,
-        ctx.strategy,
+        ctx.integration(&RepoKey::Project),
         ctx.verb,
     );
 
@@ -4554,7 +4497,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         // Only teach the VCS-native resume when the project repo is actually
         // left mid-op: a non-conflict rebase error leaves no in-flight VCS op.
-        let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
+        let live_conflict = ctx
+            .project_vcs
+            .mid_op(&ctx.cwd_project_dir)
+            .map(composed_conflict);
         crate::refuse!(
             RefusalKind::OpParked,
             "{}",
@@ -4678,6 +4624,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         /// op's savepoint so a `--continue` re-entry reads the same tip the
         /// interrupted run did rather than the pick it stopped on.
         pre_replay_tip: Option<ResolvedRevisionId>,
+        /// How it is composed onto its receiving branch beyond a
+        /// fast-forward.
+        how: Integration,
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
@@ -4735,6 +4684,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             )
         });
         sync_tasks.push(SyncTask {
+            how: ctx.integration(&key),
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, &ctx.savepoint_key()),
             abs,
@@ -4746,6 +4696,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 source_position,
             },
         });
+    }
+
+    for task in &sync_tasks {
+        if task.how == Integration::Rebase {
+            keep_before_rebase(
+                ctx,
+                task.vcs.as_ref(),
+                &task.abs,
+                &task.target,
+                RepoKey::Member(task.repo_path.clone()),
+            )?;
+        }
     }
 
     // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
@@ -4776,7 +4738,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    let strategy = ctx.strategy;
     // Return type: (is_failure, Option<actual_head_if_converged>).
     // The actual HEAD is read inside the closure (single-repo reads, no shared
     // state) and returned for the post-join batch write.  No write to the owner
@@ -4788,7 +4749,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 &task.abs,
                 &task.target,
                 task.verdicts,
-                strategy,
+                task.how,
                 task.pre_replay_tip.as_ref(),
             );
             let is_failure = outcome.is_failure();
@@ -4862,9 +4823,11 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // genuinely left mid-op. Probe the involved repos for a
         // live conflict rather than assuming one from the strategy — a batch of
         // fetch/head-unreadable failures leaves no rebase to `--continue`.
-        let live_conflict = sync_tasks
-            .iter()
-            .find_map(|t| t.vcs.mid_op(&t.abs).map(|op| (t.vcs.as_ref(), op)));
+        let live_conflict = sync_tasks.iter().find_map(|t| {
+            t.vcs
+                .mid_op(&t.abs)
+                .map(|op| (t.vcs.as_ref(), composed_conflict(op)))
+        });
         crate::refuse!(
             RefusalKind::OpParked,
             "{}",
@@ -4920,6 +4883,30 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+/// Keep the branch checked out in `dir` as a `rebased` backup before a rebase
+/// onto `onto` rewrites it: where it holds commits `onto` lacks and `onto`
+/// holds commits it lacks, and no rebase is already in progress there.
+fn keep_before_rebase(
+    ctx: &OpContext<'_>,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    onto: &ResolvedRevisionId,
+    repo: RepoKey,
+) -> anyhow::Result<()> {
+    if vcs.mid_op(dir).is_some() {
+        return Ok(());
+    }
+    let head = vcs.head_revision(dir)?;
+    if vcs.is_ancestor(dir, onto, &head)? || vcs.is_ancestor(dir, &head, onto)? {
+        return Ok(());
+    }
+    let HeadAttachment::Attached(attached) = vcs.head_attachment(dir)? else {
+        return Ok(());
+    };
+    let branch = crate::vcs::RawRefName::new(attached.to_string());
+    crate::backup::keep_rebased(vcs, dir, &branch, &head, &ctx.owner_workspace_dir, repo)
 }
 
 /// A member whose declared branch the landing changes and that holds no new
@@ -6132,6 +6119,7 @@ fn landed_into(
 }
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    drop_rebased_backups(ctx);
     crate::test_pause::point("retire");
     let emit_text = ctx.handler.emit_text();
 
@@ -6235,9 +6223,24 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         delete_savepoint(ctx.project_vcs.as_ref(), &canonical_project_dir, key);
     }
 
+    drop_rebased_backups(ctx);
+
     op_state::TouchedWorkspaces::of(ctx.verb, &ctx.owner_workspace_dir, &ctx.dest_workspace_dir)
         .clear();
     Ok(())
+}
+
+/// Drop the `rebased` backups the landing journaled, once it has landed,
+/// through the primary's clones, which outlive a retired workweave.
+fn drop_rebased_backups(ctx: &OpContext<'_>) {
+    let kept = op_state::read_owner(&ctx.owner_workspace_dir)
+        .ok()
+        .flatten()
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebased_backups)
+        .unwrap_or_default();
+    let primary = ctx.cwd_ctx.primary_path();
+    crate::backup::drop_completed_rebased(primary, primary, &ctx.cwd_project_name, &kept);
 }
 
 /// `rwv land --retire` post-land cleanup.
@@ -6295,127 +6298,93 @@ fn retire_workweave_after_landing(
     })
 }
 
-/// Phase 1': replay CWD's unique project commits onto `source_tip` via
-/// `strategy`, holding the lock merge driver to source's version of the lock
-/// through the replay. Phase 3 regenerates the lock from manifest tips
-/// afterwards.
+/// A conflict a composing merge or rebase stopped on, as the hint for it
+/// reads: up to staging, after which `rwv <verb> --continue` finishes it, so
+/// a merge commit keeps the parent order rwv composes it with.
+fn composed_conflict(op: ConflictOp) -> ConflictOp {
+    match op {
+        ConflictOp::Merge => ConflictOp::Rebase,
+        other => other,
+    }
+}
+
+/// Phase 1': compose the source's project branch with `source_tip`, the
+/// target's tip, as `how` says, holding the lock merge driver to the source's
+/// lock; Phase 3 regenerates the lock from the members' tips afterwards.
 ///
-/// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
-///   a fast-forward via `git merge --ff-only`.
-/// - Either: a CWD tip that already contains `source_tip` is left as it is.
-///   There is nothing to compose, and a forced rebase would flatten any
-///   merge the range holds.
-/// - `Rebase`: native `git rebase` via [`Vcs::rebase`]. On conflict, leaves
-///   the repo mid-rebase; the operator resolves, `git add`s, then runs
-///   `rwv sync --continue` (or `rwv land --continue` for land).
-///
-/// Conflicts on non-lock paths halt the operation, leaving the VCS-native
-/// in-flight state for the operator to resolve and re-run sync, or
-/// `rwv abort`.
-///
-/// `verb` is the running op's verb ([`OpVerb`]), threaded through so the
-/// conflict-bail message shows the correct rwv-native resume command
-/// (`rwv sync --continue` / `rwv land --continue`).
+/// A branch that already holds the target's tip moves nothing here: the
+/// target fast-forwards to it. A rebase replays the branch's commits onto the
+/// tip; a merge commits the two with the target's tip as first parent. A
+/// conflict leaves the project repo stopped in it for the operator to resolve
+/// and stage, then `rwv <verb> --continue`, or `rwv abort`.
 fn apply_project_strategy(
     vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     source_tip: &ResolvedRevisionId,
     cwd_tip: &ResolvedRevisionId,
-    strategy: SyncStrategy,
+    how: Integration,
     verb: OpVerb,
 ) -> anyhow::Result<()> {
-    // Replay re-entry (`rwv sync --continue`): a project repo that stopped
-    // mid-rebase on a conflict has HEAD sitting at `source_tip` (git checked
-    // it out as the rebase onto and stopped on the very first pick). The
-    // no-op short-circuit below would then trip and return `Ok(())` without
-    // ever driving the rebase forward — leaving the repo mid-rebase forever
-    // and lying to the caller that Phase 1' completed. Mid-rebase is the
-    // signal that trumps head-equality: always route through
-    // `Vcs::rebase_continue` (below) when we see it under a rebase strategy.
-    let mid_rebase = matches!(vcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase))
-        && strategy == SyncStrategy::Rebase;
-
+    let conflict = |repo: &Path, op: ConflictOp| -> anyhow::Error {
+        let detail = match op {
+            ConflictOp::Rebase => vcs.rebase_stopped_commit_detail(repo),
+            _ => format!("merging {}", source_tip.id().short()),
+        };
+        crate::refusal::refusal(
+            RefusalKind::OpParked,
+            per_conflict_bail_message(
+                vcs,
+                repo,
+                composed_conflict(op),
+                match how {
+                    Integration::Rebase => "rebase (project repo)",
+                    Integration::Merge => "merge (project repo)",
+                },
+                &detail,
+                verb,
+            ),
+        )
+    };
+    if how == Integration::Merge {
+        return match compose_merge(vcs, cwd_project_dir, source_tip) {
+            Ok(_) => Ok(()),
+            Err(VcsError::RebaseConflict { repo, op }) => Err(conflict(&repo, op)),
+            Err(e) => Err(crate::untokened!(
+                EnvironmentPassthrough,
+                "project repo merge failed: {e:#}"
+            )),
+        };
+    }
+    // A project repo stopped mid-rebase sits at `source_tip` or past it, which
+    // the short-circuits below would read as done; the rebase in progress is
+    // driven forward instead.
+    let mid_rebase = matches!(vcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase));
     if !mid_rebase
         && (cwd_tip == source_tip || vcs.is_ancestor(cwd_project_dir, source_tip, cwd_tip)?)
     {
         return Ok(());
     }
-
-    match strategy {
-        SyncStrategy::Ff => {
-            // CWD must be ancestor of source (caller verified). Fast-forward.
-            let containment = Containment::observe(vcs, cwd_project_dir, cwd_tip, source_tip);
-            if let Err(e) = vcs.advance_if_fast_forward(cwd_project_dir, source_tip) {
-                let shape = match containment {
-                    Some(c) => format!(
-                        " (CWD's project tip is {})",
-                        c.describe(&format!("source's project tip ({source_tip})"))
-                    ),
-                    None => String::new(),
-                };
-                return Err(crate::untokened!(
-                    EnvironmentPassthrough,
-                    "project repo fast-forward failed{shape}: {e:#}"
-                ));
-            }
-        }
-        SyncStrategy::Rebase => {
-            // The replay states `keep_target_side`, which holds the driver the
-            // repo's committed `rwv.lock merge=rwv-lock` line names: lock-only
-            // commits become empty patches and git drops them by default
-            // (`--empty=drop`), so source's version of `rwv.lock` survives
-            // the replay untouched. Phase 3 then regenerates the lock from
-            // manifest tips — the resolution only has to be mechanical,
-            // because regeneration is what makes the result correct.
-            //
-            // Replay re-entry (`rwv sync --continue`): if the project repo
-            // is already mid-rebase from a previous phase that stopped on a
-            // conflict, `Vcs::rebase` would fail immediately ("another
-            // rebase is in progress"). Route through `Vcs::rebase_continue`
-            // so `resolve → git add → rwv sync --continue` iterates per
-            // conflicted pick. It states the same policy, so any remaining
-            // lock-only picks resolve the same way a fresh `Vcs::rebase`
-            // would. A mid-op that is NOT rebase (mid-merge,
-            // mid-cherry-pick) is not rwv-initiated for this path —
-            // preserve today's behavior of calling `Vcs::rebase`, which will
-            // fail loudly rather than silently adopting foreign state.
-            let outcome = if mid_rebase {
-                vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
-            } else {
-                vcs.rebase(
-                    cwd_project_dir,
-                    source_tip,
-                    source_tip,
-                    DerivedContentPolicy::keep_target_side(),
-                )
-            };
-            match outcome {
-                Ok(()) => {}
-                Err(VcsError::RebaseConflict { repo, op }) => {
-                    let detail = vcs.rebase_stopped_commit_detail(&repo);
-                    crate::refuse!(
-                        RefusalKind::OpParked,
-                        "{}",
-                        per_conflict_bail_message(
-                            vcs,
-                            &repo,
-                            op,
-                            "rebase (project repo)",
-                            &detail,
-                            verb,
-                        )
-                    );
-                }
-                Err(e) => {
-                    return Err(crate::untokened!(
-                        EnvironmentPassthrough,
-                        "project repo rebase failed: {e:#}"
-                    ))
-                }
-            }
-        }
+    // The replay states `keep_target_side`, which holds the lock merge driver:
+    // lock-only commits become empty patches git drops, so the source's
+    // `rwv.lock` survives the replay and Phase 3 regenerates it.
+    let outcome = if mid_rebase {
+        vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
+    } else {
+        vcs.rebase(
+            cwd_project_dir,
+            source_tip,
+            source_tip,
+            DerivedContentPolicy::keep_target_side(),
+        )
+    };
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(VcsError::RebaseConflict { repo, op }) => Err(conflict(&repo, op)),
+        Err(e) => Err(crate::untokened!(
+            EnvironmentPassthrough,
+            "project repo rebase failed: {e:#}"
+        )),
     }
-    Ok(())
 }
 
 /// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
@@ -8003,7 +7972,7 @@ mod tests {
                 containment: Some(Containment::Ahead(7)),
                 source_position: None,
             },
-            SyncStrategy::Ff,
+            Integration::Rebase,
             None,
         );
 
@@ -8039,7 +8008,7 @@ mod tests {
                 containment: Some(Containment::Equal),
                 source_position: None,
             },
-            SyncStrategy::Ff,
+            Integration::Rebase,
             None,
         );
 
@@ -8076,7 +8045,7 @@ mod tests {
                 containment: Some(Containment::Behind(1)),
                 source_position: None,
             },
-            SyncStrategy::Ff,
+            Integration::Rebase,
             None,
         );
 
@@ -8791,7 +8760,7 @@ mod tests {
                 error: "x".into(),
                 cause: None,
             },
-            SyncFailure::FastForwardImpossible {
+            SyncFailure::MergeFailed {
                 error: "x".into(),
                 cause: VcsError::NotARepo(PathBuf::from("/x")),
             },
@@ -8803,7 +8772,7 @@ mod tests {
         for f in &all {
             match f {
                 SyncFailure::HeadUnreadable { .. }
-                | SyncFailure::FastForwardImpossible { .. }
+                | SyncFailure::MergeFailed { .. }
                 | SyncFailure::RebaseFailed { .. } => {}
             }
         }
@@ -8832,18 +8801,18 @@ mod tests {
     }
 
     #[test]
-    fn sync_failure_for_strategy_picks_matching_variant() {
+    fn sync_failure_for_integration_picks_matching_variant() {
         assert!(matches!(
-            SyncFailure::for_strategy(
-                SyncStrategy::Ff,
+            SyncFailure::for_integration(
+                Integration::Merge,
                 "e".into(),
                 VcsError::NotARepo(PathBuf::from("/x"))
             ),
-            SyncFailure::FastForwardImpossible { .. }
+            SyncFailure::MergeFailed { .. }
         ));
         assert!(matches!(
-            SyncFailure::for_strategy(
-                SyncStrategy::Rebase,
+            SyncFailure::for_integration(
+                Integration::Rebase,
                 "e".into(),
                 VcsError::NotARepo(PathBuf::from("/x"))
             ),
@@ -9311,16 +9280,9 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        apply_strategy(
-            git_vcs().as_ref(),
-            &repo,
-            &main_tip,
-            ReplayBaseline::SourceLockEntry,
-            None,
-            SyncStrategy::Rebase,
-        )
-        .map_err(|e| e.message)
-        .expect("a declared derived path must not stop a manifest-repo replay");
+        apply_strategy(git_vcs().as_ref(), &repo, &main_tip)
+            .map_err(|e| e.message)
+            .expect("a declared derived path must not stop a manifest-repo replay");
 
         assert_eq!(
             std::fs::read_to_string(repo.join("generated.txt")).unwrap(),
@@ -9351,14 +9313,7 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        let stopped = apply_strategy(
-            git_vcs().as_ref(),
-            &repo,
-            &main_tip,
-            ReplayBaseline::SourceLockEntry,
-            None,
-            SyncStrategy::Rebase,
-        );
+        let stopped = apply_strategy(git_vcs().as_ref(), &repo, &main_tip);
         assert!(
             stopped.is_err(),
             "an authored conflict must stop the replay whatever the policy"
@@ -9374,16 +9329,9 @@ mod tests {
         std::fs::write(repo.join("shared.txt"), "merged\n").unwrap();
         git(&repo, &["add", "shared.txt"]);
 
-        apply_strategy(
-            git_vcs().as_ref(),
-            &repo,
-            &main_tip,
-            ReplayBaseline::SourceLockEntry,
-            None,
-            SyncStrategy::Rebase,
-        )
-        .map_err(|e| e.message)
-        .expect("the resumed replay must carry through the declared path");
+        apply_strategy(git_vcs().as_ref(), &repo, &main_tip)
+            .map_err(|e| e.message)
+            .expect("the resumed replay must carry through the declared path");
 
         assert!(
             git_vcs().mid_op(&repo).is_none(),

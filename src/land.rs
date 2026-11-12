@@ -9,11 +9,12 @@
 use crate::diagnosis::{Form, Judged, Report, State};
 use crate::lineage::{Lineage, PinHistory};
 use crate::manifest::{
-    LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
+    History, LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
 use crate::op_state::{CreatedRef, LeftBehind, Moves};
 use crate::records::{BranchName, Mode, Record, Store};
 use crate::refusal::RefusalKind;
+use crate::set_history::Integration;
 use crate::vcs::{
     project_vcs, vcs_for, CommitId, CommitSummary, DestroyProof, HeadAttachment, RawRefName,
     ResolvedRevisionId, Site, Vcs, VcsError,
@@ -58,6 +59,12 @@ pub struct Plan {
     pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
     /// Each change to `T`'s entries `--allow-member-change` named.
     pub landed_changes: Vec<crate::op_state::LandingReport>,
+    /// The repos composed by a merge commit, first parent the receiving
+    /// branch, rather than rebased onto it.
+    pub merged: BTreeSet<RepoKey>,
+    /// The merge each repo's range holds, where that range is integrated by
+    /// a merge commit under a rebasing setting.
+    pub merged_ranges: Vec<(RepoKey, CommitId)>,
 }
 
 impl Plan {
@@ -99,44 +106,6 @@ impl Plan {
             .iter()
             .filter(|(_, r)| matches!(r.moves, Moves::InCheckout | Moves::AsRef { .. }))
     }
-}
-
-/// How the landing composes a branch that does not contain the tip it lands
-/// on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Composing {
-    /// Rebased onto that tip.
-    Rebase,
-    /// Not composed: such a branch refuses.
-    FastForwardOnly,
-}
-
-/// A range a rebase would replay that holds a merge is never rebased: the
-/// one judgment `sync` makes, made here for the landing so it joins the
-/// landing's one report.
-#[allow(clippy::too_many_arguments)]
-fn judge_merge_in_range(
-    composing: Composing,
-    vcs: &dyn Vcs,
-    dir: &Path,
-    repo: &str,
-    head: &CommitId,
-    onto: &CommitId,
-    target: &BranchName,
-    report: &mut Report,
-) -> anyhow::Result<()> {
-    if composing == Composing::Rebase && !vcs.is_ancestor(dir, &rev(onto), &rev(head))? {
-        crate::feature_sync::judge_merge_in_range(
-            vcs,
-            dir,
-            repo,
-            head,
-            onto,
-            target.as_str(),
-            report,
-        )?;
-    }
-    Ok(())
 }
 
 fn rev(commit: &CommitId) -> ResolvedRevisionId {
@@ -648,8 +617,8 @@ fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
 /// plan each `owned` or `fork` member's receiving branch. Nothing moves.
 pub fn judge(
     landing: &Landing,
+    one_run: Option<History>,
     source_root: &Path,
-    composing: Composing,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
     let vcs = project_vcs();
@@ -682,16 +651,6 @@ pub fn judge(
         theirs,
     )?;
     let (landed_changes, inapplicable) = judge_entry_changes(landing, &sides, source_root, report)?;
-    judge_merge_in_range(
-        composing,
-        vcs,
-        &dir,
-        &label,
-        &head,
-        &landing.target_tip,
-        &landing.target,
-        report,
-    )?;
     let off_alignment = judge_source_members(
         source_root,
         &landing.project,
@@ -709,6 +668,30 @@ pub fn judge(
         landed_changes,
         ..Plan::default()
     };
+    let project_scoped = |state: State| {
+        state
+            .of(&label)
+            .project_repo()
+            .checkout(&dir)
+            .bind("<T>", &landing.target)
+            .by_verb("land")
+    };
+    let composing = Composing {
+        recorded: sides.theirs.history,
+        one_run,
+        dir: &dir,
+        vcs,
+        head: &head,
+        onto: &landing.target_tip,
+    };
+    if let Composed::By(how, merged) = composing.judge(project_scoped, false, report)? {
+        if how == Integration::Merge {
+            plan.merged.insert(RepoKey::Project);
+        }
+        if let Some(merge) = merged {
+            plan.merged_ranges.push((RepoKey::Project, merge));
+        }
+    }
     for (path, entry) in sides.ours.iter_entries() {
         let mdir = source_root.join(path.as_path());
         let mvcs = vcs_for(entry.vcs_type);
@@ -734,7 +717,7 @@ pub fn judge(
             sides: &sides,
             target_aligner: &target_aligner,
             as_mode,
-            composing,
+            one_run,
         };
         judge_member(&judging, &member, &mut plan, report)?;
     }
@@ -1539,7 +1522,7 @@ struct Judging<'a> {
     sides: &'a Sides,
     target_aligner: &'a crate::alignment::Aligner,
     as_mode: Mode,
-    composing: Composing,
+    one_run: Option<History>,
 }
 
 /// Judge one `owned` or `fork` member and plan it: its receiving branch
@@ -1557,7 +1540,7 @@ fn judge_member(
         sides,
         target_aligner,
         as_mode,
-        composing,
+        one_run,
     } = *judging;
     let Member {
         path,
@@ -1687,16 +1670,32 @@ fn judge_member(
     }
     if moved {
         judge_moved(landing, sides, member, &receiving, &head, &tip, report)?;
-        judge_merge_in_range(
-            composing,
-            vcs,
+        let scoped = |state: State| {
+            state
+                .of(path)
+                .member()
+                .checkout(dir)
+                .bind("<m>", path)
+                .bind("<T>", &landing.target)
+                .by_verb("land")
+        };
+        let composing = Composing {
+            recorded: sides.theirs.history_for(path),
+            one_run,
             dir,
-            path.as_str(),
-            &head,
-            &tip,
-            &landing.target,
-            report,
-        )?;
+            vcs,
+            head: &head,
+            onto: &tip,
+        };
+        if let Composed::By(how, merged) = composing.judge(scoped, true, report)? {
+            if how == Integration::Merge {
+                plan.merged.insert(RepoKey::Member(path.clone()));
+            }
+            if let Some(merge) = merged {
+                plan.merged_ranges
+                    .push((RepoKey::Member(path.clone()), merge));
+            }
+        }
     }
     let moves = if follows {
         Moves::Follows { create: created }
@@ -1777,6 +1776,87 @@ fn judge_moved(
         ),
     }
     Ok(())
+}
+
+/// One repo the landing composes: what the target records for it, the one-run
+/// `--history`, and the source's tip against the receiving tip.
+struct Composing<'a> {
+    recorded: Option<History>,
+    one_run: Option<History>,
+    dir: &'a Path,
+    vcs: &'a dyn Vcs,
+    head: &'a CommitId,
+    onto: &'a CommitId,
+}
+
+/// How a repo lands: by a fast-forward of its receiving branch, which reads no
+/// setting where the receiving tip sits on the source's first-parent chain,
+/// or composed first, with the merge its range holds where that makes a
+/// rebasing setting merge. A source that holds the receiving tip only through
+/// a merge's second parent lands by a merge commit under `linear` and
+/// `merge`, so the receiving branch keeps its own first parents; `ff-only`
+/// fast-forwards it, as its name says.
+enum Composed {
+    FastForward,
+    By(Integration, Option<CommitId>),
+}
+
+impl Composing<'_> {
+    /// Judge how the repo lands by the history setting, adding its refusal
+    /// where the setting is unset, contradicted, or `ff-only` and the landing
+    /// is no fast-forward.
+    fn judge(
+        &self,
+        scoped: impl Fn(State) -> crate::diagnosis::Judging,
+        member: bool,
+        report: &mut Report,
+    ) -> anyhow::Result<Composed> {
+        let Composing {
+            recorded,
+            one_run,
+            dir,
+            vcs,
+            head,
+            onto,
+        } = *self;
+        let contained = vcs.is_ancestor(dir, &rev(onto), &rev(head))?;
+        if contained && vcs.first_parent_chain(dir, head)?.contains(onto) {
+            return Ok(Composed::FastForward);
+        }
+        let history = match crate::set_history::governing(recorded, one_run, member, &scoped, vcs) {
+            Ok(history) => history,
+            Err(judged) => {
+                report.add(judged);
+                return Ok(Composed::FastForward);
+            }
+        };
+        if contained {
+            return Ok(match history {
+                History::FfOnly => Composed::FastForward,
+                History::Merge => Composed::By(Integration::Merge, None),
+                History::Linear => Composed::By(
+                    Integration::Merge,
+                    crate::set_history::merge_in_range(vcs, dir, head, onto)?,
+                ),
+            });
+        }
+        if history == History::FfOnly {
+            report.add(
+                scoped(State::HistoryNotFastForward)
+                    .subject(format!(
+                        "the target records ff-only, and its tip {} is not an ancestor of this \
+                         branch's {}",
+                        onto.short(),
+                        head.short()
+                    ))
+                    .judge(vcs),
+            );
+            return Ok(Composed::FastForward);
+        }
+        let in_range = crate::set_history::merge_in_range(vcs, dir, head, onto)?;
+        let (how, merged) = crate::set_history::integration(history, in_range);
+        Ok(Composed::By(how, merged))
+    }
 }
 
 /// A receiving branch the landing's declared-branch change names moves as a

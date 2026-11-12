@@ -579,7 +579,7 @@ fn list_runs_mid_operation_and_drop_and_prune_do_not() {
     std::fs::write(
         weave.ws.join(".rwv-op"),
         format!(
-            "{{\"id\": \"20991231T000001Z\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+            "{{\"id\": \"20991231T000001Z\", \"verb\": \"sync\", \"history\": null, \
              \"project\": \"demo\", \"source\": \"{root}\", \"target\": \"{root}\", \
              \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
              \"converged_tips\": {{}}, \"overrides\": [], \

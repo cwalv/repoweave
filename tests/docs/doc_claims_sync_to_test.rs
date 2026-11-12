@@ -158,7 +158,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
-        .args(["land", "--strategy=ff", "--json"])
+        .args(["land", "--history=ff-only", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -204,7 +204,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args(["land", "--strategy=ff", "--json"])
+        .args(["land", "--history=ff-only", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -309,7 +309,7 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
     std::fs::write(primary.server_dir.join("scratch.txt"), "scratch\n").unwrap();
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -355,7 +355,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     let primary_server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let err_output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -466,7 +466,7 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -509,7 +509,7 @@ fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();

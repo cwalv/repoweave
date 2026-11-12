@@ -381,7 +381,7 @@ fn sync_to_ff_primary_advances_to_workweave_lock() {
 
     // From primary: sync from the workweave.
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -415,7 +415,7 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
     );
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -454,30 +454,24 @@ fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
     );
 }
 
-/// Under `--strategy ff`, land refuses when the target's project tip is not
-/// an ancestor of CWD's: the target is ahead of CWD.
+/// Under `ff-only`, land refuses when the target's project tip is not an
+/// ancestor of CWD's: the target is ahead of CWD.
 #[test]
-fn sync_to_ff_refuses_when_target_project_repo_is_ahead_of_cwd() {
+fn ff_only_refuses_when_target_project_repo_is_ahead_of_cwd() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
 
-    let assertion = rwv()
-        .args(["land", "--strategy", "ff"])
+    let out = rwv()
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(&out, repoweave::diagnosis::State::HistoryNotFastForward);
     assert!(
-        stderr.contains("needs this feature to be ahead of its target")
-            && stderr.contains("does not contain the target's tip"),
-        "expected refusal naming the ancestry relation; got: {stderr}"
-    );
-    assert!(
-        stderr.contains("--strategy rebase"),
-        "expected refusal to name the rebase strategy; got: {stderr}"
+        stderr.contains("projects/web-app: history not fast-forward"),
+        "expected the project repo judged; got: {stderr}"
     );
 }
 
@@ -501,14 +495,12 @@ fn sync_to_ff_refuses_when_target_project_repo_has_diverged_from_cwd() {
     let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_ne!(primary_tip, ww_tip);
 
-    rwv()
-        .args(["land", "--strategy", "ff"])
+    let out = rwv()
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "needs this feature to be ahead of its target",
-        ));
+        .output()
+        .unwrap();
+    common::cli::refused(&out, repoweave::diagnosis::State::HistoryNotFastForward);
 }
 
 /// Forward sync (target project tip a strict ancestor of CWD's): allowed.
@@ -525,7 +517,7 @@ fn sync_to_ff_allows_when_target_project_repo_is_strict_ancestor_of_cwd() {
     );
 
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -549,31 +541,31 @@ fn sync_to_ff_allows_when_target_project_repo_equals_cwd() {
     assert_eq!(primary_tip, ww_tip);
 
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
 }
 
-/// The ff refusal names `--strategy=rebase` as the rwv-native path to land
-/// diverging project commits.
+/// The `ff-only` refusal names taking the target's new work in first, the
+/// step where the rebase happens.
 #[test]
-fn sync_to_ff_refusal_message_suggests_rebase_strategy() {
+fn ff_only_refusal_names_taking_the_target_in_first() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
 
     let assertion = rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("--strategy rebase"),
-        "expected refusal to suggest --strategy rebase; got: {stderr}"
+        stderr.contains("take the target's new work in first") && stderr.contains("rwv sync"),
+        "expected the refusal to name `rwv sync`; got: {stderr}"
     );
 }
 
@@ -588,7 +580,7 @@ fn sync_to_rebase_lands_lock_only_divergence() {
     let primary_tip_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -615,19 +607,19 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
     primary_advance_project_one_commit(&primary, &c1);
 
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();
 
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -680,7 +672,7 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     // project repos; this test deliberately constructs that to exercise Phase
     // 2's rebase strategy on the manifest repo, so it opts in via
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -767,7 +759,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // is required to reach Phase 2 where the rebase conflict is the focus
     // (adapted from --force).
     let _ = rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert();
 
@@ -813,7 +805,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     let op_id = repoweave::op_state::OpId::new_now();
     let owner = repoweave::op_state::OwnerRecord::new_sync(
         &op_id,
-        repoweave::op_state::SyncStrategy::Rebase,
+        None,
         repoweave::manifest::ProjectName::new("web-app").unwrap(),
         &ws.root,
         &ws.root,
@@ -934,7 +926,7 @@ fn sync_to_proceeds_when_source_lock_tag_matches_head() {
     );
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -953,7 +945,7 @@ fn sync_to_proceeds_when_source_lock_sha_matches_head() {
     assert!(!source_lock_sha.is_empty());
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -985,14 +977,14 @@ fn sync_to_roundtrip_converges_without_project_repo_growth() {
 
     // Sync primary → workweave (workweave catches up to C2).
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
     // Sync workweave → primary (now a no-op: ww is at C2, primary is already at C2).
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1156,7 +1148,7 @@ fn sync_to_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
     // is fresh" — workweave-tip C1 == workweave-lock C1 — even though primary
     // has diverged.
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1191,7 +1183,7 @@ fn sync_to_from_primary_with_marker_workweave_source_uses_source_own_lock() {
     // Primary syncs from the workweave. Source freshness must be checked
     // against the workweave's own lock (C2 vs ww-tip C2), not primary's lock.
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1234,7 +1226,7 @@ fn sync_to_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     common::git_in(&ws.ww_server_dir, &["reset", "--hard", &ww_c1]);
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ws.ww_root)
         .assert()
         .failure()
@@ -1279,7 +1271,7 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
 
     // Land ww: target is C2, but ww is at C3 (C2 is ancestor of C3).
     let out = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1355,7 +1347,7 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww tips"]);
 
     let out = rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -1369,12 +1361,12 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     );
 
     assert!(
-        both.contains("github/chatly/server: HEAD is")
-            && both.contains("rwv explain not-fast-forwardable"),
+        both.contains("github/chatly/server: history not fast-forward")
+            && both.contains("rwv explain history"),
         "the diverged repo's line must carry its own verdict; got:\n{both}"
     );
     assert!(
-        !both.contains("github/chatly/api: HEAD is"),
+        !both.contains("github/chatly/api: history"),
         "the contained repo needs no composing and is not named; got:\n{both}"
     );
     assert!(
@@ -1383,10 +1375,10 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     );
 }
 
-/// Regression: diverged repo + `--strategy ff` must still report `failed (cannot fast-forward...)`.
-/// Verifies the failure message structure carries through the new outcome enum unchanged.
+/// A diverged member under `ff-only` is refused by name before anything
+/// moves.
 #[test]
-fn sync_to_ff_reports_failed_for_diverged_repo() {
+fn ff_only_refuses_a_diverged_member_by_name() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -1411,26 +1403,24 @@ fn sync_to_ff_reports_failed_for_diverged_repo() {
     // ww's project already contains the target's project tip, so the ff
     // failure is the manifest repo's: C2 and C_ww diverge from C1.
     let out = rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
         .get_output()
         .clone();
 
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = common::cli::refused(&out, repoweave::diagnosis::State::HistoryNotFastForward);
     assert!(
-        stderr.contains("github/chatly/server: HEAD is diverged"),
-        "diverged ff landing should name the repo and its verdict; got stderr: {stderr}"
+        stderr.contains("github/chatly/server: history not fast-forward"),
+        "diverged ff-only landing should name the repo; got stderr: {stderr}"
     );
 }
 
-/// The diverged ff refusal states rwv's own verdict and remedy, and keeps
-/// git's `fatal:` cause underneath — but must not carry git's `hint:` block,
-/// which recommends `git merge --no-ff` / `git rebase`, either of which
-/// bypasses the sync op this refusal is inside of.
+/// The diverged `ff-only` refusal states rwv's own verdict and choice, and
+/// carries no git `hint:` block, whose advice would bypass rwv.
 #[test]
-fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
+fn ff_only_diverged_refusal_carries_no_git_advice() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
@@ -1451,7 +1441,7 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let out = rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -1460,7 +1450,7 @@ fn sync_to_ff_diverged_refusal_keeps_cause_drops_advice() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--strategy rebase") && stderr.contains("not-fast-forwardable"),
+        stderr.contains("history not fast-forward") && stderr.contains("rwv sync"),
         "rwv's own verdict and remedy must survive; got: {stderr}"
     );
     assert!(
@@ -1598,7 +1588,7 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
     );
 
     rwv()
-        .arg("land")
+        .args(["land", "--history", "linear"])
         .args(args)
         .current_dir(&ww.root)
         .output()

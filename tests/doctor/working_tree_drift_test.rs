@@ -389,7 +389,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     );
 
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww_root)
         .assert()
         .success();

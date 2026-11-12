@@ -441,7 +441,7 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["lock"]),
         (&weave.seat, vec!["update", "--remote"]),
         (&weave.seat, vec!["sync"]),
-        (&weave.seat, vec!["land"]),
+        (&weave.seat, vec!["land", "--history", "linear"]),
         (
             &weave.primary,
             vec!["workweave", "delete", "--project", PROJECT, SEAT],
@@ -493,7 +493,7 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
     let pin = common::git_in(&weave.linked_canonical, &["rev-parse", "HEAD"]);
     common::savepoint::plant_at(&weave.linked_canonical, op_id, &pin);
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -578,7 +578,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     let primary_owned_before = common::git_in(&owned, &["rev-parse", "main"]);
 
     let parked = rwv()
-        .args(["land", "--strategy=rebase"])
+        .args(["land", "--history=linear"])
         .current_dir(&seat)
         .output()
         .unwrap();

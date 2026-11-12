@@ -10,18 +10,18 @@ use crate::diagnosis::{ChoiceId, Fact, FactKind, Form, Judged, Report, State};
 use crate::lineage::{Lineage, PinHistory};
 use crate::lock_merge::{merge_pins, Held, Parent, PinMerge, Reach};
 use crate::manifest::{
-    LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
+    History, LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
 use crate::merge_upstream::Op;
-use crate::op_state::{OpVerb, SavepointKey, SyncFrom, SyncStrategy, TakeInRecord};
+use crate::op_state::{OpVerb, SavepointKey, SyncFrom, TakeInRecord};
 use crate::parallel::OutputMode;
 use crate::project_merge::{MemberMerging, MemberStop, Order, ProjectMerge, Sides};
 use crate::records::{Mode, Record};
 use crate::refusal::RefusalKind;
+use crate::set_history::Integration;
 use crate::vcs::{
-    project_vcs, vcs_for, AttachedRef, BackupMark, BackupSource, CommitId, CommitSummary,
-    ConflictOp, DerivedContentPolicy, HeadAttachment, RawRefName, Relation, ResolvedRevisionId,
-    Vcs, VcsError,
+    project_vcs, vcs_for, AttachedRef, BackupSource, CommitId, CommitSummary, ConflictOp,
+    DerivedContentPolicy, HeadAttachment, RawRefName, Relation, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
 use anyhow::Context;
@@ -34,7 +34,8 @@ pub struct Args {
     pub from: Option<String>,
     pub target: Option<String>,
     pub reset_to_target: Vec<RepoOperand>,
-    pub strategy: SyncStrategy,
+    /// How a repo whose target records no `history` integrates, for this run.
+    pub history: Option<History>,
     pub jobs: usize,
 }
 
@@ -80,6 +81,9 @@ struct Member {
     new_work: Vec<CommitSummary>,
     dropped: Vec<CommitSummary>,
     was: Option<CommitId>,
+    /// The merge its range holds, where that range is integrated by a merge
+    /// commit under a rebasing setting.
+    merged: Option<CommitId>,
 }
 
 struct Sync<'a> {
@@ -91,7 +95,7 @@ struct Sync<'a> {
     from: SyncFrom,
     /// The record's target, where the branch is a feature.
     target: Option<String>,
-    strategy: SyncStrategy,
+    history: Option<History>,
     jobs: usize,
 }
 
@@ -232,7 +236,7 @@ fn take(
                 target,
                 branch,
                 from,
-                strategy: owner.strategy,
+                history: owner.history,
                 jobs: 1,
             };
             act(&sync, &op, &take_in, output, reported)
@@ -331,7 +335,7 @@ fn fresh(
             Record::Feature { target, .. } => Some(target.to_string()),
             Record::Declared => None,
         },
-        strategy: args.strategy,
+        history: args.history,
         jobs: args.jobs,
     };
     let planned = plan(&sync, as_mode, &args.reset_to_target)?;
@@ -348,11 +352,17 @@ fn fresh(
     take_in
         .upstream_tips
         .insert(RepoKey::Project, planned.source.clone());
+    if matches!(planned.project, Act::Merge(_)) && !sync.merging() {
+        take_in.merged.push(RepoKey::Project);
+    }
     for member in &planned.members {
         if let Some(source) = member.source() {
             take_in
                 .upstream_tips
                 .insert(RepoKey::Member(member.path.clone()), source.clone());
+        }
+        if matches!(member.act, Act::Merge(_)) && !sync.merging() {
+            take_in.merged.push(RepoKey::Member(member.path.clone()));
         }
     }
     let nothing =
@@ -375,8 +385,14 @@ fn fresh(
     {
         let mut owner = crate::op_state::read_owner(&op.workspace)?
             .context("the op record vanished as it began")?;
-        owner.strategy = sync.strategy;
+        owner.history = sync.history;
         crate::op_state::write_owner(&op.workspace, &owner)?;
+    }
+    if let Some(merge) = &planned.merged {
+        say(
+            output,
+            &crate::set_history::merged_line(&sync.label(), merge),
+        );
     }
     for member in &planned.members {
         for line in member.report_lines() {
@@ -400,6 +416,9 @@ impl Member {
 
     fn report_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        if let Some(merge) = &self.merged {
+            lines.push(crate::set_history::merged_line(&self.path, merge));
+        }
         if !self.beyond_pin.is_empty() {
             lines.push(format!(
                 "{}: the branch it lands on holds {} commit(s) beyond the target's pin, which the \
@@ -480,6 +499,9 @@ fn savepoint_repos(sync: &Sync<'_>) -> Vec<(PathBuf, Box<dyn Vcs>)> {
 struct Planned {
     source: CommitId,
     project: Act,
+    /// The merge the project branch's range holds, where that range is
+    /// integrated by a merge commit under a rebasing setting.
+    merged: Option<CommitId>,
     members: Vec<Member>,
 }
 
@@ -714,6 +736,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             ))
         }
     };
+    let mut project_merged = None;
     let project_act = if resets_project {
         report.add_opt(judge_reset_site(sync, vcs, dir, &label, &dependents));
         Act::Reset(source.clone())
@@ -724,27 +747,33 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     } else if sync.merging() {
         Act::Merge(source.clone())
     } else {
-        match sync.strategy {
-            SyncStrategy::Ff => {
-                report.note(format!(
-                    "{label}: '{}' holds commits {} lacks, so it cannot fast-forward to it; \
-                     rerun with `--strategy rebase`",
-                    sync.branch,
-                    sync.source_name()
-                ));
-                Act::Nothing
+        let scoped = |state: State| {
+            state
+                .of(&label)
+                .project_repo()
+                .checkout(dir)
+                .bind("<T>", sync.source_name())
+                .by_verb("sync")
+        };
+        match crate::set_history::governing(
+            theirs.as_ref().and_then(|m| m.history),
+            sync.history,
+            false,
+            scoped,
+            vcs,
+        ) {
+            Ok(history) => {
+                let in_range = crate::set_history::merge_in_range(vcs, dir, &head, &source)?;
+                let (how, merged) = crate::set_history::integration(history, in_range);
+                project_merged = merged;
+                match how {
+                    Integration::Rebase => Act::Rebase(source.clone()),
+                    Integration::Merge => Act::Merge(source.clone()),
+                }
             }
-            SyncStrategy::Rebase => {
-                judge_merge_in_range(
-                    vcs,
-                    dir,
-                    &label,
-                    &head,
-                    &source,
-                    sync.source_name(),
-                    &mut report,
-                )?;
-                Act::Rebase(source.clone())
+            Err(judged) => {
+                report.add(judged);
+                Act::Nothing
             }
         }
     };
@@ -779,17 +808,11 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                 .judge(vcs),
         );
     }
-    if report.lines().is_empty() && !report.notes().is_empty() {
-        crate::refuse!(
-            RefusalKind::NotFastForwardable,
-            "{}",
-            report.notes().join("\n")
-        );
-    }
     report.into_result()?;
     Ok(Planned {
         source,
         project: project_act,
+        merged: project_merged,
         members,
     })
 }
@@ -832,33 +855,6 @@ fn judge_reset_site(
         vcs.dirty_file_names(dir).unwrap_or_default(),
         None,
     )
-}
-
-/// A range holding a merge is never rebased: the rebase would flatten the
-/// merge's second parent, which is how another lineage's work entered. The
-/// note names the merge that takes `source`, the branch rebased onto, in
-/// instead; a report holding only such notes refuses `not-fast-forwardable`.
-pub(crate) fn judge_merge_in_range(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    repo: &str,
-    tip: &CommitId,
-    onto: &CommitId,
-    source: &str,
-    report: &mut Report,
-) -> anyhow::Result<()> {
-    let base = vcs.merge_bases(dir, tip, onto)?.into_iter().next();
-    let range = vcs.pushed_range(dir, &rev(tip), base.as_ref().map(rev).as_ref())?;
-    if let Some(merge) = range.iter().find(|c| c.parents.len() > 1) {
-        report.note(format!(
-            "{repo}: the commits a rebase would replay hold the merge {}, which a rebase would \
-             flatten; take {} in by a merge instead: `rwv sync --from {}`",
-            merge.id.short(),
-            source,
-            source
-        ));
-    }
-    Ok(())
 }
 
 struct PlanInputs<'a> {
@@ -1020,6 +1016,7 @@ fn plan_member(
         new_work: Vec::new(),
         dropped: Vec::new(),
         was: Some(head.clone()),
+        merged: None,
     };
     let mvcs = member.vcs.as_ref();
     let mdir = member.dir.clone();
@@ -1166,16 +1163,35 @@ fn plan_member(
             Act::Follow(source.clone())
         }
     } else {
-        match sync.strategy {
-            SyncStrategy::Ff => {
-                report.note(format!(
-                    "{path}: '{}' holds new work and {} has moved, so it cannot fast-forward; \
-                     rerun with `--strategy rebase`",
-                    sync.branch, receiving
-                ));
+        let scoped = |state: State| {
+            state
+                .of(path)
+                .member()
+                .checkout(&mdir)
+                .bind("<m>", path)
+                .bind("<T>", sync.source_name())
+                .by_verb("sync")
+        };
+        match crate::set_history::governing(
+            inputs.theirs.and_then(|m| m.history_for(path)),
+            sync.history,
+            true,
+            scoped,
+            mvcs,
+        ) {
+            Ok(history) => {
+                let in_range = crate::set_history::merge_in_range(mvcs, &mdir, &head, &source)?;
+                let (how, merged) = crate::set_history::integration(history, in_range);
+                member.merged = merged;
+                match how {
+                    Integration::Rebase => Act::Rebase(source.clone()),
+                    Integration::Merge => Act::Merge(source.clone()),
+                }
+            }
+            Err(judged) => {
+                report.add(judged);
                 Act::Nothing
             }
-            SyncStrategy::Rebase => Act::Rebase(source.clone()),
         }
     };
     if !follows || (inputs.dependents && !contained) {
@@ -1208,18 +1224,6 @@ fn plan_member(
                     .join(", ")
             ))),
         }
-    }
-    if let Act::Rebase(onto) = &member.act {
-        let onto = onto.clone();
-        judge_merge_in_range(
-            mvcs,
-            &mdir,
-            path.as_str(),
-            &head,
-            &onto,
-            sync.source_name(),
-            report,
-        )?;
     }
     judge_push_branch(
         mvcs,
@@ -1347,6 +1351,11 @@ fn act(
         let dir = sync.ctx.active_path().join(path.as_path());
         let vcs = vcs_for(entry.vcs_type);
         let reset = resets.contains(&RepoOperand::Member(path.clone()));
+        let how = if take_in.merged.contains(&RepoKey::Member(path.clone())) {
+            Integration::Merge
+        } else {
+            Integration::Rebase
+        };
         let tip = take_member(
             sync,
             op,
@@ -1355,6 +1364,7 @@ fn act(
             vcs.as_ref(),
             member_source,
             reset,
+            how,
             output,
         )?;
         let before = vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone());
@@ -1373,7 +1383,7 @@ fn act(
     let resets_project = resets.iter().any(|r| matches!(r, RepoOperand::Project(_)));
     let vcs = sync.vcs.as_ref();
     let head = vcs.head_revision(&sync.dir)?.id().clone();
-    if sync.merging() {
+    if sync.merging() || take_in.merged.contains(&RepoKey::Project) {
         if !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))?
             || vcs.merge_in_flight(&sync.dir)?.is_some()
         {
@@ -1437,7 +1447,17 @@ fn act(
         });
     }
     let repos = savepoint_repos(sync);
+    let kept = crate::op_state::read_owner(&op.workspace)?
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebased_backups)
+        .unwrap_or_default();
     op.finish(&repos);
+    crate::backup::drop_completed_rebased(
+        sync.ctx.primary_path(),
+        sync.ctx.active_path(),
+        &sync.project,
+        &kept,
+    );
     say(output, &format!("took in {}", sync.source_name()));
     Ok(())
 }
@@ -1475,6 +1495,7 @@ fn take_member(
     vcs: &dyn Vcs,
     source: &CommitId,
     reset: bool,
+    how: Integration,
     output: OutputMode,
 ) -> anyhow::Result<CommitId> {
     let workspace = &op.workspace;
@@ -1521,7 +1542,7 @@ fn take_member(
     if vcs.is_ancestor(dir, &src, &head)? {
         return Ok(head.id().clone());
     }
-    if sync.merging() {
+    if sync.merging() || how == Integration::Merge {
         let message = format!(
             "Merge {}'s pin of {path} into {}",
             sync.source_name(),
@@ -1588,11 +1609,13 @@ fn take_member(
         );
         return Ok(source.clone());
     }
-    vcs.create_backup(
+    crate::backup::keep_rebased(
+        vcs,
         dir,
-        &BackupSource::Branch(branch.clone()),
+        &branch,
         &head,
-        Some(BackupMark::Rebased),
+        workspace,
+        RepoKey::Member(path.clone()),
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
@@ -1702,11 +1725,13 @@ fn take_project(
         );
         return Ok(());
     }
-    vcs.create_backup(
+    crate::backup::keep_rebased(
+        vcs,
         dir,
-        &BackupSource::Branch(branch),
+        &branch,
         &here,
-        Some(BackupMark::Rebased),
+        sync.ctx.active_path(),
+        RepoKey::Project,
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
@@ -1991,7 +2016,7 @@ pub(crate) fn reset_offer(
         branch,
         from: SyncFrom::Target(target.to_string()),
         target: Some(target.to_string()),
-        strategy: SyncStrategy::Ff,
+        history: None,
         jobs: 1,
     };
     let runs = plan(&sync, Some(as_mode), &[RepoOperand::Member(path.clone())]).is_ok();

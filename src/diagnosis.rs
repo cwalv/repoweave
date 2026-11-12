@@ -802,6 +802,7 @@ impl State {
                 verb_offers: &[
                     ("branch create", Form::C34),
                     ("workweave create", Form::C34),
+                    ("push", Form::Republish),
                 ],
             },
             Self::PushBranchBehind => &StateRow {
@@ -1495,7 +1496,7 @@ impl State {
                         the top-level one",
                 refused_by: "a verb that takes a target's work in or lands work into it, \
                              where a fast-forward does not do it",
-                offers: &[Form::C23SetHistory, Form::C23Rerun],
+                offers: &[Form::C23SetHistory, Form::C23SetHistoryRepo, Form::C23Rerun],
                 verb_offers: &[],
             },
             Self::HistoryContradicted => &StateRow {
@@ -1505,7 +1506,11 @@ impl State {
                         records another for this repo",
                 refused_by: "a verb that takes a target's work in or lands work into it, run \
                              with a `history` for one run",
-                offers: &[Form::C23SetHistory, Form::KeepRecordedHistory],
+                offers: &[
+                    Form::C23SetHistory,
+                    Form::C23SetHistoryRepo,
+                    Form::KeepRecordedHistory,
+                ],
                 verb_offers: &[],
             },
             Self::HistoryNotFastForward => &StateRow {
@@ -1743,6 +1748,7 @@ pub enum ChoiceId {
     KeepRecordedHistory,
     MigrateLockDriver,
     LostRace,
+    Republish,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1963,6 +1969,12 @@ impl ChoiceId {
                 keeps_work: "`rwv abort` moves only what the landing moved, from the tips it \
                              wrote; a branch someone else moved stays where they left it",
             },
+            Self::Republish => &ChoiceRow {
+                id: None,
+                phrase: "republish rwv's own rebase over the push branch it rewrote",
+                keeps_work: "leased to the push branch's tip, which the `rebased` backup holds; \
+                             the backup goes once the push lands",
+            },
             Self::ConvertIndex => &ChoiceRow {
                 id: None,
                 phrase: "convert the index and move it into the project clone",
@@ -2102,6 +2114,7 @@ pub enum Form {
     C19,
     C22,
     C23SetHistory,
+    C23SetHistoryRepo,
     C23Rerun,
     C24,
     C25,
@@ -2136,6 +2149,7 @@ pub enum Form {
     KeepRecordedHistory,
     MigrateLockDriver,
     LostRace,
+    Republish,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2147,7 +2161,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 84] = [
+    pub const ALL: [Form; 86] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2198,6 +2212,7 @@ impl Form {
         Self::C19,
         Self::C22,
         Self::C23SetHistory,
+        Self::C23SetHistoryRepo,
         Self::C23Rerun,
         Self::C24,
         Self::C25,
@@ -2232,6 +2247,7 @@ impl Form {
         Self::KeepRecordedHistory,
         Self::MigrateLockDriver,
         Self::LostRace,
+        Self::Republish,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -2546,11 +2562,17 @@ impl Form {
                 at: W::OnTarget,
                 shipped: true,
             },
+            Self::C23SetHistoryRepo => &FormRow {
+                choice: C::C23,
+                steps: &[Rwv("rwv branch set-history <h> --repo <m>")],
+                at: W::OnTarget,
+                shipped: true,
+            },
             Self::C23Rerun => &FormRow {
                 choice: C::C23,
                 steps: &[Rerun("--history <h>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C24 => &FormRow {
                 choice: C::C24,
@@ -2739,7 +2761,7 @@ impl Form {
                 choice: C::KeepRecordedHistory,
                 steps: &[RerunWithout("--history")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::MigrateLockDriver => &FormRow {
                 choice: C::MigrateLockDriver,
@@ -2750,6 +2772,12 @@ impl Form {
             Self::LostRace => &FormRow {
                 choice: C::LostRace,
                 steps: &[Rwv("rwv abort"), Rwv("rwv land")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::Republish => &FormRow {
+                choice: C::Republish,
+                steps: &[Rwv("rwv push --overwrite <repo>")],
                 at: W::Here,
                 shipped: true,
             },

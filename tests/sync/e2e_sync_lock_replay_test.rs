@@ -191,7 +191,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From primary: sync WA → primary (ff). Primary now has WA's commit + lock.
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wa.root)
         .assert()
         .success();
@@ -210,7 +210,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
     // Before the lock-replay fix landed this step would fail with a
     // `git rebase --continue` conflict on rwv.lock. After: success.
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -243,7 +243,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From primary: sync WB → primary (ff). Both contributions land.
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -298,19 +298,19 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
     // Primary absorbs WA (ff).
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wa.root)
         .assert()
         .success();
 
     // WB syncs primary (rebase) then lands in primary (ff).
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&wb.root)
         .assert()
         .success();
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -320,7 +320,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
     // (its initial rwv lock commit) that conflicts with the two prior lock-bumps.
     // Both should drop silently.
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&wc.root)
         .assert()
         .success();
@@ -352,7 +352,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
     // Land WC into primary (ff).
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wc.root)
         .assert()
         .success();
@@ -404,7 +404,7 @@ fn sync_ff_preserves_lock_only_commits() {
 
     // From primary: sync WW → primary via ff (the default).
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -473,7 +473,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
     rwv_lock_commit(&wa.root);
     rwv()
-        .args(["land", "--strategy", "ff"])
+        .args(["land", "--history", "ff-only"])
         .current_dir(&wa.root)
         .assert()
         .success();
@@ -495,7 +495,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     // .gitattributes is clean, so this must fail on primary's state, not
     // ww's — and the refusal must name primary's directory, not ww's.
     let out = rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -668,7 +668,7 @@ fn sync_to_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() 
 
     // Start the rebase from ww. It must stop on F1's docs conflict.
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -754,7 +754,7 @@ fn sync_to_continue_with_unstaged_resolution_bails_and_second_continue_succeeds(
 
     // First sync stops on the docs conflict, same as the golden path.
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();

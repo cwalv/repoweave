@@ -181,7 +181,7 @@ fn sync_to_fails_on_dangling_active() {
     // (the active-project check fires before any git operations).
     set_dangling_active(&ws, "evaporated");
 
-    let stderr = fail(&ws, &["land"]);
+    let stderr = fail(&ws, &["land", "--history", "linear"]);
     assert_dangling_error(&stderr, "evaporated");
 }
 

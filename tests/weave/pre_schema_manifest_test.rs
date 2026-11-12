@@ -476,7 +476,7 @@ fn a_landing_into_a_target_whose_tip_names_the_old_keys_refuses_naming_doctor_fi
     common::git_in(&ww.project, &["commit", "-m", "lock: ww change"]);
 
     let before = common::git_in(&primary.server, &["rev-parse", "main"]);
-    let out = common::cli::run(&["land", "--strategy", "rebase"], &ww.root);
+    let out = common::cli::run(&["land", "--history", "linear"], &ww.root);
     common::cli::refused(&out, State::UnparseableProjectAt);
     assert_eq!(
         common::git_in(&primary.server, &["rev-parse", "main"]),

@@ -426,3 +426,148 @@ pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Whether `branch` is published: it takes in from its own name, and its push
+/// branch is there as last fetched.
+pub(crate) fn published(
+    vcs: &dyn Vcs,
+    dir: &std::path::Path,
+    branch: &crate::vcs::RawRefName,
+) -> bool {
+    let Ok(Some(upstream)) = vcs.upstream_of(dir, branch) else {
+        return false;
+    };
+    if upstream.branch != *branch {
+        return false;
+    }
+    let Ok(Some(target)) = vcs.push_target_of(dir, branch, Some(&upstream.remote)) else {
+        return false;
+    };
+    vcs.remote_copies(dir, branch)
+        .is_ok_and(|copies| copies.iter().any(|copy| copy.remote == target))
+}
+
+/// Keep `head`, the tip of `branch` a rebase is about to rewrite, as a
+/// `rebased` backup. One of an unpublished branch is journaled on the op at
+/// `workspace`, so it goes when the op completes; one of a published branch
+/// stays until the republish replaces its push branch.
+pub(crate) fn keep_rebased(
+    vcs: &dyn Vcs,
+    dir: &std::path::Path,
+    branch: &crate::vcs::RawRefName,
+    head: &crate::vcs::ResolvedRevisionId,
+    workspace: &std::path::Path,
+    repo: crate::manifest::RepoKey,
+) -> anyhow::Result<()> {
+    let unpublished = !published(vcs, dir, branch);
+    let kept = vcs.create_backup(
+        dir,
+        &crate::vcs::BackupSource::Branch(branch.clone()),
+        head,
+        Some(BackupMark::Rebased),
+    )?;
+    if unpublished {
+        crate::op_state::journal_rebased_backup(
+            workspace,
+            crate::op_state::KeptBackup {
+                repo,
+                name: kept.backup().name.as_str().to_owned(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// Drop the `rebased` backups an op journaled, now it has completed: the
+/// rebased commits hold their work. One whose drop would leave a live pin
+/// reached by nothing stays, reported.
+pub(crate) fn drop_completed_rebased(
+    primary: &std::path::Path,
+    root: &std::path::Path,
+    project: &ProjectName,
+    kept: &[crate::op_state::KeptBackup],
+) {
+    if kept.is_empty() {
+        return;
+    }
+    let live = live_pins(primary).unwrap_or_default();
+    for one in kept {
+        let (dir, vcs, member) = match &one.repo {
+            crate::manifest::RepoKey::Project => (project_dir(root, project), project_vcs(), None),
+            crate::manifest::RepoKey::Member(path) => (
+                root.join(path.as_path()),
+                crate::vcs::probe_vcs(),
+                Some(path),
+            ),
+        };
+        let Ok(listed) = vcs.list_backups(&dir, RemoteTracking::Counted) else {
+            continue;
+        };
+        let Some(found) = listed
+            .iter()
+            .find(|l| l.backup.name.as_str() == one.name)
+            .map(|l| l.backup.clone())
+        else {
+            continue;
+        };
+        let held = member
+            .and_then(|m| live.get(m))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        match crate::pins::stranded_by_dropping(vcs.as_ref(), &dir, held, &[&found]) {
+            Ok(stranded) if stranded.is_empty() => {
+                if let Err(e) = vcs.drop_backup(&dir, &found.name) {
+                    eprintln!(
+                        "rwv: could not drop the rebased backup {}: {e:#}",
+                        found.name
+                    );
+                }
+            }
+            Ok(_) => eprintln!(
+                "rwv: kept the rebased backup {}: a live lock pins a commit only it reaches",
+                found.name
+            ),
+            Err(e) => eprintln!(
+                "rwv: kept the rebased backup {}: could not judge the pin rule: {e:#}",
+                found.name
+            ),
+        }
+    }
+}
+
+/// Drop each `rebased` backup of `dir` holding `replaced`, the push branch
+/// tip a republish just replaced: the rebased commits now on the remote hold
+/// its work.
+pub(crate) fn drop_republished(vcs: &dyn Vcs, dir: &std::path::Path, replaced: &CommitId) {
+    let Ok(listed) = vcs.list_backups(dir, RemoteTracking::Counted) else {
+        return;
+    };
+    for entry in listed {
+        let backup = entry.backup;
+        if backup.mark == Some(BackupMark::Rebased) && backup.tip.id() == replaced {
+            match vcs.drop_backup(dir, &backup.name) {
+                Ok(()) => eprintln!(
+                    "dropped the rebased backup {} (held {}): the republish replaced it",
+                    backup.name,
+                    replaced.short()
+                ),
+                Err(e) => eprintln!(
+                    "rwv: could not drop the rebased backup {}: {e:#}",
+                    backup.name
+                ),
+            }
+        }
+    }
+}
+
+/// The `rebased` backup in `dir` that holds `push_tip`, the push branch's
+/// tip: where one does, rwv's own rebase rewrote what was published, and the
+/// republish recovery applies.
+pub(crate) fn rebased_holding(vcs: &dyn Vcs, dir: &std::path::Path, push_tip: &CommitId) -> bool {
+    vcs.list_backups(dir, RemoteTracking::Counted)
+        .is_ok_and(|listed| {
+            listed.iter().any(|l| {
+                l.backup.mark == Some(BackupMark::Rebased) && l.backup.tip.id() == push_tip
+            })
+        })
+}

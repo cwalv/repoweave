@@ -129,14 +129,14 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     succeed(&ws, &["lock"]);
     common::git_in(&project, &["add", "rwv.lock"]);
     common::git_in(&project, &["commit", "-m", "primary: relock"]);
-    let parked = rwv(&seat, &["land"]);
+    let parked = rwv(&seat, &["land", "--history", "linear"]);
     assert!(!parked.status.success(), "the conflict must park land");
     succeed(&seat, &["abort"]);
 
     let primary_tip = common::git_in(&primary_lib, &["rev-parse", "HEAD"]);
     common::git_in(&seat_lib, &["reset", "--hard", &primary_tip]);
     commit_file(&seat_lib, "d.txt", "seat\n", "seat: lib again");
-    succeed(&seat, &["land"]);
+    succeed(&seat, &["land", "--history", "linear"]);
     succeed(&ws, &["workweave", "delete", "--project", PROJECT, "s1"]);
 
     succeed(&ws, &["workweave", "create", "--project", PROJECT, "s2"]);

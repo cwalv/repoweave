@@ -5,7 +5,8 @@
 use clap::ValueEnum;
 use repoweave::check::KindFilter;
 use repoweave::integration::IssueKind;
-use repoweave::op_state::{OpPhase, OpVerb, SyncStrategy};
+use repoweave::manifest::History;
+use repoweave::op_state::{OpPhase, OpVerb};
 use repoweave::vcs::{ConflictOp, MidOperation};
 use repoweave::workspace::AdvisoryKindOutput;
 use schemars::JsonSchema;
@@ -110,8 +111,8 @@ fn a_mid_operation_token_without_its_prefix_or_name_does_not_parse() {
 }
 
 #[test]
-fn sync_strategy_displays_reads_and_is_offered_as_the_token_it_serializes_to() {
-    let variants = SyncStrategy::value_variants();
+fn history_displays_reads_and_is_offered_as_the_token_it_serializes_to() {
+    let variants = History::value_variants();
     assert!(variants.len() > 1, "{variants:?}");
     for variant in variants {
         let token = wire(variant);
@@ -119,10 +120,10 @@ fn sync_strategy_displays_reads_and_is_offered_as_the_token_it_serializes_to() {
         assert_eq!(
             variant.to_possible_value().unwrap().get_name(),
             token,
-            "{variant:?}: the name `--strategy` accepts"
+            "{variant:?}: the name `--history` accepts"
         );
         assert_eq!(
-            serde_json::from_value::<SyncStrategy>(Value::String(token)).unwrap(),
+            serde_json::from_value::<History>(Value::String(token)).unwrap(),
             *variant,
             "{variant:?}: read back from its own token"
         );

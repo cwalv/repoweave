@@ -172,7 +172,7 @@ fn pre_op(parked: &Parked) -> PreOp {
 
 fn run_sync_to_into_park(parked: &Parked) {
     let out = common::rwv()
-        .arg("land")
+        .args(["land", "--history", "linear"])
         .current_dir(&parked.seat.root)
         .output()
         .unwrap();

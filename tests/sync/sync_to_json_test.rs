@@ -191,7 +191,7 @@ fn sync_to_retire_json_round_trip() {
     let target_server_before = common::git_in(&primary_server, &["rev-parse", "HEAD"]);
 
     let assert = rwv()
-        .args(["land", "--strategy=rebase", "--retire", "--json"])
+        .args(["land", "--history=linear", "--retire", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -308,7 +308,7 @@ fn sync_to_json_retired_false_without_retire_flag() {
 
     // Invoke WITHOUT --retire.
     let assert = rwv()
-        .args(["land", "--strategy=ff", "--json"])
+        .args(["land", "--history=ff-only", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -348,7 +348,7 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     std::fs::write(ww_server.join("scratch.txt"), "not committed\n").unwrap();
 
     let assert = rwv()
-        .args(["land", "--strategy=rebase", "--retire", "--json"])
+        .args(["land", "--history=linear", "--retire", "--json"])
         .current_dir(&ww)
         .assert()
         .failure();
@@ -441,7 +441,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     // land --strategy=ff from ww to primary: step 1 is a no-op, step 3
     // is also a no-op (already at the same tip).
     let assert = rwv()
-        .args(["land", "--strategy=ff", "--json"])
+        .args(["land", "--history=ff-only", "--json"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -491,7 +491,7 @@ fn sync_to_json_outside_workspace_no_panic() {
     let tmp = common::tempdir().unwrap();
 
     rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -529,7 +529,7 @@ const RESUMED_OP_ID: &str = "envelope-identity-resume";
 /// owned by `workspace`, landing into `target`, retiring nothing.
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path, overrides: &str) {
     let body = format!(
-        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [{overrides}], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
@@ -704,7 +704,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
 
     // The op parks at replay on the conflict.
     rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww)
         .assert()
         .failure();

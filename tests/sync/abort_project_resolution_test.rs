@@ -181,7 +181,7 @@ fn park_with_target_manifest_advanced(parent: &Path) -> Parked {
     let target_project_pre_op = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();

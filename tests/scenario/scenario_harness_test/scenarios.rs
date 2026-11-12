@@ -299,7 +299,7 @@ pub fn feature_in_primary_while_main_moves() -> Scenario {
             Step::commit(&a(), Repo::Lib, "main-lib"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["switch", "feat-x"]).expect(Exit::Succeeds),
-            Step::rwv(&a(), &["sync", "--strategy", "rebase"])
+            Step::rwv(&a(), &["sync", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),
@@ -3711,9 +3711,11 @@ pub fn sync_takes_in_the_target() -> Scenario {
             Step::commit(&a(), Repo::Lib, "main-lib"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
-                .claim(Claim::OutputContains("--strategy rebase")),
-            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+                .expect(Exit::refuses(Repo::App, State::HistoryUnset))
+                .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+                .claim(Claim::OutputContains("rerun with --history <h>"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .may_rewrite(&[Repo::App])
                 .claim(Claim::OutputContains("local/remotes/app: rebased onto"))
@@ -4520,7 +4522,7 @@ pub fn sync_refuses_off_lineage() -> Scenario {
             )
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App]),
-            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
                 .expect(Exit::refuses(Repo::App, State::PinOffLineage))
                 .claim(Claim::OutputContains("local/remotes/app: pin off lineage"))
                 .claim(Claim::OutputContains(
@@ -4549,8 +4551,9 @@ pub fn sync_refuses_off_lineage() -> Scenario {
     )
 }
 
-/// A range holding a merge is never rebased: `sync --strategy rebase` refuses
-/// it and names the merge that keeps it.
+/// A range holding a merge is never rebased: `sync` under a linear setting
+/// integrates it by a merge commit instead, first parent the feature's, and
+/// reports it `merged`.
 pub fn sync_never_rebases_a_merge() -> Scenario {
     scenario(
         "sync never rebases a range holding a merge",
@@ -4568,17 +4571,29 @@ pub fn sync_never_rebases_a_merge() -> Scenario {
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
-                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
-                .claim(Claim::OutputContains("rwv sync --from main"))
-                .claim(Claim::LocalStateUnchanged(ww("w"))),
-            Step::rwv(&ww("w"), &["sync", "--from", "main"])
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: merged: the commits a rebase would replay hold the merge",
+                ))
+                .claim(Claim::OutputLacks("local/remotes/app: rebased onto"))
                 .claim(Claim::Contains {
                     at: ww("w"),
                     repo: Repo::App,
                     rev: "proj--w",
                     mark: "side-app",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w",
+                    mark: "main-app",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w^1",
+                    mark: "w-app",
                 }),
         ],
     )
@@ -4602,7 +4617,7 @@ pub fn sync_refuses_to_rewrite_under_dependents() -> Scenario {
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::commit(&a(), Repo::App, "main-app"),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
                 .claim(Claim::OutputContains("target dependents"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
@@ -4732,7 +4747,7 @@ fn feature_rebased_past_its_push_branch() -> Vec<Step> {
             .expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "main-app"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+        Step::rwv(&ww("w"), &["sync", "--history", "linear"])
             .expect(Exit::Succeeds)
             .may_rewrite(&[Repo::App, Repo::Proj])
             .claim(Claim::Contains {

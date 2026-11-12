@@ -147,7 +147,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
     commit_file(&ww.repo, "shared.txt", "from ww\n", "ww: add shared.txt");
 
     let sync_out = rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .output()
         .unwrap();

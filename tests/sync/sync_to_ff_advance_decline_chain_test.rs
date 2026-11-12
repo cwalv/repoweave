@@ -146,7 +146,7 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr() {
     std::fs::write(primary.server_dir.join("foo"), "blocking\n").unwrap();
 
     let assert = common::rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -205,7 +205,7 @@ fn sync_to_ff_advance_decline_path_carries_gits_stderr_for_the_project_repo() {
     std::fs::write(primary.project_dir.join("newdir"), "blocking\n").unwrap();
 
     let assert = common::rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .output()
         .unwrap();

@@ -191,7 +191,7 @@ fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
 
     // First sync parks mid-replay on the real conflict.
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -203,7 +203,7 @@ fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
     // Attempt a new sync from ww while the op-state file is present.
     // It should fail with an in-progress error.
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -237,7 +237,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
     let op_id = repoweave::op_state::OpId::new_now();
     let mut owner = repoweave::op_state::OwnerRecord::new_sync(
         &op_id,
-        repoweave::op_state::SyncStrategy::Rebase,
+        None,
         repoweave::manifest::ProjectName::new("web-app").unwrap(),
         &primary.root,
         &ww.root,
@@ -248,7 +248,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
     let before = unix_now();
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -313,7 +313,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
     let out = rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -393,7 +393,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -442,7 +442,7 @@ fn continue_with_strategy_flag_is_rejected() {
 
     // Plant a v2 owner record so --continue would proceed if it were alone.
     let op_state_json = format!(
-        "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -453,7 +453,7 @@ fn continue_with_strategy_flag_is_rejected() {
 
     // Passing --strategy alongside --continue must be rejected.
     let assertion = rwv()
-        .args(["sync", "--strategy", "rebase", "--continue"])
+        .args(["sync", "--history", "linear", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -515,7 +515,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
 
     // rwv land --strategy=rebase --continue must be rejected.
     let assertion = rwv()
-        .args(["land", "--strategy", "rebase", "--continue"])
+        .args(["land", "--history", "linear", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -596,7 +596,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -637,7 +637,7 @@ fn abort_restores_repos_and_removes_op_state() {
     common::savepoint::plant_at(&ww.server_dir, op_id, &ww_server_sha);
 
     let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
@@ -677,7 +677,7 @@ fn abort_restores_repos_and_removes_op_state() {
 /// Plant a v2 owner record for an in-flight op at `ws_root`.
 fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: &Path) {
     let json = format!(
-        "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -771,7 +771,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
     plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -899,7 +899,7 @@ fn op_guard_precedes_lock_relation_classification() {
 
     // A `rwv land` must report the in-flight op, NOT a lock/relation error.
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -965,7 +965,7 @@ fn op_state_file_written_during_sync_to_and_removed_on_success() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();

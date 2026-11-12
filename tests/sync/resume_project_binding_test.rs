@@ -171,7 +171,7 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
     let target_project_parked = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();

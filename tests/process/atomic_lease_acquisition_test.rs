@@ -215,7 +215,7 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // in flight on disk — a real holder produced by the production acquire
     // path, exactly what a crashed/conflicted peer leaves behind.
     let assertion = rwv()
-        .args(["land", "--strategy", "rebase"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -239,7 +239,7 @@ fn sync_to_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     // other refusal, so regardless of what state the parked op left the
     // repos in, the refusal MUST be the in-flight shape.
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -296,7 +296,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     // First attempt: land must refuse via the dirty-source preflight, NOT
     // via the in-flight refusal (nothing is in flight yet).
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -321,7 +321,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     // was idempotent and the first attempt didn't strand any records that
     // would now surface as an "in progress" error.
     let assertion = rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -426,7 +426,7 @@ fn doctor_leaves_live_lease_alone() {
     let owner_ws = tmp.path().join("live-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let owner_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -475,7 +475,7 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     let owner_ws = tmp.path().join("other-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let fresh_json = format!(
-        "{{\"id\": \"fresh-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"fresh-op\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",

@@ -82,7 +82,7 @@ fn every_writing_verb_refuses_from_another_projects_directory() {
         &["update", "--remote"],
         &["push"],
         &["sync"],
-        &["land"],
+        &["land", "--history", "linear"],
         &["update"],
         &["fetch"],
         &["pull"],

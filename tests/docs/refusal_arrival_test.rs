@@ -101,7 +101,7 @@ fn plain_weave(root: &Path) -> PathBuf {
 /// A v2 owner record for an op whose workspace is `ws`.
 fn owner_record_json(ws: &Path) -> String {
     format!(
-        "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"history\": null, \
          \"project\": \"web-app\", \"source\": \"{ws}\", \"target\": \"{ws}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -658,7 +658,7 @@ fn a_dirty_workweave_at_sync_to_time_routes_to_its_token() {
     let text = std::fs::read_to_string(&manifest).unwrap();
     std::fs::write(&manifest, format!("{text}# edited, uncommitted\n")).unwrap();
 
-    let stderr = refusal_stderr(&["land"], &workweave);
+    let stderr = refusal_stderr(&["land", "--history", "linear"], &workweave);
     assert!(
         stderr.contains("rwv land: projects/web-app: edits dirty\n    rwv.toml\n"),
         "precondition: the land dirt preflight fired:\n{stderr}"
@@ -716,7 +716,7 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
     let original = std::fs::metadata(&server).unwrap().permissions();
     std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o000)).unwrap();
     let output = common::rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&workweave)
         .output()
         .expect("rwv should run");
@@ -861,7 +861,7 @@ fn a_landing_judges_the_edits_of_both_sides_in_one_refusal() {
         std::fs::write(side.join(SERVER_PATH).join("README.md"), "edited\n").unwrap();
     }
 
-    let stderr = refusal_stderr(&["land"], &workweave);
+    let stderr = refusal_stderr(&["land", "--history", "linear"], &workweave);
     for line in [
         format!("rwv land: {SERVER_PATH}: edits dirty\n    README.md\n"),
         format!(
@@ -885,7 +885,7 @@ fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
     std::fs::write(&manifest, format!("{text}# edited, uncommitted\n")).unwrap();
 
     let out = common::rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&workweave)
         .output()
         .unwrap();

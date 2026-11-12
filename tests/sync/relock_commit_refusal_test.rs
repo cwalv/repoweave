@@ -141,7 +141,7 @@ fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_wa
     let target_head = head(&project_dir(&weave.root));
     weave.refuse_commits();
 
-    let out = run(&s1, &["land"]);
+    let out = run(&s1, &["land", "--history", "linear"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "the op must refuse:\n{stderr}");
     assert!(
@@ -172,7 +172,7 @@ fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_wa
     assert_eq!(savepoints(&common::under(&s1, LIB)), "", "and no savepoint");
 
     weave.accept_commits();
-    succeed(&s1, &["land"]);
+    succeed(&s1, &["land", "--history", "linear"]);
 }
 
 /// The seat and the primary both moved the member, so the replay rebases it
@@ -185,7 +185,7 @@ fn park_in_relock(weave: &Weave) -> PathBuf {
     succeed(&s1, &["lock", "--commit"]);
     weave.refuse_commits();
 
-    let out = run(&s1, &["land", "--strategy", "rebase"]);
+    let out = run(&s1, &["land", "--history", "linear"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),

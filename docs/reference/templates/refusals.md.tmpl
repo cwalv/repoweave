@@ -577,23 +577,6 @@ checkout.
 **Exits.** Move it aside and re-run the command the message names. Nothing
 was written.
 
-### `not-fast-forwardable`
-
-**Condition.** The tips are not in the fast-forward relation `--strategy=ff`
-requires.
-
-**Why.** `ff` is the strategy that promises to add nothing and rewrite
-nothing. Where a fast-forward is impossible, honoring that promise means
-stopping rather than quietly doing something else.
-
-**Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
-reconcile the repos by hand first. Where the commits a rebase would replay hold
-a merge, `rwv sync` and `rwv land` name `rwv sync --from <target>` instead,
-which takes the target in by a merge rather than flattening it. A landing whose target moved
-after it composed stops as `target` `moved mid-operation` instead.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
-
 ### `occupied-bootstrap-dir`
 
 **Condition.** The bootstrap target is neither a workspace nor empty, and no

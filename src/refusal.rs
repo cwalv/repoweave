@@ -54,8 +54,6 @@ pub enum RefusalKind {
     NoRemoteDefaultBranch,
     /// HEAD is detached, unborn or unreadable where the verb must land or move.
     HeadNotOnBranch,
-    /// Preflight: tips are not in the fast-forward relation the strategy needs.
-    NotFastForwardable,
     /// A checkout dropped from the lock carries commits nothing else reaches.
     DroppedRepoHasUniqueCommits,
     /// `--continue` arguments disagree with the recorded op.

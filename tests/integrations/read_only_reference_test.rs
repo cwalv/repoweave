@@ -444,7 +444,7 @@ fn sync_to_leaves_the_reference_members_read_only() {
     commit_all(&seat.join(OWNED_PATH), "seat: new owned file");
     succeed(&["lock", "--commit"], &seat);
 
-    succeed(&["land"], &seat);
+    succeed(&["land", "--history", "linear"], &seat);
 
     assert!(weave.owned.join("NEW").exists(), "the commit landed");
     assert_read_only(&weave.reference, "the primary's reference after land");
@@ -547,8 +547,15 @@ fn abort_restoring_an_older_manifest_resettles_the_target() {
     succeed(&["lock", "--commit"], &seat);
 
     let mut land = common::rwv_std();
-    land.args(["land", "--retire", "--allow-member-change", OWNED_PATH])
-        .current_dir(&seat);
+    land.args([
+        "land",
+        "--history",
+        "linear",
+        "--retire",
+        "--allow-member-change",
+        OWNED_PATH,
+    ])
+    .current_dir(&seat);
     let held = common::pause::Paused::spawn(land, "retire", &tmp.path().join("pause"))
         .expect("the landing reaches its retire step");
     drop(held);

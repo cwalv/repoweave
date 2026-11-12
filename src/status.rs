@@ -815,6 +815,7 @@ fn judge_push_branch(
             branch: &attached.to_string(),
             declared: Some(&entry.branch),
             member: true,
+            republish: false,
         },
         &standing,
     )

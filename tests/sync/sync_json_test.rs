@@ -157,7 +157,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -216,7 +216,7 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let assert = rwv()
-        .args(["land", "--strategy", "rebase", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -252,7 +252,7 @@ fn sync_json_moves_nothing_for_a_member_already_at_its_lock() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
     let assert = rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -399,13 +399,13 @@ fn outcome_failed_ff_impossible_uses_ff_impossible_tag() {
     let v = serialize_outcome(
         "github/cwalv/foo",
         "/abs/foo",
-        &RepoSyncOutcome::Failed(SyncFailure::FastForwardImpossible {
+        &RepoSyncOutcome::Failed(SyncFailure::MergeFailed {
             error: "diverged".into(),
             cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
         }),
     );
-    // Critical: must be `ff-impossible`, not `fast-forward-impossible`.
-    assert_eq!(v["failure"]["kind"], "ff-impossible");
+    // Critical: must be `merge-failed`, not `fast-forward-impossible`.
+    assert_eq!(v["failure"]["kind"], "merge-failed");
 }
 
 #[test]
@@ -445,7 +445,7 @@ fn outcome_failed_with_rebase_conflict_cause_surfaces() {
 #[test]
 fn strategy_failures_always_carry_cause_on_the_wire() {
     for failure in [
-        SyncFailure::FastForwardImpossible {
+        SyncFailure::MergeFailed {
             error: "diverged".into(),
             cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
         },
@@ -757,7 +757,7 @@ fn manifest_order() -> Vec<&'static str> {
 fn sync_from_primary(primary: &Workspace, ww: &Workspace, jobs: &str) -> Vec<u8> {
     let _ = primary;
     rwv()
-        .args(["land", "--json", "-j", jobs])
+        .args(["land", "--history", "linear", "--json", "-j", jobs])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1002,7 +1002,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1050,7 +1050,7 @@ fn sync_json_discloses_the_verdict_a_failed_rebase_ran_against() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let assert = rwv()
-        .args(["land", "--strategy", "rebase", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .failure();

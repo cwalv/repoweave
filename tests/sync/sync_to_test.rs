@@ -179,7 +179,7 @@ fn sync_to_ff_clean_advances_target() {
 
     // Run land from ww → primary with ff strategy.
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -252,7 +252,7 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     // Run land from ww → primary with rebase strategy.
     // Both sides have the same lock (initial_sha), so no --force needed.
     rwv()
-        .args(["land", "--strategy=rebase"])
+        .args(["land", "--history=linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -354,7 +354,7 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww conflict"]);
 
     let assert = rwv()
-        .args(["land", "--strategy=rebase"])
+        .args(["land", "--history=linear"])
         .current_dir(&ww.root)
         .assert();
 
@@ -449,7 +449,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     // ww's lock is fresh (ww_c2 matches ww's server).
     // primary's lock is fresh (primary_c2 matches primary's server).
     rwv()
-        .args(["land", "--strategy=rebase"])
+        .args(["land", "--history=linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -495,7 +495,7 @@ fn sync_to_clears_op_state_on_success() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -534,7 +534,7 @@ fn sync_to_continue_from_step3_ff() {
     // Then test --continue from clean state (should be a no-op on re-run
     // since there's no op-state).
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -590,7 +590,7 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
 
     // Trying land with --strategy=ff from ww (which is behind primary) should fail.
     let err_output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -641,7 +641,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     let server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let err_output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -690,7 +690,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
     common::git_in(&primary.project_dir, &["checkout", "--", "README.md"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -723,7 +723,7 @@ fn sync_to_advances_the_target_branch_not_just_head() {
     let ww_project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     let output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -787,7 +787,7 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
     common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
     let err_output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -823,7 +823,7 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
     // Re-attach and re-run: the work lands on the named branch.
     common::git_in(&primary.server_dir, &["checkout", "main"]);
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -849,7 +849,7 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
     common::git_in(&primary.project_dir, &["checkout", "--detach", "HEAD"]);
 
     let err_output = rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -897,7 +897,7 @@ fn a_refused_landing_leaves_the_source_ref_where_it_was() {
     common::git_in(&primary.server_dir, &["checkout", "--detach", "HEAD"]);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -999,7 +999,7 @@ fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
 
     // land must succeed despite the mismatch.
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1067,7 +1067,7 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
     // rwv sync from the workweave should pick up primary's project commit,
     // not bail with "active project mismatch".
     rwv()
-        .args(["sync", "--strategy=ff"])
+        .args(["sync", "--history=ff-only"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1188,7 +1188,7 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     // (the parent workweave), and retire must accept the work as merged
     // once the parent has it.
     rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1249,7 +1249,7 @@ fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
     child_work_ready_to_retire(&child_ww);
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1303,7 +1303,7 @@ fn a_retire_that_refuses_leaves_no_completion_claim_behind() {
     .unwrap();
     let parent_before = common::git_in(parent_ww.join(SERVER_PATH), &["rev-parse", "HEAD"]);
 
-    let out = common::cli::run(&["land", "--retire"], &child_ww);
+    let out = common::cli::run(&["land", "--history", "linear", "--retire"], &child_ww);
     let stderr = common::cli::refused(&out, State::EditsDirty);
     assert!(stderr.contains("scratch.txt"), "{stderr}");
     assert_eq!(
@@ -1331,7 +1331,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
     child_work_ready_to_retire(&child_ww);
 
     let assert = rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1419,7 +1419,7 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww pre-rebase"]);
 
     rwv()
-        .args(["land", "--strategy=rebase"])
+        .args(["land", "--history=linear"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -1471,7 +1471,7 @@ fn land_takes_no_target_operand() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww advance"]);
     let before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    let out = common::cli::run(&["land", "../../primary"], &ww_root);
+    let out = common::cli::run(&["land", "--history", "linear", "../../primary"], &ww_root);
     assert_eq!(
         out.status.code(),
         Some(2),

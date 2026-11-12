@@ -128,7 +128,7 @@ const GATED: &[&[&str]] = &[
     &["update", "--remote"],
     &["pull"],
     &["sync"],
-    &["land"],
+    &["land", "--history", "linear"],
     &["push"],
 ];
 

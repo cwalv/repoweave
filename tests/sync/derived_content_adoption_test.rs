@@ -300,7 +300,7 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
     assert_no_durable_definition(&ww.managed_repo);
 
     let synced = rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -387,7 +387,7 @@ fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
     add_a_verb_and_lock(&ww, "weave");
 
     let out = rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -445,7 +445,7 @@ fn the_templates_the_generator_reads_stay_authored() {
     }
 
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -481,7 +481,7 @@ fn the_templates_the_generator_reads_stay_authored() {
 /// Land `ww` onto its recorded parent, returning `(stdout, stderr)`.
 fn land(ww: &Workspace, json: bool) -> (String, String) {
     let mut cmd = rwv();
-    cmd.args(["land", "--strategy", "rebase"]);
+    cmd.args(["land", "--history", "linear"]);
     if json {
         cmd.arg("--json");
     }

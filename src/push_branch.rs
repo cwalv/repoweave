@@ -150,6 +150,9 @@ pub(crate) struct Subject<'a> {
     /// would be copied.
     pub(crate) declared: Option<&'a TrackingRef>,
     pub(crate) member: bool,
+    /// The divergence is rwv's own rebase of what was published: a `rebased`
+    /// backup holds the push branch's tip.
+    pub(crate) republish: bool,
 }
 
 /// `standing` judged for `subject`, when it is worth a line.
@@ -185,6 +188,9 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
         judging = judging.bind("<b>", declared);
     }
     judging = judging.bind("<repo>", subject.repo);
+    if subject.republish {
+        judging = judging.by_verb("push");
+    }
     let nothing_to_settle = matches!(
         standing,
         Standing::Diverged { unpushed, rewritten: false } if unpushed.is_empty()

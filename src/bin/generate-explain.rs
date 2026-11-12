@@ -8719,14 +8719,14 @@ mod tests {
         let page = concat!(
             "# page\n",
             "\n",
-            "`not-fast-forwardable`, `tool-missing`, `head-not-on-branch`, `rebase-failed`,\n",
+            "`dropped-repo-has-unique-commits`, `tool-missing`, `head-not-on-branch`, `rebase-failed`,\n",
             "[`alignment`](#x) (`detached`), `missing-lock-merge-driver` (`attribute-absent`,\n",
             "`attribute-legacy`), `workweave-drift` (`.rwv-workweave` is gone).\n",
             "`rwv workweave create pr-42`, `rwv workweave list`,\n",
             "`rwv -w myproj--hotfix land`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
-            "`rwv --help`, `rwv explain not-fast-forwardable`, `rwv explain land`,\n",
+            "`rwv --help`, `rwv explain dropped-repo-has-unique-commits`, `rwv explain land`,\n",
             "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
             // rwv-advice: not-an-invocation
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv land`.\n",

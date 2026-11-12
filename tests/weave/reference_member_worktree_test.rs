@@ -324,7 +324,7 @@ fn sync_to_lands_an_owned_commit_past_a_detached_reference_member() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -360,7 +360,7 @@ fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
         ));
 
     rwv()
-        .args(["land"])
+        .args(["land", "--history", "linear"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -386,7 +386,7 @@ fn sync_to_retire_with_a_reference_member_retires_the_workweave() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -418,7 +418,7 @@ fn abort_restores_a_reference_member_like_any_other() {
     common::savepoint::plant_at(&ww.ref_checkout, op_id, &start);
     let advanced = commit_file(&ww.ref_checkout, "R", "r\n", "op: advance");
     let record = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"{PROJECT}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{target}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{\"{REF_PATH}\": \"{advanced}\"}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",

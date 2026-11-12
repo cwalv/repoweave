@@ -925,7 +925,7 @@ fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
     }
 
     rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&ww)
         .assert()
         .success();

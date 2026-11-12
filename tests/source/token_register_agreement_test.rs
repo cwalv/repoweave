@@ -317,7 +317,7 @@ fn the_register_walk_is_not_vacuous() {
         ("doctor", "orphaned-clone"),
         ("issue", "tool-missing"),
         ("vcs", "not-a-repo"),
-        ("sync", "ff-impossible"),
+        ("sync", "merge-failed"),
     ] {
         assert!(
             regs[name].contains(witness),

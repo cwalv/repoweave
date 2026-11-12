@@ -136,7 +136,7 @@ fn park() -> Parked {
         primary,
         seat,
     };
-    let out = rwv(&parked.seat.root, &["land"]);
+    let out = rwv(&parked.seat.root, &["land", "--history", "linear"]);
     assert!(
         !out.status.success(),
         "the member conflict must park land:\n{}",
@@ -172,7 +172,7 @@ fn mid_op(repo: &Path) -> bool {
 /// Resolves the member conflict a fresh `land` parks on and resumes it, so
 /// the landing runs to completion.
 fn land(parked: &Parked) {
-    let out = rwv(&parked.seat.root, &["land"]);
+    let out = rwv(&parked.seat.root, &["land", "--history", "linear"]);
     let stderr = stderr_of(&out);
     assert!(
         !stderr.contains("rwv explain op-in-progress")
@@ -316,7 +316,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
     std::fs::remove_file(record_path(&parked)).unwrap();
 
     for (dir, args) in [
-        (&parked.seat.root, &["land"][..]),
+        (&parked.seat.root, &["land", "--history", "linear"][..]),
         (&target, &["abort"][..]),
         (&target, &["status"][..]),
     ] {
@@ -351,7 +351,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
     succeed(&target, &["doctor", "--fix"]);
 
     assert_no_op_residue(&parked);
-    let out = rwv(&parked.seat.root, &["land"]);
+    let out = rwv(&parked.seat.root, &["land", "--history", "linear"]);
     common::cli::refused(&out, State::PinBackwards);
     succeed(
         &parked.seat.root,

@@ -416,7 +416,7 @@ fn sync_post_refresh_clears_stale_index() {
     // Both sides committed independent lock advances above, which diverges
     // the project repos; the test's focus is the post-refresh.
     rwv()
-        .args(["sync", "--strategy", "rebase"])
+        .args(["sync", "--history", "linear"])
         .current_dir(&ww_root)
         .assert()
         .success();
@@ -538,7 +538,10 @@ fn sync_to_precondition_accepts_tag_form_lock_entry() {
     common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
     // rwv land the source (tag-pinned lock) must not emit "lock is stale".
-    let out = rwv().args(["land"]).current_dir(&cwd_root).assert();
+    let out = rwv()
+        .args(["land", "--history", "linear"])
+        .current_dir(&cwd_root)
+        .assert();
 
     let output = out.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);

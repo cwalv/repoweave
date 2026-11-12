@@ -3085,49 +3085,25 @@ fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
     }
 }
 
-/// The run is green but for the landing that follows `rwv sync --from
-/// main`: it fast-forwards `main` in each of `repos` onto the seat's merge,
-/// whose first parent is the seat's, which is what the first-parents check
-/// holds against it. The merge commit with `main` as first parent is the
-/// integration a later landing makes; until then this pins where the printed
-/// route ends.
-fn assert_green_but_the_fast_forward_onto_a_merge_of_main(report: &Report, repos: &[Repo]) {
-    assert!(
-        report.unmet.is_empty() && report.pending.is_none(),
-        "{report}"
-    );
-    let mut broken: Vec<Repo> = report
-        .violations
-        .iter()
-        .map(|(label, violation)| match violation {
-            Violation::FirstParentsBroken { repo, branch, .. }
-                if label == "rwv land" && branch == "main" =>
-            {
-                *repo
-            }
-            _ => panic!("an unexpected violation after `{label}`: {violation}\n{report}"),
-        })
-        .collect();
-    broken.dedup();
-    assert_eq!(broken, repos, "{report}");
-}
-
-/// A landing never rebases a member range holding a merge: it refuses
-/// before anything moves, naming the merge that takes the target in, and
-/// after that merge the landing fast-forwards, the seat's commits landing
-/// as they are.
+/// A landing never rebases a member range holding a merge: under `linear` it
+/// integrates the range by a merge commit whose first parent is `main`, and
+/// reports it `merged`. Without a setting it refuses before anything moves.
+/// After `rwv sync --from main` the seat holds `main` only through a merge's
+/// second parent, and the landing again makes a merge commit rather than
+/// fast-forwarding `main` onto the seat's first parents.
 #[test]
 fn a_landing_never_rebases_a_member_range_holding_a_merge() {
     let mut steps = seat_holding_a_merge_behind_main();
     steps.extend([
         Step::rwv(&ww("w"), &["land"])
-            .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
-            .claim(Claim::OutputContains("rwv sync --from main"))
+            .expect(Exit::refuses(Repo::App, State::HistoryUnset))
             .claim(Claim::LocalStateUnchanged(ww("w")))
             .claim(Claim::LocalStateUnchanged(a())),
-        Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["land"])
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
             .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/app: merged: the commits a rebase would replay hold the merge",
+            ))
             .claim(Claim::Contains {
                 at: a(),
                 repo: Repo::App,
@@ -3139,18 +3115,42 @@ fn a_landing_never_rebases_a_member_range_holding_a_merge() {
                 repo: Repo::App,
                 rev: "main",
                 mark: "side-app",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main^1",
+                mark: "main-app",
+            }),
+        Step::commit(&a(), Repo::App, "main-app-2"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app-2"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app-2",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main^1",
+                mark: "main-app-2",
             }),
     ]);
-    let report = bad_steps("a landing over a member merge", steps);
-    assert_green_but_the_fast_forward_onto_a_merge_of_main(&report, &[Repo::Proj, Repo::App]);
+    bad_steps("a landing over a member merge", steps).assert_fully_decided_green();
 }
 
 /// The project branch's range is judged the same way: a seat that took
-/// `main` in by a merge and then saw `main` move refuses to land rather than
-/// rebasing that merge away, and lands once it merges `main` again.
+/// `main` in by a merge and then saw `main` move lands by a merge commit,
+/// first parent `main`, rather than rebasing that merge away.
 #[test]
 fn a_landing_never_rebases_a_project_range_holding_a_merge() {
-    let report = bad_steps(
+    bad_steps(
         "a landing over a project merge",
         vec![
             Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
@@ -3159,14 +3159,11 @@ fn a_landing_never_rebases_a_project_range_holding_a_merge() {
             Step::commit(&a(), Repo::Proj, "main-notes-1"),
             Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Proj, "main-notes-2"),
-            Step::rwv(&ww("w"), &["land"])
-                .expect(Exit::refuses_kind(RefusalKind::NotFastForwardable))
-                .claim(Claim::OutputContains("rwv sync --from main"))
-                .claim(Claim::LocalStateUnchanged(ww("w")))
-                .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&ww("w"), &["sync", "--from", "main"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "projects/proj: merged: the commits a rebase would replay hold the merge",
+                ))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::Proj,
@@ -3180,8 +3177,8 @@ fn a_landing_never_rebases_a_project_range_holding_a_merge() {
                     mark: "main-notes-2",
                 }),
         ],
-    );
-    assert_green_but_the_fast_forward_onto_a_merge_of_main(&report, &[Repo::Proj]);
+    )
+    .assert_fully_decided_green();
 }
 
 /// Every ref the sandbox holds, local and remote, and every lock and record

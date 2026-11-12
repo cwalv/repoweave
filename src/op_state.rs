@@ -1,6 +1,6 @@
 //! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv land`.
 //!
-//! # Schema v3 (no back-compat with v2)
+//! # Schema v4 (no back-compat with v3)
 //!
 //! A record carries its `schema`. One that carries another, or none, is
 //! refused by every reader, naming the release that wrote it: it is finished
@@ -15,7 +15,7 @@
 //! {
 //!   "id": "1779769917405921588",
 //!   "verb": "sync",
-//!   "strategy": "rebase",
+//!   "history": null,
 //!   "project": "web-app",
 //!   "source": "/abs/path/src",
 //!   "target": "/abs/path/tgt",
@@ -30,7 +30,8 @@
 //!
 //! `id` is the op id, shared with savepoint refs. `project` is the project
 //! both `source` and `target` are resolved under. `verb` is `sync` or
-//! `land`; `strategy` is `ff` or `rebase`; `phase` is `replay`, `relock`,
+//! `land`; `history` is the one-run `--history` (`linear`, `merge`,
+//! `ff-only`), or `null`; `phase` is `replay`, `relock`,
 //! `advance-target`, or `retire`. `advanced_tips` is replay-phase intent (repo
 //! → planned/actual tip): empty before replay entry, cleared at relock in the
 //! same write that populates `converged_tips`, which is written at relock
@@ -256,7 +257,7 @@ impl FromStr for SavepointKey {
 /// The operator-facing resume command for a mid-op verb.
 ///
 /// A failed op is resumed with `--continue` from the OWNING workspace, which
-/// reads every parameter (source, strategy, target, retire, overrides) back
+/// reads every parameter (source, `--history`, target, retire, overrides) back
 /// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
 /// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
 /// it named the PULL verb for a `land` (landing) op, and it re-supplied
@@ -269,30 +270,6 @@ pub fn resume_command(verb: OpVerb) -> String {
         other => other.to_string(),
     };
     format!("rwv {words} --continue")
-}
-
-// ---------------------------------------------------------------------------
-// SyncStrategy — typed sync strategy
-// ---------------------------------------------------------------------------
-
-/// How `rwv sync` advances each repo to its lock target.
-///
-/// `merge` is intentionally not offered (state-space shrink). See
-/// `docs/explanation/joints/sync-semantics.md` §"Why no `merge` strategy" for
-/// the justification test and the origin-less weave-to-weave escape hatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum SyncStrategy {
-    /// Fast-forward only; bail if not possible.
-    Ff,
-    /// Rebase the local branch onto the lock target.
-    Rebase,
-}
-
-impl fmt::Display for SyncStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&wire_token(self))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +515,13 @@ pub struct TakeInRecord {
     /// What a `cherry-pick` ports, and how far it got.
     #[serde(default)]
     pub pick: Option<PickRecord>,
+    /// The repos the op integrates by a merge commit rather than a rebase.
+    #[serde(default)]
+    pub merged: Vec<RepoKey>,
+    /// The `rebased` backups the op made of branches it found unpublished,
+    /// which go when it completes.
+    #[serde(default)]
+    pub rebased_backups: Vec<KeptBackup>,
 }
 
 /// One move a landing reports as it makes it.
@@ -692,6 +676,13 @@ impl MemberPick {
     }
 }
 
+/// A backup an op made, by the repo holding it and the name it is dropped by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptBackup {
+    pub repo: RepoKey,
+    pub name: String,
+}
+
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
 /// the landing read it, and how the landing moves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,8 +761,9 @@ pub struct OwnerRecord {
     pub id: OpId,
     /// Which verb started this op.
     pub verb: OpVerb,
-    /// Strategy supplied to the op.
-    pub strategy: SyncStrategy,
+    /// The `history` the op was run with for one run, which governs a repo
+    /// only where the target records none for it.
+    pub history: Option<crate::manifest::History>,
     /// The project this op operates on. Both [`Self::source`] and
     /// [`Self::target`] resolve under it and neither one's `.rwv-active` is
     /// consulted: the pointer is ambient state an operator may retarget while
@@ -823,7 +815,7 @@ struct WireOwnerRecord {
     release: String,
     id: OpId,
     verb: OpVerb,
-    strategy: SyncStrategy,
+    history: Option<crate::manifest::History>,
     project: ProjectName,
     source: CanonicalPath,
     target: CanonicalPath,
@@ -850,7 +842,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
         Self {
             id: w.id,
             verb: w.verb,
-            strategy: w.strategy,
+            history: w.history,
             project: w.project,
             source: w.source,
             target: w.target,
@@ -876,7 +868,7 @@ impl From<OwnerRecord> for WireOwnerRecord {
             release: crate::rwv_version().to_string(),
             id: r.id,
             verb: r.verb,
-            strategy: r.strategy,
+            history: r.history,
             project: r.project,
             source: r.source,
             target: r.target,
@@ -897,7 +889,7 @@ impl OwnerRecord {
     /// Initial phase is `Replay` — the first phase the driver will enter.
     pub fn new_sync(
         op_id: &OpId,
-        strategy: SyncStrategy,
+        history: Option<crate::manifest::History>,
         project: ProjectName,
         source_workspace: &Path,
         cwd_workspace: &Path,
@@ -905,7 +897,7 @@ impl OwnerRecord {
         Self {
             id: op_id.clone(),
             verb: OpVerb::Sync,
-            strategy,
+            history,
             project,
             source: CanonicalPath::of(source_workspace),
             target: CanonicalPath::of(cwd_workspace),
@@ -923,7 +915,7 @@ impl OwnerRecord {
     /// Initial phase is `Replay` — the first phase the driver will enter.
     pub fn new_land(
         op_id: &OpId,
-        strategy: SyncStrategy,
+        history: Option<crate::manifest::History>,
         project: ProjectName,
         cwd_workspace: &Path,
         target_workspace: &Path,
@@ -932,7 +924,7 @@ impl OwnerRecord {
         Self {
             id: op_id.clone(),
             verb: OpVerb::Land,
-            strategy,
+            history,
             project,
             source: CanonicalPath::of(cwd_workspace),
             target: CanonicalPath::of(target_workspace),
@@ -957,7 +949,7 @@ impl OwnerRecord {
         Self {
             id: op_id.clone(),
             verb,
-            strategy: SyncStrategy::Ff,
+            history: None,
             project,
             source: CanonicalPath::of(workspace),
             target: CanonicalPath::of(workspace),
@@ -1423,6 +1415,24 @@ pub fn created_by(
                 .iter()
                 .any(|made| &made.repo == repo && made.branch == branch.as_str())
         }))
+}
+
+/// Record a `rebased` backup the op made of an unpublished branch, so it goes
+/// when the op completes.
+pub fn journal_rebased_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        if !take_in.rebased_backups.contains(&kept) {
+            take_in.rebased_backups.push(kept);
+        }
+    }
+    write_owner(workspace_dir, &record)
 }
 
 /// Remove the `.rwv-op` owner record from `workspace_dir`. No-op if absent.
@@ -2003,7 +2013,7 @@ mod tests {
 
     fn a_record_in(dir: &Path, schema_fields: &str) {
         let record = format!(
-            "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"strategy\": \"ff\", \
+            "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"history\": null, \
              \"project\": \"p\", \"source\": \"{d}\", \"target\": \"{d}\", \
              \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
              \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \
@@ -2081,7 +2091,7 @@ mod tests {
   "release": "{release}",
   "id": "1779769917405921588",
   "verb": "land",
-  "strategy": "rebase",
+  "history": null,
   "project": "web-app",
   "source": {source},
   "target": {target},
@@ -2183,17 +2193,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // SyncStrategy on the wire
+    // The one-run history on the wire
     // -----------------------------------------------------------------------
 
     #[test]
-    fn the_strategy_is_written_as_the_token_it_has_always_been() {
+    fn the_one_run_history_is_written_as_its_token() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
-        for (strategy, token) in [(SyncStrategy::Ff, "ff"), (SyncStrategy::Rebase, "rebase")] {
+        for history in crate::manifest::History::ALL {
             let record = OwnerRecord::new_sync(
                 &OpId::new_now(),
-                strategy,
+                Some(history),
                 test_project(),
                 Path::new("/src/ws"),
                 Path::new("/cwd/ws"),
@@ -2201,9 +2211,10 @@ mod tests {
             write_owner(dir, &record).unwrap();
             let json = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
             assert!(
-                json.contains(&format!("\"strategy\": \"{token}\"")),
-                "the strategy must be written as `{token}`; got:\n{json}"
+                json.contains(&format!("\"history\": \"{history}\"")),
+                "the history must be written as `{history}`; got:\n{json}"
             );
+            assert_eq!(read_owner(dir).unwrap().unwrap().history, Some(history));
         }
     }
 
@@ -2241,7 +2252,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src/ws"),
             Path::new("/cwd/ws"),
@@ -2250,7 +2261,7 @@ mod tests {
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back.id, record.id);
         assert_eq!(read_back.verb, OpVerb::Sync);
-        assert_eq!(read_back.strategy, SyncStrategy::Rebase);
+        assert_eq!(read_back.history, None);
         assert_eq!(read_back.project, test_project());
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
@@ -2274,7 +2285,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src/ws"),
             Path::new("/cwd/ws"),
@@ -2306,7 +2317,7 @@ mod tests {
         let json = r#"{
   "id": "9999999999999999999",
   "verb": "sync",
-  "strategy": "ff",
+  "history": null,
   "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2335,7 +2346,7 @@ mod tests {
         let json = r#"{
   "id": "9999999999999999999",
   "verb": "sync",
-  "strategy": "ff",
+  "history": null,
   "source": "/src/ws",
   "target": "/cwd/ws",
   "retire": false,
@@ -2365,7 +2376,7 @@ mod tests {
         let json = r#"{
   "id": "9999999999999999999",
   "verb": "sync",
-  "strategy": "ff",
+  "history": null,
   "project": "web--app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2385,12 +2396,12 @@ mod tests {
         );
     }
 
-    fn record_json(id: &str, strategy: &str) -> String {
+    fn record_json(id: &str, history: &str) -> String {
         format!(
             r#"{{
   "id": "{id}",
   "verb": "sync",
-  "strategy": "{strategy}",
+  "history": {history},
   "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2411,7 +2422,7 @@ mod tests {
         let dir = tmp.path();
         std::fs::write(
             dir.join(OP_STATE_FILE),
-            record_json("1779769917405921588-target", "ff"),
+            record_json("1779769917405921588-target", "null"),
         )
         .unwrap();
         let err = read_owner(dir).unwrap_err();
@@ -2422,19 +2433,19 @@ mod tests {
     }
 
     #[test]
-    fn wire_record_rejects_a_strategy_no_variant_names() {
+    fn wire_record_rejects_a_history_no_variant_names() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         std::fs::write(
             dir.join(OP_STATE_FILE),
-            record_json("1779769917405921588", "merge"),
+            record_json("1779769917405921588", "\"rebase\""),
         )
         .unwrap();
         let err = read_owner(dir).unwrap_err();
         let shown = format!("{err:#}");
         assert!(
-            shown.contains("merge") && shown.contains("ff") && shown.contains("rebase"),
-            "a strategy the enum no longer has must fail at read, naming what is accepted; \
+            shown.contains("rebase") && shown.contains("linear") && shown.contains("ff-only"),
+            "a history the enum does not have must fail at read, naming what is accepted; \
              got: {shown}"
         );
     }
@@ -2446,7 +2457,7 @@ mod tests {
         let json = r#"{
   "id": "9999999999999999999",
   "verb": "sync",
-  "strategy": "ff",
+  "history": null,
   "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2472,7 +2483,7 @@ mod tests {
         let json = r#"{
   "id": "9999999999999999999",
   "verb": "sync",
-  "strategy": "ff",
+  "history": null,
   "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2540,7 +2551,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src/ws"),
             Path::new("/cwd/ws"),
@@ -2593,7 +2604,7 @@ mod tests {
         let json = r#"{
   "id": "1",
   "verb": "sync",
-  "strategy": "rebase",
+  "history": null,
   "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
@@ -2617,7 +2628,7 @@ mod tests {
             let tmp = crate::tempdir().unwrap();
             let dir = tmp.path();
             let json = format!(
-                r#"{{"id": "1", "verb": "sync", "strategy": "rebase", "project": "web-app",
+                r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
                 "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 4, "release": "0.0.0", "take_in": null}}"#
@@ -2638,7 +2649,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/cwd/ws"),
             Path::new("/tgt/ws"),
@@ -2647,7 +2658,7 @@ mod tests {
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back.verb, OpVerb::Land);
-        assert_eq!(read_back.strategy, SyncStrategy::Ff);
+        assert_eq!(read_back.history, None);
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(read_back.retire);
     }
@@ -2665,7 +2676,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -2683,7 +2694,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -2720,7 +2731,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -2775,7 +2786,7 @@ mod tests {
         let op_id = OpId::new_now();
         let original = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -2818,7 +2829,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src/ws"),
             Path::new("/cwd/ws"),
@@ -2920,7 +2931,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -2943,7 +2954,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/cwd"),
             Path::new("/tgt"),
@@ -2987,7 +2998,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -3046,7 +3057,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/cwd"),
             Path::new("/tgt"),
@@ -3081,7 +3092,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             &owner_dir,
             Path::new("/tgt"),
@@ -3153,7 +3164,7 @@ mod tests {
         std::fs::create_dir_all(&owner_dir).unwrap();
         let record = OwnerRecord::new_sync(
             &OpId::new_now(),
-            SyncStrategy::Ff,
+            None,
             test_project(),
             &owner_dir,
             &owner_dir,
@@ -3185,7 +3196,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -3230,7 +3241,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -3257,7 +3268,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Rebase,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -3282,7 +3293,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_land(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/cwd"),
             Path::new("/tgt"),
@@ -3325,7 +3336,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            SyncStrategy::Ff,
+            None,
             test_project(),
             Path::new("/src"),
             Path::new("/tgt"),
@@ -3375,18 +3386,11 @@ mod tests {
     }
 
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
-        OwnerRecord::new_sync(op_id, SyncStrategy::Rebase, test_project(), source, owner)
+        OwnerRecord::new_sync(op_id, None, test_project(), source, owner)
     }
 
     fn make_land_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
-        OwnerRecord::new_land(
-            op_id,
-            SyncStrategy::Rebase,
-            test_project(),
-            owner,
-            target,
-            false,
-        )
+        OwnerRecord::new_land(op_id, None, test_project(), owner, target, false)
     }
 
     #[test]

@@ -163,7 +163,7 @@ fn plant_sync_to_owner_record(
         repoweave::manifest::RepoKey::Project,
     ];
     let body = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{\"{SERVER_PATH}\": \"{landed_server}\", \"(project)\": \"{landed_project}\"}}, \

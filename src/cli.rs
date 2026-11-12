@@ -17,7 +17,6 @@ use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::manifest;
-use crate::op_state::SyncStrategy;
 use operand::Operand;
 
 #[derive(Parser)]
@@ -334,6 +333,7 @@ pub enum Commands {
     ///
     /// In a feature, each member takes in the branch it lands on, then the project branch
     /// takes in the target's tip, with the relock. A member with no new work follows forward;
+    /// one holding new work is rebased or merged as the target's `history` setting says;
     /// work built on another lineage is refused before anything moves. `--from <branch>`
     /// merges that branch's history instead, in any weave branch.
     ///
@@ -341,7 +341,7 @@ pub enum Commands {
     ///
     ///   rwv sync
     ///
-    ///   rwv sync --strategy rebase
+    ///   rwv sync --history merge
     ///
     ///   rwv sync --from stable
     ///
@@ -360,9 +360,9 @@ pub enum Commands {
             conflicts_with = "do_continue"
         )]
         reset_to_target: Vec<crate::manifest::RepoOperand>,
-        /// How a branch holding new work takes in: ff (fast-forward only, the default) or rebase
-        #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
-        strategy: SyncStrategy,
+        /// How a repo holding new work takes in, for this run, where the target records no `history` for it: linear, merge or ff-only. A value differing from a recorded one is refused
+        #[arg(long, value_name = "H", value_enum, conflicts_with = "do_continue")]
+        history: Option<crate::manifest::History>,
         /// Emit the refusal envelope as JSON. See `rwv explain sync`.
         #[arg(long, conflicts_with = "do_continue")]
         json: bool,
@@ -379,8 +379,10 @@ pub enum Commands {
     /// Land this feature into the branch its record lands into
     ///
     /// The work is composed in this workspace first: each member that holds work the
-    /// branch it lands on lacks is rebased onto that branch's tip, the project branch onto
-    /// the target's tip, then the lock records the result. Then each receiving branch and
+    /// branch it lands on lacks is integrated with that branch's tip as the target's
+    /// `history` setting says (rebased under `linear`, merged under `merge`, refused under
+    /// `ff-only`), the project branch with the target's tip likewise, then the lock records
+    /// the result. Then each receiving branch and
     /// the target fast-forward where the target is checked out, that workspace aligns, and
     /// this workspace's members follow the target's new pins. Every refusal is reported
     /// before anything moves.
@@ -401,16 +403,11 @@ pub enum Commands {
         /// Let the landing change the target's entry for this member: any field, its removal, or a backward pin; `projects/<p>` names the target's top-level `history`. Repeat per repo. A name the landing changes nothing for is refused. With `--continue`, adds to the names the landing started with
         #[arg(long = "allow-member-change", value_name = "REPO")]
         allow_member_change: Vec<crate::manifest::RepoOperand>,
-        /// How a member holding work the branch it lands on lacks is composed: rebase (the
-        /// default) replays it onto that branch's tip; ff refuses unless every repo
-        /// fast-forwards
-        #[arg(
-            long,
-            default_value = "rebase",
-            value_enum,
-            conflicts_with = "do_continue"
-        )]
-        strategy: SyncStrategy,
+        /// How a repo holding work the branch it lands on lacks lands, for this run, where the
+        /// target records no `history` for it: linear, merge or ff-only. A value differing
+        /// from a recorded one is refused
+        #[arg(long, value_name = "H", value_enum, conflicts_with = "do_continue")]
+        history: Option<crate::manifest::History>,
         /// Once the landing is done, remove the workweave and the feature's branches by
         /// the deletion rule: a branch holding anything not landed is kept and listed
         #[arg(long, conflicts_with = "do_continue")]

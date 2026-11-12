@@ -379,7 +379,7 @@ fn a_sync_to_does_not_park_on_a_member_its_target_lacks() {
         "fixture: the target lacks it"
     );
 
-    let landed = run(&["land"], &child);
+    let landed = run(&["land", "--history", "linear"], &child);
     assert!(
         landed.status.success(),
         "land must land rather than park on a member the target lacks; {}",
@@ -427,7 +427,7 @@ fn a_sync_to_retire_lands_into_a_target_that_lacked_a_member() {
         &pin,
     );
 
-    let landed = run(&["land", "--retire"], &child);
+    let landed = run(&["land", "--history", "linear", "--retire"], &child);
     assert!(
         landed.status.success(),
         "retire's merged-check must find the target holding the member; {}",

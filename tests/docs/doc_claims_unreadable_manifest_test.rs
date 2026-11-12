@@ -94,7 +94,7 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
         (vec!["member", "remove", MEMBER], ws),
         (vec!["workweave", "delete", "--project", "app", "one"], ws),
         (vec!["sync"], &weave.workweave),
-        (vec!["land"], &weave.workweave),
+        (vec!["land", "--history", "linear"], &weave.workweave),
     ];
     for (args, dir) in cases {
         let out = run(&args, dir);

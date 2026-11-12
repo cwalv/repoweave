@@ -293,7 +293,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
@@ -2742,7 +2742,7 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 
 fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
     format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",

@@ -9,7 +9,7 @@
 //!   - The `$schema` URL is embedded in the envelope, pinning consumers at
 //!     `docs/reference/schemas/land.json` under repoweave's main branch.
 //!   - Per-failure records carry a stable kebab-case `kind` tag at
-//!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`).
+//!     `outcome.failure.kind` (e.g. `merge-failed`, `rebase-failed`).
 //!     The outcome's own `kind` is `failed` in that case.
 //!
 //! This test is deliberately CLI-only: the lower-level wire-shape
@@ -156,7 +156,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
-        .args(["land", "--json"])
+        .args(["land", "--history", "linear", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -310,7 +310,7 @@ fn sync_to_json_parallel_emits_the_envelope() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args(["land", "--json", "-j", "2"])
+        .args(["land", "--history", "linear", "--json", "-j", "2"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -362,7 +362,7 @@ fn sync_to_json_failed_outcome_has_stable_kebab_kind() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
-        .args(["land", "--json", "--strategy=rebase"])
+        .args(["land", "--json", "--history=linear"])
         .current_dir(&ww.root)
         .assert()
         .failure();

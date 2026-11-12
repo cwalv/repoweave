@@ -161,3 +161,89 @@ pub fn run(ctx: &WorkspaceContext, request: SetHistory) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// How a repo takes in or lands work a fast-forward does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Integration {
+    /// Its commits are replayed onto the side they integrate with.
+    Rebase,
+    /// A merge commit joins the two.
+    Merge,
+}
+
+/// The setting that governs one repo of a `sync` or `land` where a
+/// fast-forward does not do: the target's own, else `--history` for one run.
+/// `--history` stands in only where the target records nothing; a value
+/// differing from a recorded one is refused.
+pub(crate) fn governing(
+    recorded: Option<History>,
+    one_run: Option<History>,
+    member: bool,
+    scoped: impl Fn(crate::diagnosis::State) -> crate::diagnosis::Judging,
+    vcs: &dyn crate::vcs::Vcs,
+) -> Result<History, crate::diagnosis::Judged> {
+    use crate::diagnosis::{Form, State};
+    let set = if member {
+        Form::C23SetHistoryRepo
+    } else {
+        Form::C23SetHistory
+    };
+    match (recorded, one_run) {
+        (Some(recorded), Some(one_run)) if recorded != one_run => {
+            Err(scoped(State::HistoryContradicted)
+                .subject(format!(
+                    "`--history {one_run}` for one run, where the target records {recorded}"
+                ))
+                .only_forms(&[set, Form::KeepRecordedHistory])
+                .judge(vcs))
+        }
+        (Some(recorded), _) => Ok(recorded),
+        (None, Some(one_run)) => Ok(one_run),
+        (None, None) => Err(scoped(State::HistoryUnset)
+            .subject("the target records no history for it")
+            .only_forms(&[set, Form::C23Rerun])
+            .judge(vcs)),
+    }
+}
+
+/// The first merge commit among the commits `tip` holds beyond its merge base
+/// with `onto`: the commits a rebase onto `onto` would replay.
+pub(crate) fn merge_in_range(
+    vcs: &dyn crate::vcs::Vcs,
+    dir: &std::path::Path,
+    tip: &crate::vcs::CommitId,
+    onto: &crate::vcs::CommitId,
+) -> Result<Option<crate::vcs::CommitId>, crate::vcs::VcsError> {
+    let rev = |c: &crate::vcs::CommitId| crate::vcs::ResolvedRevisionId::from(c.clone());
+    let base = vcs.merge_bases(dir, tip, onto)?.into_iter().next();
+    let range = vcs.pushed_range(dir, &rev(tip), base.as_ref().map(rev).as_ref())?;
+    Ok(range
+        .into_iter()
+        .find(|c| c.parents.len() > 1)
+        .map(|c| c.id))
+}
+
+/// How a repo whose work a fast-forward does not integrate is integrated
+/// under `history`: a linear-family setting rebases, unless the commits a
+/// rebase would replay hold a merge, which a rebase would flatten; those are
+/// integrated by a merge commit, the merge returned so the run reports it.
+pub(crate) fn integration(
+    history: History,
+    merge_in_range: Option<crate::vcs::CommitId>,
+) -> (Integration, Option<crate::vcs::CommitId>) {
+    match (history, merge_in_range) {
+        (History::Merge, _) => (Integration::Merge, None),
+        (History::Linear | History::FfOnly, Some(merge)) => (Integration::Merge, Some(merge)),
+        (History::Linear | History::FfOnly, None) => (Integration::Rebase, None),
+    }
+}
+
+/// The `merged` report line for a repo whose range holding `merge` is
+/// integrated by a merge commit under a rebasing setting.
+pub(crate) fn merged_line(repo: &dyn std::fmt::Display, merge: &crate::vcs::CommitId) -> String {
+    format!(
+        "{repo}: merged: the commits a rebase would replay hold the merge {}, which a rebase \
+         would flatten, so they are integrated by a merge commit",
+        merge.short()
+    )
+}

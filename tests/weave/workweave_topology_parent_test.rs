@@ -215,7 +215,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
 
     // Plant a v2 owner record in the workweave root (simulate an in-flight op).
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-delete-op\", \"verb\": \"land\", \"history\": null, \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -258,7 +258,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let ww = create_workweave(&main, "busyforce", None);
 
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"land\", \"history\": null, \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -489,7 +489,7 @@ fn retire_adopts_children() {
     // Retire wwa to primary (bare land reads parent = primary).
     rebind(&main, &format!("{PROJECT}--wwb"), "main");
     let out = rwv()
-        .args(["land", "--retire"])
+        .args(["land", "--history", "linear", "--retire"])
         .current_dir(&wwa.root)
         .output()
         .unwrap();
@@ -526,7 +526,7 @@ fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweav
     commit_file(&a.manifest_repo, "a.txt", "from a\n", "a: add a.txt");
     rwv_lock_commit(&a.root);
     rwv()
-        .args(["land", "--strategy=ff", "--target", "app--p2"])
+        .args(["land", "--history=ff-only", "--target", "app--p2"])
         .current_dir(&a.root)
         .assert()
         .success();
@@ -541,7 +541,14 @@ fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
         .to_string_lossy()
         .into_owned();
     rwv()
-        .args(["land", "--retire", "--target", &branch])
+        .args([
+            "land",
+            "--history",
+            "linear",
+            "--retire",
+            "--target",
+            &branch,
+        ])
         .current_dir(&a.root)
         .output()
         .unwrap()
@@ -592,7 +599,7 @@ fn continuing_a_parked_retire_refuses_records_that_disagree() {
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "parked", None);
     let op_json = format!(
-        "{{\"id\": \"planted-retire-op\", \"verb\": \"land\", \"strategy\": \"rebase\", \"project\": \"app\", \
+        "{{\"id\": \"planted-retire-op\", \"verb\": \"land\", \"history\": null, \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",
@@ -628,7 +635,7 @@ fn a_retire_whose_records_come_to_disagree_mid_op_deletes_nothing() {
 
     let mut retire = common::rwv_std();
     retire
-        .args(["land", "--retire", "--strategy=ff"])
+        .args(["land", "--retire", "--history=ff-only"])
         .current_dir(&ww.root);
     let held = common::pause::Paused::spawn(retire, "advance-target", &tmp.path().join("pause"))
         .unwrap_or_else(|e| panic!("{e}"));
@@ -744,7 +751,7 @@ fn a_landing_whose_target_workweave_was_removed_names_opening_it() {
     // Remove wwa out-of-band; wwb's target is now checked out nowhere.
     std::fs::remove_dir_all(&wwa.root).unwrap();
 
-    let out = common::cli::run(&["land"], &wwb.root);
+    let out = common::cli::run(&["land", "--history", "linear"], &wwb.root);
     let stderr = common::cli::refused(&out, State::TargetNotCheckedOut);
     assert!(
         !stderr.contains("failed to canonicalize") && !stderr.contains("os error 2"),
@@ -1178,7 +1185,7 @@ fn bare_sync_to_follows_recorded_stacked_parent() {
     rwv_lock_commit(&wwb.root);
 
     rwv()
-        .args(["land", "--strategy=ff"])
+        .args(["land", "--history=ff-only"])
         .current_dir(&wwb.root)
         .assert()
         .success();

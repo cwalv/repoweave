@@ -1408,7 +1408,7 @@ pub fn run() -> anyhow::Result<()> {
             from,
             target,
             reset_to_target,
-            strategy,
+            history,
             json,
             jobs,
             project,
@@ -1423,7 +1423,7 @@ pub fn run() -> anyhow::Result<()> {
                     from,
                     target,
                     reset_to_target,
-                    strategy,
+                    history,
                     jobs: jobs.map_or(1, |n| crate::parallel::resolve_jobs(Some(n))),
                 })
             };
@@ -1452,7 +1452,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Land {
             target,
             allow_member_change,
-            strategy,
+            history,
             retire,
             json,
             jobs,
@@ -1475,7 +1475,7 @@ pub fn run() -> anyhow::Result<()> {
                         target.as_deref(),
                         allow_member_change,
                     )?),
-                    strategy,
+                    history,
                     retire,
                     jobs: jobs.map_or(1, |n| crate::parallel::resolve_jobs(Some(n))),
                 }

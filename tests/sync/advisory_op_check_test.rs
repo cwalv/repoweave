@@ -117,7 +117,7 @@ fn weave_with_a_generator(root: &Path) -> PathBuf {
 /// A v2 owner record for an op the check must refuse.
 fn owner_record_json(ws: &Path) -> String {
     format!(
-        "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"history\": null, \
          \"project\": \"app\", \"source\": \"{ws}\", \"target\": \"{ws}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 4, \"release\": \"0.0.0\", \"take_in\": null}}",

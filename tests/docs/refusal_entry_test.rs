@@ -327,7 +327,7 @@ fn explain_serves_the_page_section_verbatim() {
 
     for token in [
         "head-not-on-branch",
-        "not-fast-forwardable",
+        "dropped-repo-has-unique-commits",
         "dangling-active-project",
         "edits",
         &last_entry,
@@ -363,13 +363,13 @@ fn explain_serves_the_page_section_verbatim() {
 #[test]
 fn a_mistyped_token_is_suggested() {
     let out = common::rwv()
-        .args(["explain", "not-fast-forwardabel"])
+        .args(["explain", "dropped-repo-has-unique-commitz"])
         .output()
         .expect("rwv should run");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("did you mean: not-fast-forwardable"),
+        stderr.contains("did you mean: dropped-repo-has-unique-commits"),
         "expected a token suggestion, got:\n{stderr}"
     );
 }

@@ -474,7 +474,7 @@ fn a_landing_refuses_a_role_change_to_the_targets_entry() {
     succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
-    let out = common::cli::run(&["land"], &seat);
+    let out = common::cli::run(&["land", "--history", "linear"], &seat);
     let stderr = common::cli::refused(&out, State::TargetMemberChanges);
     assert!(stderr.contains("role: owned → reference"), "{stderr}");
     assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Owned);

@@ -504,7 +504,7 @@ fn add_in_a_workweave_creates_a_checkout_with_its_submodules() {
 fn sync_creates_a_checkout_with_its_submodules() {
     let weave = weave();
     let (one, two, member) = one_adds_two_lacks(&weave);
-    rwv(&one, &["land"]);
+    rwv(&one, &["land", "--history", "linear"]);
 
     rwv(&two, &["sync"]);
 
@@ -516,7 +516,16 @@ fn sync_to_creates_a_checkout_with_its_submodules() {
     let weave = weave();
     let (one, two, member) = one_adds_two_lacks(&weave);
 
-    rwv(&one, &["land", "--target", &format!("{PROJECT}--two")]);
+    rwv(
+        &one,
+        &[
+            "land",
+            "--history",
+            "linear",
+            "--target",
+            &format!("{PROJECT}--two"),
+        ],
+    );
 
     assert_populated(&two.join(&member));
 }
