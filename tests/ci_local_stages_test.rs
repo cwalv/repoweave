@@ -1105,7 +1105,11 @@ fn a_git_floor_stage_whose_git_is_not_the_floor_runs_nothing() {
         &[("CI_LOCAL_TEST_FLOOR_GIT", "2.53.0")],
     );
     assert!(!out.status.success(), "{}", stdout_of(&out));
-    assert!(!stdout_of(&out).contains("STUB_CARGO:"), "{}", stdout_of(&out));
+    assert!(
+        !stdout_of(&out).contains("STUB_CARGO:"),
+        "{}",
+        stdout_of(&out)
+    );
     assert!(
         stderr_of(&out).contains("PATH resolves git version 2.53.0, not git 2.36.0"),
         "{}",
