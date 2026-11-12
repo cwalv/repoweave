@@ -7300,10 +7300,24 @@ fn prune_dropped_in_target(op: &OpContext<'_>, target: &WorkspaceContext, landed
     else {
         return;
     };
+    let presented = crate::shared_members::outgoing(dest_workspace_dir, &op.cwd_project_name)
+        .and_then(|other| {
+            Project::from_dir_skip_lock(&project_dir(dest_workspace_dir, &other), other.clone())
+                .ok()
+                .map(|project| (other, project.manifest))
+        });
     for (repo_path, entry) in before.iter_entries() {
         let checkout = dest_workspace_dir.join(repo_path.as_path());
         if landed.contains_repo(repo_path) || !checkout.exists() {
             continue;
+        }
+        if let Some((other, manifest)) = &presented {
+            if manifest.contains_repo(repo_path) {
+                if emit_text {
+                    outln!("  {repo_path}: left in the target's workspace, which {other} lists");
+                }
+                continue;
+            }
         }
         let member = match prune_dropped_repo(vcs_for(entry.vcs_type).as_ref(), target, repo_path) {
             Ok(()) => {

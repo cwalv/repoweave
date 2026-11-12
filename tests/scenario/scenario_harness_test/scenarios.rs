@@ -738,6 +738,41 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
 /// `lib` to `proj`; each choice it prints that must act on `proj2` carries
 /// `--project proj2` or names `activate proj2 --update`, and each, run as
 /// printed in the primary, passes.
+/// `proj2`'s seat drops `lib`, which `proj` lists too, and lands while the
+/// primary presents `proj`: the primary's `lib` is `proj`'s checkout, so the
+/// landing leaves it.
+pub fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists() -> Scenario
+{
+    let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
+    Scenario {
+        name: "an inactive project's landing leaves a dropped member the presented project lists",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&side, &["member", "remove", LIB, "--delete"]).expect(Exit::Succeeds),
+            Step::rwv(&side, &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &side,
+                &[
+                    "land",
+                    "--history",
+                    "linear",
+                    "--retire",
+                    "--allow-member-change",
+                    LIB,
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("pruned in the target's workspace"))
+            .claim(Claim::OutputContains("which proj lists")),
+            Step::git(&a(), Repo::Lib, &["status", "--porcelain"]),
+            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
+        ],
+    }
+}
+
 pub fn inactive_project_choices() -> Scenario {
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
     Scenario {

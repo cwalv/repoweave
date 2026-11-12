@@ -80,6 +80,15 @@ fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on
 }
 
 #[test]
+fn an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists() {
+    runner::run(
+        scenarios::an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists(
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn abort_after_aligning_leaves_a_member_the_landing_never_moved() {
     runner::run(scenarios::abort_leaves_a_target_member_the_alignment_never_moved())
         .assert_fully_decided_green();
@@ -942,6 +951,7 @@ every_scenario!(
     stable_end_to_end,
     main_change_into_stable,
     shared_member_declared_dev,
+    an_inactive_projects_landing_leaves_a_dropped_member_the_presented_project_lists,
     inactive_project_choices,
     shared_member_pinned_behind,
     nested_workweaves,
