@@ -3162,7 +3162,7 @@ fn a_landing_never_rebases_a_project_range_holding_a_merge() {
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
-                    "projects/proj: merged: the commits a rebase would replay hold the merge",
+                    "(project): merged: the commits a rebase would replay hold the merge",
                 ))
                 .claim(Claim::Contains {
                     at: a(),

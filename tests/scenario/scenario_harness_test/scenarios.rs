@@ -6195,10 +6195,10 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
 /// pruning fetch that meets the store's fetch claim held by a retiring seat
 /// waits for it rather than failing on a ref lock, and each retire's
 /// deletion completes. A second landing into the same target while one runs
-/// meets a known defect in place of the landing claim. The later seats each
-/// land their work on `main`, as copies, and retire; `main` records `merge`,
-/// which the landing does not read yet, so each leaves its published project
-/// branch.
+/// meets the known defect `landing_into_a_held_target` names. `main`
+/// records `merge`, so each later seat lands by a merge commit whose first
+/// parent is `main` and which its published branch is an ancestor of: no
+/// published branch is rewritten, and each retire deletes what landed.
 pub fn parallel_retire_fetch() -> Scenario {
     let seats = [
         ("s1", "feat-1", "f1-app"),
@@ -6245,7 +6245,7 @@ pub fn parallel_retire_fetch() -> Scenario {
     steps.extend([
         Step::rwv_paused(
             &ww("s1"),
-            &["land", "--history", "linear", "--retire"],
+            &["land", "--retire"],
             "fetch-under-claim",
             "retire-s1",
         ),
@@ -6255,13 +6255,18 @@ pub fn parallel_retire_fetch() -> Scenario {
         Step::release("fetch-s2").expect(Exit::Succeeds),
     ]);
     for (seat, _, mark) in &seats[1..] {
-        let landed: &'static str = Box::leak(format!("main:{mark}.txt").into_boxed_str());
-        steps.extend([
-            Step::rwv(&ww(seat), &["land", "--history", "linear", "--retire"])
-                .expect(Exit::Defect(Defect::MergeHistoryNotRead))
-                .claim(Claim::WorkweaveGone(ww(seat))),
-            Step::git(&a(), Repo::App, &["cat-file", "-e", landed]),
-        ]);
+        steps.push(retired(
+            Step::rwv(&ww(seat), &["land", "--retire"])
+                .claim(Claim::OutputLacks("rebased"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main^1",
+                    mark: "f1-app",
+                }),
+            seat,
+            mark,
+        ));
     }
     scenario("parallel retire fetch", steps)
 }
@@ -6450,12 +6455,20 @@ pub fn member_change_left_behind_in_json() -> Scenario {
             create("fix"),
             create("feat"),
             Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
-            Step::rwv(&ww("fix"), &["land", "--history", "linear", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("fix"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds),
             Step::rwv(&ww("feat"), &["member", "set-branch", LIB, "dev"]).expect(Exit::Succeeds),
             Step::commit(&ww("feat"), Repo::App, "feat-app"),
             Step::rwv(
                 &ww("feat"),
-                &["land", "--history", "linear", "--allow-member-change", LIB, "--json"],
+                &[
+                    "land",
+                    "--history",
+                    "linear",
+                    "--allow-member-change",
+                    LIB,
+                    "--json",
+                ],
             )
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
@@ -6493,7 +6506,14 @@ pub fn backward_pin_reported_in_json() -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(
                 &ww("back"),
-                &["land", "--history", "linear", "--allow-member-change", LIB, "--json"],
+                &[
+                    "land",
+                    "--history",
+                    "linear",
+                    "--allow-member-change",
+                    LIB,
+                    "--json",
+                ],
             )
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
@@ -6519,7 +6539,8 @@ pub fn member_change_left_behind_on_continue() -> Scenario {
             create("fix"),
             create("feat"),
             Step::commit(&ww("fix"), Repo::Lib, "lib-fix"),
-            Step::rwv(&ww("fix"), &["land", "--history", "linear", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("fix"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds),
             Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
             Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -6527,17 +6548,20 @@ pub fn member_change_left_behind_on_continue() -> Scenario {
             Step::hand_edit(&ww("feat"), Repo::App, "README", "app", "beta"),
             Step::git(&ww("feat"), Repo::App, &["commit", "-qam", "beta"]),
             Step::rwv(&ww("feat"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("feat"), &["land", "--history", "linear", "--allow-member-change", LIB])
-                .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                .may_rewind(&[Repo::Lib, Repo::App])
-                .claim(Claim::OutputInOrder(&[
-                    "the target's pin reaches commits 'dev' lacks",
-                    "lib-fix",
-                    "copy these commits onto `dev`",
-                ]))
-                .claim(Claim::OutputContains(
-                    "local/remotes/lib: has no new work, so it takes",
-                )),
+            Step::rwv(
+                &ww("feat"),
+                &["land", "--history", "linear", "--allow-member-change", LIB],
+            )
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_rewind(&[Repo::Lib, Repo::App])
+            .claim(Claim::OutputInOrder(&[
+                "the target's pin reaches commits 'dev' lacks",
+                "lib-fix",
+                "copy these commits onto `dev`",
+            ]))
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: has no new work, so it takes",
+            )),
             Step::git(&ww("feat"), Repo::App, &["checkout", "--theirs", "README"]),
             Step::git(&ww("feat"), Repo::App, &["add", "README"]),
             Step::rwv(&ww("feat"), &["land", "--continue"])
@@ -6799,12 +6823,15 @@ fn stop_resolved_to_the_features_manifest() -> Vec<Step> {
         ),
         Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::rwv(&ww("w"), &["land", "--history", "linear", "--allow-member-change", LIB])
-            .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .claim(Claim::OutputContains(
-                "local/remotes/lib: removed (the target's entry, named by \
+        Step::rwv(
+            &ww("w"),
+            &["land", "--history", "linear", "--allow-member-change", LIB],
+        )
+        .expect(Exit::refuses_kind(RefusalKind::OpParked))
+        .claim(Claim::OutputContains(
+            "local/remotes/lib: removed (the target's entry, named by \
                  --allow-member-change)",
-            )),
+        )),
         Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"]),
         Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
         Step::rwv(&ww("w"), &["land", "--continue"])
@@ -7468,14 +7495,17 @@ pub fn land_reports_what_it_pins_beyond_the_target() -> Scenario {
                 mark: "forge-lib",
             }),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--strategy", "ff"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("local/remotes/lib: ff-advanced"))
-                .claim(Claim::PinContains {
-                    site: main_lock(),
-                    member: Repo::App,
-                    mark: "w-app",
-                }),
+            Step::rwv(
+                &ww("w"),
+                &["land", "--history", "linear", "--strategy", "ff"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("local/remotes/lib: ff-advanced"))
+            .claim(Claim::PinContains {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "w-app",
+            }),
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
@@ -8411,7 +8441,8 @@ pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Lib])
             .may_strand(&[Repo::Lib]),
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Lib, &["cat-file", "-e", "main:w-lib.txt"]),
         ],
     )

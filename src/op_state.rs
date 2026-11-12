@@ -542,6 +542,16 @@ pub enum LandingReport {
         was: CommitId,
         backup: String,
     },
+    /// A range holding the merge `merge` that a rebasing setting integrated
+    /// by a merge commit instead.
+    Merged { repo: RepoKey, merge: CommitId },
+    /// A branch a rebase rewrote, its tip `was` kept in the `rebased` backup
+    /// `backup`.
+    Rebased {
+        repo: RepoKey,
+        was: CommitId,
+        backup: String,
+    },
     /// A pin moved backward by name.
     Repinned {
         repo: RepoKey,

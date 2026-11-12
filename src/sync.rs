@@ -707,6 +707,16 @@ pub enum LandingReportOutput {
         was: CommitId,
         backup: String,
     },
+    /// A range holding the merge `merge` that a rebasing setting integrated
+    /// by a merge commit, first parent the receiving tip, rather than flatten.
+    Merged { path: String, merge: CommitId },
+    /// A branch a rebase rewrote; the tip `was` it left is kept in the
+    /// `rebased` backup `backup`.
+    Rebased {
+        path: String,
+        was: CommitId,
+        backup: String,
+    },
     /// A pin the landing moved backward, named by `--allow-member-change`.
     RePinned {
         path: String,
@@ -784,6 +794,15 @@ impl LandingReportOutput {
             } => Self::Followed {
                 path: repo.to_string(),
                 to: to.clone(),
+                was: was.clone(),
+                backup: backup.clone(),
+            },
+            op_state::LandingReport::Merged { repo, merge } => Self::Merged {
+                path: repo.to_string(),
+                merge: merge.clone(),
+            },
+            op_state::LandingReport::Rebased { repo, was, backup } => Self::Rebased {
+                path: repo.to_string(),
                 was: was.clone(),
                 backup: backup.clone(),
             },
@@ -880,6 +899,15 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     "  {repo}: has no new work, so it takes {} as its pin (was {}, kept in backup \
                      {backup})",
                     to.short(),
+                    was.short()
+                );
+            }
+            op_state::LandingReport::Merged { repo, merge } => {
+                outln!("  {}", crate::set_history::merged_line(repo, merge));
+            }
+            op_state::LandingReport::Rebased { repo, was, backup } => {
+                outln!(
+                    "  {repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
                     was.short()
                 );
             }
@@ -3534,10 +3562,13 @@ fn guard_and_mark<'a>(
         emit_landing_report(handler, change);
     }
     take_in.reports.extend(plan.landed_changes.iter().cloned());
-    if emit_text {
-        for (repo, merge) in &plan.merged_ranges {
-            eprintln!("rwv land: {}", crate::set_history::merged_line(repo, merge));
-        }
+    for (repo, merge) in &plan.merged_ranges {
+        let report = op_state::LandingReport::Merged {
+            repo: repo.clone(),
+            merge: merge.clone(),
+        };
+        emit_landing_report(handler, &report);
+        take_in.reports.push(report);
     }
     let mut record = op_state::read_owner(&owner_workspace_dir)?
         .context("the op record vanished as the landing began")?;
@@ -4906,7 +4937,22 @@ fn keep_before_rebase(
         return Ok(());
     };
     let branch = crate::vcs::RawRefName::new(attached.to_string());
-    crate::backup::keep_rebased(vcs, dir, &branch, &head, &ctx.owner_workspace_dir, repo)
+    let backup = crate::backup::keep_rebased(
+        vcs,
+        dir,
+        &branch,
+        &head,
+        &ctx.owner_workspace_dir,
+        repo.clone(),
+    )?;
+    report_landing(
+        ctx,
+        op_state::LandingReport::Rebased {
+            repo,
+            was: head.id().clone(),
+            backup,
+        },
+    )
 }
 
 /// A member whose declared branch the landing changes and that holds no new

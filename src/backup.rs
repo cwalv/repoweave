@@ -458,7 +458,7 @@ pub(crate) fn keep_rebased(
     head: &crate::vcs::ResolvedRevisionId,
     workspace: &std::path::Path,
     repo: crate::manifest::RepoKey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let unpublished = !published(vcs, dir, branch);
     let kept = vcs.create_backup(
         dir,
@@ -466,16 +466,17 @@ pub(crate) fn keep_rebased(
         head,
         Some(BackupMark::Rebased),
     )?;
+    let name = kept.backup().name.as_str().to_owned();
     if unpublished {
         crate::op_state::journal_rebased_backup(
             workspace,
             crate::op_state::KeptBackup {
                 repo,
-                name: kept.backup().name.as_str().to_owned(),
+                name: name.clone(),
             },
         )?;
     }
-    Ok(())
+    Ok(name)
 }
 
 /// Drop the `rebased` backups an op journaled, now it has completed: the

@@ -1290,9 +1290,16 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
     // The state the condition proved is containment. A rebase onto a baseline
     // HEAD already contains changes nothing, and an operator who is told to
     // run one spends the attempt discovering that.
+    let member_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.contains("github/chatly/server"))
+        .collect();
     assert!(
-        !stdout.contains("rebase") && !stdout.contains("diverge"),
-        "a strictly-ahead pull must not advise a rebase or call itself a \
+        !member_lines.is_empty()
+            && member_lines
+                .iter()
+                .all(|l| !l.contains("rebase") && !l.contains("diverge")),
+        "a strictly-ahead member must not be advised a rebase or called a \
          divergence; got stdout: {stdout}"
     );
     assert!(
