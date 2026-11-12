@@ -528,6 +528,23 @@ impl Carrier<'_> {
             tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);
             let mut member_composed = false;
             for (repo, from) in &tips {
+                let moved = record.carries.iter().find_map(|c| {
+                    let to = c.composed.as_ref()?;
+                    (&c.repo == repo
+                        && c.branch == carry.dependent.as_str()
+                        && record
+                            .ref_moves
+                            .iter()
+                            .any(|m| &m.repo == repo && m.branch == c.branch && &m.to == to))
+                    .then(|| to.clone())
+                });
+                if let Some(to) = moved {
+                    new_tips.insert(
+                        (carry.dependent.as_str().to_owned(), repo.clone()),
+                        (from.clone(), to),
+                    );
+                    continue;
+                }
                 let Some((base, onto)) = new_tips
                     .get(&(carry.parent.as_str().to_owned(), repo.clone()))
                     .map(|(_, new)| new.clone())

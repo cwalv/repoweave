@@ -792,6 +792,7 @@ every_scenario!(
     a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Abort),
     a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Continue),
     a_landing_killed_after_its_carry_continues,
+    a_landing_resumed_after_its_target_moved_past_a_carry,
     a_carry_stopped_in_the_project_continues,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
     a_sync_continued_after_its_relock_keeps_it,
@@ -5346,6 +5347,12 @@ fn a_landing_into_a_dependent_lands_once_its_stopped_carry_continues() {
         ),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_resumed_after_its_target_moved_past_a_carry_completes() {
+    runner::run(scenarios::a_landing_resumed_after_its_target_moved_past_a_carry())
+        .assert_fully_decided_green();
 }
 
 #[test]

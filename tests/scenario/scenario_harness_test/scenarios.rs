@@ -16961,6 +16961,61 @@ pub fn a_landing_killed_after_its_carry_continues() -> Scenario {
     )
 }
 
+/// `a-landing-killed-after-its-carry-continues`, with a commit made on
+/// `w1` before the resume: the carry does not compose `w2` again, so
+/// `rwv land --continue` completes with `w2` where the carry moved it, and
+/// `w2` takes the commit at its own next sync.
+pub fn a_landing_resumed_after_its_target_moved_past_a_carry() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::commit(&ww("w1"), Repo::App, "w1-later"),
+        Step::rwv(&ww("w1"), &["land", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("lacks"))
+            .claim(Claim::OutputLacks("moved mid-operation"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            })
+            .claim(Claim::Lacks {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "w1-later",
+            }),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2s",
+                "--branch",
+                "w2",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w2s"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("w2s"),
+                repo: Repo::App,
+                rev: "HEAD",
+                mark: "w1-later",
+            }),
+    ]);
+    scenario(
+        "stack: a landing resumed after its target moved past a carry",
+        steps,
+    )
+}
+
 pub fn stack_carried_by_a_landing() -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
