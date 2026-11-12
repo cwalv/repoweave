@@ -198,6 +198,18 @@ rwv doctor --fix
 
 If the old file was committed to the project repo, the conversion removes the working file and leaves the deletion for you to commit. A file that does not parse is reported as `unreadable-workweave-index` and left alone: delete it and run `rwv doctor --fix`, which lists the workweaves on disk again.
 
+## Step 9 — the lock merge driver an earlier release set up
+
+An earlier release assigned `rwv.lock` the `rwv-ours` merge driver (`rwv.lock merge=rwv-ours`, or `merge=ours`, in `.gitattributes`, with `merge.rwv-ours.driver = true` in the clone's config), which kept one side of every lock merge silently. `rwv.lock` now merges through the lock merge driver: `rwv.lock merge=rwv-lock`, with `merge.rwv-lock.driver` naming `rwv lock --merge-driver %O %A %B`. Every verb that writes the project repo or its lock refuses the old setup, or none, as `missing-lock-merge-driver`, before it writes anything; `rwv explain missing-lock-merge-driver` serves the entry.
+
+Run the repair in each checkout of the project repo whose branch carries the old line:
+
+```bash
+rwv doctor --fix
+```
+
+It rewrites the line in the checked-out commit's `.gitattributes`, committing only that, and in the working file with its other edits in place, and replaces the clone's config. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
+
 ## The health floor and bridge versions
 
 A release can drop the repair arms for on-disk states older than some version. Before it does, a weave has to record that it was clean under a version that still had them: that record is the health floor. A text-mode `rwv doctor --all` run with no `--kind` filter records it when the run is clean, meaning no error and nothing left that `rwv doctor --fix` would repair. `rwv doctor` without `--all`, with `--kind`, or with `--json` records nothing. The record names the rwv version that made the run, and a run by an older binary never lowers it.

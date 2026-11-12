@@ -502,7 +502,7 @@ A project repo's lock merge driver is not set up as this release sets it up: the
 
 **Warning. Auto-fixable.** The checked-out branch's committed `.gitattributes` has no `rwv.lock merge=rwv-lock` line, so a merge rwv does not make merges the lock as text.
 
-**What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the line to the working file and to the checked-out commit's file and commits only that line; any other edit to `.gitattributes` stays uncommitted. It declines, changing nothing, while another file is staged or a merge, rebase or cherry-pick is in progress in the project repo. Another branch carries its own file and is migrated where it is checked out.
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the line to the working file and to the checked-out commit's file and commits only that line; any other edit to `.gitattributes` stays uncommitted, and anything else staged stays staged. It declines, changing nothing, while a merge, rebase or cherry-pick is in progress in the project repo. Another branch carries its own file and is migrated where it is checked out.
 
 #### `attribute-legacy`
 
