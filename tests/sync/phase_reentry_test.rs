@@ -1098,7 +1098,7 @@ fn resume_stranded_advance_target(tmp: &Path, history: &str, id: &str) -> (Strin
     let ww_server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     let op_id = write_sync_to_record_with_history(&ww.root, &primary.root, history, id);
-    write_lease(&primary.root, &ww.root);
+    write_lease_with_id(&primary.root, &ww.root, &op_id);
     create_savepoint(&ww.project_dir, &op_id);
     create_savepoint(&ww.server_dir, &op_id);
 
