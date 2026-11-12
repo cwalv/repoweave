@@ -298,7 +298,6 @@ const SUPERSEDED_DRIVER_KEYS: [&str; 2] =
 /// uses the prefix to find such lines.
 pub const RWV_MERGE_DRIVER_PREFIX: &str = "rwv-";
 
-
 fn lock_attribute_line(driver: &str) -> String {
     format!("{} merge={driver}", crate::manifest::LockFile::FILE_NAME)
 }

@@ -3502,12 +3502,27 @@ mod tests {
 
     #[test]
     fn an_axis_with_a_finding_spells_its_token_and_carries_every_sub_kind() {
-        let mut with_finding = 0;
+        let finding_kinds: std::collections::BTreeSet<String> = crate::check::ViolationKind::ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let shared: Vec<Axis> = Axis::ALL
+            .into_iter()
+            .filter(|axis| finding_kinds.contains(&axis.token()))
+            .collect();
+        let with_finding: Vec<Axis> = Axis::ALL
+            .into_iter()
+            .filter(|axis| axis.finding().is_some())
+            .collect();
+        assert!(!shared.is_empty());
+        assert_eq!(
+            with_finding, shared,
+            "an axis names its doctor finding exactly when a finding kind spells its token"
+        );
         for axis in Axis::ALL {
             let Some(finding) = axis.finding() else {
                 continue;
             };
-            with_finding += 1;
             assert_eq!(finding.kind.to_string(), axis.token());
             let carried = crate::check::finding_sub_kinds()
                 .remove(&axis.token())
@@ -3516,7 +3531,6 @@ mod tests {
                 finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
             assert_eq!(listed, carried, "{axis:?}");
         }
-        assert_eq!(with_finding, 5);
     }
 
     #[test]

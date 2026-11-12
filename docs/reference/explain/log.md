@@ -205,6 +205,13 @@ Schema:
           "enum": [
             "protected"
           ]
+        },
+        {
+          "description": "A project repo whose lock merge driver is not set up as this release sets it up.",
+          "type": "string",
+          "enum": [
+            "missing-lock-merge-driver"
+          ]
         }
       ]
     },

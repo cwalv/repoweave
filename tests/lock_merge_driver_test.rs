@@ -505,8 +505,9 @@ fn init_sets_the_driver_up_and_a_linked_worktree_needs_nothing_more() {
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     let project = root.join("projects/web");
     assert_eq!(
-        std::fs::read_to_string(project.join(".gitattributes")).unwrap(),
-        common::LOCK_DRIVER_ATTRIBUTE
+        common::git_in(&project, &["show", "HEAD:.gitattributes"]),
+        common::LOCK_DRIVER_ATTRIBUTE.trim_end(),
+        "init's first commit holds the line"
     );
     assert_eq!(
         common::git_in(&project, &["config", "--get", "merge.rwv-lock.driver"]),

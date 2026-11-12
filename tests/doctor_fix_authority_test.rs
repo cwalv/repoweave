@@ -1658,10 +1658,11 @@ fn the_repair_walk_actually_reads_the_arms() {
         "the walk sees no repair announcement in `apply_prelude_repairs`"
     );
     assert!(
-        per_fn("apply_workspace_repairs") >= 7,
-        "the walk sees only {} repair announcements in `apply_workspace_repairs` — the \
-         pre-collection pass this instrument exists for has gone dark to it",
-        per_fn("apply_workspace_repairs")
+        per_fn("apply_workspace_repairs") >= 1,
+        "the walk sees no repair announcement in `apply_workspace_repairs` — the \
+         pre-collection pass this instrument exists for has gone dark to it; an arm it \
+         misses is a binding that matches no announcement, which \
+         `every_repair_announcement_is_bound_to_a_repairable_finding` reports"
     );
     assert!(
         per_fn("apply_finding_repairs") >= 6,
