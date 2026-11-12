@@ -408,6 +408,50 @@ fn sync_post_refresh_clears_stale_working_tree() {
     );
 }
 
+/// As above, with a revert touching nothing the move changed, so no path the
+/// move changed holds HEAD's entry and only the operation in progress keeps
+/// the stale path from being refreshed.
+#[test]
+fn doctor_fix_leaves_drift_beside_an_unrelated_revert() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+    make_commit(&ws.server_ww, "added.txt", "added\n", "ww: add");
+    common::git_in(&ws.server_ww, &["revert", "--no-commit", "HEAD"]);
+    let scratch = tmp.path().join("scratch");
+    common::git_in(
+        &ws.server_primary,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &scratch.to_string_lossy(),
+            "ww/main",
+        ],
+    );
+    let moved = make_commit(&scratch, "change.txt", "new\n", "moved");
+    common::git_in(
+        &ws.server_primary,
+        &["worktree", "remove", &scratch.to_string_lossy()],
+    );
+    advance_ww_branch(&ws.server_primary, "ww/main", &moved);
+    let before = common::git_in(&ws.server_ww, &["ls-files", "-s"]);
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("drift in"),
+        "nothing is refreshed: {stdout}"
+    );
+    assert_eq!(common::git_in(&ws.server_ww, &["ls-files", "-s"]), before);
+    assert!(!ws.server_ww.join("change.txt").exists());
+}
+
 /// A drifted checkout stopped in a revert is left as it stands by the sync's
 /// post-refresh: the revert's staged state and the stale path alike.
 #[test]
