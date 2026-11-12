@@ -10385,6 +10385,91 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(
     )
 }
 
+/// What keeps abort from switching the target's `lib` back onto `main`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchBackBlocked {
+    /// `main` was deleted.
+    Gone,
+    /// `main` is checked out in another worktree.
+    Held,
+}
+
+/// The target's `lib` aligned onto `lib-next` and the landing was killed;
+/// then `main`, the branch abort switches `lib` back to, is deleted or held
+/// elsewhere. Abort refuses, printing the command that clears it; run as
+/// printed, the next abort switches `lib` back.
+pub fn abort_switch_back_blocked(blocked: SwitchBackBlocked) -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
+        Step::commit(&a(), Repo::Lib, "dev-own"),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &declared_branch_text(Repo::Lib, "lib-next"),
+        ),
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["commit", "-qam", "lib onto lib-next"],
+        ),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv_paused(
+            &ww("w"),
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
+            "landed",
+            "landing",
+        ),
+        Step::kill("landing"),
+    ];
+    let (block, why, choice) = match blocked {
+        SwitchBackBlocked::Gone => (
+            Step::git(&a(), Repo::Lib, &["branch", "-q", "-D", "main"]).may_strand(&[Repo::Lib]),
+            "cannot be switched back: it is gone",
+            "branch main ",
+        ),
+        SwitchBackBlocked::Held => (
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["worktree", "add", "-q", "../lib-held", "main"],
+            ),
+            "cannot be switched back: it is checked out at",
+            "switch --detach",
+        ),
+    };
+    steps.extend([
+        block,
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_strand(&[Repo::Proj, Repo::Lib])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OutputContains(why)),
+        Step::rwv_printed_holding(&ww("w"), "git -C ", choice).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            }),
+    ]);
+    scenario("abort switch-back blocked", steps)
+}
+
 /// The target's `lib` aligned onto `lib-next`, which the landing moved as a
 /// ref, and the landing was killed; someone edits a file `lib-next` holds
 /// and `main` lacks. Abort, run from the source, does not discard an edit

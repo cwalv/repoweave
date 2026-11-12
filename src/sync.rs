@@ -9119,10 +9119,15 @@ fn report_abort_outcome(
                 (
                     format!("it is checked out at {held}"),
                     format!(
-                        "free the checkout at {held} of '{branch}' (switch it to another \
-                         branch, or detach it), as this shows:\n\t{}",
-                        vcs.hint(crate::vcs::VcsAction::Status)
-                            .replace("<checkout>", &held)
+                        "free the checkout at {held} of '{branch}' by detaching it:\n\t{}",
+                        held_at
+                            .iter()
+                            .map(|at| vcs
+                                .hint(crate::vcs::VcsAction::SwitchDetached)
+                                .replace("<checkout>", &at.display().to_string())
+                                .replace(" <r>/<b>", ""))
+                            .collect::<Vec<_>>()
+                            .join("\n\t")
                     ),
                 )
             };

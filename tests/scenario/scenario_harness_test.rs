@@ -815,6 +815,8 @@ every_scenario!(
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
+    abort_switch_back_blocked(scenarios::SwitchBackBlocked::Gone),
+    abort_switch_back_blocked(scenarios::SwitchBackBlocked::Held),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Retire),
     abort_restores_a_target_fast_forward_killed_after_the_move,
     a_continued_landing_racing_a_commit_on_a_repo_it_moved,
@@ -2682,6 +2684,17 @@ holding_rwv! {
     fn abort_restores_a_target_fast_forward_killed_after_the_move() {
         runner::run(scenarios::abort_restores_a_target_fast_forward_killed_after_the_move())
             .assert_fully_decided_green();
+    }
+
+    /// A saved branch deleted or held elsewhere keeps abort from switching
+    /// the target's checkout back; the printed command clears it.
+    fn abort_prints_what_clears_a_blocked_switch_back() {
+        for blocked in [
+            scenarios::SwitchBackBlocked::Gone,
+            scenarios::SwitchBackBlocked::Held,
+        ] {
+            runner::run(scenarios::abort_switch_back_blocked(blocked)).assert_fully_decided_green();
+        }
     }
 
     /// Edits in the target that keep abort from switching a checkout back
