@@ -88,9 +88,9 @@ redirected. `--target <T>` takes the target's mode now.
 
 **A record published on a remote** names a target this machine reads only
 through that remote: the target published there, and a local branch of that
-name taking in from that branch there, or, taking in from nowhere,
-configured to publish there. Anything else, a local branch taking in from
-another branch included, refuses as `target` `gone`, never landing into an
+name taking in from that branch there, or configured to publish there and
+taking in from no branch of another name. Anything else, a local branch with
+a foreign upstream included, refuses as `target` `gone`, never landing into an
 unrelated branch that shares the name. A target that exists nowhere refuses
 the same way. The recovery rebinds the feature onto a target the operator
 chooses, `rwv branch set-mode <W> feature --target <T>`, listing the
@@ -1190,13 +1190,13 @@ Schema:
           }
         },
         {
-          "description": "The commits `path`'s new pin in `target` holds beyond the pin `target` held, pinned into `target` with the feature's work.",
+          "description": "The commits `path`'s new pin in the branch `into` holds beyond the pin `into` held, pinned there with the feature's work.",
           "type": "object",
           "required": [
             "commits",
+            "into",
             "kind",
-            "path",
-            "target"
+            "path"
           ],
           "properties": {
             "commits": {
@@ -1205,6 +1205,9 @@ Schema:
                 "$ref": "#/definitions/LeftCommitOutput"
               }
             },
+            "into": {
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "enum": [
@@ -1212,9 +1215,6 @@ Schema:
               ]
             },
             "path": {
-              "type": "string"
-            },
-            "target": {
               "type": "string"
             }
           }

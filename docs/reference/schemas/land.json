@@ -886,13 +886,13 @@
           }
         },
         {
-          "description": "The commits `path`'s new pin in `target` holds beyond the pin `target` held, pinned into `target` with the feature's work.",
+          "description": "The commits `path`'s new pin in the branch `into` holds beyond the pin `into` held, pinned there with the feature's work.",
           "type": "object",
           "required": [
             "commits",
+            "into",
             "kind",
-            "path",
-            "target"
+            "path"
           ],
           "properties": {
             "commits": {
@@ -901,6 +901,9 @@
                 "$ref": "#/definitions/LeftCommitOutput"
               }
             },
+            "into": {
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "enum": [
@@ -908,9 +911,6 @@
               ]
             },
             "path": {
-              "type": "string"
-            },
-            "target": {
               "type": "string"
             }
           }
