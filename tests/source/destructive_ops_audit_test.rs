@@ -577,12 +577,15 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git/replay.rs",
         pattern: "remove_file",
-        count: 1,
+        count: 2,
         callers: &[],
         justification: "copy_with_changes: removes the temporary index file \
             it named under the checkout's private git directory for this \
             process, after the copy is built. The checkout's real index and \
-            working tree are never opened for writing.",
+            working tree are never opened for writing. remove_replay_records: \
+            removes the files named `rwv-replayed-*` in the checkout's private \
+            git directory, which only rwv's own rebases write, once the op \
+            that reads them has ended; no ref, index or working-tree file.",
     },
     Allowed {
         file: "git/records.rs",
