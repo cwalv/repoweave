@@ -5483,6 +5483,12 @@ pub fn land_never_resolves_a_published_record_to_an_unrelated_branch() -> Scenar
             .expect(Exit::refuses(Repo::Proj, State::TargetGone))
             .claim(Claim::Judged(Repo::App, State::EditsDirty))
             .claim(Claim::OutputContains("neither takes in"))
+            .claim(Claim::OutputContains("rwv branch set-mode feat-x declared"))
+            .claim(Claim::OutputLacks("--target main"))
+            .claim(Claim::LocalStateUnchanged(b())),
+        Step::rwv(&b_ww("r"), &["branch", "set-mode", "feat-x", "declared"]).expect(Exit::Succeeds),
+        Step::rwv(&b_ww("r"), &["land"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetNoTarget))
             .claim(Claim::LocalStateUnchanged(b())),
     ]);
     scenario(
@@ -7372,8 +7378,8 @@ fn main_lock() -> LockSite {
 }
 
 /// A record whose target exists nowhere refuses as the target gone, with the
-/// source's own refusals in the same report; the target-gone recovery rebinds
-/// onto the nearest candidate, and the landing then goes there.
+/// source's own refusals in the same report, at `land` and at `sync`; the
+/// sole candidate is bound into the rebind, and the landing then goes there.
 pub fn land_into_a_target_that_exists_nowhere() -> Scenario {
     scenario(
         "land into a target that exists nowhere",
@@ -7398,6 +7404,12 @@ pub fn land_into_a_target_that_exists_nowhere() -> Scenario {
                     "rwv branch set-mode proj--w feature --target main",
                 ))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-mode proj--w feature --target main",
+                ))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(
                 &ww("w"),
                 &[
@@ -7407,6 +7419,67 @@ pub fn land_into_a_target_that_exists_nowhere() -> Scenario {
             .expect(Exit::Succeeds),
             Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib edited", "lib"),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    )
+}
+
+/// The target-gone rebind lists every branch the feature could land into and
+/// binds none of them where there are several, so a sibling sharing as much
+/// history as the trunk is never chosen for the operator; a branch landing
+/// into the feature is no candidate, since the rebind would close a cycle.
+/// The operator's choice from the list then lands.
+pub fn land_target_gone_lists_only_targets_the_rebind_takes() -> Scenario {
+    scenario(
+        "land target gone lists only targets the rebind takes",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "stable"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "fa"]),
+            Step::rwv(
+                &a(),
+                &["branch", "set-mode", "fa", "feature", "--target", "main"],
+            )
+            .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "branch", "set-mode", "proj--w", "feature", "--target", "stable",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["workweave", "create", "--project", "proj", "x"])
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "-D", "stable"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetGone))
+                .claim(Claim::OutputContains(
+                    "--target candidates, nearest first: fa, main",
+                ))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-mode proj--w feature --target <T>",
+                ))
+                .claim(Claim::OutputLacks("--target fa"))
+                .claim(Claim::OutputLacks("--target proj--x"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv(
+                &ww("w"),
+                &[
+                    "branch", "set-mode", "proj--w", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "delete", "--project", "proj", "x"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: a(),

@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::add_remove::find_project;
-use crate::diagnosis::{Judged, Judging, Report, State};
+use crate::diagnosis::{Form, Judged, Judging, Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
 use crate::names::{judge_feature_names, require_feature_names, NameScan};
 use crate::parallel::OutputMode;
@@ -205,10 +205,11 @@ pub(crate) fn write_refusal(
     }
 }
 
-/// `target` gone as `feature`'s record names it: the target-gone recovery
-/// rebinds onto another target, the nearest candidate bound and every
-/// candidate listed, since rebinding onto the target that is gone would refuse
-/// again.
+/// `target` gone as `feature`'s record names it. The rebind names a target
+/// the operator chooses among the candidates listed: never the gone target,
+/// nor a branch landing into `feature`, which the rebind would refuse as a
+/// cycle. A sole candidate is bound; with none, declaring `feature` is what
+/// clears the state.
 pub(crate) fn target_gone(
     vcs: &dyn Vcs,
     project: &ProjectName,
@@ -217,20 +218,33 @@ pub(crate) fn target_gone(
     target: &BranchName,
 ) -> anyhow::Result<Judging> {
     let view = view_of(&Store::open(vcs, dir)?)?;
-    let candidates = target_candidates(vcs, dir, &view, feature)?;
-    let mut judging = State::TargetGone
+    let candidates: Vec<String> = target_candidates(vcs, dir, &view, feature)?
+        .into_iter()
+        .filter(|name| name != target.as_str())
+        .filter(|name| {
+            BranchName::parse(vcs, name)
+                .is_ok_and(|name| view.chain_back_to(feature, vec![name]).is_none())
+        })
+        .collect();
+    let judging = State::TargetGone
         .of(label(project))
         .project_repo()
         .subject(target)
         .checkout(dir)
         .bind("<W>", feature);
-    if let Some(nearest) = candidates.first() {
-        judging = judging.bind("<T>", nearest).listing([format!(
-            "--target candidates, nearest first: {}",
-            candidates.join(", ")
-        )]);
-    }
-    Ok(judging)
+    Ok(match candidates.as_slice() {
+        [] => judging.only_forms(&[Form::C12Declared]),
+        [only] => judging
+            .bind("<T>", only)
+            .listing([format!("--target candidate: {only}")])
+            .only_forms(&[Form::C12Feature]),
+        _ => judging
+            .listing([format!(
+                "--target candidates, nearest first: {}",
+                candidates.join(", ")
+            )])
+            .only_forms(&[Form::C12Feature]),
+    })
 }
 
 pub(crate) fn view_of(store: &Store<'_>) -> anyhow::Result<View> {

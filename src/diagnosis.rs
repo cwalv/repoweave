@@ -1626,9 +1626,11 @@ impl State {
                 axis: Axis::Target,
                 name: "gone",
                 means: "the branch the record lands into exists nowhere: not as a local branch, \
-                        nor on a remote as last fetched",
-                refused_by: "`rwv branch list` reports it",
-                offers: &[Form::C12Feature],
+                        nor on a remote as last fetched; or the record was published on a \
+                        remote where that branch is not, so the local branch of that name is \
+                        another branch",
+                refused_by: "`rwv land` and `rwv sync`; `rwv branch list` reports it",
+                offers: &[Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },
             Self::PortMainline => &StateRow {

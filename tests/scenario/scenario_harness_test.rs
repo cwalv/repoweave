@@ -736,6 +736,7 @@ every_scenario!(
     land_refuses_work_built_on_another_lineage,
     land_never_rewrites_a_declared_mode_branch,
     land_into_a_target_that_exists_nowhere,
+    land_target_gone_lists_only_targets_the_rebind_takes,
     land_judges_target_edits_only_where_it_moves,
     land_judges_the_pin_on_its_branch_only_for_moved_members,
     land_refuses_a_moved_member_whose_branch_lacks_the_pin,
@@ -3991,6 +3992,12 @@ fn dc11_safe_drift_is_refreshed_before_edits_are_judged_and_the_moved_tip_lands(
 #[test]
 fn land_into_a_target_that_exists_nowhere_scenario() {
     runner::run(scenarios::land_into_a_target_that_exists_nowhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn land_target_gone_lists_only_targets_the_rebind_takes_scenario() {
+    runner::run(scenarios::land_target_gone_lists_only_targets_the_rebind_takes())
+        .assert_fully_decided_green();
 }
 
 #[test]
