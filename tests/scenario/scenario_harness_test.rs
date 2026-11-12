@@ -688,6 +688,12 @@ macro_rules! every_scenario {
                 "git_below_2_38",
                 scenarios::git_below_2_38().into_steps(),
             ));
+            #[cfg(unix)]
+            every.push((
+                "abort_after_a_carry_stop",
+                scenarios::abort_after_a_carry_stop(scenarios::BeforeTheCarry::LandingMerged)
+                    .into_steps(),
+            ));
             every
         }
     };
@@ -708,6 +714,8 @@ every_scenario!(
     stack_not_containing,
     stack_carry_conflict(scenarios::AfterHandContinue::Continue),
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
+    abort_after_a_carry_stop(scenarios::BeforeTheCarry::SyncRelocked),
+    abort_after_a_carry_stop(scenarios::BeforeTheCarry::FinishedByHand),
     stack_at_the_tip_under_update_refs,
     stack_carry_stopped_under_update_refs,
     a_landing_into_a_dependent_waits_on_its_stopped_carry,
@@ -2159,6 +2167,40 @@ fn first_parent_check_catches_a_merge_with_an_upstream_that_brought_nothing() {
         )],
         "{report}"
     );
+}
+
+/// `w`, a target of `x`, moved onto a merge of itself into `main`, the branch
+/// it lands into, `main`'s tip as first parent: a landing of `w` composed and
+/// not yet advanced.
+#[test]
+fn first_parent_check_spares_a_target_composed_onto_the_branch_it_lands_into() {
+    let git = |args: &[&str]| Step::git(&a(), Repo::App, args);
+    let report = bad_steps(
+        "w, a target, moved onto its merge into main",
+        vec![
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                sandbox::RECORDS_BRANCH,
+                &[
+                    ("w", FEATURE_ONTO_MAIN),
+                    (
+                        "x",
+                        "mode = \"feature\"\ntarget = \"w\"\nas = \"declared\"\n",
+                    ),
+                ],
+            ),
+            git(&["switch", "-c", "w"]),
+            Step::commit(&a(), Repo::App, "w-1"),
+            git(&["switch", "main"]),
+            Step::commit(&a(), Repo::App, "main-1"),
+            git(&["switch", "--detach", "main"]),
+            git(&["merge", "--no-ff", "--no-edit", "w"]),
+            git(&["branch", "-f", "w", "HEAD"]),
+            git(&["switch", "main"]),
+        ],
+    );
+    report.assert_green();
 }
 
 #[test]
@@ -5000,6 +5042,31 @@ fn a_carry_that_conflicts_continues_once_resolved() {
 fn a_carry_that_conflicts_aborts_to_where_the_stack_was() {
     runner::run(scenarios::stack_carry_conflict(
         scenarios::AfterHandContinue::Abort,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_after_a_sync_relocked_reads_the_relock_as_its_own() {
+    runner::run(scenarios::abort_after_a_carry_stop(
+        scenarios::BeforeTheCarry::SyncRelocked,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[cfg(unix)]
+#[test]
+fn an_abort_after_a_landing_merged_its_project_reads_the_merge_as_its_own() {
+    runner::run(scenarios::abort_after_a_carry_stop(
+        scenarios::BeforeTheCarry::LandingMerged,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_abort_after_a_carry_finished_by_hand_reads_its_tip_as_its_own() {
+    runner::run(scenarios::abort_after_a_carry_stop(
+        scenarios::BeforeTheCarry::FinishedByHand,
     ))
     .assert_fully_decided_green();
 }

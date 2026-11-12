@@ -15037,6 +15037,140 @@ pub fn a_sync_continued_after_its_relock_keeps_it() -> Scenario {
     scenario("stack: a sync continued after its relock keeps it", steps)
 }
 
+/// What wrote `w1`'s project tip before its carry of `w2` stopped.
+#[derive(Debug, Clone, Copy)]
+pub enum BeforeTheCarry {
+    /// A sync's relock commit, pinning an `app` commit the lock did not.
+    SyncRelocked,
+    /// A landing's project merge, under a `merge` project with a `linear`
+    /// `app`, by a git without `merge-tree --write-tree`.
+    #[cfg(unix)]
+    LandingMerged,
+    /// Nothing more: the carry's replay was then finished by hand.
+    FinishedByHand,
+}
+
+/// `w1`'s sync or landing stops carrying `w2`, whose `app` commit conflicts
+/// with `main`'s, after rwv wrote `w1`'s project tip or once the operator
+/// finished the carry's replay by hand; `rwv abort` reads every tip as the
+/// operation's own and puts `w1` and `w2` back as they were.
+pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
+    let landing = !matches!(
+        before,
+        BeforeTheCarry::SyncRelocked | BeforeTheCarry::FinishedByHand
+    );
+    let history = if landing { "merge" } else { "linear" };
+    let unpinned = matches!(before, BeforeTheCarry::SyncRelocked);
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds)];
+    if history == "merge" {
+        steps.push(
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "set-history",
+                    "linear",
+                    "--repo",
+                    "local/remotes/app",
+                ],
+            )
+            .expect(Exit::Succeeds),
+        );
+    }
+    steps.extend([
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    if unpinned {
+        steps.push(Step::commit(&ww("w1"), Repo::App, "w1-unpinned"));
+    }
+    steps.push(dependent_of(&ww("w1"), "w2", "proj--w1"));
+    if unpinned {
+        steps.push(Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge", "--ff-only", "-q", "proj--w1"],
+        ));
+    }
+    let verb = if landing { "land" } else { "sync" };
+    steps.extend([
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &[verb])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "carrying 'w2' along in local/remotes/app",
+            )),
+    ]);
+    if matches!(before, BeforeTheCarry::FinishedByHand) {
+        steps.extend([
+            Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+            Step::git(
+                &ww("w1"),
+                Repo::App,
+                &["-c", "core.editor=true", "rebase", "--continue"],
+            ),
+        ]);
+    }
+    let w1_app = if unpinned { "w1-unpinned" } else { "w1-app" };
+    let abort = match before {
+        BeforeTheCarry::FinishedByHand => Step::rwv(&ww("w1"), &["abort"]).may_strand(&[Repo::App]),
+        _ => Step::rwv(&ww("w1"), &["abort"]),
+    };
+    steps.extend([
+        abort
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("foreign"))
+            .claim(Claim::OnBranch {
+                at: ww("w1"),
+                repo: Repo::App,
+                branch: "proj--w1",
+            })
+            .claim(Claim::OnBranch {
+                at: ww("w1"),
+                repo: Repo::Proj,
+                branch: "proj--w1",
+            }),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["log", "--format=%s", "-1", "proj--w1"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLine(w1_app)),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "proj--w1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::git(&ww("w1"), Repo::Proj, &["log", "--format=%s", "proj--w1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("relock after"))
+            .claim(Claim::OutputLacks("Merge")),
+    ]);
+    Scenario {
+        name: "stack: an abort after a carry stopped",
+        seed: match before {
+            #[cfg(unix)]
+            BeforeTheCarry::LandingMerged => Seed::default().old_git(),
+            BeforeTheCarry::SyncRelocked | BeforeTheCarry::FinishedByHand => Seed::default(),
+        },
+        steps,
+    }
+}
+
 /// `stack-carry-conflict` stopped on `w2`, and a landing into `w2` from a
 /// third workweave meanwhile: the stopped carry holds `w2` as a landing
 /// would, so the landing refuses naming the carry's op, and once the

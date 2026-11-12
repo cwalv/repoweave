@@ -6410,7 +6410,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             && !vcs.on_first_parents(dir, head.id(), target)?);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
-        crate::repin::commit_merge(
+        let merge = crate::repin::commit_merge(
             vcs,
             dir,
             (target, head.id()),
@@ -6418,6 +6418,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             Some(&lock),
             &named,
         )?;
+        op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, &merge)?;
         if ctx.handler.emit_text() {
             eprintln!(
                 "  {}: merged with {}, re-locked in the merge",
@@ -6427,13 +6428,20 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
         return Ok(());
     }
-    if commit_lock_file_with_message(
+    if !commit_lock_file_with_message(
         vcs,
         dir,
         &auto_relock_commit_message(&ctx.source_workspace_name),
         &named,
-    )? && ctx.handler.emit_text()
-    {
+    )? {
+        return Ok(());
+    }
+    op_state::journal_tip(
+        &ctx.owner_workspace_dir,
+        RepoKey::Project,
+        vcs.head_revision(dir)?.id(),
+    )?;
+    if ctx.handler.emit_text() {
         eprintln!(
             "  {}: re-locked after composing onto {}",
             RepoKey::Project,
@@ -8475,6 +8483,11 @@ fn restore_abort_workspace(
             project_vcs,
             project_dir.to_path_buf(),
         )));
+    let replays: Vec<op_state::Rebasing> = rebases
+        .iter()
+        .cloned()
+        .chain(carries.iter().map(op_state::Carrying::rebasing))
+        .collect();
     let mut moved_from: std::collections::BTreeMap<PathBuf, ResolvedRevisionId> =
         std::collections::BTreeMap::new();
     for (repo_key, vcs, abs) in repos {
@@ -8537,7 +8550,7 @@ fn restore_abort_workspace(
         let finished_by_hand = match side {
             AbortSide::Replay => head
                 .as_ref()
-                .and_then(|head| replay_of(vcs.as_ref(), &abs, rebases, &repo_key, head.id())),
+                .and_then(|head| replay_of(vcs.as_ref(), &abs, &replays, &repo_key, head.id())),
             AbortSide::LandTarget => None,
         };
         let integrates = match (side, operates_in) {

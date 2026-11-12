@@ -2216,12 +2216,18 @@ fn relock(
         pins.iter().map(|(p, c)| (p.clone(), rev(c))).collect();
     let lock = crate::lock::with_pins(&manifest, None, resolved.iter().map(|(p, c)| (p, c)));
     crate::lock::write_lock_in(&lock, dir)?;
-    crate::lock::commit_lock_file_with_message(
+    if crate::lock::commit_lock_file_with_message(
         vcs,
         dir,
         &format!("lock: relock after sync from {}", sync.source_name()),
         &by_name_resets(resets),
-    )?;
+    )? {
+        crate::op_state::journal_tip(
+            sync.ctx.active_path(),
+            RepoKey::Project,
+            vcs.head_revision(dir)?.id(),
+        )?;
+    }
     Ok(())
 }
 

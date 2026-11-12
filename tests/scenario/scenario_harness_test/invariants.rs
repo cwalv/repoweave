@@ -42,7 +42,9 @@
 //!   contain (a merge that brought nothing in is no merge of the upstream).
 //!   A target that is itself a feature and lands, then follows the branch it
 //!   landed into, takes that branch's chain: its new tip is the tip, in the
-//!   same store, of a branch it lands into.
+//!   same store, of a branch it lands into. While that landing is stopped,
+//!   its new tip is the landing's merge onto such a branch: that branch's tip
+//!   is its first parent.
 //! - **replay record left**: a record of what a replay made, kept in a
 //!   checkout's git dir, in a place that holds no operation's record or
 //!   lease, so nothing will read it again.
@@ -1048,19 +1050,25 @@ pub fn first_parents_broken(
                     && upstream == first_parent.trim()
                     && !is_ancestor(sandbox, &dir, upstream, from)
             });
-        let followed_its_landing = lands
+        let receiving_tips: Vec<&str> = lands
             .get(&(repo, branch.to_owned()))
             .into_iter()
             .flatten()
-            .any(|receiving| {
+            .filter_map(|receiving| {
                 after
                     .branches
                     .get(&(repo, store))
                     .and_then(|tips| tips.get(receiving))
                     .map(String::as_str)
-                    == Some(to)
-            });
-        if !on_first_parents && !merged_with_its_upstream && !followed_its_landing {
+            })
+            .collect();
+        let followed_its_landing = receiving_tips.contains(&to);
+        let composed_onto_its_landing = receiving_tips.contains(&first_parent.trim());
+        if !on_first_parents
+            && !merged_with_its_upstream
+            && !followed_its_landing
+            && !composed_onto_its_landing
+        {
             violations.push(Violation::FirstParentsBroken {
                 repo,
                 store,

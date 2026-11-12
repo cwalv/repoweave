@@ -605,14 +605,15 @@ pub struct Carrying {
 }
 
 impl Carrying {
-    pub fn rebasing(&self) -> Option<Rebasing> {
-        self.composed.as_ref().map(|_| Rebasing {
+    /// The carry's replay as a rebase of `branch`.
+    pub fn rebasing(&self) -> Rebasing {
+        Rebasing {
             repo: self.repo.clone(),
             branch: self.branch.clone(),
             base: self.base.clone(),
             from: self.from.clone(),
             onto: self.onto.clone(),
-        })
+        }
     }
 }
 
