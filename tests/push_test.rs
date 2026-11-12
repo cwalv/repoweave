@@ -1532,7 +1532,10 @@ struct RawMerge {
 
 impl RawMerge {
     fn project_dir(&self) -> std::path::PathBuf {
-        self.ws.workspace.join("projects").join(&self.ws.project_name)
+        self.ws
+            .workspace
+            .join("projects")
+            .join(&self.ws.project_name)
     }
 
     fn push_project(&self) -> std::process::Output {
@@ -1686,7 +1689,14 @@ fn a_merge_whose_own_commit_records_the_re_pin_waives_itself() {
     let commit = common::git_in(
         &project_dir,
         &[
-            "commit-tree", &tree, "-p", "HEAD", "-p", "other", "-m", &message,
+            "commit-tree",
+            &tree,
+            "-p",
+            "HEAD",
+            "-p",
+            "other",
+            "-m",
+            &message,
         ],
     );
     common::git_in(&project_dir, &["reset", "-q", "--hard", &commit]);

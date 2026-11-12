@@ -169,10 +169,7 @@ pub(crate) fn analyze(
                     (Verdict::ListedOnly, Vec::new())
                 } else {
                     let found = waiver(&mut reader, member, range, index, &pins)?;
-                    (
-                        found.waived.unwrap_or(Verdict::Unmerged),
-                        found.untrusted,
-                    )
+                    (found.waived.unwrap_or(Verdict::Unmerged), found.untrusted)
                 };
                 findings.push(Finding {
                     merge: merge.id.clone(),

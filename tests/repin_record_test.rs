@@ -38,7 +38,11 @@ fn succeed(w: &PushWorkspace, args: &[&str]) -> String {
         .output()
         .expect("rwv runs");
     let text = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(out.status.success(), "`rwv {}` failed:\n{text}", args.join(" "));
+    assert!(
+        out.status.success(),
+        "`rwv {}` failed:\n{text}",
+        args.join(" ")
+    );
     text
 }
 
@@ -121,7 +125,12 @@ fn upstream_moves(w: &PushWorkspace) -> String {
     } else {
         git_in(
             w._tmp.path(),
-            &["clone", "-q", bare.to_str().unwrap(), other.to_str().unwrap()],
+            &[
+                "clone",
+                "-q",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
         );
     }
     let count = git_in(&other, &["rev-list", "--count", "HEAD"]);
@@ -144,18 +153,9 @@ fn update_remote_records_only_the_member_reset_to_upstream_names() {
     let theirs = upstream_moves(&w);
     succeed(
         &w,
-        &[
-            "update",
-            "--remote",
-            "--reset-to-upstream",
-            LIB,
-            "--commit",
-        ],
+        &["update", "--remote", "--reset-to-upstream", LIB, "--commit"],
     );
-    assert_eq!(
-        records(&w),
-        [record(LIB, &pin, &theirs, "update --remote")]
-    );
+    assert_eq!(records(&w), [record(LIB, &pin, &theirs, "update --remote")]);
 }
 
 #[test]
@@ -208,7 +208,14 @@ fn branch_create_and_workweave_create_record_the_set_branch_re_pin() {
 
     succeed(
         &w,
-        &["branch", "create", "dec", "--declared", "--set-branch", &set],
+        &[
+            "branch",
+            "create",
+            "dec",
+            "--declared",
+            "--set-branch",
+            &set,
+        ],
     );
     assert_eq!(records(&w), [record(LIB, &ahead, &first, "branch create")]);
 

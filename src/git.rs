@@ -4,17 +4,17 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
-    AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BackupWitness,
-    BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp, ContentIdentity,
-    DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond, DiscardOutcome,
-    FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
-    MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeCommit,
-    RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
-    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune, RemoteBranchCopies,
-    RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip,
-    RemoteTracking, Replace, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId,
-    SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind,
-    TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
+    AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
+    BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
+    ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond,
+    DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
+    LocalRefName, MemberBirth, MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef,
+    RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl,
+    RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune,
+    RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
+    RemoteRef, RemoteTip, RemoteTracking, Replace, ReplayExclusionState, ResolvedEndpoint,
+    ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, TrackedFile,
+    TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
     VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
@@ -4444,7 +4444,12 @@ impl Vcs for GitVcs {
         message: &str,
         annotations: &[Annotation],
     ) -> Result<CommitId, VcsError> {
-        Self::commit_staged_merge(checkout, first, second, &with_trailers(message, annotations))
+        Self::commit_staged_merge(
+            checkout,
+            first,
+            second,
+            &with_trailers(message, annotations),
+        )
     }
 
     fn merge_as_refs(
