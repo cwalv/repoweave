@@ -8629,7 +8629,7 @@ pub fn cherry_pick_conflict_aborts() -> Scenario {
 /// `cherry-pick-conflict`, abandoned while the operator is stopped in a
 /// merge of their own in `docs`, a member the port never touches: `rwv
 /// abort` puts back what the port moved and leaves that merge as it is,
-/// neither cancelling it nor resetting the branch under it.
+/// neither canceling it nor resetting the branch under it.
 pub fn cherry_pick_abort_leaves_an_untouched_members_merge() -> Scenario {
     let mut steps = conflicting_port();
     steps.extend([
