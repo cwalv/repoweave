@@ -6453,6 +6453,8 @@ pub fn roles_in_feature() -> Scenario {
             Step::rwv(&ww("back"), &["member", "pin", LIB, "HEAD~1", "--commit"])
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::Lib]),
+            Step::commit(&a(), Repo::App, "main-app-2"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("back"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
                 .claim(Claim::OutputContains("pin: "))
@@ -6463,7 +6465,8 @@ pub fn roles_in_feature() -> Scenario {
                 &["land", "--retire", "--allow-member-change", LIB],
             )
             .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::Lib]),
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::OutputContains("re-pinned")),
             Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%B", "main"])
                 .claim(Claim::OutputContains("Rwv-Repin: \"local/remotes/lib\"")),
             create("patch"),
