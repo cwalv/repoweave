@@ -203,7 +203,7 @@ fn fresh(
             false,
         ),
         args.jobs,
-        OutputMode::Text,
+        OutputMode::Json,
     )?;
     if fetched.unconfirmed > 0 {
         crate::refuse!(
@@ -226,7 +226,11 @@ fn fresh(
 
     let mut take_in = TakeInRecord {
         sync_from: Some(sync.from.clone()),
-        reset_to_target: args.reset_to_target.iter().map(ToString::to_string).collect(),
+        reset_to_target: args
+            .reset_to_target
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         ..TakeInRecord::default()
     };
     take_in
@@ -239,14 +243,23 @@ fn fresh(
                 .insert(RepoKey::Member(member.path.clone()), source.clone());
         }
     }
-    let nothing = planned.project == Act::Nothing
-        && planned.members.iter().all(|m| m.act == Act::Nothing);
+    let nothing =
+        planned.project == Act::Nothing && planned.members.iter().all(|m| m.act == Act::Nothing);
     if nothing {
-        say(output, &format!("{}: already contains {}", sync.label(), sync.source_name()));
+        say(
+            output,
+            &format!("{}: already contains {}", sync.label(), sync.source_name()),
+        );
         return Ok(());
     }
     let repos = savepoint_repos(&sync);
-    let op = Op::begin(ctx.active_path(), &sync.project, OpVerb::Sync, take_in.clone(), &repos)?;
+    let op = Op::begin(
+        ctx.active_path(),
+        &sync.project,
+        OpVerb::Sync,
+        take_in.clone(),
+        &repos,
+    )?;
     {
         let mut owner = crate::op_state::read_owner(&op.workspace)?
             .context("the op record vanished as it began")?;
@@ -376,7 +389,11 @@ fn receiving_branch(
         m.get_entry(path)
             .map(|e| e.branch.local_counterpart().as_str().to_owned())
     };
-    let (mine, theirs, was) = (declared(ours), theirs.and_then(declared), base.and_then(declared));
+    let (mine, theirs, was) = (
+        declared(ours),
+        theirs.and_then(declared),
+        base.and_then(declared),
+    );
     let chosen = match (mine, theirs) {
         (Some(mine), Some(theirs)) if mine == theirs => mine,
         (Some(mine), Some(theirs)) => {
@@ -474,9 +491,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             );
         }
     }
-    let resets_project = resets
-        .iter()
-        .any(|r| matches!(r, RepoOperand::Project(_)));
+    let resets_project = resets.iter().any(|r| matches!(r, RepoOperand::Project(_)));
 
     let aligner = crate::alignment::Aligner::open(
         sync.ctx.active_path(),
@@ -593,12 +608,20 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                 .checkout(dir)
                 .bind("<W>", &sync.branch)
                 .bind("<T>", sync.source_name())
-                .listing(
-                    dependents
-                        .iter()
-                        .map(|d| format!("{d} lands into {}, which this sync would rewrite", sync.branch)),
-                )
+                .listing(dependents.iter().map(|d| {
+                    format!(
+                        "{d} lands into {}, which this sync would rewrite",
+                        sync.branch
+                    )
+                }))
                 .judge(vcs),
+        );
+    }
+    if report.lines().is_empty() && !report.notes().is_empty() {
+        crate::refuse!(
+            RefusalKind::NotFastForwardable,
+            "{}",
+            report.notes().join("\n")
         );
     }
     report.into_result()?;
@@ -632,7 +655,11 @@ fn judge_reset_site(
                 .of(label)
                 .project_repo()
                 .checkout(dir)
-                .listing(dependents.iter().map(|d| format!("{d} lands into this branch")))
+                .listing(
+                    dependents
+                        .iter()
+                        .map(|d| format!("{d} lands into this branch")),
+                )
                 .judge(vcs),
         );
     }
@@ -713,7 +740,10 @@ pub(crate) fn diverged_standing(
     }
     let mut landed = receiving.to_vec();
     landed.push(upstream.id().clone());
-    if vcs.commits_excluding(dir, local, &landed, false)?.is_empty() {
+    if vcs
+        .commits_excluding(dir, local, &landed, false)?
+        .is_empty()
+    {
         return Ok(Diverged::Landed);
     }
     if vcs
@@ -750,7 +780,11 @@ fn judge_push_branch(
     };
     let local = vcs.head_revision(dir)?;
     let scoped = |state: State| {
-        let judging = state.of(repo).checkout(dir).bind("<repo>", repo).bind("<m>", repo);
+        let judging = state
+            .of(repo)
+            .checkout(dir)
+            .bind("<repo>", repo)
+            .bind("<m>", repo);
         if project {
             judging.project_repo()
         } else {
@@ -879,7 +913,8 @@ fn plan_member(
     let source = match receiving_source(&u, &pin) {
         Ok(source) => source,
         Err(diverged) => {
-            let (ahead, behind) = mvcs.ahead_behind(&mdir, diverged.upstream.id(), diverged.local.id());
+            let (ahead, behind) =
+                mvcs.ahead_behind(&mdir, diverged.upstream.id(), diverged.local.id());
             report.add(
                 State::PushBranchDiverged
                     .of(path)
@@ -902,7 +937,8 @@ fn plan_member(
     let pins = inputs.history.of_member(path);
 
     if inputs.reset {
-        member.dropped = crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &BTreeSet::new())?;
+        member.dropped =
+            crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &BTreeSet::new())?;
         member.act = Act::Reset(source);
         judge_member_moves(&member, &attached, report)?;
         return Ok(Some(member));
@@ -933,8 +969,7 @@ fn plan_member(
                 report.note(format!(
                     "{path}: '{}' holds new work and {} has moved, so it cannot fast-forward; \
                      rerun with `--strategy rebase`",
-                    sync.branch,
-                    receiving
+                    sync.branch, receiving
                 ));
                 Act::Nothing
             }
@@ -964,7 +999,11 @@ fn plan_member(
             Lineage::Unreachable { absent } => report.add(unreachable(format!(
                 "{} pinned {} for it, which this clone lacks, so its base cannot be read here",
                 sync.source_name(),
-                absent.iter().map(|c| c.short().to_string()).collect::<Vec<_>>().join(", ")
+                absent
+                    .iter()
+                    .map(|c| c.short().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))),
         }
     }
@@ -990,12 +1029,19 @@ fn plan_member(
 /// The tip of the branch a member lands on, or the target's pin where that
 /// branch exists nowhere.
 fn receiving_source(u: &TipOf, pin: &CommitId) -> Result<CommitId, crate::tip_of::Diverged> {
-    Ok(u.newer()?.map(|tip| tip.id().clone()).unwrap_or_else(|| pin.clone()))
+    Ok(u.newer()?
+        .map(|tip| tip.id().clone())
+        .unwrap_or_else(|| pin.clone()))
 }
 
 /// The `patch-equivalent` fact for a member's unlanded commits, where the
 /// backend names any.
-pub(crate) fn patch_fact(vcs: &dyn Vcs, dir: &Path, unlanded: &CommitId, onto: &CommitId) -> Option<Fact> {
+pub(crate) fn patch_fact(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    unlanded: &CommitId,
+    onto: &CommitId,
+) -> Option<Fact> {
     let found = vcs.patch_equivalents(dir, unlanded, onto)?;
     if !found.names_any() {
         return None;
@@ -1011,7 +1057,12 @@ pub(crate) fn patch_fact(vcs: &dyn Vcs, dir: &Path, unlanded: &CommitId, onto: &
     if !found.unmatched.is_empty() && found.combined.is_none() {
         about.push(format!(
             "no match for {}",
-            found.unmatched.iter().map(|c| c.short().to_string()).collect::<Vec<_>>().join(", ")
+            found
+                .unmatched
+                .iter()
+                .map(|c| c.short().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     Some(Fact {
@@ -1022,7 +1073,11 @@ pub(crate) fn patch_fact(vcs: &dyn Vcs, dir: &Path, unlanded: &CommitId, onto: &
 
 /// What a member that moves needs judged: no edits, and its branch checked
 /// out nowhere else.
-fn judge_member_moves(member: &Member, on: &AttachedRef, report: &mut Report) -> anyhow::Result<()> {
+fn judge_member_moves(
+    member: &Member,
+    on: &AttachedRef,
+    report: &mut Report,
+) -> anyhow::Result<()> {
     let vcs = member.vcs.as_ref();
     let dir = &member.dir;
     report.extend(crate::diagnosis::judge_edits(
@@ -1084,7 +1139,16 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
         let dir = sync.ctx.active_path().join(path.as_path());
         let vcs = vcs_for(entry.vcs_type);
         let reset = resets.contains(&RepoOperand::Member(path.clone()));
-        let tip = take_member(sync, op, path, &dir, vcs.as_ref(), member_source, reset, output)?;
+        let tip = take_member(
+            sync,
+            op,
+            path,
+            &dir,
+            vcs.as_ref(),
+            member_source,
+            reset,
+            output,
+        )?;
         let before = vcs.resolve_savepoint(&dir, &key).map(|r| r.id().clone());
         if before.as_ref() != Some(&tip) || reset {
             moved.insert(path.clone(), tip);
@@ -1095,7 +1159,9 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
     let vcs = sync.vcs.as_ref();
     let head = vcs.head_revision(&sync.dir)?.id().clone();
     if sync.merging() {
-        if !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))? || vcs.merge_in_flight(&sync.dir)?.is_some() {
+        if !vcs.is_ancestor(&sync.dir, &rev(&source), &rev(&head))?
+            || vcs.merge_in_flight(&sync.dir)?.is_some()
+        {
             let commit = ProjectMerge {
                 ctx: sync.ctx,
                 project: &sync.project,
@@ -1111,7 +1177,15 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
                 first: head.clone(),
                 second: source.clone(),
             })?;
-            say(output, &format!("{}: merged {} into {}", sync.label(), sync.source_name(), commit.short()));
+            say(
+                output,
+                &format!(
+                    "{}: merged {} into {}",
+                    sync.label(),
+                    sync.source_name(),
+                    commit.short()
+                ),
+            );
         } else if !moved.is_empty() {
             relock(sync, &pre_head, &source, &moved, false)?;
         }
@@ -1126,7 +1200,13 @@ fn act(sync: &Sync<'_>, op: &Op, take_in: &TakeInRecord, output: OutputMode) -> 
     Ok(())
 }
 
-fn conflict_refusal(sync: &Sync<'_>, repo: &str, dir: &Path, vcs: &dyn Vcs, op: ConflictOp) -> anyhow::Error {
+fn conflict_refusal(
+    sync: &Sync<'_>,
+    repo: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    op: ConflictOp,
+) -> anyhow::Error {
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
@@ -1172,15 +1252,19 @@ fn take_member(
     };
     if reset {
         if head.id() != source {
-            let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
+            let kept =
+                vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
             vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             journal(source)?;
-            say(output, &format!(
-                "{path}: reset '{branch}' to {}, keeping {} in backup {}",
-                source.short(),
-                head.id().short(),
-                kept.backup().name
-            ));
+            say(
+                output,
+                &format!(
+                    "{path}: reset '{branch}' to {}, keeping {} in backup {}",
+                    source.short(),
+                    head.id().short(),
+                    kept.backup().name
+                ),
+            );
         }
         return Ok(source.clone());
     }
@@ -1188,7 +1272,11 @@ fn take_member(
         return Ok(head.id().clone());
     }
     if sync.merging() {
-        let message = format!("Merge {}'s pin of {path} into {}", sync.source_name(), sync.branch);
+        let message = format!(
+            "Merge {}'s pin of {path} into {}",
+            sync.source_name(),
+            sync.branch
+        );
         return match crate::project_merge::merge_member(
             false,
             workspace,
@@ -1217,26 +1305,41 @@ fn take_member(
     if vcs.is_ancestor(dir, &head, &src)? {
         vcs.advance_attached_ref(&attached, &src)?;
         journal(source)?;
-        say(output, &format!("{path}: fast-forwarded to {}", source.short()));
+        say(
+            output,
+            &format!("{path}: fast-forwarded to {}", source.short()),
+        );
         return Ok(source.clone());
     }
-    let pins = PinHistory::of(sync.vcs.as_ref(), &sync.dir, take_in_tip(op)?.as_ref().unwrap_or(source))
-        .map(|h| h.of_member(path))
-        .unwrap_or_default();
+    let pins = PinHistory::of(
+        sync.vcs.as_ref(),
+        &sync.dir,
+        take_in_tip(op)?.as_ref().unwrap_or(source),
+    )
+    .map(|h| h.of_member(path))
+    .unwrap_or_default();
     let new_work = crate::lineage::new_work(vcs, dir, head.id(), Some(source), &pins)?;
     if new_work.is_empty() {
         let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
         vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
         journal(source)?;
-        say(output, &format!(
-            "{path}: has no new work, so it follows {} (was {}, kept in backup {})",
-            source.short(),
-            head.id().short(),
-            kept.backup().name
-        ));
+        say(
+            output,
+            &format!(
+                "{path}: has no new work, so it follows {} (was {}, kept in backup {})",
+                source.short(),
+                head.id().short(),
+                kept.backup().name
+            ),
+        );
         return Ok(source.clone());
     }
-    vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, Some(BackupMark::Rebased))?;
+    vcs.create_backup(
+        dir,
+        &BackupSource::Branch(branch.clone()),
+        &head,
+        Some(BackupMark::Rebased),
+    )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::vcs_default())
         .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
     let tip = vcs.head_revision(dir)?.id().clone();
@@ -1284,15 +1387,23 @@ fn take_project(
     let here = rev(head);
     if reset {
         if head != source {
-            let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &here, None)?;
+            let kept =
+                vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &here, None)?;
             vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
-            crate::op_state::journal_tip(&sync.ctx.active_path().to_path_buf(), RepoKey::Project, source)?;
-            say(output, &format!(
-                "{label}: reset '{branch}' to {} with its lock, keeping {} in backup {}",
-                source.short(),
-                head.short(),
-                kept.backup().name
-            ));
+            crate::op_state::journal_tip(
+                &sync.ctx.active_path().to_path_buf(),
+                RepoKey::Project,
+                source,
+            )?;
+            say(
+                output,
+                &format!(
+                    "{label}: reset '{branch}' to {} with its lock, keeping {} in backup {}",
+                    source.short(),
+                    head.short(),
+                    kept.backup().name
+                ),
+            );
         }
         return Ok(());
     }
@@ -1301,10 +1412,18 @@ fn take_project(
     }
     if vcs.is_ancestor(dir, &here, &src)? {
         vcs.advance_attached_ref(&attached, &src)?;
-        say(output, &format!("{label}: fast-forwarded to {}", source.short()));
+        say(
+            output,
+            &format!("{label}: fast-forwarded to {}", source.short()),
+        );
         return Ok(());
     }
-    vcs.create_backup(dir, &BackupSource::Branch(branch), &here, Some(BackupMark::Rebased))?;
+    vcs.create_backup(
+        dir,
+        &BackupSource::Branch(branch),
+        &here,
+        Some(BackupMark::Rebased),
+    )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
     say(output, &format!("{label}: rebased onto {}", source.short()));
@@ -1353,7 +1472,12 @@ fn relock(
         let ours = held(pre_head);
         let merged_declared: BTreeMap<RepoPath, String> = manifest
             .iter_entries()
-            .map(|(path, entry)| (path.clone(), entry.branch.local_counterpart().as_str().to_owned()))
+            .map(|(path, entry)| {
+                (
+                    path.clone(),
+                    entry.branch.local_counterpart().as_str().to_owned(),
+                )
+            })
             .collect();
         let merged = merge_pins(
             &PinMerge {

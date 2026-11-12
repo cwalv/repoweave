@@ -3653,6 +3653,47 @@ pub fn dc18_partial_delete_status() -> Scenario {
                 .claim(Claim::OutputContains(
                     "left: local/remotes/lib proj--feat2: unlanded",
                 )),
+/// A workweave's feature, its target `main` moved in `app` and locked; `sync`
+/// rebases the feature's `app` onto `main`'s and relocks.
+pub fn sync_takes_in_the_target() -> Scenario {
+    scenario(
+        "sync takes in the record's target",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("--strategy rebase")),
+            Step::rwv(&ww("w"), &["sync", "--strategy", "rebase"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .claim(Claim::OutputContains("local/remotes/app: rebased onto"))
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::App,
+                    rev: "proj--w",
+                    mark: "main-app",
+                })
+                .claim(Claim::Contains {
+                    at: ww("w"),
+                    repo: Repo::Lib,
+                    rev: "proj--w",
+                    mark: "main-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),
+                    member: Repo::App,
+                    mark: "main-app",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(ww("w"), Repo::Proj, "proj--w".to_owned()),
+                    member: Repo::Lib,
+                    mark: "main-lib",
+                }),
         ],
     )
 }

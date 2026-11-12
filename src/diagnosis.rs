@@ -2748,6 +2748,10 @@ impl Report {
         &self.lines
     }
 
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
     /// Print `note` after the judged lines.
     pub fn note(&mut self, note: impl fmt::Display) {
         self.notes.push(note.to_string());

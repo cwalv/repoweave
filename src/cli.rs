@@ -346,7 +346,11 @@ pub enum Commands {
         #[arg(long, value_name = "T", conflicts_with = "do_continue")]
         target: Option<String>,
         /// Move this repo's branch to the branch it lands on, keeping a backup and listing the new work it drops; repeat per repo (`projects/<p>` for the project branch, to the target's tip with its lock)
-        #[arg(long = "reset-to-target", value_name = "REPO", conflicts_with = "do_continue")]
+        #[arg(
+            long = "reset-to-target",
+            value_name = "REPO",
+            conflicts_with = "do_continue"
+        )]
         reset_to_target: Vec<crate::manifest::RepoOperand>,
         /// How a branch holding new work takes in: ff (fast-forward only, the default) or rebase
         #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]

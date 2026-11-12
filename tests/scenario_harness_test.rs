@@ -2604,3 +2604,8 @@ fn a_delete_destroys_only_landed_push_branches_or_the_repos_it_names() {
 fn a_delete_leaving_an_unlanded_branch_exits_3_naming_each_survivor() {
     runner::run(scenarios::dc18_partial_delete_status()).assert_fully_decided_green();
 }
+
+#[test]
+fn sync_takes_in_the_records_target_and_relocks() {
+    runner::run(scenarios::sync_takes_in_the_target()).assert_fully_decided_green();
+}
