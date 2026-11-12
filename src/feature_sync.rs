@@ -607,7 +607,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         &sync.project,
         crate::alignment::Accounting::default(),
     )?;
-    let accounting = crate::alignment::Accounting::scan(sync.ctx.primary_path());
+    let accounting = crate::alignment::Accounting::scan(sync.ctx.primary_path())?;
     let dependents = crate::merge_upstream::dependents_of(vcs, dir, &sync.branch)?;
     let mut members = Vec::new();
     for (path, entry) in ours.iter_entries() {
@@ -1078,6 +1078,28 @@ fn plan_member(
     let pins = inputs.history.of_member(path);
 
     if inputs.reset {
+        let live = crate::pins::live_pins(sync.ctx.primary_path())?;
+        let branch = crate::branch_ref::BranchRef::Local(RawRefName::new(attached.to_string()));
+        let (was, now) = (rev(&head), rev(&source));
+        let change = crate::pins::RefChange {
+            branch: &branch,
+            was: &was,
+            now: Some(&now),
+            was_backed_up: true,
+        };
+        let held = live.get(path).map(Vec::as_slice).unwrap_or_default();
+        let stranded = crate::pins::stranded_by(mvcs, &mdir, held, &change, |_| false)?;
+        if !stranded.is_empty() {
+            report.add(
+                State::PinWouldBeUnreachable
+                    .of(path)
+                    .member()
+                    .checkout(&mdir)
+                    .bind("<m>", path)
+                    .listing(stranded.iter().map(|s| s.line(&change)))
+                    .judge(mvcs),
+            );
+        }
         member.dropped =
             crate::lineage::new_work(mvcs, &mdir, &head, Some(&source), &BTreeSet::new())?;
         member.act = Act::Reset(source);
@@ -1326,12 +1348,12 @@ fn act(
                 ),
             );
         } else if !moved.is_empty() {
-            relock(sync, &pre_head, &source, &moved, false)?;
+            relock(sync, &pre_head, &source, &moved, false, &resets)?;
         }
     } else {
         set_aside_authored(sync, &pre_manifest)?;
         take_project(sync, &head, &source, resets_project, output)?;
-        relock(sync, &pre_head, &source, &moved, resets_project)?;
+        relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }
     settle(sync, &pre_manifest, reported, output)?;
     let hits = delivered_materialized_inputs(sync, &key);
@@ -1669,6 +1691,18 @@ fn set_aside_authored(sync: &Sync<'_>, manifest: &Manifest) -> anyhow::Result<()
     Ok(())
 }
 
+/// The members `--reset-to-target` names: the lock commit re-pins them by
+/// name.
+fn by_name_resets(resets: &[RepoOperand]) -> crate::repin::Naming {
+    crate::repin::Naming::by_name(
+        "sync",
+        resets.iter().filter_map(|r| match r {
+            RepoOperand::Member(path) => Some(path.clone()),
+            RepoOperand::Project(_) => None,
+        }),
+    )
+}
+
 /// The lock a sync leaves: the three-way merge of pins against the merge
 /// base's lock, each moved member at its new tip; with the project repo reset,
 /// the target's lock with the moved members at theirs.
@@ -1678,6 +1712,7 @@ fn relock(
     source: &CommitId,
     moved: &BTreeMap<RepoPath, CommitId>,
     reset_project: bool,
+    resets: &[RepoOperand],
 ) -> anyhow::Result<()> {
     let vcs = sync.vcs.as_ref();
     let dir = &sync.dir;
@@ -1727,6 +1762,7 @@ fn relock(
         vcs,
         dir,
         &format!("lock: relock after sync from {}", sync.source_name()),
+        &by_name_resets(resets),
     )?;
     Ok(())
 }

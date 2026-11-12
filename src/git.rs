@@ -8,14 +8,14 @@ use crate::vcs::{
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DestroyProof, DiffBeyond,
     DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup,
-    LocalRefName, MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PinOutcome, PruningFetch, PublishRef,
-    RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl,
-    RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin, RegistrationPrune,
-    RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
-    RemoteRef, RemoteTip, RemoteTracking, Replace, ReplayExclusionState, ResolvedEndpoint,
-    ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, TrackedFile,
-    TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    LocalRefName, MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PinOutcome,
+    PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId,
+    RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge,
+    RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch,
+    RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace,
+    ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
+    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
+    Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
