@@ -34,6 +34,7 @@ src/alignment.rs	alignment detached	-	1
 src/alignment.rs	alignment detached with unpushed commits	-	1
 src/alignment.rs	alignment on branch	-	1
 src/alignment.rs	alignment on branch with stray commits	-	1
+src/alignment.rs	alignment project detached	-	1
 src/alignment.rs	alignment unaligned	-	1
 src/alignment.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
 src/alignment.rs	pin none	tests/backup_verb_test.rs	1
@@ -105,7 +106,6 @@ src/integrations/static_files.rs	(untokened:integration-channel)	-	1
 src/integrations/uv_workspace.rs	(untokened:integration-channel)	-	4
 src/lock.rs	(untokened:environment-passthrough)	-	4
 src/lock.rs	(untokened:tally)	-	1
-src/lock.rs	alignment project detached	-	1
 src/lock.rs	edits dirty	tests/refusal_arrival_test.rs	3
 src/lock.rs	pin backwards	tests/backup_verb_test.rs	1
 src/lock.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
@@ -178,12 +178,17 @@ src/push_branch.rs	push-branch gone	-	1
 src/push_branch.rs	push-branch no push target	-	1
 src/registry.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
-src/status.rs	alignment project detached	-	1
 src/status.rs	alignment project moved	-	1
 src/status.rs	alignment project unaligned	-	1
 src/status.rs	pin none	tests/backup_verb_test.rs	1
 src/status.rs	pin unreachable	tests/backup_verb_test.rs	1
 src/status.rs	push-branch ahead	-	1
+src/switch.rs	edits rwv.toml or rwv.lock uncommitted	tests/refusal_arrival_test.rs	1
+src/switch.rs	head-not-on-branch	-	1
+src/switch.rs	invalid-ref-name	-	1
+src/switch.rs	name no-such-branch	tests/refusal_arrival_test.rs	2
+src/switch.rs	name reserved	tests/refusal_arrival_test.rs	1
+src/switch.rs	push-branch diverged	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	3
 src/sync.rs	(untokened:internal-invariant)	-	10
 src/sync.rs	(untokened:tally)	-	2
@@ -210,7 +215,6 @@ src/sync.rs	unparseable-project malformed	tests/e2e_sync_abort_test.rs	1
 src/sync.rs	unreadable-status	-	2
 src/sync.rs	unresolvable-lock-entry	tests/refusal_arrival_test.rs	3
 src/sync.rs	untracked-collision	-	1
-src/update.rs	alignment project detached	-	1
 src/update.rs	partial-run-aborted	tests/refusal_arrival_test.rs	3
 src/update_remote.rs	partial-run-aborted	tests/refusal_arrival_test.rs	2
 src/url_remote.rs	name taken	tests/refusal_arrival_test.rs	1
