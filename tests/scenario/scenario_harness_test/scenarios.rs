@@ -7065,6 +7065,8 @@ pub fn shared_checkout_detached() -> Scenario {
                     mark: "hotfix-docs",
                 }),
             Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
+            Step::git(&a(), Repo::Docs, &["for-each-ref", "refs/rwv/pre-op/"])
+                .claim(Claim::OutputLacks("-in-place")),
             Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
             Step::commit(&ww("st"), Repo::Docs, "st-docs"),
             Step::rwv(&ww("st"), &["lock"])
@@ -10514,6 +10516,10 @@ pub enum ReceivingCase {
     /// `lib-next` exists nowhere: the landing creates it at `main`'s pin and
     /// moves it onto the composed work.
     Created,
+    /// `lib-next` exists nowhere and the feature has no `lib` work: the
+    /// landing creates it at `main`'s pin, where the target's checkout of
+    /// `lib` already is, and aligning switches that checkout onto it.
+    CreatedWithoutWork,
 }
 
 /// The workspace `rwv abort` is run in.
@@ -10530,7 +10536,12 @@ pub enum AbortFrom {
 /// it) and never reset to `main`'s pin, and no commit is left on no ref.
 pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> Scenario {
     let mut steps = vec![create("w")];
-    if case != ReceivingCase::Created {
+    let created = matches!(
+        case,
+        ReceivingCase::Created | ReceivingCase::CreatedWithoutWork
+    );
+    let with_work = matches!(case, ReceivingCase::MovedAsRef | ReceivingCase::Created);
+    if !created {
         steps.extend([
             Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
             Step::commit(&a(), Repo::Lib, "dev-own"),
@@ -10551,7 +10562,7 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
             &["commit", "-qam", "lib onto lib-next"],
         ),
     ]);
-    if case != ReceivingCase::Followed {
+    if with_work {
         steps.push(Step::commit(&ww("w"), Repo::Lib, "w-lib"));
     }
     steps.extend([
@@ -10578,7 +10589,9 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
     };
     let restored: &[Repo] = match case {
         ReceivingCase::Followed => &[Repo::Proj],
-        ReceivingCase::MovedAsRef | ReceivingCase::Created => &[Repo::Proj, Repo::Lib],
+        ReceivingCase::MovedAsRef | ReceivingCase::Created | ReceivingCase::CreatedWithoutWork => {
+            &[Repo::Proj, Repo::Lib]
+        }
     };
     steps.push(
         Step::rwv(&aborts_in, &["abort"])
@@ -10603,12 +10616,12 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
             Step::git(&a(), Repo::Lib, &["log", "--format=%s", "-1", "lib-next"])
                 .claim(Claim::OutputLine("dev-own")),
         ]),
-        ReceivingCase::Created => steps.push(
+        ReceivingCase::Created | ReceivingCase::CreatedWithoutWork => steps.push(
             Step::git(&a(), Repo::Lib, &["branch", "--list", "lib-next"])
                 .claim(Claim::OutputLacks("lib-next")),
         ),
     }
-    if case != ReceivingCase::Followed {
+    if with_work {
         steps.push(
             Step::git(&ww("w"), Repo::Lib, &["log", "--format=%s", "-1"])
                 .claim(Claim::OutputLine("w-lib")),
@@ -10634,7 +10647,7 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
             branch: "lib-next",
         }),
     );
-    if case != ReceivingCase::Created {
+    if !created {
         steps.push(
             Step::git(&a(), Repo::Lib, &["log", "--format=%s", "lib-next"])
                 .claim(Claim::OutputLine("dev-own")),

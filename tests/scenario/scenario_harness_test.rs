@@ -763,6 +763,14 @@ every_scenario!(
         scenarios::ReceivingCase::Created,
         scenarios::AbortFrom::Target
     ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::CreatedWithoutWork,
+        scenarios::AbortFrom::Source
+    ),
+    abort_after_the_target_aligned(
+        scenarios::ReceivingCase::CreatedWithoutWork,
+        scenarios::AbortFrom::Target
+    ),
     cherry_pick_abort_leaves_an_untouched_members_merge,
     pull_abort_refuses_a_merge_begun_on_the_operators_commit,
     pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint,
@@ -2697,14 +2705,17 @@ holding_rwv! {
 holding_rwv! {
     /// After the target's workspace aligned onto a receiving branch the
     /// landing created, `rwv abort` from either workspace switches it back,
-    /// then deletes the branch.
+    /// then deletes the branch, the checkout switched at the commit it was
+    /// on included.
     fn abort_after_aligning_onto_a_created_branch_deletes_it() {
-        for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
-            runner::run(scenarios::abort_after_the_target_aligned(
-                scenarios::ReceivingCase::Created,
-                from,
-            ))
-            .assert_fully_decided_green();
+        for case in [
+            scenarios::ReceivingCase::Created,
+            scenarios::ReceivingCase::CreatedWithoutWork,
+        ] {
+            for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+                runner::run(scenarios::abort_after_the_target_aligned(case, from))
+                    .assert_fully_decided_green();
+            }
         }
     }
 }

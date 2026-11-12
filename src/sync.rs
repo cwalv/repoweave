@@ -7086,15 +7086,16 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey, to: &CommitId) -> an
     })
 }
 
-/// Journal each checkout of `T`'s workspace that aligning it may move: each
-/// member whose checkout is not at the pin `T`'s new lock gives it, or that
-/// has no checkout yet, with that pin, leaving a checkout the project the
-/// workspace presents shares with it, which aligning does not move.
+/// Journal each checkout of `T`'s workspace that aligning it may move, with
+/// the pin `T`'s new lock gives it, leaving a checkout the project the
+/// workspace presents shares with it, which aligning does not move. Aligning
+/// moves a checkout by its attachment as well as its commit, so a checkout
+/// already at its pin is journaled too; each one comes with where it stood.
 fn journal_alignment(
     ctx: &OpContext<'_>,
     dest_workspace_dir: &Path,
     dest_project_dir: &Path,
-) -> anyhow::Result<Vec<RepoKey>> {
+) -> anyhow::Result<Vec<(RepoKey, Option<Standing>)>> {
     let Ok(landed) = Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()) else {
         return Ok(Vec::new());
     };
@@ -7116,25 +7117,40 @@ fn journal_alignment(
         }
         let vcs = vcs_for(entry.vcs_type);
         let dir = dest_workspace_dir.join(path.as_path());
-        if vcs.is_repo(&dir) && vcs.head_revision(&dir).is_ok_and(|head| head.id() == &pin) {
-            continue;
-        }
         let key = RepoKey::Member(path.clone());
         journal_fast_forward(ctx, &key, &pin)?;
-        aligning.push(key);
+        aligning.push((key, standing(vcs.as_ref(), &dir)));
     }
     Ok(aligning)
 }
 
+/// Where a checkout stands: its commit, and the branch it is on.
+#[derive(PartialEq, Eq)]
+struct Standing {
+    at: CommitId,
+    on: Option<String>,
+}
+
+fn standing(vcs: &dyn Vcs, dir: &Path) -> Option<Standing> {
+    if !vcs.is_repo(dir) {
+        return None;
+    }
+    let at = vcs.head_revision(dir).ok()?.id().clone();
+    let on = match vcs.head_attachment(dir).ok()? {
+        HeadAttachment::Attached(on) => Some(on.to_string()),
+        _ => None,
+    };
+    Some(Standing { at, on })
+}
+
 /// Take back off the journal each checkout of `aligning` the alignment left
-/// at its savepoint: it did not move.
+/// where it stood: it did not move.
 fn unjournal_unmoved(
     ctx: &OpContext<'_>,
     dest_workspace_dir: &Path,
-    aligning: &[RepoKey],
+    aligning: &[(RepoKey, Option<Standing>)],
 ) -> anyhow::Result<()> {
-    let key = ctx.target_savepoint_key();
-    for repo in aligning {
+    for (repo, before) in aligning {
         let RepoKey::Member(path) = repo else {
             continue;
         };
@@ -7147,12 +7163,8 @@ fn unjournal_unmoved(
             continue;
         }
         let vcs = crate::vcs::probe_vcs();
-        let dir = dest_workspace_dir.join(path.as_path());
-        let unmoved = match (vcs.resolve_savepoint(&dir, &key), vcs.head_revision(&dir)) {
-            (Some(saved), Ok(head)) => saved == head,
-            _ => !vcs.is_repo(&dir),
-        };
-        if unmoved {
+        let now = standing(vcs.as_ref(), &dest_workspace_dir.join(path.as_path()));
+        if &now == before {
             unjournal(ctx, repo)?;
         }
     }
@@ -7468,6 +7480,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let mut keys = vec![ctx.savepoint_key()];
     if matches!(ctx.verb, op_state::OpVerb::Land) {
         keys.push(ctx.target_savepoint_key());
+        keys.push(SavepointKey::LandInPlace(ctx.op_id.clone()));
     }
 
     // Every member either side listed when its savepoints were taken, or
