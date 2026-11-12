@@ -351,7 +351,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `off lineage`, for `rwv pull` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `off lineage`, for `rwv pull` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick -x <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
 | `not on declared branch` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `not on declared branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `not on declared branch`, for `rwv cherry-pick` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit`; then rerun with `--except <m>` | here | re-pins by name; backup for a detached HEAD |
@@ -1357,12 +1357,12 @@ A member's checkout, or the project repo's, is not where the checked-out project
 |---|---|---|---|---|
 | `on branch` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `on branch`, for `rwv activate` | C6: align members for the checked-out branch | `rwv activate <project> --update` | here | moves only what alignment moves |
-| `on branch with stray commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `on branch with stray commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick -x <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
 | `on branch with stray commits` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
 | `detached` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `detached`, for `rwv activate` | C6: align members for the checked-out branch | `rwv activate <project> --update` | here | moves only what alignment moves |
 | `detached with unpushed commits` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
-| `detached with unpushed commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `detached with unpushed commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick -x <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
 | `unaligned` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `unaligned` | C18: start `<m>`'s `<b>` at a commit you choose | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | creates only |
 | `project moved` | C30: return the project repo to a branch, or start one carrying the edits | `rwv switch <b>` | here | moves only what alignment moves |

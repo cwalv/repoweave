@@ -6888,6 +6888,38 @@ pub fn member_change_race_listing() -> Scenario {
     )
 }
 
+/// A member on a branch of its own with a commit nothing else reaches, its
+/// expected branch checked out in the primary: the printed copy records its
+/// source, so the commit counts as reached, the state moves to an empty stray
+/// set, and its printed `rwv update` aligns the member.
+pub fn stray_commits_copied_onto_the_checked_out_branch() -> Scenario {
+    Scenario {
+        name: "stray commits copied onto the checked-out branch",
+        seed: Seed::default().role(Repo::Lib, Role::Dependency),
+        steps: vec![
+            create("w"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "-q", "-c", "stray"]),
+            Step::commit(&ww("w"), Repo::Lib, "stray-one"),
+            Step::rwv(&ww("w"), &["lock"])
+                .expect(Exit::refuses(
+                    Repo::Lib,
+                    State::AlignmentOnBranchWithStrayCommits,
+                ))
+                .claim(Claim::OutputContains("cherry-pick -x"))
+                .claim(Claim::OutputContains("rwv lock --commit")),
+            Step::rwv_printed_holding(&ww("w"), "git -C", "cherry-pick").expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["cat-file", "-e", "main:stray-one.txt"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["lock"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputLacks("stray-one")),
+            Step::rwv_printed_exactly(&ww("w"), "rwv update").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["lock"]).expect(Exit::Succeeds),
+        ],
+    }
+}
+
 /// A seat lands `lib`'s move from `main` to `dev` while `main` holds
 /// `alpha`, a commit its push branch lacks and `dev` does not hold.
 fn member_change_leaves_main_unpushed() -> Vec<Step> {

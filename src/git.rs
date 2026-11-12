@@ -2989,8 +2989,8 @@ impl Vcs for GitVcs {
             VcsAction::SwitchTo => "git -C <checkout> switch <E>",
             VcsAction::SwitchDetached => "git -C <checkout> switch --detach <r>/<b>",
             VcsAction::Detach => "git -C <checkout> switch --detach",
-            VcsAction::CherryPick => "git -C <checkout> cherry-pick <ids>",
-            VcsAction::CherryPickOntoCheckedOut => "git -C <b-checkout> cherry-pick <ids>",
+            VcsAction::CherryPick => "git -C <checkout> cherry-pick -x <ids>",
+            VcsAction::CherryPickOntoCheckedOut => "git -C <b-checkout> cherry-pick -x <ids>",
             VcsAction::CherryPickMainline => "git -C <checkout> cherry-pick -m 1 <ids>",
             VcsAction::Revert => "git -C <checkout> revert <ids>",
             VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <pin>",
@@ -5088,6 +5088,15 @@ impl Vcs for GitVcs {
 
     fn copied_from(&self, repo: &Path, commit: &CommitId) -> Result<Option<CommitId>, VcsError> {
         Self::cherry_picked_from(repo, commit)
+    }
+
+    fn copied_into(
+        &self,
+        repo: &Path,
+        commits: &[CommitId],
+        target: &ResolvedRevisionId,
+    ) -> Result<std::collections::BTreeSet<CommitId>, VcsError> {
+        Self::cherry_picked_into(repo, commits, target)
     }
 
     fn parents(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {

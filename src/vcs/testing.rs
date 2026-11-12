@@ -913,6 +913,15 @@ impl Vcs for FakeVcs {
         unsupported("copied_from")
     }
 
+    fn copied_into(
+        &self,
+        _repo: &Path,
+        _commits: &[CommitId],
+        _target: &ResolvedRevisionId,
+    ) -> Result<std::collections::BTreeSet<CommitId>, VcsError> {
+        unsupported("copied_into")
+    }
+
     fn parents(&self, _repo: &Path, _commit: &CommitId) -> Result<Vec<CommitId>, VcsError> {
         unsupported("parents")
     }

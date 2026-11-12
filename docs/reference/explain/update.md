@@ -1483,9 +1483,10 @@ rwv update --remote --repo github/acme/server --commit
 - *no active project* — the weave holds zero or several projects and none is
   active; pass `--project <name>` or run `rwv activate <name>`.
 - *alignment on branch with stray commits* — the checkout is on a branch the
-  workspace does not expect and holds commits no other ref reaches. `update`
-  leaves it; keep the commits on a branch or copy them onto the expected one,
-  as the choices print, and re-run.
+  workspace does not expect and holds commits no other ref reaches, nor a copy
+  on the expected branch that records it copies them (git: `cherry-pick -x`).
+  `update` leaves it; keep the commits on a branch or copy them onto the
+  expected one, as the choices print, and re-run.
 - *edits mid-operation* — a repo is stopped mid-rebase, mid-merge, mid-cherry-pick
   or mid-bisect. Finish or abort that operation and re-run; rwv will not move a
   HEAD that is carrying an in-flight operation's state.

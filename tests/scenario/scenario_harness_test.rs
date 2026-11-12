@@ -67,6 +67,12 @@ fn a_diverged_main_left_by_a_member_change_publishes_through_a_workspace_on_it()
 }
 
 #[test]
+fn stray_commits_copied_onto_their_branch_checked_out_elsewhere_clear_the_state() {
+    runner::run(scenarios::stray_commits_copied_onto_the_checked_out_branch())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_diverged_main_left_by_a_member_change_resets_to_its_upstream_keeping_a_backup() {
     runner::run(scenarios::main_diverged_after_member_change_reset()).assert_fully_decided_green();
 }
@@ -927,6 +933,7 @@ every_scenario!(
     seat_follows_after_landing,
     member_change_race_listing,
     main_diverged_after_member_change,
+    stray_commits_copied_onto_the_checked_out_branch,
     main_diverged_after_member_change_reset,
     member_change_left_behind_in_json,
     member_change_left_behind_on_continue,

@@ -1013,9 +1013,18 @@ impl Aligner {
             HeadAttachment::Attached(a) => {
                 let tip = m.vcs.head_revision(m.dir)?;
                 let leaving = RawRefName::new(a.to_string());
-                let stray = m
+                let mut stray = m
                     .vcs
                     .stray_commits(m.dir, &tip, Some(&leaving), onto.as_ref())?;
+                let wanted = self.wanted(m.entry.role, m.entry).0;
+                if let (false, Some(wanted_tip)) = (
+                    stray.is_empty(),
+                    m.vcs.resolve_local_branch_tip(m.dir, &wanted)?,
+                ) {
+                    let ids: Vec<_> = stray.iter().map(|c| c.id.clone()).collect();
+                    let copied = m.vcs.copied_into(m.dir, &ids, &wanted_tip)?;
+                    stray.retain(|c| !copied.contains(&c.id));
+                }
                 Off::OnBranch {
                     branch: a.to_string(),
                     stray,

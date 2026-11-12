@@ -125,6 +125,40 @@ impl GitVcs {
         commit_id(&String::from_utf8_lossy(&output.stdout), &args, checkout).map(Some)
     }
 
+    pub(super) fn cherry_picked_into(
+        repo: &Path,
+        commits: &[CommitId],
+        target: &crate::vcs::ResolvedRevisionId,
+    ) -> Result<std::collections::BTreeSet<CommitId>, VcsError> {
+        if commits.is_empty() {
+            return Ok(std::collections::BTreeSet::new());
+        }
+        let mut args = vec![
+            "log".to_owned(),
+            "--format=%B%x00".to_owned(),
+            target.id().as_str().to_owned(),
+            "--not".to_owned(),
+        ];
+        args.extend(commits.iter().map(|c| c.as_str().to_owned()));
+        args.push("--".to_owned());
+        let messages = Self::run(&args, repo)?;
+        let copied: std::collections::BTreeSet<&str> = messages
+            .split('\0')
+            .filter_map(|message| {
+                message.lines().rev().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("(cherry picked from commit ")?
+                        .strip_suffix(')')
+                })
+            })
+            .collect();
+        Ok(commits
+            .iter()
+            .filter(|c| copied.contains(c.as_str()))
+            .cloned()
+            .collect())
+    }
+
     pub(super) fn cherry_picked_from(
         repo: &Path,
         commit: &CommitId,

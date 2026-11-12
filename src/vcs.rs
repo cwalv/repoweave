@@ -4974,6 +4974,17 @@ pub trait Vcs: Send + Sync {
     /// message.
     fn copied_from(&self, repo: &Path, commit: &CommitId) -> Result<Option<CommitId>, VcsError>;
 
+    /// The commits of `commits` that `target` holds a recorded copy of: a
+    /// commit `target` reaches, and none of `commits` does, that records it
+    /// copies one of them, as [`Vcs::copied_from`] reads it. Never matched by
+    /// content.
+    fn copied_into(
+        &self,
+        repo: &Path,
+        commits: &[CommitId],
+        target: &ResolvedRevisionId,
+    ) -> Result<std::collections::BTreeSet<CommitId>, VcsError>;
+
     /// The parents of `commit`, in order; none for a root commit.
     ///
     /// For git: `git rev-list --parents -n 1 <commit>`.
