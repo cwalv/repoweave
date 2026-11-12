@@ -714,7 +714,7 @@
       }
     },
     "ReplayBaseline": {
-      "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
+      "description": "Which read gave replay this repo's target.",
       "type": "string",
       "enum": [
         "source-lock-entry",

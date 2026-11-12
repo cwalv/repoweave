@@ -814,7 +814,7 @@ Schema:
       "description": "Which top-level verb started this op.",
       "oneOf": [
         {
-          "description": "Single-step sync (existing `rwv sync`).",
+          "description": "`rwv sync`: a feature takes in its target, or a branch merges `--from`.",
           "type": "string",
           "enum": [
             "sync"

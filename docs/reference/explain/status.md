@@ -55,6 +55,12 @@ fetched:
   the project repo, `project moved`, `project unaligned` or `project detached`
   against the aligned branch. A workspace state file that cannot be read is
   said so, and reads as absent.
+- `target record changed (<branch>)` for the project repo's checked-out branch
+  when its record differs from the one this workspace last saw and this
+  workspace did not write the change: the old and the new value, and whether
+  it arrived by fetch or was written in another workspace of this clone.
+  `rwv update` accepts it; `rwv branch set-mode` restores the old value. Like
+  the `aligned for` line, it prints only without `--role` or `--repo`.
 - One `pin` line for each member whose HEAD is not at the commit the lock pins
   for it, with that state's choices: `none` (the lock has no entry for it),
   `unreachable`, `behind`, `diverged`, `unpinned` (commits beyond the pin that
@@ -799,7 +805,7 @@ Schema:
       "description": "Which top-level verb started this op.",
       "oneOf": [
         {
-          "description": "Single-step sync (existing `rwv sync`).",
+          "description": "`rwv sync`: a feature takes in its target, or a branch merges `--from`.",
           "type": "string",
           "enum": [
             "sync"
