@@ -198,6 +198,7 @@ pub mod setup;
 pub mod share;
 pub(crate) mod shared_members;
 pub mod skipped;
+pub(crate) mod stack;
 pub mod state_file;
 pub mod status;
 pub mod switch;

@@ -718,6 +718,15 @@ pub enum LandingReportOutput {
         was: CommitId,
         backup: String,
     },
+    /// A dependent's branch `branch` carried along the landing's rebase, from
+    /// `was`, kept in the `rebased` backup `backup`, to `now`.
+    Carried {
+        path: String,
+        branch: String,
+        was: CommitId,
+        now: CommitId,
+        backup: String,
+    },
     /// A pin a replayed project commit held on a commit the rebase of
     /// `path` dropped, moved to what that rebase made of the commits before it.
     Remapped {
@@ -822,6 +831,19 @@ impl LandingReportOutput {
             op_state::LandingReport::Rebased { repo, was, backup } => Self::Rebased {
                 path: repo.to_string(),
                 was: was.clone(),
+                backup: backup.clone(),
+            },
+            op_state::LandingReport::Carried {
+                repo,
+                branch,
+                was,
+                now,
+                backup,
+            } => Self::Carried {
+                path: repo.to_string(),
+                branch: branch.clone(),
+                was: was.clone(),
+                now: now.clone(),
                 backup: backup.clone(),
             },
             op_state::LandingReport::Remapped { repo, was, now } => Self::Remapped {
@@ -953,6 +975,20 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                 outln!(
                     "  {repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
                     was.short()
+                );
+            }
+            op_state::LandingReport::Carried {
+                repo,
+                branch,
+                was,
+                now,
+                backup,
+            } => {
+                eprintln!(
+                    "  {repo}: carried '{branch}' along: {} -> {}, the tip it left kept in the \
+                     rebased backup {backup}",
+                    was.short(),
+                    now.short()
                 );
             }
             op_state::LandingReport::Remapped { repo, was, now } => {
@@ -3514,7 +3550,7 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let plan = match crate::land::judge(landing, history, cwd_workspace_dir, &mut report) {
+    let plan = match crate::land::judge(landing, history, cwd_workspace_dir, retire, &mut report) {
         Ok(plan) => plan,
         Err(e) => {
             hold(Err(e), &mut report);
@@ -5537,6 +5573,7 @@ fn keep_before_rebase(
         op_state::Rebasing {
             repo: repo.clone(),
             branch: branch.as_str().to_owned(),
+            base: onto.id().clone(),
             from: head.id().clone(),
             onto: onto.id().clone(),
         },
@@ -5580,6 +5617,16 @@ fn follow_receiving(
         ));
     };
     let branch = crate::vcs::RawRefName::new(attached.to_string());
+    op_state::journal_rebasing(
+        &ctx.owner_workspace_dir,
+        op_state::Rebasing {
+            repo: RepoKey::Member(repo_path.clone()),
+            branch: branch.as_str().to_owned(),
+            base: head.id().clone(),
+            from: head.id().clone(),
+            onto: source.clone(),
+        },
+    )?;
     let kept = vcs.create_backup(
         abs,
         &crate::vcs::BackupSource::Branch(branch.clone()),
@@ -5805,6 +5852,22 @@ fn read_member_tips(
 fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
+    let pre_op = pre_op_manifest(ctx)?;
+    let feature = landing_feature(ctx)?;
+    let target = target_name(ctx);
+    let carrier = crate::stack::Carrier {
+        repos: crate::stack::Repos {
+            root: &ctx.cwd_workspace_dir,
+            project: &ctx.cwd_project_name,
+            manifest: &pre_op,
+        },
+        workspace: &ctx.owner_workspace_dir,
+        verb: ctx.verb,
+        w: &feature,
+        t: &target,
+    };
+    carrier.finish_stopped()?;
+
     let cwd_project = reload_replayed_project(ctx)?;
 
     if let Err(e) = relock_landing(ctx, &cwd_project.manifest) {
@@ -5828,11 +5891,51 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
+    for carried in carrier.carry()? {
+        report_landing(
+            ctx,
+            op_state::LandingReport::Carried {
+                repo: carried.repo,
+                branch: carried.branch,
+                was: carried.was,
+                now: carried.now,
+                backup: carried.backup,
+            },
+        )?;
+    }
+
     // Record converged tips on the owner record. These are read by
     // advance-target and consumed by abort hardening (sibling .4).
     record_converged_tips(ctx, &cwd_project)?;
 
     Ok(())
+}
+
+/// The feature a landing lands: the branch the source's project checkout is
+/// on.
+fn landing_feature(ctx: &OpContext<'_>) -> anyhow::Result<crate::records::BranchName> {
+    let vcs = ctx.project_vcs.as_ref();
+    let name = match vcs.head_attachment(&ctx.cwd_project_dir)? {
+        HeadAttachment::Attached(on) => on.to_string(),
+        _ => op_state::read_owner(&ctx.owner_workspace_dir)?
+            .and_then(|owner| owner.take_in)
+            .and_then(|take_in| {
+                take_in
+                    .rebases
+                    .into_iter()
+                    .find(|r| r.repo == RepoKey::Project)
+            })
+            .map(|r| r.branch)
+            .ok_or_else(|| {
+                crate::untokened!(
+                    EnvironmentPassthrough,
+                    "{}: is on no branch, so the feature it lands is unknown",
+                    ctx.cwd_project_dir.display()
+                )
+            })?,
+    };
+    crate::records::BranchName::parse(vcs, &name)
+        .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{name}: {e:?}"))
 }
 
 /// Answers whether one pin of a member reaches another, in the source's
@@ -7498,9 +7601,11 @@ pub fn run_abort(
             .as_ref()
             .map(|take_in| take_in.ref_moves.as_slice())
             .unwrap_or_default();
-        for (repo, branch, error) in
-            crate::merge_upstream::restore_ref_moves(&workspace_dir, ref_moves)
-        {
+        for (repo, branch, error) in crate::merge_upstream::restore_ref_moves(
+            &workspace_dir,
+            Some(&cwd_project_dir),
+            ref_moves,
+        ) {
             eprintln!(
                 "  {}: '{branch}' moved since the op wrote it, so it is left where it is: {error:#}",
                 RepoOperand::of(&repo, &op_project_name)
@@ -8054,7 +8159,7 @@ fn replay_of(
             )
             .unwrap_or(false)
                 && vcs
-                    .replayed(dir, &rebase.onto, &rebase.from, &rebase.onto, head)
+                    .replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head)
                     .is_ok_and(|replayed| {
                         replayed
                             .written

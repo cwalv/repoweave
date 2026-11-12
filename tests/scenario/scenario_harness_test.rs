@@ -652,6 +652,7 @@ macro_rules! every_scenario {
 every_scenario!(
     solo_workweave,
     history_rebase_pin_remap,
+    stack_carried,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
         scenarios::AfterHandContinue::Continue
@@ -4428,6 +4429,11 @@ fn abort_after_the_vcs_s_own_continue_of_the_project_rebase_restores_the_seat() 
         scenarios::AfterHandContinue::Abort,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn stack_carried_is_green() {
+    runner::run(scenarios::stack_carried()).assert_fully_decided_green();
 }
 
 #[test]

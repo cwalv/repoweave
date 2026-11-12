@@ -11886,12 +11886,14 @@ pub fn history_rebase_pin_remap() -> Scenario {
                 rev: tip,
                 member: Repo::App,
                 subject: "w-app-2",
+                reached_from: "HEAD",
             },
             Claim::PinsReplayed {
                 at,
                 rev: before,
                 member: Repo::App,
                 subject: "w-app-1",
+                reached_from: "HEAD",
             },
         ]
     };
@@ -12010,18 +12012,21 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
                     rev: "main",
                     member: Repo::App,
                     subject: "w-app-3",
+                    reached_from: "HEAD",
                 })
                 .claim(Claim::PinsReplayed {
                     at: a(),
                     rev: "main~1",
                     member: Repo::App,
                     subject: "w-app-2",
+                    reached_from: "HEAD",
                 })
                 .claim(Claim::PinsReplayed {
                     at: a(),
                     rev: "main~2",
                     member: Repo::App,
                     subject: "w-app-1",
+                    reached_from: "HEAD",
                 }),
         ),
         (MidRebase::Project, AfterHandContinue::Continue) => steps.push(
@@ -12033,12 +12038,14 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
                     rev: "main",
                     member: Repo::App,
                     subject: "w-app-1",
+                    reached_from: "HEAD",
                 })
                 .claim(Claim::PinsReplayed {
                     at: a(),
                     rev: "main~1",
                     member: Repo::App,
                     subject: "w-app-1",
+                    reached_from: "HEAD",
                 }),
         ),
         (_, AfterHandContinue::Abort) => steps.extend([
@@ -12072,4 +12079,99 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
         "a landing stopped mid-rebase, finished by the VCS's own continue",
         steps,
     )
+}
+
+/// A seat `w1` on a `linear` `main`, holding `w1-app`, and `w2`, a feature
+/// onto `w1` holding `w2-app` and checked out nowhere: made and filled in
+/// `w1`'s seat, which then switches back.
+fn stack_on_a_seat() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// In the workspace `at`, `name` created as a feature onto `onto`, the
+/// workspace switching to it.
+fn dependent_of(at: &Place, name: &'static str, onto: &'static str) -> Step {
+    Step::rwv(at, &["branch", "create", name, "--target", onto]).expect(Exit::Succeeds)
+}
+
+fn main_moves_app(mark: &'static str) -> Vec<Step> {
+    vec![
+        Step::commit(&a(), Repo::App, mark),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// `stack-carried`: `w1`'s `sync` under a moved `linear` `main` rebases
+/// `w1` and carries `w2`, checked out nowhere, along: its branches hold
+/// `main`'s new work and its own, a `rebased` backup keeps its old tips
+/// until the sync completes, its project branch pins the carried `app`, and
+/// `w2` then lands into `w1` by fast-forward.
+pub fn stack_carried() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "w2",
+            })
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "proj--w1",
+                member: Repo::App,
+                subject: "w1-app",
+                reached_from: "w2",
+            }),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2s",
+                "--branch",
+                "w2",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w2s"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("rebased"))
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "HEAD",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "HEAD",
+            }),
+    ]);
+    scenario("stack: a dependent checked out nowhere is carried", steps)
 }

@@ -403,13 +403,14 @@ pub enum Claim {
     },
     /// The lock of the project commit `rev` at `at` pins `member` at a
     /// commit whose subject is `subject` and that `member`'s checkout at `at`
-    /// reaches from its HEAD: a commit a rebase replayed there, never the
-    /// one it replayed.
+    /// reaches from `reached_from`: a commit a rebase replayed there, never
+    /// the one it replayed.
     PinsReplayed {
         at: Place,
         rev: &'static str,
         member: Repo,
         subject: &'static str,
+        reached_from: &'static str,
     },
     WorkweaveGone(Place),
     /// A backup in machine A's primary clone of `repo` reaches the commit
@@ -2103,6 +2104,7 @@ impl Run<'_> {
                 rev,
                 member,
                 subject,
+                reached_from,
             } => {
                 let proj = sb.checkout(at, Repo::Proj);
                 let lock = sb.git_ok(&proj, &["show", &format!("{rev}:rwv.lock")]);
@@ -2124,13 +2126,13 @@ impl Run<'_> {
                 }
                 if !self
                     .sandbox
-                    .git(&dir, &["merge-base", "--is-ancestor", &pin, "HEAD"])
+                    .git(&dir, &["merge-base", "--is-ancestor", &pin, reached_from])
                     .status
                     .success()
                 {
                     return Err(format!(
-                        "the lock at {rev} pins {} at {pin} '{subject}', which its HEAD does not \
-                         reach: the commit the rebase replayed, not its image",
+                        "the lock at {rev} pins {} at {pin} '{subject}', which {reached_from} \
+                         does not reach: the commit the rebase replayed, not its image",
                         member.name()
                     ));
                 }

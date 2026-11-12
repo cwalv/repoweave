@@ -556,6 +556,9 @@ pub enum State {
     TargetCycle,
     TargetGone,
     TargetDependents,
+    TargetDependentLacksTip,
+    TargetDependentCheckedOut,
+    TargetDependentOnAnotherMachine,
     TargetRecordChanged,
     TargetModeChanged,
     TargetMemberChanges,
@@ -607,7 +610,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 77] = [
+    pub const ALL: [State; 80] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -663,6 +666,9 @@ impl State {
         Self::TargetCycle,
         Self::TargetGone,
         Self::TargetDependents,
+        Self::TargetDependentLacksTip,
+        Self::TargetDependentCheckedOut,
+        Self::TargetDependentOnAnotherMachine,
         Self::HistoryUnset,
         Self::HistoryContradicted,
         Self::HistoryNotFastForward,
@@ -1486,6 +1492,44 @@ impl State {
                 offers: &[Form::C35, Form::C35Retire, Form::C12Feature],
                 verb_offers: &[],
             },
+            Self::TargetDependentLacksTip => &StateRow {
+                axis: Axis::Target,
+                name: "dependent lacks the tip",
+                means: "a branch whose record names this branch as the one it lands into was \
+                        cut from an older commit of it: in the repos listed it lacks this \
+                        branch's tip, so a rewrite of this branch cannot carry it along",
+                refused_by: "`rwv sync` and `rwv land` where they would rebase this branch; \
+                             nothing moves",
+                offers: &[Form::C35, Form::C12Feature, Form::C36Dependent],
+                verb_offers: &[],
+            },
+            Self::TargetDependentCheckedOut => &StateRow {
+                axis: Axis::Target,
+                name: "dependent checked out elsewhere",
+                means: "a branch whose record names this branch as the one it lands into is \
+                        checked out in another workspace, where a rewrite of this branch \
+                        cannot move it",
+                refused_by: "`rwv sync` and `rwv land` where they would rebase this branch; \
+                             nothing moves",
+                offers: &[
+                    Form::C16WorkweaveDelete,
+                    Form::C35,
+                    Form::C35Retire,
+                    Form::C12Feature,
+                ],
+                verb_offers: &[],
+            },
+            Self::TargetDependentOnAnotherMachine => &StateRow {
+                axis: Axis::Target,
+                name: "dependent on another machine",
+                means: "a branch whose record names this branch as the one it lands into is \
+                        here only as a remote's copy, published from another machine with \
+                        its record: no verb here moves it",
+                refused_by: "`rwv sync` and `rwv land` where they would rebase this branch; \
+                             nothing moves",
+                offers: &[Form::C35, Form::C12Feature],
+                verb_offers: &[],
+            },
             Self::HistoryUnset => &StateRow {
                 axis: Axis::History,
                 name: "unset",
@@ -2121,6 +2165,7 @@ pub enum Form {
     C35,
     C35Retire,
     C36,
+    C36Dependent,
     C37BranchCreate,
     C37WorkweaveCreate,
     C38,
@@ -2161,7 +2206,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 85] = [
+    pub const ALL: [Form; 86] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2229,6 +2274,7 @@ impl Form {
         Self::C35,
         Self::C35Retire,
         Self::C36,
+        Self::C36Dependent,
         Self::C37BranchCreate,
         Self::C37WorkweaveCreate,
         Self::C38,
@@ -2664,6 +2710,12 @@ impl Form {
                 choice: C::C36,
                 steps: &[Rwv("rwv sync")],
                 at: W::WithFeature,
+                shipped: true,
+            },
+            Self::C36Dependent => &FormRow {
+                choice: C::C36,
+                steps: &[Rwv("rwv sync")],
+                at: W::DependentsWorkspace,
                 shipped: true,
             },
             Self::C37BranchCreate => &FormRow {

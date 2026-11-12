@@ -87,6 +87,9 @@ pub struct Plan {
     /// alone: none of their branches move, but `T`'s pin does, and aligning
     /// `T`'s workspace afterwards moves their checkouts to it.
     pub realigned: BTreeSet<RepoPath>,
+    /// Each repo whose source branch the landing rewrites, by a rebase or a
+    /// follow, with its tip before.
+    pub rewritten: Vec<(RepoKey, CommitId)>,
 }
 
 /// A receiving branch `U`, its tip as the landing read it (the newer of it
@@ -343,7 +346,12 @@ fn judge_source(
     crate::sync::judge_landing_source(ctx, report)?;
     let project = ctx.require_bound_project()?;
     let landing_into = feature.zip(target);
-    judge_source_members(ctx.active_path(), project, landing_into, report)?;
+    judge_source_members(
+        ctx.active_path(),
+        project,
+        landing_into.filter(|_| retire),
+        report,
+    )?;
     if retire {
         let manifest = Manifest::from_path(
             &project_dir(ctx.active_path(), project).join(Manifest::FILE_NAME),
@@ -693,6 +701,7 @@ pub fn judge(
     landing: &Landing,
     one_run: Option<History>,
     source_root: &Path,
+    retire: bool,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
     let vcs = project_vcs();
@@ -728,7 +737,7 @@ pub fn judge(
     let off_alignment = judge_source_members(
         source_root,
         &landing.project,
-        Some((&landing.feature, &landing.target)),
+        Some((&landing.feature, &landing.target)).filter(|_| retire),
         report,
     )?;
     let target_aligner = landing
@@ -766,6 +775,8 @@ pub fn judge(
     if let Composed::By(how, merged) = composing.judge(project_scoped, false, report)? {
         if how == Integration::Merge {
             plan.merged.insert(RepoKey::Project);
+        } else {
+            plan.rewritten.push((RepoKey::Project, head.clone()));
         }
         if let Some(merge) = merged {
             plan.merged_ranges.push((RepoKey::Project, merge));
@@ -801,6 +812,15 @@ pub fn judge(
         judge_member(&judging, &member, &mut plan, report)?;
     }
     plan_realigned(&sides, source_root, &mut plan)?;
+    if !retire {
+        let repos = crate::stack::Repos {
+            root: source_root,
+            project: &landing.project,
+            manifest: &sides.ours,
+        };
+        let stack = crate::stack::walk(&repos, &landing.feature, &plan.rewritten)?;
+        crate::stack::judge(&stack, &repos, landing.target.as_str(), "land", report);
+    }
     match inapplicable {
         Some(refused) => Err(refused),
         None => Ok(plan),
@@ -1811,12 +1831,19 @@ fn judge_member(
         if let Composed::By(how, merged) = composing.judge(scoped, true, report)? {
             if how == Integration::Merge {
                 plan.merged.insert(RepoKey::Member(path.clone()));
+            } else {
+                plan.rewritten
+                    .push((RepoKey::Member(path.clone()), head.clone()));
             }
             if let Some(merge) = merged {
                 plan.merged_ranges
                     .push((RepoKey::Member(path.clone()), merge));
             }
         }
+    }
+    if follows && head != tip {
+        plan.rewritten
+            .push((RepoKey::Member(path.clone()), head.clone()));
     }
     let moves = if follows {
         Moves::Follows { create: created }

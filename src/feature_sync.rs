@@ -790,23 +790,30 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         let receiving = [source.clone()];
         judge_push_branch(vcs, dir, &label, &attached, &receiving, true, &mut report)?;
     }
-    let rewrites = project_act.rewrites() || members.iter().any(|m| m.act.rewrites());
-    if rewrites && !dependents.is_empty() {
-        report.add(
-            State::TargetDependents
-                .of(&label)
-                .project_repo()
-                .checkout(dir)
-                .bind("<W>", &sync.branch)
-                .bind("<T>", sync.source_name())
-                .listing(dependents.iter().map(|d| {
-                    format!(
-                        "{d} lands into {}, which this sync would rewrite",
-                        sync.branch
-                    )
-                }))
-                .judge(vcs),
-        );
+    let carried_along = |act: &Act| matches!(act, Act::Follow(_) | Act::Rebase(_));
+    let mut moved = Vec::new();
+    if carried_along(&project_act) {
+        moved.push((RepoKey::Project, vcs.head_revision(dir)?.id().clone()));
+    }
+    for member in &members {
+        if carried_along(&member.act) {
+            moved.push((
+                RepoKey::Member(member.path.clone()),
+                member.vcs.head_revision(&member.dir)?.id().clone(),
+            ));
+        }
+    }
+    if !moved.is_empty() {
+        let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+        let repos = crate::stack::Repos {
+            root: sync.ctx.active_path(),
+            project: &sync.project,
+            manifest: &manifest,
+        };
+        let branch = crate::records::BranchName::parse(vcs, &sync.branch)
+            .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {e:?}", sync.branch))?;
+        let stack = crate::stack::walk(&repos, &branch, &moved)?;
+        crate::stack::judge(&stack, &repos, sync.source_name(), "sync", &mut report);
     }
     report.into_result()?;
     Ok(Planned {
@@ -1342,6 +1349,20 @@ fn act(
         .clone();
     let pre_manifest = manifest_at(sync.vcs.as_ref(), &sync.dir, &pre_head)
         .context("the project's rwv.toml did not parse when the sync began")?;
+    let branch = crate::records::BranchName::parse(sync.vcs.as_ref(), &sync.branch)
+        .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {e:?}", sync.branch))?;
+    let carrier = crate::stack::Carrier {
+        repos: crate::stack::Repos {
+            root: sync.ctx.active_path(),
+            project: &sync.project,
+            manifest: &pre_manifest,
+        },
+        workspace: &op.workspace,
+        verb: OpVerb::Sync,
+        w: &branch,
+        t: sync.source_name(),
+    };
+    carrier.finish_stopped()?;
 
     let mut moved: BTreeMap<RepoPath, CommitId> = BTreeMap::new();
     for (path, entry) in pre_manifest.iter_entries() {
@@ -1437,6 +1458,19 @@ fn act(
         take_project(sync, &head, &source, resets_project, output)?;
         remap(sync, op, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
+    }
+    for carried in carrier.carry()? {
+        say(
+            output,
+            &format!(
+                "{}: carried '{}' along: {} -> {}, the tip it left kept in the rebased backup {}",
+                carried.label,
+                carried.branch,
+                carried.was.short(),
+                carried.now.short(),
+                carried.backup
+            ),
+        );
     }
     settle(sync, &pre_manifest, reported, output)?;
     let hits = delivered_materialized_inputs(sync, &key);
@@ -1624,6 +1658,16 @@ fn take_member(
         return Ok(source.clone());
     }
     if follows {
+        crate::op_state::journal_rebasing(
+            workspace,
+            crate::op_state::Rebasing {
+                repo: RepoKey::Member(path.clone()),
+                branch: branch.as_str().to_owned(),
+                base: head.id().clone(),
+                from: head.id().clone(),
+                onto: source.clone(),
+            },
+        )?;
         let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
         journal(source)?;
         vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
@@ -1644,6 +1688,7 @@ fn take_member(
         crate::op_state::Rebasing {
             repo: RepoKey::Member(path.clone()),
             branch: branch.as_str().to_owned(),
+            base: source.clone(),
             from: head.id().clone(),
             onto: source.clone(),
         },
@@ -1847,6 +1892,7 @@ fn take_project(
         crate::op_state::Rebasing {
             repo: RepoKey::Project,
             branch: branch.as_str().to_owned(),
+            base: source.clone(),
             from: head.clone(),
             onto: source.clone(),
         },

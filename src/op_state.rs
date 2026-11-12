@@ -537,15 +537,48 @@ pub struct TakeInRecord {
     /// be read back from the commits once it ends, by this process or by hand.
     #[serde(default)]
     pub rebases: Vec<Rebasing>,
+    /// Each dependent's branch the op carries onto its target's new tip,
+    /// written before its replay starts, with the tip the replay composed
+    /// once it ends; the branch itself moves only once every carry composed.
+    #[serde(default)]
+    pub carries: Vec<Carrying>,
 }
 
-/// A rebase of the branch `branch` in `repo`, from `from` onto `onto`.
+/// A rebase of the branch `branch` in `repo`, the commits `base..from`
+/// replayed onto `onto`; a branch moved to `onto` with nothing replayed has
+/// `base` at `from`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rebasing {
     pub repo: RepoKey,
     pub branch: String,
+    pub base: CommitId,
     pub from: CommitId,
     pub onto: CommitId,
+}
+
+/// A dependent's branch `branch` in `repo` carried along: the commits
+/// `base..from` replayed onto `onto`, composed at `composed` once the replay
+/// ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Carrying {
+    pub repo: RepoKey,
+    pub branch: String,
+    pub base: CommitId,
+    pub from: CommitId,
+    pub onto: CommitId,
+    pub composed: Option<CommitId>,
+}
+
+impl Carrying {
+    pub fn rebasing(&self) -> Option<Rebasing> {
+        self.composed.as_ref().map(|_| Rebasing {
+            repo: self.repo.clone(),
+            branch: self.branch.clone(),
+            base: self.base.clone(),
+            from: self.from.clone(),
+            onto: self.onto.clone(),
+        })
+    }
 }
 
 /// One move a landing reports as it makes it.
@@ -574,6 +607,15 @@ pub enum LandingReport {
     Rebased {
         repo: RepoKey,
         was: CommitId,
+        backup: String,
+    },
+    /// A dependent's branch carried along the rebase, from `was` to `now`,
+    /// the tip it left kept in the `rebased` backup `backup`.
+    Carried {
+        repo: RepoKey,
+        branch: String,
+        was: CommitId,
+        now: CommitId,
         backup: String,
     },
     /// A pin a replayed project commit held on a commit the rebase dropped,
@@ -1552,6 +1594,29 @@ pub fn journal_rebasing(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Res
             .rebases
             .retain(|r| !(r.repo == rebasing.repo && r.branch == rebasing.branch));
         take_in.rebases.push(rebasing);
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal `carrying` on the op at `workspace_dir`, replacing the record of
+/// the same branch of the same repo.
+pub fn journal_carrying(workspace_dir: &Path, carrying: Carrying) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        match take_in
+            .carries
+            .iter_mut()
+            .find(|c| c.repo == carrying.repo && c.branch == carrying.branch)
+        {
+            Some(held) => *held = carrying,
+            None => take_in.carries.push(carrying),
+        }
     }
     write_owner(workspace_dir, &record)
 }

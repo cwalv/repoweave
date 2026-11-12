@@ -3,9 +3,7 @@
 
 use crate::manifest::{LockEntry, LockFile, Manifest, RepoKey, RepoPath};
 use crate::op_state::Rebasing;
-use crate::vcs::{
-    vcs_for, AttachedRef, CommitId, RawRefName, RawRevisionId, Replayed, ResolvedRevisionId, Vcs,
-};
+use crate::vcs::{vcs_for, CommitId, RawRefName, RawRevisionId, Replayed, ResolvedRevisionId, Vcs};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -45,13 +43,35 @@ impl MemberReplay {
 }
 
 /// The member rebases of `rebases`, each read back from its branch's tip in
-/// its checkout under `root`; one whose branch is gone is left out.
+/// its checkout under `root`, one whose branch is gone left out, and the
+/// member carries of `carries` that composed, each read back from the tip
+/// it composed.
 pub(crate) fn member_replays(
     root: &Path,
     manifest: &Manifest,
     rebases: &[Rebasing],
+    carries: &[crate::op_state::Carrying],
 ) -> anyhow::Result<BTreeMap<RepoPath, Vec<MemberReplay>>> {
     let mut replays: BTreeMap<RepoPath, Vec<MemberReplay>> = BTreeMap::new();
+    for carry in carries {
+        let (RepoKey::Member(path), Some(composed)) = (&carry.repo, &carry.composed) else {
+            continue;
+        };
+        let Some(entry) = manifest.get_entry(path) else {
+            continue;
+        };
+        let replayed = vcs_for(entry.vcs_type).replayed(
+            &root.join(path.as_path()),
+            &carry.base,
+            &carry.from,
+            &carry.onto,
+            composed,
+        )?;
+        replays.entry(path.clone()).or_default().push(MemberReplay {
+            replayed,
+            onto: carry.onto.clone(),
+        });
+    }
     for rebase in rebases {
         let RepoKey::Member(path) = &rebase.repo else {
             continue;
@@ -66,7 +86,7 @@ pub(crate) fn member_replays(
         else {
             continue;
         };
-        let replayed = vcs.replayed(&dir, &rebase.onto, &rebase.from, &rebase.onto, tip.id())?;
+        let replayed = vcs.replayed(&dir, &rebase.base, &rebase.from, &rebase.onto, tip.id())?;
         replays.entry(path.clone()).or_default().push(MemberReplay {
             replayed,
             onto: rebase.onto.clone(),
@@ -188,18 +208,17 @@ fn changes_nothing_but_the_lock(
 }
 
 /// Rewrite each commit the project rebase `replayed` wrote onto `onto` so its
-/// lock pins what the member rebases made of the commits it pinned, then move
-/// the branch `on` witnesses to the rewritten tip. Commits already pinning so
+/// lock pins what the member rebases made of the commits it pinned, returning
+/// the rewritten tip where any commit changed. Commits already pinning so
 /// are kept as they are; one left changing nothing, as the rebase drops a
 /// commit it leaves empty, is dropped. Returns each pin a dropped commit's re-map moved.
 pub(crate) fn remap_project(
     vcs: &dyn Vcs,
-    on: &AttachedRef,
+    dir: &Path,
     replayed: &Replayed,
     onto: &CommitId,
     replays: &BTreeMap<RepoPath, Vec<MemberReplay>>,
-) -> anyhow::Result<Vec<Remapped>> {
-    let dir = on.repo();
+) -> anyhow::Result<(Vec<Remapped>, Option<CommitId>)> {
     let mut remapped = Vec::new();
     let mut parent = onto.clone();
     let mut before = lock_at(vcs, dir, onto);
@@ -254,14 +273,7 @@ pub(crate) fn remap_project(
         };
         before = Some(lock);
     }
-    if rewritten {
-        let last = replayed
-            .written
-            .last()
-            .expect("a rewrite rewrote a written commit");
-        vcs.take_rewritten(on, last, &parent)?;
-    }
-    Ok(remapped)
+    Ok((remapped, rewritten.then_some(parent)))
 }
 
 /// Re-map the project branch checked out in `project_dir` through the
@@ -287,14 +299,19 @@ pub(crate) fn remap_rebased_project(
     let tip = project_vcs.head_revision(project_dir)?.id().clone();
     let replayed = project_vcs.replayed(
         project_dir,
-        &project.onto,
+        &project.base,
         &project.from,
         &project.onto,
         &tip,
     )?;
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
-    let replays = member_replays(root, &manifest, rebases)?;
-    remap_project(project_vcs, &on, &replayed, &project.onto, &replays).map(Some)
+    let replays = member_replays(root, &manifest, rebases, &[])?;
+    let (remapped, rewritten) =
+        remap_project(project_vcs, project_dir, &replayed, &project.onto, &replays)?;
+    if let Some(rewritten) = rewritten {
+        project_vcs.take_rewritten(&on, &tip, &rewritten)?;
+    }
+    Ok(Some(remapped))
 }
 
 #[cfg(test)]

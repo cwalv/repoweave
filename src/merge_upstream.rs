@@ -248,14 +248,16 @@ pub(crate) fn reset_to_upstream(
 /// the tip the op wrote. Returns the repos whose branch had moved since.
 pub(crate) fn restore_ref_moves(
     workspace: &Path,
+    project_dir: Option<&Path>,
     moves: &[RefMove],
 ) -> Vec<(RepoKey, String, VcsError)> {
     let vcs = crate::vcs::probe_vcs();
     let mut foreign = Vec::new();
     for moved in moves.iter().rev() {
-        let dir = match &moved.repo {
-            RepoKey::Member(path) => workspace.join(path.as_path()),
-            RepoKey::Project => continue,
+        let dir = match (&moved.repo, project_dir) {
+            (RepoKey::Member(path), _) => workspace.join(path.as_path()),
+            (RepoKey::Project, Some(dir)) => dir.to_path_buf(),
+            (RepoKey::Project, None) => continue,
         };
         let branch = RawRefName::new(moved.branch.clone());
         if vcs
@@ -320,7 +322,7 @@ mod tests {
     #[test]
     fn a_branch_the_op_moved_as_a_ref_is_put_back_where_it_still_sits_at_the_tip_the_op_wrote() {
         let (tmp, moved, dir) = member_with_a_moved_branch();
-        let foreign = restore_ref_moves(tmp.path(), std::slice::from_ref(&moved));
+        let foreign = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
         assert!(foreign.is_empty());
         assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
     }
@@ -331,7 +333,7 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let later = commit(&dir, "three");
         git(&dir, &["checkout", "-q", "--detach"]);
-        let foreign = restore_ref_moves(tmp.path(), std::slice::from_ref(&moved));
+        let foreign = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
         assert_eq!(foreign.len(), 1);
         assert_eq!(git(&dir, &["rev-parse", "main"]), later.as_str());
     }
