@@ -426,6 +426,20 @@ The others follow.
 
 ## Tokens
 
+### `abort-in-its-workspace`
+
+**Condition.** `rwv abort` was typed in a workspace a landing moved as its
+target and released at its retire, and either more than one such landing is
+recorded, or the one recorded does not show its retire stopped.
+
+**Why.** Abort typed there acts on a landing started elsewhere, so it must
+know which one, and that its process has ended: a landing in its retire holds
+nothing on the target, and nothing but the record's note that its retire
+stopped tells a running retire from a stopped one.
+
+**Exits.** Run the printed `rwv -C <workspace> abort`, which aborts the
+landing from its own workspace, once that landing has ended.
+
 ### `adopt-path-outside-weave`
 
 **Condition.** `rwv member add --adopt <path>` names a location under neither the

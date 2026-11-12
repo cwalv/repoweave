@@ -50,6 +50,9 @@ pub enum RefusalKind {
     OpAcquisitionRaced,
     /// `--continue` or `abort` where no op-state exists.
     NoOpRecorded,
+    /// `abort` typed in a workspace a landing moved and released, where it
+    /// cannot tell which landing, or that its process ended.
+    AbortInItsWorkspace,
     /// The remote publishes no default branch.
     NoRemoteDefaultBranch,
     /// HEAD is detached, unborn or unreadable where the verb must land or move.

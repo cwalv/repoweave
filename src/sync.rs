@@ -3076,7 +3076,16 @@ fn run_machine(
 fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     loop {
         let phase = ctx.current_phase()?;
-        let next = run_phase(ctx, phase)?;
+        let retiring = phase == op_state::OpPhase::Retire;
+        let next = match run_phase(ctx, phase) {
+            Err(e) if retiring => {
+                if let Err(marked) = op_state::mark_retire_stopped(&ctx.owner_workspace_dir, true) {
+                    eprintln!("warning: {marked:#}");
+                }
+                return Err(e);
+            }
+            ran => ran?,
+        };
         match next {
             Some(p) => {
                 // Post-transition write. Until this commits, a crash leaves
@@ -4465,6 +4474,8 @@ fn load_continuing_context<'a>(
     let project_vcs = project_vcs();
 
     if matches!(record.phase, op_state::OpPhase::Retire) {
+        op_state::mark_retire_stopped(&owner_workspace_dir, false)
+            .context("failed to record that the retire runs again")?;
         if let Some(dest) = dest_workspace_dir.as_deref() {
             op_state::clear_lease_owned_by(dest, &owner_workspace_dir);
         }
@@ -8009,23 +8020,82 @@ fn regenerate_lock_phase3(
 fn landing_released_into(
     ctx: &WorkspaceContext,
     workspace: &CanonicalPath,
-) -> anyhow::Result<Option<(op_state::OwnerReading, CanonicalPath)>> {
+) -> anyhow::Result<Vec<(op_state::OwnerReading, CanonicalPath)>> {
     let primary = CanonicalPath::of(ctx.primary_path());
     let owners = std::iter::once(primary).chain(
         recorded_workweaves(ctx.primary_path())?
             .into_iter()
             .map(|(_, root)| root),
     );
+    let mut released = Vec::new();
     for owner in owners.filter(|owner| owner != workspace) {
         let Ok(Some(reading)) = op_state::read_owner_for_abort(owner.as_path()) else {
             continue;
         };
         let header = reading.header();
         if header.verb == OpVerb::Land && header.target.as_ref() == Some(workspace) {
-            return Ok(Some((reading, owner)));
+            released.push((reading, owner));
         }
     }
-    Ok(None)
+    Ok(released)
+}
+
+/// The landing `rwv abort` typed in the workspace it moved takes up: the one
+/// landing whose record names this workspace as its target, and only once
+/// that record shows its process ended: at `retire`, with the retire
+/// recorded as stopped. Named before anything moves. More than one, or one
+/// whose retire may still run, refuses with the line that aborts each from
+/// its own workspace.
+fn released_landing_to_abort(
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<Option<(op_state::OwnerReading, CanonicalPath)>> {
+    let mut released = landing_released_into(ctx, ctx.active_root())?;
+    let aborts_there =
+        |owner: &CanonicalPath| format!("rwv -C {} abort", owner.as_path().display());
+    match released.len() {
+        0 => Ok(None),
+        1 => {
+            let (reading, owner) = released.remove(0);
+            let stopped = matches!(
+                &reading,
+                op_state::OwnerReading::Whole(record)
+                    if record.phase == op_state::OpPhase::Retire
+                        && record.take_in.as_ref().is_some_and(|take_in| take_in.retire_stopped)
+            );
+            let id = reading.header().id.clone();
+            if !stopped {
+                crate::refuse!(
+                    RefusalKind::AbortInItsWorkspace,
+                    "the landing from {owner} (op {id}) moved this workspace and released it, \
+                     but its record does not show its retire stopped, so it may still be \
+                     running. Once it has ended, abort it from its own workspace:\n  {line}",
+                    owner = owner.as_path().display(),
+                    line = aborts_there(&owner),
+                );
+            }
+            eprintln!(
+                "aborting the landing from {} (op {id}), which moved this workspace and stopped \
+                 in its retire",
+                owner.as_path().display()
+            );
+            Ok(Some((reading, owner)))
+        }
+        _ => crate::refuse!(
+            RefusalKind::AbortInItsWorkspace,
+            "{n} landings moved this workspace and released it; abort the one you mean from \
+             its own workspace:\n{lines}",
+            n = released.len(),
+            lines = released
+                .iter()
+                .map(|(reading, owner)| format!(
+                    "  op {}:\n    {}",
+                    reading.header().id,
+                    aborts_there(owner)
+                ))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+    }
 }
 
 /// Which of an op's workspaces a restore is running in, decided by the
@@ -8128,7 +8198,7 @@ fn abort_op(
     // the same record.
     let found = match op_state::resolve_for_abort(ctx.active_root().as_path())? {
         Some(found) => Some(found),
-        None => landing_released_into(ctx, ctx.active_root())?,
+        None => released_landing_to_abort(ctx)?,
     };
     let Some((reading, owner_workspace)) = found else {
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")

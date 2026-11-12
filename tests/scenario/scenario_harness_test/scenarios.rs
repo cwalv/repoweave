@@ -11110,10 +11110,12 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
     )
 }
 
-/// A landing stopped in its retire has moved the target and released it.
+/// A landing killed in its retire has moved the target and released it.
 /// `rwv abort`, typed in the target's workspace, finds the landing by the
-/// record that names that workspace, takes the claim and the lease back, and
-/// restores both sides; the landing run again lands and retires.
+/// record that names that workspace, but nothing shows its retire stopped,
+/// so it refuses and prints the abort to run in the landing's own
+/// workspace; that one takes the claim and the lease back and restores both
+/// sides, and the landing run again lands and retires.
 pub fn abort_after_the_landing_released_its_target() -> Scenario {
     let landed = |at: Place| Claim::Contains {
         at,
@@ -11129,11 +11131,15 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
             Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
             Step::kill("landing"),
             Step::rwv(&a(), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::AbortInItsWorkspace))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed(&a(), "rwv -C")
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
                 .may_restore(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains("[source] ")),
+                .claim(Claim::OutputContains("[target] ")),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
                 .claim(Claim::OutputLacks("w-app")),
             Step::rwv(&ww("w"), &["status"])
@@ -11684,6 +11690,69 @@ pub fn a_continued_retire_releases_the_target_first() -> Scenario {
                 .claim(Claim::WorkweaveGone(ww("w2"))),
         ],
     )
+}
+
+/// A landing whose retire refused on a dirty workweave has released its
+/// target and recorded that its retire stopped: `rwv abort` typed in the
+/// target's workspace names that landing before it moves anything, and
+/// restores. With two such landings it refuses, printing the abort of each
+/// from its own workspace.
+pub fn abort_typed_in_the_target_names_the_landing(two: bool) -> Scenario {
+    let mut steps = vec![
+        create("w1"),
+        create("w2"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear", "--retire"],
+            "retiring",
+            "w1-landing",
+        ),
+        Step::kill("w1-landing"),
+        Step::hand_edit(&ww("w1"), Repo::Docs, "README", "docs", "w1 dirt"),
+        Step::rwv(&ww("w1"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Docs, State::EditsDirty)),
+    ];
+    if two {
+        steps.extend([
+            Step::rwv_paused(
+                &ww("w2"),
+                &["land", "--history", "linear", "--retire"],
+                "retiring",
+                "w2-landing",
+            ),
+            Step::kill("w2-landing"),
+            Step::hand_edit(&ww("w2"), Repo::Docs, "README", "docs", "w2 dirt"),
+            Step::rwv(&ww("w2"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::Docs, State::EditsDirty)),
+            Step::rwv(&a(), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::AbortInItsWorkspace))
+                .claim(Claim::OutputContains("proj--w1 abort"))
+                .claim(Claim::OutputContains("proj--w2 abort"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed_holding(&a(), "rwv -C", "proj--w2")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+        ]);
+    }
+    steps.extend([
+        Step::rwv(&a(), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("aborting the landing from"))
+            .claim(Claim::OutputContains("proj--w1")),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("w1-app")),
+        Step::rwv(&ww("w1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    scenario("abort typed in the target names the landing", steps)
 }
 
 /// How a landing killed while it waited on its target's claim is ended.

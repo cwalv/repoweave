@@ -902,6 +902,8 @@ every_scenario!(
     a_refused_abort_puts_back_what_it_took(scenarios::LandedStop::Retire),
     a_refused_continue_of_a_released_landing_leaves_the_target_free,
     a_continued_retire_releases_the_target_first,
+    abort_typed_in_the_target_names_the_landing(false),
+    abort_typed_in_the_target_names_the_landing(true),
     a_landing_killed_while_it_waits(scenarios::KilledWaiter::Continued),
     a_landing_killed_while_it_waits(scenarios::KilledWaiter::Aborted),
     a_landing_killed_while_it_waits_continues_once_free,
@@ -3075,6 +3077,15 @@ holding_rwv! {
         }
         runner::run(scenarios::a_refused_continue_of_a_released_landing_leaves_the_target_free())
             .assert_fully_decided_green();
+    }
+
+    /// Abort typed in the target's workspace names the one landing it takes
+    /// up, and refuses two, printing where each is aborted.
+    fn abort_typed_in_the_target_names_the_landing() {
+        for two in [false, true] {
+            runner::run(scenarios::abort_typed_in_the_target_names_the_landing(two))
+                .assert_fully_decided_green();
+        }
     }
 
     /// A landing killed while it waits on the claim leaves a record whose

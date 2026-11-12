@@ -558,6 +558,11 @@ pub struct TakeInRecord {
     /// refused or interrupted abort leaves a record only `rwv abort` takes up.
     #[serde(default)]
     pub abort_begun: bool,
+    /// The retire was judged and refused, and the process that ran it ended:
+    /// what lets `rwv abort` typed in the target's workspace take up a
+    /// landing that released it there. A retire killed leaves it unset.
+    #[serde(default)]
+    pub retire_stopped: bool,
     /// Each rebase the op starts, written before it starts, so the replay can
     /// be read back from the commits once it ends, by this process or by hand.
     #[serde(default)]
@@ -1673,6 +1678,18 @@ pub fn mark_abort_begun(workspace_dir: &Path) -> anyhow::Result<()> {
         .take_in
         .get_or_insert_with(TakeInRecord::default)
         .abort_begun = true;
+    write_owner(workspace_dir, &record)
+}
+
+/// Record whether the op's retire stopped, refused, in the process that ran it.
+pub fn mark_retire_stopped(workspace_dir: &Path, stopped: bool) -> anyhow::Result<()> {
+    let Some(mut record) = read_owner(workspace_dir)? else {
+        return Ok(());
+    };
+    match record.take_in.as_mut() {
+        Some(take_in) if take_in.retire_stopped != stopped => take_in.retire_stopped = stopped,
+        _ => return Ok(()),
+    }
     write_owner(workspace_dir, &record)
 }
 
