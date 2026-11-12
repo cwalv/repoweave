@@ -4914,6 +4914,12 @@ fn apply_project_strategy(
         // No-op.
         return Ok(());
     }
+    if !mid_rebase
+        && strategy == SyncStrategy::Rebase
+        && vcs.is_ancestor(cwd_project_dir, source_tip, cwd_tip)?
+    {
+        return Ok(());
+    }
 
     match strategy {
         SyncStrategy::Ff => {

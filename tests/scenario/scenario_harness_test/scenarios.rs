@@ -5949,3 +5949,72 @@ pub fn records_local_writers() -> Scenario {
     steps.push(after.claim(seat_recorded("s9", true)));
     scenario("records local writers", steps)
 }
+
+/// `parallel-retire-fetch`: four published seats retire in one clone. A
+/// pruning fetch that meets the store's fetch claim held by a retiring seat
+/// waits for it rather than failing on a ref lock, and each retire's
+/// deletion completes. A second landing into the same target while one runs
+/// waits on the landing claim, which this scenario leaves undecided, as it
+/// does the later seats' landings: `main` records `merge`, so each lands by a
+/// merge commit its push branch is an ancestor of, which the landing reads
+/// once the history setting governs it.
+pub fn parallel_retire_fetch() -> Scenario {
+    let seats = [
+        ("s1", "feat-1", "f1-app"),
+        ("s2", "feat-2", "f2-app"),
+        ("s3", "feat-3", "f3-app"),
+        ("s4", "feat-4", "f4-app"),
+    ];
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
+    for (seat, branch, mark) in seats {
+        steps.extend([
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    seat,
+                    "--new-branch",
+                    branch,
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww(seat), Repo::App, mark),
+            Step::rwv(&ww(seat), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww(seat), &["push"]))
+                .pushes(Remote::origin(Repo::App), branch)
+                .pushes(Remote::origin(Repo::Proj), branch)
+                .expect(Exit::Succeeds),
+        ]);
+    }
+    let retired = |step: Step, seat: &str, mark: &'static str| {
+        step.expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww(seat)))
+            .claim(Claim::OutputLacks("left:"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark,
+            })
+    };
+    steps.extend([
+        Step::rwv_paused(
+            &ww("s1"),
+            &["land", "--retire"],
+            "fetch-under-claim",
+            "retire-s1",
+        ),
+        Step::rwv(&ww("s2"), &["land", "--retire"]),
+        Step::rwv_paused(&ww("s2"), &["fetch"], "claim-held", "fetch-s2"),
+        retired(Step::release("retire-s1"), "s1", "f1-app"),
+        Step::release("fetch-s2").expect(Exit::Succeeds),
+    ]);
+    for (seat, _, _) in &seats[1..] {
+        steps.push(Step::rwv(&ww(seat), &["land", "--retire"]));
+    }
+    scenario("parallel retire fetch", steps)
+}

@@ -491,6 +491,7 @@ every_scenario!(
     dc29_no_bring,
     concurrent_landing_merge_upstream,
     records_local_writers,
+    parallel_retire_fetch,
     cross_repo_pr,
     cross_repo_pr_fork,
     resume_on_machine_b,
@@ -2888,5 +2889,13 @@ holding_rwv! {
     /// branch; every lost compare-and-swap retries and no record is lost.
     fn records_written_at_once_on_one_machine_are_all_kept_and_drops_retry_against_the_winner() {
         runner::run(scenarios::records_local_writers()).assert_green();
+    }
+}
+
+holding_rwv! {
+    /// A pruning fetch meeting the fetch claim a retiring seat holds waits
+    /// for it, and every seat's retire completes its deletion.
+    fn retiring_seats_fetch_one_at_a_time_under_the_store_claim_and_each_deletion_completes() {
+        runner::run(scenarios::parallel_retire_fetch()).assert_green();
     }
 }

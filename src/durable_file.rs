@@ -94,7 +94,10 @@ pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
                     .unwrap_or_else(|_| "an unreadable holder".to_string());
                 return Err(ClaimError::Held(held_by));
             }
-            Err(CreateNewError::AlreadyExists) => std::thread::sleep(CLAIM_POLL),
+            Err(CreateNewError::AlreadyExists) => {
+                crate::test_pause::point("claim-held");
+                std::thread::sleep(CLAIM_POLL);
+            }
             Err(CreateNewError::Io(e)) => return Err(ClaimError::Io(e)),
         }
     }
