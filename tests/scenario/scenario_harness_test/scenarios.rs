@@ -9128,14 +9128,41 @@ pub fn a_receiving_branch_moved_as_a_ref_loses_its_race(race: RefRace) -> Scenar
     scenario("a receiving branch moved as a ref loses its race", steps)
 }
 
-/// A port killed once it has recorded that the project copy starts:
-/// `--continue` makes the project copy, so the project commit holds
-/// `<rev>`'s project files.
+/// A file `<rev>` adds standing untracked in the project repo refuses the
+/// port before anything moves. A port killed once it has recorded that the
+/// project copy starts: `--continue` makes the project copy, so the project
+/// commit holds `<rev>`'s project files.
 pub fn cherry_pick_project_copy_killed() -> Scenario {
     let mut steps = stable_lines();
     steps.extend(port_me_on_main());
     steps.extend(feature_onto_stable());
     steps.extend([
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["checkout", "main", "--", "port-me.txt"],
+        ),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["rm", "-q", "--cached", "port-me.txt"],
+        ),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::UntrackedCollision))
+            .claim(Claim::OutputContains("port-me.txt"))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &[
+                "stash",
+                "push",
+                "-q",
+                "--include-untracked",
+                "--",
+                "port-me.txt",
+            ],
+        ),
         Step::rwv_paused(
             &ww("p"),
             &["cherry-pick", "main"],

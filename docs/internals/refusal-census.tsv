@@ -74,12 +74,14 @@ src/check.rs	missing-lock-merge-driver config absent	-	1
 src/check.rs	missing-lock-merge-driver config legacy	tests/sync/lock_merge_driver_test.rs	1
 src/check.rs	repair-target-changed	-	2
 src/check.rs	unknown-finding-kind	-	1
-src/cherry_pick.rs	(untokened:owed)	-	3
+src/cherry_pick.rs	(untokened:owed)	-	4
 src/cherry_pick.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/cherry_pick.rs	edits rwv.toml or rwv.lock uncommitted	-	1
+src/cherry_pick.rs	foreign-tip	-	1
+src/cherry_pick.rs	head-not-on-branch	-	1
 src/cherry_pick.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/cherry_pick.rs	name no-such-branch	-	1
-src/cherry_pick.rs	op-parked	-	1
+src/cherry_pick.rs	op-parked	-	2
 src/cherry_pick.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/cherry_pick.rs	pin not on declared branch	-	2
 src/cherry_pick.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
@@ -88,6 +90,7 @@ src/cherry_pick.rs	port mainline	-	1
 src/cherry_pick.rs	port merge in range	-	1
 src/cherry_pick.rs	port not listed	-	1
 src/cherry_pick.rs	target no target	tests/sync/land_drift_test.rs	1
+src/cherry_pick.rs	untracked-collision	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
 src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1

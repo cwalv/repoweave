@@ -669,7 +669,7 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
                     judge_excepted(here, &aligner, path, entry, our_pins.get(path), &mut report)?
                 {
                     record.excepted.insert(RepoKey::Member(path.clone()), tip);
-                } else if our_pins.get(path).is_some()
+                } else if our_pins.contains_key(path)
                     && vcs_for(entry.vcs_type).is_repo(&here.member_dir(path))
                 {
                     notes.push(format!("{path}: left out; its checkout is at its pin here"));
