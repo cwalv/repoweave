@@ -2868,7 +2868,7 @@ fn cell_owner_record_missing_advanced_tips_key_aborts_from_its_header() {
 /// A record that reads header-only says nothing of what the op started, so
 /// a merge begun at the savepoint is not taken for the op's: abort refuses
 /// it, and naming the repo on `--abandon-foreign-tip` keeps its staged
-/// content as a backup before cancelling it.
+/// content as a backup before canceling it.
 #[test]
 fn a_header_only_record_refuses_a_merge_begun_at_the_savepoint() {
     let tmp = common::tempdir().unwrap();

@@ -9344,10 +9344,10 @@ fn abort_refuses_then_abandons_the_operators_merge(
 
 /// `pull --merge-upstream` stopped on its conflict in `app`; the operator
 /// gives up that merge and, at the savepoint, starts one of their own. The
-/// pull integrates `app`, and cancelling returns to the savepoint, but the
+/// pull integrates `app`, and canceling returns to the savepoint, but the
 /// merge takes in a commit the pull never journaled: abort refuses it, and
 /// the printed abandon keeps its staged content as a backup before
-/// cancelling it.
+/// canceling it.
 pub fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
     steps.push(Step::git(&b(), Repo::App, &["merge", "--abort"]));
@@ -9391,9 +9391,9 @@ pub fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() -> Scena
 
 /// A landing stopped in `app`'s rebase; the operator gives that rebase up
 /// and starts an interactive one of their own, stopped after its first
-/// pick, and commits there. Cancelling it returns to the savepoint, but it replays
+/// pick, and commits there. Canceling it returns to the savepoint, but it replays
 /// onto a commit the landing never journaled: abort refuses, and the printed
-/// abandon keeps the commit made inside it before cancelling.
+/// abandon keeps the commit made inside it before canceling.
 pub fn abort_refuses_an_interactive_rebase_the_operator_began() -> Scenario {
     let (mut steps, _) = landing_stopped_mid_rebase(MidRebase::Member);
     steps.extend([
