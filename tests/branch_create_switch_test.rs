@@ -755,3 +755,76 @@ fn the_moved_and_detached_states_print_the_choices_that_switch_and_create_ship()
         "{held}"
     );
 }
+
+#[test]
+fn a_target_create_from_a_detached_project_repo_starts_at_its_head_not_the_targets_tip() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    let earlier = tip(&project, "HEAD");
+    commit_in(&project, "later.txt");
+    git_ok(&project, &["checkout", "-q", "--detach", &earlier]);
+
+    succeed(&["branch", "create", "hotfix", "--target", "main"], ws);
+
+    assert_eq!(head_branch(&project).as_deref(), Some("hotfix"));
+    assert_eq!(tip(&project, "hotfix"), earlier);
+}
+
+#[test]
+fn the_create_a_detached_state_prints_runs_with_an_uncommitted_lock() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    let earlier = tip(&project, "HEAD");
+    commit_in(&project, "later.txt");
+    git_ok(&project, &["checkout", "-q", "--detach", &earlier]);
+    let lock = std::fs::read_to_string(project.join("rwv.lock")).unwrap();
+    std::fs::write(project.join("rwv.lock"), format!("{lock}\n")).unwrap();
+
+    succeed(&["branch", "create", "w", "--target", "main"], ws);
+
+    assert_eq!(tip(&project, "w"), earlier);
+}
+
+#[test]
+fn a_target_create_starts_at_the_upstream_where_it_is_ahead_of_the_local_branch() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    git_ok(&project, &["push", "-q", "origin", "main"]);
+    let other = ws.parent().unwrap().join("colleague");
+    common::git_in(
+        ws.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            w.project_bare.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    let theirs = commit_in(&other, "theirs.txt");
+    git_ok(&other, &["push", "-q", "origin", "main"]);
+    git_ok(&project, &["fetch", "-q", "origin"]);
+
+    succeed(&["branch", "create", "f", "--target", "main"], ws);
+
+    assert_eq!(tip(&project, "f"), theirs);
+}
+
+#[test]
+fn a_create_onto_itself_is_a_target_cycle_with_or_without_at() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+
+    for args in [
+        &["branch", "create", "x", "--target", "x", "--at", "main"][..],
+        &["branch", "create", "x", "--target", "x"][..],
+    ] {
+        let out = refuse(args, ws);
+        assert!(out.contains("target cycle"), "{out}");
+        assert!(!out.contains("panicked"), "{out}");
+        assert!(!has_branch(&project, "x"));
+    }
+}
