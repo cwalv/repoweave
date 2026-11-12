@@ -494,7 +494,7 @@ fn a_workweave_create_from_a_detached_project_repo_refuses() {
         ),
         RefusalKind::HeadNotOnBranch,
     );
-    assert!(stderr.contains("detached HEAD"), "{stderr}");
+    assert!(stderr.contains("alignment project detached"), "{stderr}");
     assert!(!weave.tmp.path().join(".workweaves/demo--ww").exists());
 }
 

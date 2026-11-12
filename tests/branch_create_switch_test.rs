@@ -783,6 +783,7 @@ fn the_create_a_detached_state_prints_runs_with_an_uncommitted_lock() {
     commit_in(&project, "later.txt");
     git_ok(&project, &["checkout", "-q", "--detach", &earlier]);
     let lock = std::fs::read_to_string(project.join("rwv.lock")).unwrap();
+    // raw lock bytes: the same lock with a byte added, an uncommitted edit that changes no pin.
     std::fs::write(project.join("rwv.lock"), format!("{lock}\n")).unwrap();
 
     succeed(&["branch", "create", "w", "--target", "main"], ws);
@@ -869,6 +870,7 @@ fn a_lock_that_does_not_read_at_the_destination_refuses_before_the_project_repo_
     let ws = &w.workspace;
     let project = project_dir(ws);
     succeed(&["branch", "create", "bad", "--declared"], ws);
+    // raw lock bytes: a lock that does not parse, which the builder cannot write.
     std::fs::write(project.join("rwv.lock"), "{ not a lock").unwrap();
     git_ok(&project, &["commit", "-qam", "break the lock"]);
     git_ok(&project, &["switch", "-q", "main"]);
