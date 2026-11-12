@@ -12,7 +12,8 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
-    CommitId, Holds, PathStanding, RawRevisionId, RefreshScope, ResolvedRevisionId, VcsError,
+    CommitId, Holds, PathStanding, RawRevisionId, RefreshScope, RefreshWrite, ResolvedRevisionId,
+    VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
@@ -7224,33 +7225,104 @@ impl Refreshed {
     }
 }
 
-/// What [`refresh_drift`] did in one checkout: what it replaced, and the
-/// stale paths it left as they stand because, when it came to write them,
-/// one no longer held the moved-from tip's content or something on disk was
-/// in its way.
+/// Why [`refresh_drift`] left stale paths as they stand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeftWhy {
+    /// A path no longer held what it was read holding, or something on disk
+    /// stood in the way of the write.
+    Changed,
+    /// The branch moved again after the checkout was read.
+    MovedAgain,
+    /// The index holds unresolved conflicts.
+    Unresolved,
+    /// The VCS could not write; its own account.
+    Failed(String),
+}
+
+impl LeftWhy {
+    fn describe(&self) -> String {
+        match self {
+            Self::Changed => "a path changed after it was read, or something on disk is \
+                              in the way of the write"
+                .to_owned(),
+            Self::MovedAgain => "the branch moved again after the checkout was read".to_owned(),
+            Self::Unresolved => "the index holds unresolved conflicts".to_owned(),
+            Self::Failed(said) => format!(
+                "the write failed: {}",
+                said.lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("")
+            ),
+        }
+    }
+}
+
+/// The stale paths a refresh did not write, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftInPlace {
+    pub paths: Vec<String>,
+    pub why: LeftWhy,
+}
+
+impl LeftInPlace {
+    /// What the paths still hold, and why: the subject of the line naming them.
+    pub fn describe(&self) -> String {
+        self.why.describe()
+    }
+}
+
+/// What [`refresh_drift`] did in one checkout: what it replaced, the stale
+/// paths it left as they stand, and a record of the refresh that could not be
+/// written.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DriftRefresh {
     pub refreshed: Option<Refreshed>,
-    pub left_in_place: Vec<String>,
+    pub left_in_place: Option<LeftInPlace>,
+    pub unrecorded: Option<String>,
 }
 
 impl DriftRefresh {
-    /// The line naming what was left in place, after the checkout's label.
-    pub fn describe_left_in_place(&self) -> Option<String> {
-        (!self.left_in_place.is_empty()).then(|| {
-            format!(
-                "drift left in place: these paths no longer held the old tip's content \
-                 when the refresh came to write them, or something on disk was in the \
-                 way, and are kept as edits: {}",
-                self.left_in_place.join(", ")
-            )
+    /// The line naming what was left in place in the checkout at `dir`, after
+    /// its label, with the route that clears it: `again`, the command that
+    /// reads the checkout afresh, once nothing else is changing it.
+    pub fn describe_left_in_place(
+        &self,
+        vcs: &dyn crate::vcs::Vcs,
+        dir: &Path,
+        again: &str,
+    ) -> Option<String> {
+        let left = self.left_in_place.as_ref()?;
+        let route = match left.why {
+            LeftWhy::Unresolved => format!(
+                "resolve the conflicted paths `{}` lists, then run `{again}`",
+                vcs.hint(crate::vcs::VcsAction::Status)
+                    .replace("<checkout>", &dir.display().to_string())
+            ),
+            _ => format!("run `{again}`, which reads them afresh"),
+        };
+        Some(format!(
+            "drift left in place ({}): these paths still hold the old tip's content, and \
+             committing them would record the move's reverse; {route}: {}",
+            left.describe(),
+            left.paths.join(", ")
+        ))
+    }
+
+    /// The line saying the refresh went unrecorded, after the checkout's label.
+    pub fn describe_unrecorded(&self) -> Option<String> {
+        self.unrecorded.as_ref().map(|e| {
+            format!("the refresh was written but could not be recorded in the checkout: {e}")
         })
     }
 }
 
-/// Replace what `reading` found stale, each write made only where every path
-/// in it still holds the moved-from tip's content, and record that the
-/// checkout now stands at its HEAD.
+/// Replace what `reading` found stale, writing only what a second reading,
+/// taken immediately before, agrees on, each write made only where every path
+/// in it still holds the moved-from tip's content; and, once nothing stale is
+/// left, record that the checkout stands at its HEAD. A write declined after
+/// another was made puts the first back, so the checkout is either refreshed
+/// whole or not at all.
 pub fn refresh_drift(
     vcs: &dyn crate::vcs::Vcs,
     repo: &Path,
@@ -7259,39 +7331,123 @@ pub fn refresh_drift(
     let (Some(moved_from), Some(moved_to)) = (&reading.left, &reading.head) else {
         return Ok(DriftRefresh::default());
     };
-    let mut refreshed = Refreshed {
-        moved_from: moved_from.clone(),
-        moved_to: moved_to.clone(),
-        files: Vec::new(),
-        index_entries: Vec::new(),
+    if !reading.is_refreshable() {
+        return Ok(DriftRefresh::default());
+    }
+    let left_in_place = |paths: BTreeSet<String>, why: LeftWhy| DriftRefresh {
+        left_in_place: Some(LeftInPlace {
+            paths: paths.into_iter().collect(),
+            why,
+        }),
+        ..DriftRefresh::default()
     };
-    let mut left_in_place = Vec::new();
-    for (paths, scope) in [
-        (reading.stale_files(), RefreshScope::IndexAndFiles),
-        (reading.stale_index_entries(), RefreshScope::IndexOnly),
-    ] {
-        if paths.is_empty() {
-            continue;
-        }
-        if vcs.refresh_paths_if_left(repo, moved_from, moved_to, &paths, scope)? {
-            match scope {
-                RefreshScope::IndexAndFiles => refreshed.files = paths,
-                RefreshScope::IndexOnly => refreshed.index_entries = paths,
+    let read_stale = |r: &DriftReading| -> BTreeSet<String> {
+        r.stale_files()
+            .into_iter()
+            .chain(r.stale_index_entries())
+            .collect()
+    };
+    let first = read_stale(reading);
+    let now = read_drift(vcs, repo)?;
+    if (&now.left, &now.head) != (&reading.left, &reading.head) {
+        let why = match vcs.head_revision(repo)?.id() == moved_to {
+            true => LeftWhy::Changed,
+            false => LeftWhy::MovedAgain,
+        };
+        return Ok(left_in_place(
+            first.union(&read_stale(&now)).cloned().collect(),
+            why,
+        ));
+    }
+    let agreed = |of: fn(&DriftReading) -> Vec<String>| -> Vec<String> {
+        let again: BTreeSet<String> = of(&now).into_iter().collect();
+        of(reading)
+            .into_iter()
+            .filter(|p| again.contains(p))
+            .collect()
+    };
+    let files = agreed(DriftReading::stale_files);
+    let index_entries = agreed(DriftReading::stale_index_entries);
+    let disagreed: BTreeSet<String> = first
+        .union(&read_stale(&now))
+        .filter(|p| !files.contains(p) && !index_entries.contains(p))
+        .cloned()
+        .collect();
+    if !disagreed.is_empty() {
+        return Ok(left_in_place(
+            first.union(&disagreed).cloned().collect(),
+            LeftWhy::Changed,
+        ));
+    }
+    crate::test_pause::point("drift-write");
+    if vcs.head_revision(repo)?.id() != moved_to {
+        return Ok(left_in_place(first, LeftWhy::MovedAgain));
+    }
+    let declined = |write: RefreshWrite, paths: &[String]| -> Result<Option<LeftWhy>, VcsError> {
+        Ok(match write {
+            RefreshWrite::Written => None,
+            RefreshWrite::Unresolved => Some(LeftWhy::Unresolved),
+            RefreshWrite::Declined { vcs_said } => {
+                let after = read_drift(vcs, repo)?;
+                Some(if vcs.head_revision(repo)?.id() != moved_to {
+                    LeftWhy::MovedAgain
+                } else if after.left == reading.left && paths.iter().all(|p| after.refreshes(p)) {
+                    LeftWhy::Failed(vcs_said)
+                } else {
+                    LeftWhy::Changed
+                })
             }
-        } else {
-            left_in_place.extend(paths);
+        })
+    };
+    let written = vcs.refresh_paths_if_left(
+        repo,
+        moved_from,
+        moved_to,
+        &files,
+        RefreshScope::IndexAndFiles,
+    )?;
+    if let Some(why) = declined(written, &files)? {
+        return Ok(left_in_place(first, why));
+    }
+    crate::test_pause::point("drift-write-index");
+    let written = vcs.refresh_paths_if_left(
+        repo,
+        moved_from,
+        moved_to,
+        &index_entries,
+        RefreshScope::IndexOnly,
+    )?;
+    if let Some(why) = declined(written, &index_entries)? {
+        let put_back = vcs.refresh_paths_if_left(
+            repo,
+            moved_to,
+            moved_from,
+            &files,
+            RefreshScope::IndexAndFiles,
+        )?;
+        let mut outcome = left_in_place(first, why);
+        if put_back != RefreshWrite::Written {
+            outcome.refreshed = Some(Refreshed {
+                moved_from: moved_from.clone(),
+                moved_to: moved_to.clone(),
+                files,
+                index_entries: Vec::new(),
+            });
         }
+        return Ok(outcome);
     }
-    if refreshed.files.is_empty() && refreshed.index_entries.is_empty() {
-        return Ok(DriftRefresh {
-            refreshed: None,
-            left_in_place,
-        });
-    }
-    vcs.record_checkout_at_head(repo)?;
     Ok(DriftRefresh {
-        refreshed: Some(refreshed),
-        left_in_place,
+        refreshed: Some(Refreshed {
+            moved_from: moved_from.clone(),
+            moved_to: moved_to.clone(),
+            files,
+            index_entries,
+        }),
+        left_in_place: None,
+        unrecorded: vcs
+            .record_checkout_at_head(repo, moved_to)
+            .err()
+            .map(|e| format!("{e:#}")),
     })
 }
 
@@ -7835,13 +7991,18 @@ fn apply_finding_repairs(
                                     "[fixed] core: drift in {location}: {}",
                                     refreshed.describe()
                                 ),
-                                None if outcome.left_in_place.is_empty() => outln!(
+                                None if outcome.left_in_place.is_none() => outln!(
                                     "[fixed] core: drift in {location}: nothing left to refresh"
                                 ),
                                 None => {}
                             }
-                            if let Some(left) = outcome.describe_left_in_place() {
+                            if let Some(left) =
+                                outcome.describe_left_in_place(vcs, repo_abs, "rwv doctor --fix")
+                            {
                                 fix_errors.push(format!("{location}: {left}"));
+                            }
+                            if let Some(unrecorded) = outcome.describe_unrecorded() {
+                                fix_errors.push(format!("{location}: {unrecorded}"));
                             }
                         }
                         Err(e) => {

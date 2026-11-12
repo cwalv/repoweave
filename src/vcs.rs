@@ -2295,6 +2295,21 @@ pub enum RefreshScope {
     IndexOnly,
 }
 
+/// What one drift refresh write did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshWrite {
+    Written,
+    /// Nothing was written to the index: a path no longer held what it was
+    /// read holding, something stood in the way of a file, or the VCS could
+    /// not write. `vcs_said` is the VCS's own account, for the operator only.
+    /// A failure while writing files may have written some before it stopped.
+    Declined {
+        vcs_said: String,
+    },
+    /// Nothing was written: the index holds unresolved conflicts.
+    Unresolved,
+}
+
 /// One path of a checkout whose index entry or file differs from `HEAD`, or
 /// that the move under it changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3765,10 +3780,11 @@ pub trait Vcs: Send + Sync {
 
     /// Give each of `paths` `head`'s content in the index, and with
     /// [`RefreshScope::IndexAndFiles`] in the working tree too, removing those
-    /// `head` lacks; only where each still holds `left`'s content there, and
-    /// nothing on disk is in the way of a file `head` adds. Where any does not,
-    /// nothing changes and the answer is `false`. Nothing else in the checkout
-    /// changes either way.
+    /// `head` lacks; only where each still holds `left`'s content there, each
+    /// file `left` and `head` both hold is still on disk, and nothing on disk
+    /// is in the way of a file `head` adds. Where any does not, the answer is
+    /// [`RefreshWrite::Declined`] and nothing is written. Nothing else in the
+    /// checkout changes either way.
     fn refresh_paths_if_left(
         &self,
         repo: &Path,
@@ -3776,12 +3792,12 @@ pub trait Vcs: Send + Sync {
         head: &CommitId,
         paths: &[String],
         scope: RefreshScope,
-    ) -> Result<bool, VcsError>;
+    ) -> Result<RefreshWrite, VcsError>;
 
-    /// Record in the checkout's own history that it stands where HEAD now
-    /// is, so [`Vcs::left_behind_at`] answers `None` until the branch next
-    /// moves under it.
-    fn record_checkout_at_head(&self, repo: &Path) -> Result<(), VcsError>;
+    /// Record in the checkout's own history that it stands at `head`, so
+    /// [`Vcs::left_behind_at`] answers `None` until the branch next moves
+    /// under it. Fails, recording nothing, where HEAD no longer names `head`.
+    fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError>;
 
     /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.

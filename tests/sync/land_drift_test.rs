@@ -1165,3 +1165,553 @@ fn drift_in_a_source_stopped_in_a_revert_is_left() {
 fn drift_in_a_target_stopped_in_a_revert_is_left() {
     stopped_in_a_revert_under_a_move(Side::Target);
 }
+
+// ---------------------------------------------------------------------------
+// A refresh that cannot write: what the landing prints, and the route back
+// ---------------------------------------------------------------------------
+
+/// `rwv land` in the workweave, held at `point` once it has read the drift a
+/// second time and is about to write it.
+fn held_landing(f: &Fixture, point: &str) -> common::pause::Paused {
+    let mut land = common::rwv_std();
+    land.args(["land"]).current_dir(&f.ww);
+    common::pause::Paused::spawn(land, point, &f.scratch.join(format!("pause-{point}")))
+        .unwrap_or_else(|e| panic!("the landing reaches {point}: {e}"))
+}
+
+/// The lines the `choices:` block prints.
+fn choice_lines(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .skip_while(|l| *l != "choices:")
+        .skip(1)
+        .take_while(|l| l.starts_with(' '))
+        .map(|l| l.trim().to_owned())
+        .collect()
+}
+
+/// The landing refused with the drift left in place: the state's line, the
+/// one route that reads the checkout again, and no choice that commits.
+fn left_in_place(out: &std::process::Output, why: &str) -> String {
+    let stderr = common::cli::refused(out, State::EditsDriftLeftInPlace);
+    assert!(
+        stderr.contains(why),
+        "the reason is named, `{why}`:\n{stderr}"
+    );
+    let choices = choice_lines(&stderr);
+    assert!(
+        choices.iter().any(|l| l == "rwv land"),
+        "the route is to land again: {choices:?}\n{stderr}"
+    );
+    assert!(
+        !choices
+            .iter()
+            .any(|l| l.contains("commit") || l.contains("stash")),
+        "nothing offers to commit or stash the old tip's content: {choices:?}\n{stderr}"
+    );
+    stderr
+}
+
+fn source_head(f: &Fixture) -> String {
+    common::git_in(&f.primary_lib, &["rev-parse", "HEAD"])
+}
+
+/// A file saved while the refresh is about to write is git's to refuse over:
+/// nothing is written, the landing names the drift left in place and offers
+/// to land again, and landing again refreshes everything but the edit.
+#[test]
+fn an_edit_saved_as_the_refresh_starts_is_kept_and_landing_again_refreshes_the_rest() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    let target = source_head(&f);
+    let held = held_landing(&f, "drift-write");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{stderr}");
+    assert_eq!(source_head(&f), target, "a refused landing moves nothing");
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert_eq!(
+        edits_listing(&stderr),
+        vec!["notes.txt".to_owned()],
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("refreshed drift") && stderr.contains("new.txt"),
+        "{stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+    assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
+}
+
+/// Moves `ww/project` adding `path` as a tracked file and runs `prepare` in
+/// the source checkout; then lands, `put` putting something at the path while
+/// the landing is about to write. That something is kept, and the drift left.
+fn put_where_the_move_adds_a_file_as_the_refresh_starts(
+    path: &str,
+    prepare: impl FnOnce(&Path),
+    put: impl FnOnce(&Path),
+) {
+    let f = fixture();
+    prepare(&f.ww_lib);
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join(path), "committed\n").unwrap();
+        common::git_in(elsewhere, &["add", "-f", path]);
+    });
+    let held = held_landing(&f, "drift-write");
+    put(&f.ww_lib);
+    let before = path_state(&f.ww_lib, &[path]);
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert_eq!(path_state(&f.ww_lib, &[path]), before, "{stderr}");
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert_eq!(path_state(&f.ww_lib, &[path]), before, "{stderr}");
+}
+
+#[test]
+fn an_ignored_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
+    put_where_the_move_adds_a_file_as_the_refresh_starts(
+        "build.log",
+        |checkout| {
+            let common_dir = common::git_in(
+                checkout,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            );
+            let info = Path::new(&common_dir).join("info");
+            std::fs::create_dir_all(&info).unwrap();
+            std::fs::write(info.join("exclude"), "build.log\n").unwrap();
+        },
+        |checkout| std::fs::write(checkout.join("build.log"), "never committed\n").unwrap(),
+    );
+}
+
+#[test]
+fn an_ignored_directory_put_where_the_move_adds_a_file_as_the_refresh_starts_is_kept() {
+    put_where_the_move_adds_a_file_as_the_refresh_starts(
+        "out",
+        |checkout| {
+            let common_dir = common::git_in(
+                checkout,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            );
+            let info = Path::new(&common_dir).join("info");
+            std::fs::create_dir_all(&info).unwrap();
+            std::fs::write(info.join("exclude"), "out/\n").unwrap();
+        },
+        |checkout| {
+            std::fs::create_dir_all(checkout.join("out")).unwrap();
+            std::fs::write(checkout.join("out/a.o"), "never committed\n").unwrap();
+        },
+    );
+}
+
+#[test]
+fn an_untracked_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
+    put_where_the_move_adds_a_file_as_the_refresh_starts(
+        "new.txt",
+        |_| {},
+        |checkout| std::fs::write(checkout.join("new.txt"), "never committed\n").unwrap(),
+    );
+}
+
+/// A stale file deleted while the refresh is about to write stays deleted:
+/// git's merge counts a missing file as up to date and would write it again.
+#[test]
+fn a_file_deleted_as_the_refresh_starts_stays_deleted() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let held = held_landing(&f, "drift-write");
+    std::fs::remove_file(f.ww_lib.join("notes.txt")).unwrap();
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")), None, "{stderr}");
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        edits_listing(&stderr).iter().any(|l| l == "notes.txt"),
+        "{stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")), None, "{stderr}");
+}
+
+/// Another process holding the index when the refresh writes: the landing
+/// says the write failed, with git's account, and landing again once the
+/// index is free refreshes and lands.
+#[test]
+fn a_write_that_fails_is_named_and_landing_again_refreshes() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let lock = common::git_in(
+        &f.ww_lib,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    );
+    let held = held_landing(&f, "drift-write");
+    std::fs::write(&lock, "").unwrap();
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "the write failed");
+    assert!(
+        stderr.contains("index.lock"),
+        "git's own account is carried: {stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+    std::fs::remove_file(&lock).unwrap();
+
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(
+        read(&f.primary_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// The branch moved again while the refresh was about to write: nothing is
+/// written or recorded, and landing again refreshes to the newer tip.
+#[test]
+fn a_second_move_as_the_refresh_starts_is_left_for_the_next_landing() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let held = held_landing(&f, "drift-write");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "four\n").unwrap();
+        std::fs::write(elsewhere.join("README.md"), "moved again\n").unwrap();
+    });
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "the branch moved again");
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("four\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("moved again\n")
+    );
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// Unresolved conflicts in the index: the drift is left, its route is to look
+/// at them with the VCS's status and land again, and the checkout's other
+/// edits are listed with no choice of their own. Resolving them as that
+/// status says and landing again refreshes the drift and lands.
+#[test]
+fn unresolved_conflicts_leave_the_drift_and_resolving_them_then_landing_again_lands() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let blob = common::git_in(&f.ww_lib, &["rev-parse", "HEAD:spare.txt"]);
+    let zero = "0".repeat(blob.len());
+    let info = format!(
+        "0 {zero}\tspare.txt\n100644 {blob} 1\tspare.txt\n100644 {blob} 2\tspare.txt\n\
+         100644 {blob} 3\tspare.txt\n"
+    );
+    let mut stage = common::git();
+    stage
+        .args(["update-index", "--index-info"])
+        .current_dir(&f.ww_lib)
+        .stdin(std::process::Stdio::piped());
+    let mut child = stage.spawn().unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), info.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success());
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(stderr.contains("unresolved conflicts"), "{stderr}");
+    let status = format!("git -C {} status", f.ww_lib.display());
+    let choices = choice_lines(&stderr);
+    assert!(
+        choices.iter().any(|l| *l == status) && choices.iter().any(|l| l == "rwv land"),
+        "{choices:?}\n{stderr}"
+    );
+    assert!(
+        !choices
+            .iter()
+            .any(|l| l.contains("commit") || l.contains("stash")),
+        "{choices:?}\n{stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+
+    let shown = common::git_in(&f.ww_lib, &["status"]);
+    assert!(
+        shown.contains("spare.txt") && shown.contains("git add"),
+        "{shown}"
+    );
+    common::git_in(&f.ww_lib, &["add", "spare.txt"]);
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("refreshed drift") && stderr.contains("notes.txt"),
+        "{stderr}"
+    );
+    assert_eq!(
+        read(&f.primary_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+}
+
+/// The move changes two files, one of which already holds the new content:
+/// that one takes its index entry alone. A file write declined leaves that
+/// index entry as it was and records nothing, so the next landing still
+/// reads it as drift and resets it.
+#[test]
+fn a_declined_file_write_leaves_the_index_entries_and_records_nothing() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("spare.txt"), "spare moved\n").unwrap();
+    });
+    std::fs::write(f.ww_lib.join("spare.txt"), "spare moved\n").unwrap();
+    let held = held_landing(&f, "drift-write");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert!(
+        common::git_in(&f.ww_lib, &["diff", "--cached", "--name-only"])
+            .lines()
+            .any(|l| l == "spare.txt"),
+        "the index entry is not reset alone:\n{stderr}"
+    );
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        stderr.contains("these index entries were reset") && stderr.contains("spare.txt"),
+        "the next landing still reads the index entry as drift:\n{stderr}"
+    );
+    assert_eq!(
+        edits_listing(&stderr),
+        vec!["notes.txt".to_owned()],
+        "{stderr}"
+    );
+}
+
+/// An index entry staged while the refresh is between its file write and its
+/// index-entry write: the index-entry write is declined, and the files it had
+/// written are put back, so the checkout is not left half refreshed.
+#[test]
+fn a_declined_index_entry_write_puts_the_written_files_back() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("spare.txt"), "spare moved\n").unwrap();
+    });
+    std::fs::write(f.ww_lib.join("spare.txt"), "spare moved\n").unwrap();
+    let held = held_landing(&f, "drift-write-index");
+    std::fs::write(f.ww_lib.join("spare.txt"), "mine\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "spare.txt"]);
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["diff", "--name-only", "--", "notes.txt"]),
+        "",
+        "the put-back leaves notes.txt's file and index entry together"
+    );
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        stderr.contains("refreshed drift") && stderr.contains("notes.txt"),
+        "{stderr}"
+    );
+    assert_eq!(
+        edits_listing(&stderr),
+        vec!["spare.txt".to_owned()],
+        "{stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("spare.txt")).as_deref(), Some("mine\n"));
+}
+
+/// An edit refused beside drift whose refresh was declined is listed with no
+/// choice: committing there would commit the old tip's content with it.
+#[test]
+fn an_edit_beside_drift_left_in_place_is_offered_no_commit() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let held = held_landing(&f, "drift-write");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+
+    let out = held.release();
+
+    let stderr = left_in_place(&out, "a path changed after it was read");
+    common::cli::refused(&out, State::EditsDirty);
+    assert!(
+        edits_listing(&stderr).iter().any(|l| l == "README.md"),
+        "{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Checkouts the merge would treat otherwise than as a refresh
+// ---------------------------------------------------------------------------
+
+/// A worktree whose index file is gone: git's merge would read it as an
+/// initial checkout and write every file, an ignored one standing at a path
+/// the move did not touch included. Nothing reads as moved under it.
+#[test]
+fn a_worktree_with_no_index_is_not_refreshed() {
+    let f = fixture();
+    let common_dir = common::git_in(
+        &f.ww_lib,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    std::fs::create_dir_all(Path::new(&common_dir).join("info")).unwrap();
+    std::fs::write(Path::new(&common_dir).join("info/exclude"), "README.md\n").unwrap();
+    f.move_from_elsewhere("ww/project", "new.txt", "new\n");
+    let index = common::git_in(
+        &f.ww_lib,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    );
+    std::fs::remove_file(&index).unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "mine, ignored\n").unwrap();
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("mine, ignored\n")
+    );
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None);
+
+    let out = fix(&f, Side::Source);
+
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("mine, ignored\n"),
+        "{}",
+        common::cli::describe(&out)
+    );
+}
+
+/// A move that turns a file into a directory is refreshed whole: the file
+/// the move removes does not stand in the way of the directory.
+#[test]
+fn a_move_turning_a_file_into_a_directory_is_refreshed_whole() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::remove_file(elsewhere.join("spare.txt")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("spare.txt")).unwrap();
+        std::fs::write(elsewhere.join("spare.txt/inner.txt"), "inner\n").unwrap();
+    });
+
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(
+        read(&f.ww_lib.join("spare.txt/inner.txt")).as_deref(),
+        Some("inner\n")
+    );
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// A move that turns a directory into a file is refreshed whole: the files
+/// the move removes from the directory do not stand in the way of the file.
+#[test]
+fn a_move_turning_a_directory_into_a_file_is_refreshed_whole() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::create_dir_all(elsewhere.join("docs")).unwrap();
+        std::fs::write(elsewhere.join("docs/a.txt"), "a\n").unwrap();
+    });
+    let out = fix(&f, Side::Source);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("refreshed drift"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::remove_dir_all(elsewhere.join("docs")).unwrap();
+        std::fs::write(elsewhere.join("docs"), "now a file\n").unwrap();
+    });
+
+    let out = common::cli::succeed(&["land"], &f.ww);
+
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(
+        read(&f.ww_lib.join("docs")).as_deref(),
+        Some("now a file\n")
+    );
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// `rwv doctor --fix` held as it is about to write, a file saved meanwhile:
+/// the fix names the drift left in place and its route, running that route
+/// refreshes the rest, and the saved file is kept throughout.
+#[test]
+fn doctor_fix_names_a_declined_write_and_running_it_again_refreshes_the_rest() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    let mut doctor = common::rwv_std();
+    doctor.args(["doctor", "--fix"]).current_dir(&f.ww);
+    let held = common::pause::Paused::spawn(doctor, "drift-write", &f.scratch.join("pause"))
+        .unwrap_or_else(|e| panic!("the fix reaches its write: {e}"));
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+
+    let out = held.release();
+
+    let said = common::cli::describe(&out);
+    assert!(
+        said.contains("drift left in place") && said.contains("run `rwv doctor --fix`"),
+        "{said}"
+    );
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{said}");
+
+    let out = fix(&f, Side::Source);
+
+    let said = common::cli::describe(&out);
+    assert!(
+        said.contains("refreshed drift") && said.contains("new.txt"),
+        "{said}"
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+    assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
+}

@@ -514,6 +514,7 @@ impl Finding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum State {
     EditsDirty,
+    EditsDriftLeftInPlace,
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
@@ -610,8 +611,9 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 80] = [
+    pub const ALL: [State; 81] = [
         Self::EditsDirty,
+        Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
@@ -716,6 +718,22 @@ impl State {
                     ("lock", Form::LockDirty),
                     ("update --remote", Form::UpdateRemoteDirty),
                 ],
+            },
+            Self::EditsDriftLeftInPlace => &StateRow {
+                axis: Axis::Edits,
+                name: "drift left in place",
+                means: "the checkout's branch moved under it from another checkout, and the \
+                        refresh that brings it to its HEAD wrote none of these paths, listed, \
+                        for the reason named: a path changed after it was read or something \
+                        on disk was in the way, the branch moved again, the index holds \
+                        unresolved conflicts, or the write failed. They still hold the old \
+                        tip's content, so committing them would record the move's reverse; \
+                        the checkout's other edits are listed beside it with no choice of \
+                        their own until the drift is refreshed",
+                refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
+                             workspace",
+                offers: &[Form::DriftLandAgain, Form::DriftResolveThenLand],
+                verb_offers: &[],
             },
             Self::EditsMidOperation => &StateRow {
                 axis: Axis::Edits,
@@ -1783,6 +1801,7 @@ pub enum ChoiceId {
     MigrateLockDriver,
     LostRace,
     Republish,
+    LandAgain,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2003,6 +2022,12 @@ impl ChoiceId {
                 keeps_work: "`rwv abort` moves only what the landing moved, from the tips it \
                              wrote; a branch someone else moved stays where they left it",
             },
+            Self::LandAgain => &ChoiceRow {
+                id: None,
+                phrase: "land again once nothing else is changing the checkout: the landing \
+                         reads it afresh and refreshes what still holds the old tip",
+                keeps_work: "a refresh writes only paths that still hold the old tip's content",
+            },
             Self::Republish => &ChoiceRow {
                 id: None,
                 phrase: "republish rwv's own rebase over the push branch it rewrote",
@@ -2184,6 +2209,8 @@ pub enum Form {
     MigrateLockDriver,
     LostRace,
     Republish,
+    DriftLandAgain,
+    DriftResolveThenLand,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2206,7 +2233,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 86] = [
+    pub const ALL: [Form; 88] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2293,6 +2320,8 @@ impl Form {
         Self::MigrateLockDriver,
         Self::LostRace,
         Self::Republish,
+        Self::DriftLandAgain,
+        Self::DriftResolveThenLand,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -2812,6 +2841,18 @@ impl Form {
                 choice: C::MigrateLockDriver,
                 steps: &[Rwv("rwv doctor --fix")],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::DriftLandAgain => &FormRow {
+                choice: C::LandAgain,
+                steps: &[Rwv("rwv land")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::DriftResolveThenLand => &FormRow {
+                choice: C::LandAgain,
+                steps: &[Vcs(A::Status), Rwv("rwv land")],
+                at: W::Here,
                 shipped: true,
             },
             Self::LostRace => &FormRow {

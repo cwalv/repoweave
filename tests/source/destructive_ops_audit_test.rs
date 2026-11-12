@@ -458,28 +458,34 @@ const ALLOWLIST: &[Allowed] = &[
             the error that refusal returns; it is not a call. (7) the same command \
             spelled in the argument list of the error advance_branch_ref \
             returns when the move is not a fast-forward; it is not a call. \
-            (8) record_checkout_at_head: a HEAD reflog entry at the commit \
-            HEAD already names, by a compare-and-swap whose old and new \
-            values are both the HEAD it read, so it moves no ref; a branch \
-            moved meanwhile makes it fail rather than move back.",
+            (8) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
+            refresh read, by a compare-and-swap whose old and new values are \
+            both that commit, so it moves no ref; a branch moved since makes \
+            it fail rather than move back or record the newer tip.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"read-tree\", \"-m\"",
         count: 1,
-        callers: &[("refresh_paths_if_left", 2)],
+        callers: &[("refresh_paths_if_left", 4)],
         justification: "refresh_paths_if_left, the one write of a drift \
             refresh: a two-way merge from the moved-from tip to that tip's \
-            tree with the stale paths taken from HEAD, so every other path is \
-            one both sides agree on and git keeps its index entry and file. \
-            git itself refuses the merge, writing nothing, where a stale \
-            path's index entry or file no longer holds the moved-from tip's \
-            content or an untracked file is in the way; no --reset. Reached \
-            through the backend's Vcs method of the same name, whose one \
-            caller is check::refresh_drift, which passes only the paths \
-            check::read_drift classified stale. An ignored file git's merge \
-            treats as expendable; read_drift reads any on disk at a stale \
-            path, or where a leading directory of one would go, as an edit.",
+            tree with the stale paths taken from HEAD, so in an index that \
+            exists every other path is one both sides agree on and git keeps \
+            its index entry and file; an index with no entries reads no \
+            moved-from tip, so the merge never runs as an initial checkout. \
+            git itself refuses the merge where a stale path's index entry or \
+            tracked file no longer holds the moved-from tip's content or an \
+            untracked file is in the way; no --reset. What git's check passes \
+            (an ignored file or directory where HEAD adds a path, a tracked \
+            file deleted from disk) is checked immediately before the spawn. \
+            Reached through the backend's Vcs method of the same name, whose \
+            callers are all in check::refresh_drift: the files scope and the \
+            index-only scope, each passing only paths two readings of \
+            check::read_drift agree are stale, and the put-back of the files \
+            scope with the two tips swapped when the index-only scope is \
+            declined after it, which git refuses unless each path still holds \
+            what the first write put there.",
     },
     Allowed {
         file: "git/backup.rs",

@@ -12,11 +12,12 @@ use crate::vcs::{
     NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch, PublishRef, RangeCommit,
     RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
     RecordsPublish, RecordsSite, RefMerge, RefOrigin, RefRestoreOutcome, RefSavepoint,
-    RefreshScope, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch,
-    RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed,
-    ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth,
-    SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote,
-    Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    RefreshScope, RefreshWrite, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
+    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
+    Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
+    SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges,
+    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
+    WorkspacePopulation,
 };
 use crate::vcs::{Attribution, Integrates, KeptWork};
 use std::borrow::Cow;
@@ -617,6 +618,10 @@ pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
 /// newest entry is the branch's tip unless that move went unlogged. `HEAD@{0}`
 /// is no reading of the log: git answers it with HEAD whenever the newest
 /// entry is not HEAD.
+///
+/// An index with no entries holds nothing of the moved-from tip. Where it has
+/// no file at all, git's two-way merge treats the merge as an initial checkout
+/// and writes every path both trees hold, over whatever is on disk there.
 fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
         return Ok(None);
@@ -640,7 +645,49 @@ fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
         return Ok(None);
     }
     let forward = GitVcs.is_ancestor(repo, &ResolvedRevisionId::from(recorded.clone()), &head)?;
-    Ok(forward.then_some(recorded))
+    if !forward || !index_has_entries(repo)? {
+        return Ok(None);
+    }
+    Ok(Some(recorded))
+}
+
+/// Whether the checkout's index lists any path. Only the first byte of the
+/// listing is read.
+fn index_has_entries(repo: &Path) -> Result<bool, VcsError> {
+    use std::io::Read;
+    let args = ["ls-files", "-z"];
+    let mut child = git_command()
+        .args(args)
+        .current_dir(repo)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| VcsError::Io {
+            ctx: format!("failed to spawn git {args:?}"),
+            source: e,
+        })?;
+    let mut first = [0u8; 1];
+    let read = child
+        .stdout
+        .take()
+        .expect("stdout was piped")
+        .read(&mut first)
+        .map_err(|e| VcsError::Io {
+            ctx: format!("failed to read git {args:?}"),
+            source: e,
+        })?;
+    let status = child.wait().map_err(|e| VcsError::Io {
+        ctx: format!("failed to wait for git {args:?}"),
+        source: e,
+    })?;
+    if read == 0 && !status.success() {
+        return Err(VcsError::CommandFailed {
+            args: args.iter().map(|a| (*a).to_owned()).collect(),
+            repo: repo.to_path_buf(),
+            stderr: String::new(),
+        });
+    }
+    Ok(read > 0)
 }
 
 /// One path `diff-index --raw` reports: its status letter, and the mode and
@@ -651,6 +698,8 @@ struct RawChange {
     rev_object: String,
     other_mode: String,
 }
+
+const GITLINK: &str = "160000";
 
 /// Each path `diff-index` reports between `rev` and the index (`cached`) or
 /// the working tree.
@@ -691,51 +740,98 @@ fn changed_against(
     Ok(changed)
 }
 
-/// Something on disk at `path`, or something other than a directory where
-/// one of its leading directories would go.
-fn occupied(repo: &Path, path: &str) -> bool {
-    if std::fs::symlink_metadata(repo.join(path)).is_ok() {
-        return true;
+/// The entry of the directory `dir` that answers to `name`: the exact name,
+/// else the one entry a case-insensitive filesystem matched it to. `None`
+/// when no single entry answers to it.
+fn entry_on_disk(dir: &Path, name: &str) -> Option<String> {
+    let names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    if names.iter().any(|n| n == name) {
+        return Some(name.to_owned());
     }
-    let mut leading = repo.to_path_buf();
-    let mut components: Vec<&str> = path.split('/').collect();
-    components.pop();
-    for component in components {
-        leading.push(component);
-        match std::fs::symlink_metadata(&leading) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => return true,
-            Err(_) => return false,
+    let mut folded = names
+        .into_iter()
+        .filter(|n| n.to_lowercase() == name.to_lowercase());
+    match (folded.next(), folded.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
+}
+
+/// Whether everything on disk at `rel`, the whole tree under it for a
+/// directory, is a tracked path in `removed`.
+fn holds_only(repo: &Path, rel: &str, removed: &BTreeSet<String>) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(repo.join(rel)) else {
+        return true;
+    };
+    if !meta.is_dir() {
+        return removed.contains(rel);
+    }
+    let Ok(entries) = std::fs::read_dir(repo.join(rel)) else {
+        return false;
+    };
+    entries.into_iter().all(|entry| {
+        entry
+            .ok()
+            .and_then(|e| e.file_name().into_string().ok())
+            .is_some_and(|name| holds_only(repo, &format!("{rel}/{name}"), removed))
+    })
+}
+
+/// Something on disk at `path`, or something other than a directory where
+/// one of its leading directories would go, other than tracked paths in
+/// `removed`, which the same merge takes away.
+fn occupied(repo: &Path, path: &str, removed: &BTreeSet<String>) -> bool {
+    let components: Vec<&str> = path.split('/').collect();
+    let mut leading = String::new();
+    for (at, component) in components.iter().enumerate() {
+        let here = if leading.is_empty() {
+            (*component).to_owned()
+        } else {
+            format!("{leading}/{component}")
+        };
+        let Ok(meta) = std::fs::symlink_metadata(repo.join(&here)) else {
+            return false;
+        };
+        if meta.is_dir() && at + 1 < components.len() {
+            leading = here;
+            continue;
         }
+        let Some(name) = entry_on_disk(&repo.join(&leading), component) else {
+            return true;
+        };
+        let occupant = if leading.is_empty() {
+            name
+        } else {
+            format!("{leading}/{name}")
+        };
+        return !holds_only(repo, &occupant, removed);
     }
     false
 }
 
-/// Index entries whose file git does not compare with them: assume-unchanged
-/// ones, and skip-worktree ones with something on disk.
-fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
-    let listing = GitVcs::run(["ls-files", "-v", "-z"], repo)?;
-    Ok(nul_terminated_fields(&listing)
-        .into_iter()
-        .filter_map(|record| {
-            let (tag, path) = record.split_once(' ')?;
-            let unwatched =
-                tag.chars().any(|c| c.is_ascii_lowercase()) || (tag == "S" && occupied(repo, path));
-            unwatched.then(|| path.to_owned())
-        })
-        .collect())
-}
-
-/// Of `candidates`, each a regular file with the object `HEAD` holds for it,
-/// those git would store as exactly that object: content compared after
-/// git's own conversions, not stat data.
+/// Of `candidates`, each a regular file paired with an object, those git
+/// would store as exactly that object: content compared after git's own
+/// conversions, not stat data. A path git cannot read on a line of its own
+/// matches nothing.
 fn files_holding(repo: &Path, candidates: &[(&str, &str)]) -> BTreeSet<String> {
+    let candidates: Vec<&(&str, &str)> = candidates
+        .iter()
+        .filter(|(path, _)| !path.contains('\n'))
+        .collect();
     if candidates.is_empty() {
         return BTreeSet::new();
     }
-    let mut args = vec!["hash-object", "--"];
-    args.extend(candidates.iter().map(|(path, _)| *path));
-    let Ok(hashed) = GitVcs::run(&args, repo) else {
+    let mut input = String::new();
+    for (path, _) in &candidates {
+        input.push_str(path);
+        input.push('\n');
+    }
+    let Ok(hashed) =
+        GitVcs::run_with_stdin(["hash-object", "--stdin-paths"], repo, input.as_bytes())
+    else {
         return BTreeSet::new();
     };
     let hashed: Vec<&str> = hashed.lines().collect();
@@ -750,16 +846,82 @@ fn files_holding(repo: &Path, candidates: &[(&str, &str)]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Whether a regular file's exec bit on disk is the one `mode` records. On a
+/// platform without one, always.
+fn exec_bit_matches(repo: &Path, path: &str, mode: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(repo.join(path))
+            .is_ok_and(|m| (m.permissions().mode() & 0o100 != 0) == (mode == "100755"))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (repo, path, mode);
+        true
+    }
+}
+
+/// Index entries whose file git does not compare with them, assume-unchanged
+/// ones and skip-worktree ones with something on disk, and whose file does
+/// not hold the entry's content.
+fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
+    let listing = GitVcs::run(["ls-files", "-v", "-s", "-z"], repo)?;
+    let none = BTreeSet::new();
+    let mut unwatched = BTreeSet::new();
+    let mut regular: Vec<(String, String, String)> = Vec::new();
+    for record in nul_terminated_fields(&listing) {
+        let Some((head, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<&str> = head.split(' ').collect();
+        let [tag, mode, object, _] = fields[..] else {
+            continue;
+        };
+        let flagged = tag.chars().any(|c| c.is_ascii_lowercase())
+            || (tag == "S" && occupied(repo, path, &none));
+        if !flagged {
+            continue;
+        }
+        let is_file = std::fs::symlink_metadata(repo.join(path)).is_ok_and(|m| m.is_file());
+        if matches!(mode, "100644" | "100755") && is_file && exec_bit_matches(repo, path, mode) {
+            regular.push((path.to_owned(), object.to_owned(), mode.to_owned()));
+        } else {
+            unwatched.insert(path.to_owned());
+        }
+    }
+    let candidates: Vec<(&str, &str)> = regular
+        .iter()
+        .map(|(path, object, _)| (path.as_str(), object.as_str()))
+        .collect();
+    let unchanged = files_holding(repo, &candidates);
+    unwatched.extend(
+        regular
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .filter(|path| !unchanged.contains(path)),
+    );
+    Ok(unwatched)
+}
+
 /// [`Vcs::path_standings`] for git.
 ///
 /// `diff-index` against a tree reads a path the index lacks as absent from
 /// the working tree whatever is on disk there, so such a path that something
 /// on disk occupies, at its own name or where a leading directory would go,
-/// holds [`Holds::Other`]; so does a file git does not compare with its
-/// index entry. `diff-index` also reports a file whose stat data no longer
-/// matches its index entry as changed without reading it, so the stat data
-/// is refreshed first, as `git status` does, and a file the move changed
-/// that still differs from its old-tip entry is hashed against `HEAD`.
+/// holds [`Holds::Other`], unless what occupies it is a tracked path the
+/// move removes and that still holds the moved-from tip's content; so does a
+/// file git does not compare with its index entry and that differs from it.
+/// `diff-index` also reports a file whose stat data no longer matches its
+/// index entry as changed without reading it, so the stat data is refreshed
+/// first, as `git status` does, and a file the move changed that still
+/// differs from its old-tip entry is hashed against `HEAD`.
+///
+/// A submodule's checkout is never written by a refresh, which writes its
+/// entry alone: a moved submodule whose checkout stands where the old tip put
+/// it holds [`Holds::Head`] on disk. One the move turns into a file or link
+/// holds [`Holds::Other`] while anything is in its directory, since the merge
+/// would delete that directory whole.
 fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStanding>, VcsError> {
     refresh_stat_data(repo);
     let file_vs_head = changed_against(repo, "HEAD", false)?;
@@ -810,20 +972,44 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
         .collect();
     let mut standings: Vec<PathStanding> = paths
         .into_iter()
-        .map(|path| {
-            let mut file = side(&file_vs_head, &file_vs_left, path);
-            let absent = file_vs_head.get(path).is_some_and(|c| c.status == "D");
-            if (absent && occupied(repo, path)) || unwatched.contains(path) {
-                file = Holds::Other;
-            }
-            PathStanding {
-                path: path.clone(),
-                moved: moved.contains(path),
-                index: side(&index_vs_head, &index_vs_left, path),
-                file,
-            }
+        .map(|path| PathStanding {
+            path: path.clone(),
+            moved: moved.contains(path),
+            index: side(&index_vs_head, &index_vs_left, path),
+            file: match unwatched.contains(path) {
+                true => Holds::Other,
+                false => side(&file_vs_head, &file_vs_left, path),
+            },
         })
         .collect();
+    let removed: BTreeSet<String> = standings
+        .iter()
+        .filter(|s| s.moved && (s.index, s.file) == (Holds::LeftTip, Holds::LeftTip))
+        .filter(|s| index_vs_head.get(&s.path).is_some_and(|c| c.status == "A"))
+        .map(|s| s.path.clone())
+        .collect();
+    for standing in &mut standings {
+        let path = standing.path.as_str();
+        let absent = file_vs_head.get(path).is_some_and(|c| c.status == "D");
+        if absent && occupied(repo, path, &removed) {
+            standing.file = Holds::Other;
+        }
+        let Some(entry) = index_vs_head.get(path) else {
+            continue;
+        };
+        if !standing.moved || standing.index != Holds::LeftTip || entry.other_mode != GITLINK {
+            continue;
+        }
+        if entry.rev_mode == GITLINK {
+            if standing.file == Holds::LeftTip {
+                standing.file = Holds::Head;
+            }
+        } else if entry.rev_mode != "000000"
+            && std::fs::read_dir(repo.join(path)).is_ok_and(|mut d| d.next().is_some())
+        {
+            standing.file = Holds::Other;
+        }
+    }
     let holding_head = {
         let candidates: Vec<(&str, &str)> = standings
             .iter()
@@ -862,20 +1048,28 @@ fn refresh_stat_data(repo: &Path) {
 
 /// [`Vcs::refresh_paths_if_left`] for git: a two-way merge from `left` to a
 /// tree that is `left` with `paths` taken from `head`. Both sides of the
-/// merge agree on every other path, so its index entry and file stay as they
-/// are, and git itself refuses the merge, writing nothing, where one of
-/// `paths` no longer holds `left`'s content or something untracked is in the
-/// way. An ignored file is the one thing git's merge overwrites rather than
-/// refuses over; [`path_standings`] reads any already there as an edit.
+/// merge agree on every other path, so in an index that exists git keeps its
+/// entry and file as they are, and git itself refuses the merge where one of
+/// `paths` no longer holds `left`'s content in the index or a tracked file, or
+/// something untracked is in the way.
+///
+/// Git's check passes two things a person can lose: an ignored file or
+/// directory where `head` adds a path, which the merge treats as expendable,
+/// and a tracked file deleted from disk, which it treats as up to date and
+/// writes again. Each path is checked for both immediately before the merge
+/// is spawned, so only a change made while it starts can reach them.
 fn refresh_paths_if_left(
     repo: &Path,
     left: &CommitId,
     head: &CommitId,
     paths: &[String],
     scope: RefreshScope,
-) -> Result<bool, VcsError> {
+) -> Result<RefreshWrite, VcsError> {
     if paths.is_empty() {
-        return Ok(true);
+        return Ok(RefreshWrite::Written);
+    }
+    if !GitVcs::run(["ls-files", "-u", "-z"], repo)?.is_empty() {
+        return Ok(RefreshWrite::Unresolved);
     }
     let index = GitVcs::run_trimmed(
         [
@@ -890,27 +1084,86 @@ fn refresh_paths_if_left(
     let _ = std::fs::remove_file(&index);
     let target = match target {
         Ok(target) => target,
-        Err(VcsError::CommandFailed { .. }) => return Ok(false),
+        Err(VcsError::CommandFailed { stderr, .. }) => {
+            return Ok(RefreshWrite::Declined { vcs_said: stderr })
+        }
         Err(e) => return Err(e),
     };
     refresh_stat_data(repo);
+    if scope == RefreshScope::IndexAndFiles {
+        let removed: BTreeSet<String> = paths
+            .iter()
+            .filter(|p| target.in_left.contains_key(*p) && !target.in_head.contains(*p))
+            .cloned()
+            .collect();
+        let in_the_way = paths.iter().find(|path| {
+            match (target.in_left.get(*path), target.in_head.contains(*path)) {
+                (Some(entry), true) => {
+                    !entry.starts_with(GITLINK)
+                        && std::fs::symlink_metadata(repo.join(path)).is_err()
+                }
+                (None, true) => occupied(repo, path, &removed),
+                _ => false,
+            }
+        });
+        if let Some(path) = in_the_way {
+            return Ok(RefreshWrite::Declined {
+                vcs_said: format!("{path} no longer stands as it was read"),
+            });
+        }
+    }
     let mut args = vec!["read-tree", "-m"];
     args.push(match scope {
         RefreshScope::IndexAndFiles => "-u",
         RefreshScope::IndexOnly => "-i",
     });
-    args.extend(["--no-recurse-submodules", left.as_str(), target.as_str()]);
-    let status = git_command()
+    args.extend([
+        "--no-recurse-submodules",
+        left.as_str(),
+        target.tree.as_str(),
+    ]);
+    let output = git_command()
         .args(&args)
         .current_dir(repo)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .map_err(|e| VcsError::Io {
             ctx: format!("failed to spawn git {args:?}"),
             source: e,
         })?;
-    Ok(status.success())
+    if output.status.success() {
+        return Ok(RefreshWrite::Written);
+    }
+    Ok(RefreshWrite::Declined {
+        vcs_said: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    })
+}
+
+/// The merge target [`tree_with_paths_from`] builds, with which of the
+/// refreshed paths each side holds.
+struct TargetTree {
+    tree: String,
+    in_left: BTreeMap<String, String>,
+    in_head: BTreeSet<String>,
+}
+
+/// Each of `wanted` that `rev`'s tree holds, with its `ls-tree` entry.
+fn tree_entries(
+    repo: &Path,
+    rev: &CommitId,
+    wanted: &BTreeSet<&str>,
+) -> Result<BTreeMap<String, String>, VcsError> {
+    let listing = GitVcs::run(["ls-tree", "-r", "-z", "--full-tree", rev.as_str()], repo)?;
+    Ok(nul_terminated_fields(&listing)
+        .into_iter()
+        .filter_map(|record| {
+            let (entry, path) = record.split_once('\t')?;
+            wanted
+                .contains(path)
+                .then(|| (path.to_owned(), entry.to_owned()))
+        })
+        .collect())
 }
 
 /// `left`'s tree with each of `paths` as `head` has it, removed where `head`
@@ -921,31 +1174,14 @@ fn tree_with_paths_from(
     left: &CommitId,
     head: &CommitId,
     paths: &[String],
-) -> Result<String, VcsError> {
+) -> Result<TargetTree, VcsError> {
     let in_index = |args: &[&str], input: &[u8]| {
         GitVcs::run_bytes_in(args, repo, input, &[("GIT_INDEX_FILE", index)])
     };
     in_index(&["read-tree", left.as_str()], &[])?;
-    let mut listing = vec![
-        "--literal-pathspecs",
-        "ls-tree",
-        "-r",
-        "-z",
-        "--full-tree",
-        head.as_str(),
-        "--",
-    ];
-    listing.extend(paths.iter().map(String::as_str));
     let wanted: BTreeSet<&str> = paths.iter().map(String::as_str).collect();
-    let in_head: BTreeMap<String, String> = nul_terminated_fields(&GitVcs::run(&listing, repo)?)
-        .into_iter()
-        .filter_map(|record| {
-            let (entry, path) = record.split_once('\t')?;
-            wanted
-                .contains(path)
-                .then(|| (path.to_owned(), entry.to_owned()))
-        })
-        .collect();
+    let in_head = tree_entries(repo, head, &wanted)?;
+    let in_left = tree_entries(repo, left, &wanted)?;
     let zero = "0".repeat(head.as_str().len());
     let mut info: Vec<u8> = Vec::new();
     for path in paths.iter().filter(|path| !in_head.contains_key(*path)) {
@@ -956,32 +1192,30 @@ fn tree_with_paths_from(
     }
     in_index(&["update-index", "-z", "--index-info"], &info)?;
     let tree = in_index(&["write-tree"], &[])?;
-    Ok(String::from_utf8_lossy(&tree).trim().to_owned())
+    Ok(TargetTree {
+        tree: String::from_utf8_lossy(&tree).trim().to_owned(),
+        in_left,
+        in_head: in_head.into_keys().collect(),
+    })
 }
 
-/// [`Vcs::record_checkout_at_head`] for git: a `HEAD` reflog entry at the
-/// commit HEAD already names, so the newest entry is HEAD and nothing reads
-/// as moved under the checkout. The update is conditional on HEAD's value,
-/// so a branch moved meanwhile is never moved back; it is read again once.
-fn record_checkout_at_head(repo: &Path) -> Result<(), VcsError> {
-    let attempt = || {
-        let head = GitVcs.head_revision(repo)?;
-        let at = head.id().as_str();
-        GitVcs::run(
-            [
-                "update-ref",
-                "--create-reflog",
-                "-m",
-                "rwv: drift refreshed",
-                "HEAD",
-                at,
-                at,
-            ],
-            repo,
-        )
-        .map(drop)
-    };
-    attempt().or_else(|_| attempt())
+/// [`Vcs::record_checkout_at_head`] for git: a `HEAD` reflog entry at `head`,
+/// by an update whose old and new values are both `head`, so it moves no ref
+/// and fails where HEAD names anything else by now.
+fn record_checkout_at_head(repo: &Path, head: &CommitId) -> Result<(), VcsError> {
+    GitVcs::run(
+        [
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            "rwv: drift refreshed",
+            "HEAD",
+            head.as_str(),
+            head.as_str(),
+        ],
+        repo,
+    )
+    .map(drop)
 }
 
 /// True when the repo has any index or working-tree change against HEAD.
@@ -3507,12 +3741,12 @@ impl Vcs for GitVcs {
         head: &CommitId,
         paths: &[String],
         scope: RefreshScope,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<RefreshWrite, VcsError> {
         refresh_paths_if_left(repo, left, head, paths, scope)
     }
 
-    fn record_checkout_at_head(&self, repo: &Path) -> Result<(), VcsError> {
-        record_checkout_at_head(repo)
+    fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {
+        record_checkout_at_head(repo, head)
     }
 
     fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {
@@ -10215,14 +10449,17 @@ mod name_reading_tests {
             }]
         );
         let head = tip(&worktree, "HEAD");
-        assert!(refresh_paths_if_left(
-            &worktree,
-            &base,
-            &head,
-            &[AWKWARD.to_owned()],
-            RefreshScope::IndexAndFiles
-        )
-        .unwrap());
+        assert_eq!(
+            refresh_paths_if_left(
+                &worktree,
+                &base,
+                &head,
+                &[AWKWARD.to_owned()],
+                RefreshScope::IndexAndFiles
+            )
+            .unwrap(),
+            RefreshWrite::Written
+        );
         assert_eq!(
             std::fs::read_to_string(worktree.join(AWKWARD))
                 .unwrap()
@@ -10364,8 +10601,8 @@ mod drift_tests {
     #[test]
     fn a_recorded_refresh_ends_the_move_under_the_checkout() {
         let d = Drift::new();
-        d.move_from_outside("a2\n");
-        record_checkout_at_head(&d.worktree).unwrap();
+        let head = d.move_from_outside("a2\n");
+        record_checkout_at_head(&d.worktree, &head).unwrap();
         assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
         assert_eq!(
             git(&d.store, &["rev-parse", "feat"]),
@@ -10393,7 +10630,10 @@ mod drift_tests {
         )
         .unwrap();
 
-        assert!(!written);
+        assert!(
+            matches!(written, RefreshWrite::Declined { .. }),
+            "{written:?}"
+        );
         assert_eq!(
             text(&d.worktree.join("a.txt")).as_deref(),
             Some("saved meanwhile\n")
@@ -10419,7 +10659,10 @@ mod drift_tests {
         )
         .unwrap();
 
-        assert!(!written);
+        assert!(
+            matches!(written, RefreshWrite::Declined { .. }),
+            "{written:?}"
+        );
         assert_eq!(git(&d.worktree, &["ls-files", "-s", "a.txt"]), staged);
     }
 

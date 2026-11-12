@@ -1175,11 +1175,11 @@ impl Vcs for FakeVcs {
         _head: &CommitId,
         _paths: &[String],
         _scope: crate::vcs::RefreshScope,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<crate::vcs::RefreshWrite, VcsError> {
         unsupported("refresh_paths_if_left")
     }
 
-    fn record_checkout_at_head(&self, _repo: &Path) -> Result<(), VcsError> {
+    fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {
         unsupported("record_checkout_at_head")
     }
 
