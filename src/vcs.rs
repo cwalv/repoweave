@@ -5170,13 +5170,21 @@ pub trait Vcs: Send + Sync {
     ) -> Result<CommitId, VcsError>;
 
     /// The merge of `second` into `first` as a commit, with no checkout and no
-    /// ref moved.
+    /// ref moved. `derived` resolves a declared path both sides changed as it
+    /// does in [`Vcs::start_merge`], where `incoming`, one of `first` and
+    /// `second`, is the side that call brings in and the other is the side held
+    /// in the checkout: the same content resolves the same way whether or not a
+    /// checkout holds the branch. A backend that cannot apply the policy
+    /// without a checkout runs the merge in a scratch one, so a path it would
+    /// have resolved never reads as a conflict.
     fn merge_as_refs(
         &self,
         repo: &Path,
         first: &CommitId,
         second: &CommitId,
         message: &str,
+        derived: DerivedContentPolicy,
+        incoming: &CommitId,
     ) -> Result<RefMerge, VcsError>;
 
     /// Move the local branch `branch` from `expected` to `to`, a fast-forward,

@@ -1024,6 +1024,138 @@ fn rwvs_own_merges_settle_the_lock_without_running_the_driver() {
     );
 }
 
+fn diverged_in_a_bare_repo_declaring_a_derived_path(
+) -> (TempDir, PathBuf, [repoweave::vcs::CommitId; 2]) {
+    let dir = common::tempdir().unwrap();
+    let work = dir.path().join("work");
+    let bare = dir.path().join("bare.git");
+    fs::create_dir(&work).unwrap();
+    let p = work.as_path();
+    common::git_in(p, &["init", "-q", "-b", "main"]);
+    common::git_in(p, &["config", "user.email", "test@test.com"]);
+    common::git_in(p, &["config", "user.name", "Test"]);
+    fs::write(p.join(".gitattributes"), "DERIVED merge=rwv-ours\n").unwrap();
+    fs::write(p.join("DERIVED"), "base\n").unwrap();
+    fs::write(p.join("OTHER"), "base\n").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-qm", "base"]);
+    common::git_in(p, &["checkout", "-qb", "feat"]);
+    fs::write(p.join("DERIVED"), "feat\n").unwrap();
+    fs::write(p.join("FEAT_ONLY"), "feat\n").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-qm", "feat"]);
+    let feat = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    fs::write(p.join("DERIVED"), "main\n").unwrap();
+    fs::write(p.join("MAIN_ONLY"), "main\n").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-qm", "main"]);
+    let main = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(
+        dir.path(),
+        &["clone", "-q", "--bare", "work", bare.to_str().unwrap()],
+    );
+    let parse = |id: String| repoweave::vcs::CommitId::parse(&id).unwrap();
+    (dir, bare, [parse(main), parse(feat)])
+}
+
+#[test]
+fn a_merge_as_refs_resolves_a_declared_derived_path_to_the_incoming_side() {
+    let (_dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    for (first, second, incoming, want) in [
+        (&main, &feat, &feat, "feat\n"),
+        (&main, &feat, &main, "main\n"),
+        (&feat, &main, &feat, "feat\n"),
+        (&feat, &main, &main, "main\n"),
+    ] {
+        let merged = git_vcs()
+            .merge_as_refs(
+                &bare,
+                first,
+                second,
+                "merge",
+                repoweave::vcs::DerivedContentPolicy::keep_incoming_side(),
+                incoming,
+            )
+            .unwrap();
+        let repoweave::vcs::RefMerge::Merged(commit) = merged else {
+            panic!("a declared derived path conflicts: {merged:?}");
+        };
+        assert_eq!(
+            common::git_in(&bare, &["show", &format!("{}:DERIVED", commit.as_str())]),
+            want.trim_end()
+        );
+        for only in ["FEAT_ONLY", "MAIN_ONLY"] {
+            common::git_in(
+                &bare,
+                &["cat-file", "-e", &format!("{}:{only}", commit.as_str())],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_merge_as_refs_under_the_default_policy_still_conflicts_on_a_derived_path() {
+    let (_dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    let merged = git_vcs()
+        .merge_as_refs(
+            &bare,
+            &main,
+            &feat,
+            "merge",
+            repoweave::vcs::DerivedContentPolicy::vcs_default(),
+            &feat,
+        )
+        .unwrap();
+    assert!(
+        matches!(merged, repoweave::vcs::RefMerge::Conflicted { .. }),
+        "{merged:?}"
+    );
+}
+
+#[test]
+fn a_merge_as_refs_still_conflicts_on_an_undeclared_path_and_writes_no_ref() {
+    let (dir, bare, _) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    let p = dir.path().join("work");
+    fs::write(p.join("OTHER"), "main-other\n").unwrap();
+    common::git_in(&p, &["commit", "-qam", "other on main"]);
+    common::git_in(&p, &["checkout", "-q", "feat"]);
+    fs::write(p.join("OTHER"), "feat-other\n").unwrap();
+    common::git_in(&p, &["commit", "-qam", "other on feat"]);
+    common::git_in(
+        &bare,
+        &[
+            "fetch",
+            "-q",
+            p.to_str().unwrap(),
+            "main:main",
+            "+feat:feat",
+        ],
+    );
+    let refs = common::git_in(&bare, &["for-each-ref"]);
+    let tip = |name: &str| {
+        repoweave::vcs::CommitId::parse(&common::git_in(&bare, &["rev-parse", name])).unwrap()
+    };
+    let (main, feat) = (tip("main"), tip("feat"));
+    let merged = git_vcs()
+        .merge_as_refs(
+            &bare,
+            &main,
+            &feat,
+            "merge",
+            repoweave::vcs::DerivedContentPolicy::keep_incoming_side(),
+            &feat,
+        )
+        .unwrap();
+    assert_eq!(
+        merged,
+        repoweave::vcs::RefMerge::Conflicted {
+            paths: vec!["OTHER".to_owned()]
+        }
+    );
+    assert_eq!(common::git_in(&bare, &["for-each-ref"]), refs);
+}
+
 #[test]
 fn reading_the_setup_outside_a_repo_is_an_error_not_an_absence() {
     let dir = common::tempdir().unwrap();

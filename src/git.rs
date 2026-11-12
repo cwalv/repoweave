@@ -5222,8 +5222,10 @@ impl Vcs for GitVcs {
         first: &CommitId,
         second: &CommitId,
         message: &str,
+        derived: DerivedContentPolicy,
+        incoming: &CommitId,
     ) -> Result<RefMerge, VcsError> {
-        self.merge_commit_as_refs(repo, first, second, message)
+        self.merge_commit_as_refs(repo, first, second, message, derived, incoming)
     }
 
     fn advance_branch_ref(
@@ -6292,6 +6294,14 @@ fn readiness_of(reading: &GitReading) -> ToolReadiness {
             cause: cause.clone(),
         },
     }
+}
+
+/// `--attr-source`, which reads attributes from a commit rather than a work
+/// tree a bare repo lacks, arrived in 2.40.
+const FIRST_RELEASE_READING_ATTRIBUTES_FROM_A_COMMIT: (u32, u32) = (2, 40);
+
+fn git_reads_attributes_from_a_commit() -> bool {
+    matches!(git_reading(), GitReading::Release { release, .. } if *release >= FIRST_RELEASE_READING_ATTRIBUTES_FROM_A_COMMIT)
 }
 
 fn git_merges_trees() -> bool {

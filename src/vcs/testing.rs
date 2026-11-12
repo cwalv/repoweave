@@ -980,6 +980,8 @@ impl Vcs for FakeVcs {
         _first: &CommitId,
         _second: &CommitId,
         _message: &str,
+        _derived: crate::vcs::DerivedContentPolicy,
+        _incoming: &CommitId,
     ) -> Result<crate::vcs::RefMerge, VcsError> {
         unsupported("merge_as_refs")
     }

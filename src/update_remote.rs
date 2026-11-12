@@ -1261,9 +1261,14 @@ fn settle_diverged(
                     ));
                 }
                 Site::Refs(_) => {
-                    if let crate::vcs::RefMerge::Conflicted { paths } =
-                        vcs.merge_as_refs(dir, tip.id(), d.local.id(), "probe")?
-                    {
+                    if let crate::vcs::RefMerge::Conflicted { paths } = vcs.merge_as_refs(
+                        dir,
+                        tip.id(),
+                        d.local.id(),
+                        "probe",
+                        crate::vcs::DerivedContentPolicy::keep_incoming_side(),
+                        tip.id(),
+                    )? {
                         report.note(format!(
                             "{}: '{}' is checked out nowhere and its merge conflicts in {}; a \
                              conflict needs a workspace to stop in, so run it where the branch \
@@ -1297,9 +1302,14 @@ fn settle_diverged(
                 &mut report,
             );
         } else if state.flags.merge_upstream {
-            if let crate::vcs::RefMerge::Conflicted { paths } =
-                vcs.merge_as_refs(dir, e.upstream.id(), e.local.id(), "probe")?
-            {
+            if let crate::vcs::RefMerge::Conflicted { paths } = vcs.merge_as_refs(
+                dir,
+                e.upstream.id(),
+                e.local.id(),
+                "probe",
+                crate::vcs::DerivedContentPolicy::keep_incoming_side(),
+                e.upstream.id(),
+            )? {
                 report.note(format!(
                     "{}: '{}' is checked out nowhere and its merge conflicts in {}",
                     item.repo_path,
@@ -1407,7 +1417,7 @@ fn settle_diverged(
             tip.id(),
             Order::SourceFirst,
             &message,
-            crate::vcs::DerivedContentPolicy::vcs_default(),
+            crate::vcs::DerivedContentPolicy::keep_incoming_side(),
         ) {
             Ok(joined) => {
                 if joined.tip().is_some() {
@@ -1465,6 +1475,7 @@ fn settle_diverged(
             e.upstream.id(),
             Order::SourceFirst,
             &message,
+            crate::vcs::DerivedContentPolicy::keep_incoming_side(),
         ) {
             Ok(_) => eprintln!(
                 "rwv update --remote: {}: merged the upstream {} into '{}'",

@@ -256,6 +256,7 @@ pub(crate) fn merge_member(
             source,
             order,
             message,
+            derived,
         );
     };
     let head = vcs.head_revision(dir)?;
@@ -321,6 +322,7 @@ pub(crate) fn merge_branch_as_refs(
     source: &CommitId,
     order: Order,
     message: &str,
+    derived: DerivedContentPolicy,
 ) -> Result<Joined, MemberStop> {
     let branch = branch.clone();
     let refuse = |why: String| MemberStop::Refused(crate::untokened!(Owed, "{repo}: {why}"));
@@ -358,7 +360,7 @@ pub(crate) fn merge_branch_as_refs(
         return Ok(Joined::Moved(source.clone()));
     }
     let (first, second) = parents(order, &at, source);
-    match vcs.merge_as_refs(dir, &first, &second, message)? {
+    match vcs.merge_as_refs(dir, &first, &second, message, derived, source)? {
         RefMerge::Merged(commit) => {
             moved(&commit)?;
             vcs.advance_branch_ref(dir, &branch, &at, &commit)?;

@@ -3,8 +3,8 @@
 
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
 use super::{
-    derived_content_git_args, git_command, local_branch, lock_driver_held_args,
-    nul_terminated_fields, GitVcs,
+    derived_content_git_args, git_command, git_reads_attributes_from_a_commit, local_branch,
+    lock_driver_held_args, nul_terminated_fields, GitVcs,
 };
 use crate::vcs::{
     BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
@@ -19,17 +19,53 @@ impl TreeMerges for GitVcs {
         first: &CommitId,
         second: &CommitId,
     ) -> Result<TreeMerge, VcsError> {
-        let args = [
-            "merge-tree",
-            "--write-tree",
-            "--name-only",
-            "-z",
-            first.as_str(),
-            second.as_str(),
-        ];
+        Self::merge_tree_resolving(repo, first, second, None)
+    }
+
+    fn file_in_tree(
+        &self,
+        repo: &Path,
+        tree: &TreeId,
+        path: &str,
+    ) -> Result<Option<String>, VcsError> {
+        let named = Self::run(
+            ["ls-tree", "--name-only", "-z", tree.as_str(), "--", path],
+            repo,
+        )?;
+        if !nul_terminated_fields(&named)
+            .iter()
+            .any(|name| name == path)
+        {
+            return Ok(None);
+        }
+        Self::run(
+            ["cat-file", "blob", &format!("{}:{path}", tree.as_str())],
+            repo,
+        )
+        .map(Some)
+    }
+}
+
+impl GitVcs {
+    fn merge_tree_resolving(
+        repo: &Path,
+        first: &CommitId,
+        second: &CommitId,
+        resolving: Option<(DerivedContentPolicy, &CommitId)>,
+    ) -> Result<TreeMerge, VcsError> {
+        let mut args = vec!["merge-tree", "--write-tree", "--name-only", "-z"];
+        args.extend([first.as_str(), second.as_str()]);
+        let (held, attributes_from) = match resolving {
+            Some((derived, attributes_from)) => (
+                derived_content_git_args(derived),
+                Some(format!("--attr-source={}", attributes_from.as_str())),
+            ),
+            None => (lock_driver_held_args().to_vec(), None),
+        };
         let output = git_command()
-            .args(lock_driver_held_args())
-            .args(args)
+            .args(attributes_from)
+            .args(held)
+            .args(&args)
             .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {
@@ -66,31 +102,6 @@ impl TreeMerges for GitVcs {
         })
     }
 
-    fn file_in_tree(
-        &self,
-        repo: &Path,
-        tree: &TreeId,
-        path: &str,
-    ) -> Result<Option<String>, VcsError> {
-        let named = Self::run(
-            ["ls-tree", "--name-only", "-z", tree.as_str(), "--", path],
-            repo,
-        )?;
-        if !nul_terminated_fields(&named)
-            .iter()
-            .any(|name| name == path)
-        {
-            return Ok(None);
-        }
-        Self::run(
-            ["cat-file", "blob", &format!("{}:{path}", tree.as_str())],
-            repo,
-        )
-        .map(Some)
-    }
-}
-
-impl GitVcs {
     pub(super) fn begin_checkout_merge(
         checkout: &Path,
         other: &CommitId,
@@ -209,18 +220,25 @@ impl GitVcs {
         first: &CommitId,
         second: &CommitId,
         message: &str,
+        derived: DerivedContentPolicy,
+        incoming: &CommitId,
     ) -> Result<RefMerge, VcsError> {
-        if let Some(trees) = self.tree_merges() {
-            return Ok(match trees.merge_tree(repo, first, second)? {
-                TreeMerge::Clean(tree) => RefMerge::Merged(Self::commit_tree_of(
-                    repo,
-                    tree.as_str(),
-                    first,
-                    second,
-                    message,
-                )?),
-                TreeMerge::Conflicted { paths, .. } => RefMerge::Conflicted { paths },
-            });
+        let held = if incoming == first { second } else { first };
+        let resolving = !matches!(derived.resolution(), DerivedContentResolution::VcsDefault);
+        if self.tree_merges().is_some() && (!resolving || git_reads_attributes_from_a_commit()) {
+            let resolution = resolving.then_some((derived, held));
+            return Ok(
+                match Self::merge_tree_resolving(repo, held, incoming, resolution)? {
+                    TreeMerge::Clean(tree) => RefMerge::Merged(Self::commit_tree_of(
+                        repo,
+                        tree.as_str(),
+                        first,
+                        second,
+                        message,
+                    )?),
+                    TreeMerge::Conflicted { paths, .. } => RefMerge::Conflicted { paths },
+                },
+            );
         }
         let scratch = Self::run_trimmed(
             [
@@ -238,22 +256,20 @@ impl GitVcs {
                 "add",
                 "--detach",
                 &scratch.display().to_string(),
-                first.as_str(),
+                held.as_str(),
             ],
             repo,
         )?;
-        let merged =
-            Self::begin_checkout_merge(scratch, second, DerivedContentPolicy::vcs_default())
-                .and_then(|paths| {
-                    if paths.is_empty() {
-                        let tree = Self::run_trimmed(["write-tree"], scratch)?;
-                        Ok(RefMerge::Merged(Self::commit_tree_of(
-                            scratch, &tree, first, second, message,
-                        )?))
-                    } else {
-                        Ok(RefMerge::Conflicted { paths })
-                    }
-                });
+        let merged = Self::begin_checkout_merge(scratch, incoming, derived).and_then(|paths| {
+            if paths.is_empty() {
+                let tree = Self::run_trimmed(["write-tree"], scratch)?;
+                Ok(RefMerge::Merged(Self::commit_tree_of(
+                    scratch, &tree, first, second, message,
+                )?))
+            } else {
+                Ok(RefMerge::Conflicted { paths })
+            }
+        });
         let _ = Self::run(["merge", "--abort"], scratch);
         let removed = Self::run(["worktree", "remove", &scratch.display().to_string()], repo);
         let merged = merged?;
