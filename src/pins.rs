@@ -246,9 +246,10 @@ pub(crate) fn judge_unpinned_branch(
         .bind("<m>", repo.as_str())
         .bind("<repo>", repo.as_str())
         .bind("<W>", target)
-        .bind("<ww>", target)
+        .bind("<ww>", target.replace('/', "-"))
         .subject(format!(
-            "'{branch}', checked out nowhere, is at {}, {} beyond '{target}''s pin {}",
+            "'{branch}', checked out nowhere and moved by this landing, is at {}, {} beyond \
+             '{target}''s pin {}",
             tip.id().short(),
             commits_text(beyond.count),
             pin.id().short()

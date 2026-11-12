@@ -3673,10 +3673,12 @@ fn run_preconditions_after_acquire(
     })
 }
 
-/// Where `T` is checked out nowhere, each member branch `T` declares, read
-/// as a ref, judged against `T`'s pin as a checkout of it would be: one
-/// beyond its pin by commits no live lock and no remote reaches refuses (`pin`
-/// unpinned in `T`), unless the landing moves that branch and so pins it.
+/// Where `T` is checked out nowhere, each receiving branch the landing moves
+/// as a ref, judged against `T`'s pin: one holding commits beyond the pin that
+/// no live lock and no remote reaches refuses (`pin` unpinned in `T`), since
+/// the landing would compose onto them and pin them into `T` unrecorded. A
+/// branch the landing leaves alone it neither moves nor pins, and is not
+/// judged.
 fn judge_unpinned_refs(
     manifest: &Manifest,
     lock: &LockFile,
@@ -3687,10 +3689,13 @@ fn judge_unpinned_refs(
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let live = crate::pins::live_pins(primary)?;
-    for (repo_path, entry) in manifest.iter_entries() {
-        if plan.receiving.contains_key(repo_path) {
+    for (repo_path, receiving) in &plan.receiving {
+        if !matches!(receiving.moves, op_state::Moves::AsRef { create: false }) {
             continue;
         }
+        let Some(entry) = manifest.get_entry(repo_path) else {
+            continue;
+        };
         let Some(pin) = lock
             .get_entry(repo_path)
             .and_then(|e| e.version.as_commit_id())
@@ -3705,10 +3710,7 @@ fn judge_unpinned_refs(
         else {
             continue;
         };
-        let branch = entry.branch.local_counterpart();
-        let Some(tip) =
-            vcs.resolve_local_branch_tip(&dir, &crate::vcs::RawRefName::new(branch.as_str()))?
-        else {
+        let Some(tip) = vcs.resolve_local_branch_tip(&dir, &receiving.branch)? else {
             continue;
         };
         let pin = ResolvedRevisionId::from(pin);
@@ -3723,7 +3725,7 @@ fn judge_unpinned_refs(
                 repo_path,
                 &dir,
                 vcs.as_ref(),
-                branch.as_str(),
+                receiving.branch.as_str(),
                 &beyond,
                 &tip,
                 &pin,

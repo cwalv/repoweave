@@ -10634,8 +10634,16 @@ fn meets_a_stopped_landing(how: StoppedLanding) -> Vec<Step> {
             .may_rewind(&[Repo::App, Repo::Proj])
             .may_restore(&[Repo::App, Repo::Proj]),
     ];
-    if how == StoppedLanding::InCheckout {
-        steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    match how {
+        StoppedLanding::InCheckout => {
+            steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds))
+        }
+        StoppedLanding::AsRefs => steps.extend([
+            Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::refuses(Repo::Lib, State::PinUnpinned)),
+            Step::rwv_printed(&ww("w3"), "rwv workweave create").expect(Exit::Succeeds),
+            Step::rwv(&ww("main"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ]),
     }
     steps.push(
         Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
@@ -10644,7 +10652,7 @@ fn meets_a_stopped_landing(how: StoppedLanding) -> Vec<Step> {
     );
     if how == StoppedLanding::AsRefs {
         steps.push(
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            Step::git(&ww("main"), Repo::App, &["log", "--format=%s", "HEAD"])
                 .claim(Claim::OutputContains("w3-app"))
                 .claim(Claim::OutputLacks("w1-app")),
         );
@@ -10758,17 +10766,19 @@ pub fn landing_as_refs() -> Scenario {
 }
 
 /// `landing-as-refs-unpinned`: `main` checked out nowhere, its `lib` branch
-/// holding a raw commit beyond `main`'s pin. A seat landing only `app` work
-/// refuses `pin` unpinned for `lib` in `main`, naming the lock in a workspace
-/// on `main` and the `workweave create` that opens one; the seat's own
-/// unlocked `app` commit is not refused, its relock takes it. Following the
-/// printed choices, the landing then lands.
+/// holding a raw commit beyond `main`'s pin. A seat landing `lib` work, which
+/// would compose onto that commit and pin it into `main` unrecorded, refuses
+/// `pin` unpinned for `lib` in `main`, naming the lock in a workspace on
+/// `main` and the `workweave create` that opens one; the seat's own unlocked
+/// `app` commit is not refused, its relock takes it. Following the printed
+/// choices, the landing then lands.
 pub fn landing_as_refs_unpinned() -> Scenario {
     let mut steps = vec![create("w")];
     steps.extend(main_checked_out_nowhere());
     steps.extend([
         Step::hand_commit(&a(), Repo::Lib, "main", &[("raw.txt", "raw\n")]),
         Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
         Step::rwv(&ww("w"), &["land", "--history", "linear"])
             .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
             .claim(Claim::OutputContains(
@@ -10836,14 +10846,22 @@ pub fn lost_race_abort() -> Scenario {
             .claim(Claim::OutputLacks("w-app")),
         Step::git(&a(), Repo::Lib, &["log", "--format=%s", "-1", "main"])
             .claim(Claim::OutputLine("hand commit")),
-        lands_on_main(
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
-            Repo::App,
-            "w-app",
-        )
-        .expect(Exit::Succeeds)
-        .claim(Claim::OutputContains("rebased"))
-        .claim(Claim::WorkweaveGone(ww("w"))),
+        Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
+            .claim(Claim::OutputContains("hand commit"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv_printed(&ww("w"), "rwv workweave create").expect(Exit::Succeeds),
+        Step::rwv(&ww("main"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rebased"))
+            .claim(Claim::WorkweaveGone(ww("w")))
+            .claim(Claim::Contains {
+                at: ww("main"),
+                repo: Repo::App,
+                rev: "HEAD",
+                mark: "w-app",
+            }),
         Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
             .claim(Claim::OutputContains("w-lib"))
             .claim(Claim::OutputContains("hand commit")),
