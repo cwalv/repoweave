@@ -10546,6 +10546,97 @@ pub fn dc05_compose_in_source(stop: Dc05) -> Scenario {
     scenario("dc05: compose in source", steps)
 }
 
+/// How a landing that fast-forwards the primary's checkout in place ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InPlaceEnd {
+    /// Stopped once landed, then aborted from the source.
+    AbortedFromTheSource,
+    /// Stopped once landed, then aborted from the primary, whose checkout
+    /// the landing moved.
+    AbortedFromThePrimary,
+    /// The primary's checkout holds an edit: the landing refuses first.
+    Dirty,
+}
+
+/// The primary detached on the project, its members still on `main`: a
+/// seat's landing moves `main` as a ref for the project and fast-forwards
+/// the primary's checkouts of `main` in place. The landing leases the
+/// primary while it runs, and `rwv abort` from either side puts the
+/// primary's checkouts back; an edit there refuses the landing before
+/// anything moves.
+pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::git(&a(), Repo::Proj, &["switch", "-q", "--detach"]),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+    ];
+    let land = || {
+        lands_on_main(
+            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+            Repo::App,
+            "w-app",
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("in place in"))
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "HEAD",
+            mark: "w-app",
+        })
+        .claim(Claim::WorkweaveGone(ww("w")))
+    };
+    let from = match end {
+        InPlaceEnd::Dirty => {
+            steps.extend([
+                Step::hand_edit(&a(), Repo::App, "README", "app", "edited"),
+                Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                    .expect(Exit::refuses(Repo::App, State::EditsDirty))
+                    .claim(Claim::LocalStateUnchanged(a()))
+                    .claim(Claim::LocalStateUnchanged(ww("w"))),
+                Step::hand_edit(&a(), Repo::App, "README", "edited", "app"),
+                land(),
+            ]);
+            return scenario("in-place fast-forward: dirty", steps);
+        }
+        InPlaceEnd::AbortedFromTheSource => ww("w"),
+        InPlaceEnd::AbortedFromThePrimary => a(),
+    };
+    steps.extend([
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--history", "linear"],
+            "landed",
+            "landing",
+        )
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "HEAD",
+            mark: "w-app",
+        }),
+        Step::kill("landing"),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("in progress")),
+        Step::rwv(&from, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("w-app")),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "HEAD"])
+            .claim(Claim::OutputLacks("w-app")),
+        Step::git(&ww("w"), Repo::App, &["log", "--format=%s", "-1"])
+            .claim(Claim::OutputLine("w-app")),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+        land(),
+    ]);
+    scenario("in-place fast-forward: aborted", steps)
+}
+
 /// What happens to a receiving branch the landing moves as a ref while the
 /// landing is held at its compare-and-swap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

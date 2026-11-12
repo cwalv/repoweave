@@ -67,6 +67,17 @@ fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
 }
 
 #[test]
+fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on_edits() {
+    for end in [
+        scenarios::InPlaceEnd::AbortedFromTheSource,
+        scenarios::InPlaceEnd::AbortedFromThePrimary,
+        scenarios::InPlaceEnd::Dirty,
+    ] {
+        runner::run(scenarios::in_place_fast_forward(end)).assert_fully_decided_green();
+    }
+}
+
+#[test]
 fn a_member_change_refusal_prints_the_rebind_then_the_setter_then_the_consent() {
     runner::run(scenarios::member_change_choice_order()).assert_fully_decided_green();
 }
@@ -771,6 +782,9 @@ every_scenario!(
     continue_reports_a_created_receiving_branch,
     member_change_choice_order,
     shared_checkout_detached,
+    in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromTheSource),
+    in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromThePrimary),
+    in_place_fast_forward(scenarios::InPlaceEnd::Dirty),
     removal_is_member_change,
     dc06_member_set_from_merge,
     continue_rejudges_the_resolved_manifest,
