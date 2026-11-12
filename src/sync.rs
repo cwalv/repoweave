@@ -6558,7 +6558,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        journal_fast_forward(ctx, &key)?;
+        journal_fast_forward(ctx, &key, cwd_tip.id())?;
         match ff_advance_repo(
             vcs.as_ref(),
             repo_path,
@@ -6603,7 +6603,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let there = workspace.join(repo_path.as_path());
         let (branch, cwd_tip) = planned(key)?;
-        journal_fast_forward(ctx, key)?;
+        journal_fast_forward(ctx, key, cwd_tip.id())?;
         match ff_advance_repo(vcs.as_ref(), repo_path, &there, &cwd_repo, branch, &cwd_tip) {
             Ok(advance) => {
                 if emit_text {
@@ -6705,19 +6705,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
         prune_dropped_in_target(ctx, target_ctx, &cwd_project_final.manifest);
 
-        for key in ctx.take_in.receiving.keys().cloned().chain(
-            Project::from_dir_skip_lock(dest_project_dir, ctx.cwd_project_name.clone())
-                .map(|p| {
-                    p.manifest
-                        .iter_entries()
-                        .map(|(path, _)| RepoKey::Member(path.clone()))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
-        ) {
-            journal_fast_forward(ctx, &key)?;
-        }
+        let aligning = journal_alignment(ctx, dest_workspace_dir, dest_project_dir)?;
         align_after_landing(ctx, target_ctx);
+        unjournal_unmoved(ctx, dest_workspace_dir, &aligning)?;
     }
     if ctx.switches_primary.is_some() {
         switch_primary_to_target(ctx, target_branch)?;
@@ -6767,7 +6757,7 @@ fn advance_project_in_checkout(
     cwd_project_tip: &ResolvedRevisionId,
 ) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
-    journal_fast_forward(ctx, &RepoKey::Project)?;
+    journal_fast_forward(ctx, &RepoKey::Project, cwd_project_tip.id())?;
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
         project_rel_path(&ctx.cwd_project_name),
@@ -6954,11 +6944,11 @@ fn advance_receiving_ref(
     if &from == composed {
         return Ok(());
     }
-    journal_fast_forward(ctx, key)?;
+    journal_ref_move(ctx, key, &receiving.branch, composed)?;
     crate::test_pause::point("advance-target");
     let held = vcs.checkouts_of_branch(dir, &branch)?;
     if !held.is_empty() {
-        unjournal(ctx, key)?;
+        unjournal_ref(ctx, key, &receiving.branch)?;
         return Err(moved_since(
             Some(&from),
             format!(
@@ -6986,7 +6976,7 @@ fn advance_receiving_ref(
             .resolve_local_branch_tip(dir, &branch)?
             .unwrap_or_else(|| ResolvedRevisionId::from(from.clone()));
         if now.id() != composed {
-            unjournal(ctx, key)?;
+            unjournal_ref(ctx, key, &receiving.branch)?;
         }
         return Err(target_moved_line_for(
             label,
@@ -7012,19 +7002,131 @@ fn advance_receiving_ref(
 /// workspace, before it moves, so `rwv abort` restores it whichever step a
 /// stop interrupts (a journaled repo still at its savepoint is untouched)
 /// and leaves every other repo there where it stands.
-fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
+fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey, to: &CommitId) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        if !take_in.moved_in_target.contains(key) {
+            take_in.moved_in_target.push(key.clone());
+        }
+        take_in.wrote_in_target.insert(key.clone(), to.clone());
+    })
+}
+
+/// Journal each checkout of `T`'s workspace that aligning it may move: each
+/// member whose checkout is not at the pin `T`'s new lock gives it, or that
+/// has no checkout yet, with that pin, leaving a checkout the project the
+/// workspace presents shares with it, which aligning does not move.
+fn journal_alignment(
+    ctx: &OpContext<'_>,
+    dest_workspace_dir: &Path,
+    dest_project_dir: &Path,
+) -> anyhow::Result<Vec<RepoKey>> {
+    let Ok(landed) = Project::from_dir(dest_project_dir, ctx.cwd_project_name.clone()) else {
+        return Ok(Vec::new());
+    };
+    let Some(lock) = landed.lock.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let others =
+        crate::shared_members::held_by_presented(dest_workspace_dir, &ctx.cwd_project_name);
+    let mut aligning = Vec::new();
+    for (path, entry) in landed.manifest.iter_entries() {
+        let Some(pin) = lock
+            .get_entry(path)
+            .and_then(|entry| entry.version.as_commit_id())
+        else {
+            continue;
+        };
+        if others.contains(path) {
+            continue;
+        }
+        let vcs = vcs_for(entry.vcs_type);
+        let dir = dest_workspace_dir.join(path.as_path());
+        if vcs.is_repo(&dir) && vcs.head_revision(&dir).is_ok_and(|head| head.id() == &pin) {
+            continue;
+        }
+        let key = RepoKey::Member(path.clone());
+        journal_fast_forward(ctx, &key, &pin)?;
+        aligning.push(key);
+    }
+    Ok(aligning)
+}
+
+/// Take back off the journal each checkout of `aligning` the alignment left
+/// at its savepoint: it did not move.
+fn unjournal_unmoved(
+    ctx: &OpContext<'_>,
+    dest_workspace_dir: &Path,
+    aligning: &[RepoKey],
+) -> anyhow::Result<()> {
+    let key = ctx.target_savepoint_key();
+    for repo in aligning {
+        let RepoKey::Member(path) = repo else {
+            continue;
+        };
+        if ctx.take_in.receiving.get(repo).is_some_and(|r| {
+            matches!(
+                r.moves,
+                op_state::Moves::InCheckout | op_state::Moves::InPlace { .. }
+            )
+        }) {
+            continue;
+        }
+        let vcs = crate::vcs::probe_vcs();
+        let dir = dest_workspace_dir.join(path.as_path());
+        let unmoved = match (vcs.resolve_savepoint(&dir, &key), vcs.head_revision(&dir)) {
+            (Some(saved), Ok(head)) => saved == head,
+            _ => !vcs.is_repo(&dir),
+        };
+        if unmoved {
+            unjournal(ctx, repo)?;
+        }
+    }
+    Ok(())
+}
+
+/// Record on the op record that the landing moves `branch` of `key` as a
+/// ref to `to`, before it moves.
+fn journal_ref_move(
+    ctx: &OpContext<'_>,
+    key: &RepoKey,
+    branch: &str,
+    to: &CommitId,
+) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        take_in
+            .moved_refs
+            .retain(|moved| !(moved.repo == *key && moved.branch == branch));
+        take_in.moved_refs.push(op_state::RefWrite {
+            repo: key.clone(),
+            branch: branch.to_owned(),
+            to: to.clone(),
+        });
+    })
+}
+
+/// Take `branch` of `key` back off the journal of refs the landing moves,
+/// where it stopped before moving it.
+fn unjournal_ref(ctx: &OpContext<'_>, key: &RepoKey, branch: &str) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        take_in
+            .moved_refs
+            .retain(|moved| !(moved.repo == *key && moved.branch == branch));
+    })
+}
+
+fn journal(
+    ctx: &OpContext<'_>,
+    write: impl FnOnce(&mut op_state::TakeInRecord),
+) -> anyhow::Result<()> {
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
             InternalInvariant,
             "internal: owner record missing at advance-target"
         )
     })?;
-    let take_in = owner.take_in.get_or_insert_with(Default::default);
-    if !take_in.moved_in_target.contains(key) {
-        take_in.moved_in_target.push(key.clone());
-    }
+    write(owner.take_in.get_or_insert_with(Default::default));
     op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-        .context("failed to record a fast-forward of the target")
+        .context("failed to record a move of the target")
 }
 
 /// `T`, once it holds the landing, judged against its push branch where it is
@@ -7132,17 +7234,10 @@ fn unjournal_unless_at(
 /// Take `key` back off the journal of repos the landing moves in `T`'s
 /// workspace, where it stopped before moving it.
 fn unjournal(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
-    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "internal: owner record missing at advance-target"
-        )
-    })?;
-    if let Some(take_in) = owner.take_in.as_mut() {
+    journal(ctx, |take_in| {
         take_in.moved_in_target.retain(|moved| moved != key);
-    }
-    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-        .context("failed to record that the target was not moved")
+        take_in.wrote_in_target.remove(key);
+    })
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.
@@ -7719,6 +7814,14 @@ pub fn run_abort(
         ),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
+    let empty_wrote = std::collections::BTreeMap::new();
+    let wrote_in_target = match &reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .as_ref()
+            .map_or(&empty_wrote, |take_in| &take_in.wrote_in_target),
+        op_state::OwnerReading::HeaderOnly { .. } => &empty_wrote,
+    };
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
@@ -7788,6 +7891,7 @@ pub fn run_abort(
         &op_id,
         tips,
         moved_in_target,
+        wrote_in_target,
         operates_in.as_ref(),
         source_tip,
         &rebases,
@@ -7822,6 +7926,7 @@ pub fn run_abort(
                             &op_id,
                             tips,
                             moved_in_target,
+                            wrote_in_target,
                             operates_in.as_ref(),
                             source_tip,
                             &rebases,
@@ -8047,6 +8152,7 @@ fn restore_abort_workspace(
     op_id: &OpId,
     tips: Option<&op_state::PhaseTips>,
     moved_in_target: Option<&[RepoKey]>,
+    wrote_in_target: &std::collections::BTreeMap<RepoKey, CommitId>,
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     source_tip: Option<&CommitId>,
     rebases: &[op_state::Rebasing],
@@ -8171,7 +8277,12 @@ fn restore_abort_workspace(
             AbortSide::LandTarget => None,
         };
         let attribution = Attribution {
-            intent: advanced_tips.get(&repo_key),
+            intent: match side {
+                AbortSide::Replay => advanced_tips.get(&repo_key),
+                AbortSide::LandTarget => wrote_in_target
+                    .get(&repo_key)
+                    .filter(|wrote| Some(*wrote) != converged_tips.get(&repo_key)),
+            },
             converged: converged_tips
                 .get(&repo_key)
                 .or(finished_by_hand.as_ref())
@@ -8450,7 +8561,7 @@ fn restore_landing_refs(
     let journaled = record
         .take_in
         .as_ref()
-        .map(|take_in| take_in.moved_in_target.as_slice())
+        .map(|take_in| take_in.moved_refs.as_slice())
         .unwrap_or_default();
     let project_repo = stores
         .workspaces
@@ -8480,7 +8591,10 @@ fn restore_landing_refs(
         };
         for saved in saved {
             let branch = &saved.branch;
-            if !journaled.contains(&repo_key) {
+            let written = journaled
+                .iter()
+                .find(|moved| moved.repo == repo_key && moved.branch == branch.as_str());
+            let Some(written) = written else {
                 let now = vcs.resolve_local_branch_tip(&dir, branch).ok().flatten();
                 if now.as_ref().map(|n| n.id()) != Some(&saved.at) {
                     outln!(
@@ -8505,14 +8619,8 @@ fn restore_landing_refs(
                     tally.any_failure = true;
                 }
                 continue;
-            }
-            match vcs.restore_ref_savepoint(
-                &dir,
-                &key,
-                &saved,
-                wrote.and_then(|w| w.get(&repo_key)),
-                policy,
-            ) {
+            };
+            match vcs.restore_ref_savepoint(&dir, &key, &saved, Some(&written.to), policy) {
                 Ok(crate::vcs::RefRestoreOutcome::Untouched) => {}
                 Ok(crate::vcs::RefRestoreOutcome::Restored) => {
                     outln!("  {named}: '{branch}' restored to {}", saved.at.short());

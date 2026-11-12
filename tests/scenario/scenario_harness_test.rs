@@ -78,6 +78,12 @@ fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on
 }
 
 #[test]
+fn abort_after_aligning_leaves_a_member_the_landing_never_moved() {
+    runner::run(scenarios::abort_leaves_a_target_member_the_alignment_never_moved())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_member_change_refusal_prints_the_rebind_then_the_setter_then_the_consent() {
     runner::run(scenarios::member_change_choice_order()).assert_fully_decided_green();
 }
@@ -805,6 +811,7 @@ every_scenario!(
     continue_reports_a_created_receiving_branch,
     member_change_choice_order,
     shared_checkout_detached,
+    abort_leaves_a_target_member_the_alignment_never_moved,
     in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromTheSource),
     in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromThePrimary),
     in_place_fast_forward(scenarios::InPlaceEnd::Dirty),

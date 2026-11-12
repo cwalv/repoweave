@@ -11039,6 +11039,35 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
     scenario("in-place fast-forward: aborted", steps)
 }
 
+/// A landing stopped once `T`'s workspace aligned, then a commit in that
+/// workspace's `docs`, which the landing never moved: `rwv abort` restores
+/// what the landing moved and leaves `docs` and its commit as they stand.
+pub fn abort_leaves_a_target_member_the_alignment_never_moved() -> Scenario {
+    scenario(
+        "abort leaves a target member the alignment never moved",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--history", "linear"],
+                "landed",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::commit(&a(), Repo::Docs, "docs-own"),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::Docs, &["log", "--format=%s", "-1", "main"])
+                .claim(Claim::OutputLine("docs-own")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-app")),
+        ],
+    )
+}
+
 /// What happens to a receiving branch the landing moves as a ref while the
 /// landing is held at its compare-and-swap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

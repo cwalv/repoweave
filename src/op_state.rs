@@ -517,10 +517,18 @@ pub struct TakeInRecord {
     /// them, which aligning `T`'s workspace then moves.
     #[serde(default)]
     pub realigned: Vec<RepoKey>,
-    /// Each repo of `T`'s workspace a landing moves, by its fast-forward or
-    /// by aligning that workspace after it, written before the repo moves.
+    /// Each checkout a landing moves, in `T`'s workspace by its fast-forward
+    /// or by aligning that workspace after it, or in place in a third one,
+    /// written before it moves and taken back where it did not move.
     #[serde(default)]
     pub moved_in_target: Vec<RepoKey>,
+    /// The tip each checkout `moved_in_target` names is moved to.
+    #[serde(default)]
+    pub wrote_in_target: BTreeMap<RepoKey, CommitId>,
+    /// Each branch a landing moves as a ref, and the tip it moves it to,
+    /// written before it moves.
+    #[serde(default)]
+    pub moved_refs: Vec<RefWrite>,
     /// Each branch a landing created, and where.
     #[serde(default)]
     pub created_refs: Vec<CreatedRef>,
@@ -852,6 +860,14 @@ pub enum Moves {
     /// The member takes `tip`, merging nothing; the branch does not move,
     /// and is created at `tip` first when `create`.
     Follows { create: bool },
+}
+
+/// A branch a landing moves as a ref, and the tip it writes there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefWrite {
+    pub repo: RepoKey,
+    pub branch: String,
+    pub to: CommitId,
 }
 
 /// A branch the op created, checked out nowhere.
