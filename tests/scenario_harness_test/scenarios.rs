@@ -4763,3 +4763,68 @@ pub fn merge_upstream_off_lineage() -> Scenario {
     ]);
     scenario("merge-upstream off lineage", steps)
 }
+
+/// `main` moved `app`, and `stable`, a branch `w` does not land into, is cut
+/// from it.
+fn stable_ahead_of_w() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["branch", "stable", "main"]),
+        Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A merge naming another branch than the record's target is a merge commit
+/// even where a fast-forward would do: `w`'s `app` holds nothing `stable`'s
+/// pin lacks, and `sync --from stable` still merges it.
+pub fn sync_from_another_branch_always_merges() -> Scenario {
+    let mut steps = stable_ahead_of_w();
+    steps.extend([
+        Step::rwv(&ww("w"), &["sync", "--from", "stable"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: merged"))
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::App,
+                rev: "proj--w",
+                mark: "main-app",
+            }),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rev-parse", "--verify", "--quiet", "proj--w^2"],
+        ),
+    ]);
+    scenario("sync --from another branch always merges", steps)
+}
+
+/// `sync` reads the record and never writes it, a one-run `--target`
+/// included.
+pub fn sync_writes_no_record() -> Scenario {
+    let mut steps = stable_ahead_of_w();
+    steps.extend([
+        Step::rwv(&ww("w"), &["sync", "--target", "stable"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::App,
+                rev: "proj--w",
+                mark: "main-app",
+            })
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "proj--w",
+                record: Some(feature_onto("main", Mode::Declared)),
+            }),
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "proj--w",
+                record: Some(feature_onto("main", Mode::Declared)),
+            }),
+    ]);
+    scenario("sync writes no record", steps)
+}

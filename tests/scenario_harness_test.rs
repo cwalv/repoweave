@@ -585,6 +585,8 @@ every_scenario!(
     record_unstored_is_stored_by_sync,
     sync_refuses_a_pre_schema_target_tip,
     merge_upstream_off_lineage,
+    sync_from_another_branch_always_merges,
+    sync_writes_no_record,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2674,6 +2676,16 @@ fn sync_refuses_a_pre_schema_target_tip_at_that_branch() {
 #[test]
 fn merge_upstream_refuses_a_feature_member_off_lineage() {
     runner::run(scenarios::merge_upstream_off_lineage()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_from_a_branch_other_than_the_target_writes_a_merge_commit() {
+    runner::run(scenarios::sync_from_another_branch_always_merges()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_reads_the_record_and_never_writes_it() {
+    runner::run(scenarios::sync_writes_no_record()).assert_fully_decided_green();
 }
 
 #[test]
