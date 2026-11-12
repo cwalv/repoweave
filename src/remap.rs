@@ -257,7 +257,9 @@ pub(crate) struct ProjectRemap {
 /// Rewrite each commit the project rebase `replayed` wrote onto `onto` so its
 /// lock pins what the member rebases made of the commits it pinned. Commits
 /// already pinning so are kept as they are; one left changing nothing, as
-/// the rebase drops a commit it leaves empty, is dropped.
+/// the rebase drops a commit it leaves empty, is dropped. A written commit no
+/// replayed commit became, such as a relock written after the replay, keeps
+/// the pins it changed, so a re-map of a branch already re-mapped keeps it.
 pub(crate) fn remap_project(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -277,7 +279,7 @@ pub(crate) fn remap_project(
                 .map(|lock| lock.iter_entries().map(|(p, _)| p.clone()).collect())
                 .unwrap_or_default(),
         };
-        let original = replayed.original(written);
+        let original = replayed.original(written).or(Some(written));
         let original_lock = original.and_then(|o| lock_at(vcs, dir, o));
         let original_parent_lock = match original {
             Some(o) => vcs

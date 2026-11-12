@@ -4996,7 +4996,8 @@ fn a_landing_whose_carry_stopped_in_the_project_continues() {
 
 #[test]
 fn a_sync_continued_after_its_relock_keeps_it() {
-    runner::run(scenarios::a_sync_continued_after_its_relock_keeps_it()).assert_fully_decided_green();
+    runner::run(scenarios::a_sync_continued_after_its_relock_keeps_it())
+        .assert_fully_decided_green();
 }
 
 #[test]
