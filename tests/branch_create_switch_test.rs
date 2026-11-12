@@ -637,12 +637,16 @@ fn a_first_project_publishes_to_its_only_remote_and_a_second_remote_needs_a_push
     common::git_in(&project, &["config", "user.name", "Test"]);
     succeed(&["member", "add", &common::file_url(&one)], &ws);
     succeed(&["member", "add", &common::file_url(&two)], &ws);
-    let lock = std::fs::read_to_string(project.join("rwv.lock")).unwrap();
+    let committed: serde_json::Value =
+        serde_json::from_str(&common::git_in(&project, &["show", "HEAD:rwv.lock"])).unwrap();
     for member in ["local/origin/one", "local/origin/two"] {
-        assert!(lock.contains(member), "member add pinned {member}: {lock}");
+        let cloned = common::git_in(ws.join(member), &["rev-parse", "HEAD"]);
+        assert_eq!(
+            committed["repositories"][member]["version"].as_str(),
+            Some(cloned.trim()),
+            "member add committed {member}'s pin at the commit it cloned: {committed}"
+        );
     }
-    git_ok(&project, &["add", "-A"]);
-    git_ok(&project, &["commit", "-qm", "members"]);
 
     let first = empty_bare("web");
     git_ok(
