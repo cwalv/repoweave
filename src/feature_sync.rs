@@ -1504,11 +1504,11 @@ fn act(
         .map(|take_in| take_in.rebased_backups)
         .unwrap_or_default();
     op.finish(&repos);
-    crate::backup::drop_completed_rebased(
+    crate::backup::drop_rebased(
         sync.ctx.primary_path(),
         sync.ctx.active_path(),
         &sync.project,
-        &kept,
+        kept.iter().filter(|k| !k.published),
     );
     say(output, &format!("took in {}", sync.source_name()));
     Ok(())

@@ -1231,6 +1231,7 @@ pub struct Backup {
     pub name: BackupName,
     pub tip: ResolvedRevisionId,
     pub mark: Option<BackupMark>,
+    pub source: BackupSource,
 }
 
 /// A backup and the commits it keeps that nothing else does.

@@ -2120,7 +2120,7 @@ fn republishable(
     vcs.remote_copies(dir, branch)
         .ok()
         .and_then(|copies| copies.into_iter().find(|copy| &copy.remote == target))
-        .is_some_and(|copy| crate::backup::rebased_holding(vcs, dir, copy.tip.id()))
+        .is_some_and(|copy| crate::backup::rebased_holding(vcs, dir, branch, copy.tip.id()))
 }
 
 /// Publish `r` to `target`. A leased replace keeps the tip it replaces as a
@@ -2133,8 +2133,10 @@ fn publish_ref(
     replace: &Replace,
 ) -> Result<(), PublishFailure> {
     let republish = match replace {
-        Replace::Leased(lease) => crate::backup::rebased_holding(vcs, repo, lease.expected().id())
-            .then(|| lease.expected().id().clone()),
+        Replace::Leased(lease) => {
+            { crate::backup::rebased_holding(vcs, repo, r.name(), lease.expected().id()) }
+                .then(|| lease.expected().id().clone())
+        }
         Replace::FastForwardOnly => None,
     };
     if let (Replace::Leased(lease), None) = (replace, &republish) {
@@ -2149,7 +2151,7 @@ fn publish_ref(
     vcs.push_ref(repo, target, r, replace)
         .map_err(PublishFailure::Push)?;
     if let Some(replaced) = republish {
-        crate::backup::drop_republished(vcs, repo, &replaced);
+        crate::backup::drop_republished(vcs, repo, r.name(), &replaced);
     }
     Ok(())
 }

@@ -7238,7 +7238,12 @@ fn drop_rebased_backups(ctx: &OpContext<'_>) {
         .map(|take_in| take_in.rebased_backups)
         .unwrap_or_default();
     let primary = ctx.cwd_ctx.primary_path();
-    crate::backup::drop_completed_rebased(primary, primary, &ctx.cwd_project_name, &kept);
+    crate::backup::drop_rebased(
+        primary,
+        primary,
+        &ctx.cwd_project_name,
+        kept.iter().filter(|k| !k.published),
+    );
 }
 
 /// `rwv land --retire` post-land cleanup.
@@ -7759,6 +7764,19 @@ pub fn run_abort(
     // repo refused (foreign tip) or errored, retain op-state so the operator
     // can re-run `rwv abort` after manually reconciling the divergence.
     if tally.clean() {
+        if let op_state::OwnerReading::Whole(record) = &reading {
+            let kept = record
+                .take_in
+                .as_ref()
+                .map(|take_in| take_in.rebased_backups.clone())
+                .unwrap_or_default();
+            crate::backup::drop_rebased(
+                ctx.primary_path(),
+                owner_workspace.as_path(),
+                &op_project_name,
+                kept.iter(),
+            );
+        }
         op_state::clear_all_at(&workspace_dir);
     } else if tally.any_foreign {
         eprintln!(

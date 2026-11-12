@@ -91,6 +91,7 @@ impl GitVcs {
                         name,
                         tip: tip.clone(),
                         mark,
+                        source: source.clone(),
                     });
                 }
                 Some(held) if held == *tip => {
@@ -98,6 +99,7 @@ impl GitVcs {
                         name,
                         tip: tip.clone(),
                         mark,
+                        source: source.clone(),
                     })
                 }
                 Some(_) => {}
@@ -129,13 +131,19 @@ impl GitVcs {
                 failed(&["for-each-ref"], &repo, format!("not a commit id: {oid}"))
             })?;
             let name = refname.strip_prefix(&prefix).unwrap_or(refname);
-            let id = name.rsplit('/').next().unwrap_or(name);
+            let (component, id) = name.rsplit_once('/').unwrap_or(("", name));
+            let source = if component == DETACHED_HEAD {
+                BackupSource::DetachedHead
+            } else {
+                BackupSource::Branch(crate::vcs::RawRefName::new(component))
+            };
             let held = Self::commits_reached_by_no_branch(&repo, &tip, remote_tracking)?;
             listed.push(ListedBackup {
                 backup: Backup {
                     name: BackupName::new(name),
                     tip,
                     mark: mark_of(id),
+                    source,
                 },
                 held,
             });

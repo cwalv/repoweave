@@ -722,6 +722,8 @@ every_scenario!(
     history_member_override_lands,
     rebased_backup_lifetime,
     history_published_rebase,
+    rebased_backup_after_abort_offers_no_republish,
+    rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
     abort_after_the_target_aligned(
         scenarios::ReceivingCase::Followed,
@@ -4589,6 +4591,18 @@ fn history_member_override_lands_is_green() {
 #[test]
 fn rebased_backup_lifetime_is_green() {
     runner::run(scenarios::rebased_backup_lifetime()).assert_fully_decided_green();
+}
+
+#[test]
+fn rebased_backup_after_abort_offers_no_republish_scenario() {
+    runner::run(scenarios::rebased_backup_after_abort_offers_no_republish())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn rebased_backup_of_another_branch_offers_no_republish_scenario() {
+    runner::run(scenarios::rebased_backup_of_another_branch_offers_no_republish())
+        .assert_fully_decided_green();
 }
 
 #[test]

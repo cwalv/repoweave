@@ -11462,6 +11462,132 @@ pub fn rebased_backup_lifetime() -> Scenario {
     scenario("rebased backup lifetime", steps)
 }
 
+/// A `rebased` backup that outlives its rebase offers no republish: a
+/// `linear` `sync` of a published feature stops on a conflict and is aborted,
+/// which puts the branch back at the tip the backup holds and drops it; the
+/// operator then amends by hand, and `push` offers only the choices for a
+/// divergence rwv did not make.
+pub fn rebased_backup_after_abort_offers_no_republish() -> Scenario {
+    scenario(
+        "a rebased backup after an abort offers no republish",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "p",
+                    "--new-branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::hand_edit(&ww("p"), Repo::App, "README", "app\n", "app in p\n"),
+            Step::git(&ww("p"), Repo::App, &["commit", "-qam", "readme-p"]),
+            Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("p"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-p")
+                .pushes(Remote::origin(Repo::Proj), "feat-p")
+                .expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::rwv(&ww("p"), &["abort"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["backup", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("rebased-")),
+            Step::git(
+                &ww("p"),
+                Repo::App,
+                &["commit", "--amend", "-qm", "readme-p-amended"],
+            ),
+            Step::rwv(
+                &ww("p"),
+                &["member", "pin", "local/remotes/app", "HEAD", "--commit"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputLacks("--overwrite")),
+        ],
+    )
+}
+
+/// A `rebased` backup of one branch offers no republish for another at the
+/// same tip: `feat-q` is published at the tip `feat-p` was published at;
+/// a `linear` `sync` rebases `feat-p`, keeping its backup; `feat-q`, amended
+/// by hand, is offered only the choices for a divergence rwv did not make.
+pub fn rebased_backup_of_another_branch_offers_no_republish() -> Scenario {
+    let ww_create = |name: &'static str, branch: &'static str| {
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                name,
+                "--new-branch",
+                branch,
+            ],
+        )
+        .expect(Exit::Succeeds)
+    };
+    scenario(
+        "a rebased backup of another branch offers no republish",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            ww_create("p", "feat-p"),
+            Step::commit(&ww("p"), Repo::App, "p-app"),
+            Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("p"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-p")
+                .pushes(Remote::origin(Repo::Proj), "feat-p")
+                .expect(Exit::Succeeds),
+            ww_create("q", "feat-q"),
+            Step::git(&ww("q"), Repo::App, &["reset", "-q", "--hard", "feat-p"]),
+            Step::rwv(&ww("q"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("q"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-q")
+                .pushes(Remote::origin(Repo::Proj), "feat-q")
+                .expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "p-app",
+                    marked: Some("rebased"),
+                }),
+            Step::git(
+                &ww("q"),
+                Repo::App,
+                &["commit", "--amend", "-qm", "q-amended"],
+            ),
+            Step::rwv(&ww("q"), &["member", "pin", APP, "HEAD", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("q"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputLacks("--overwrite")),
+            Step::rwv(&ww("p"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv push --overwrite local/remotes/app",
+                )),
+        ],
+    )
+}
+
 /// `history-published-rebase`: a `linear` `sync` of a published feature, then
 /// `push`: the rebasing machine is offered the republish recovery, leased to
 /// the tip its `rebased` backup holds; another machine holding unpushed work

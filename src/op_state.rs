@@ -817,6 +817,10 @@ impl MemberPick {
 pub struct KeptBackup {
     pub repo: RepoKey,
     pub name: String,
+    /// The branch was published when it was kept: the backup outlives the
+    /// op's completion, until the republish replaces the push branch, and
+    /// goes only with an abort, which puts the branch back at its tip.
+    pub published: bool,
 }
 
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
