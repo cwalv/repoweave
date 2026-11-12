@@ -168,7 +168,7 @@ pub enum Commands {
         action: MemberAction,
     },
 
-    /// Record how a weave branch is used, list the weave branches with their records, or delete one
+    /// Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one
     #[command(arg_required_else_help = true)]
     Branch {
         #[command(subcommand)]
@@ -192,7 +192,12 @@ pub enum Commands {
         #[arg(value_name = "W", conflicts_with = "detach")]
         branch: Option<String>,
         /// For a branch with no record: record it as a feature that lands into `<T>`, which must itself have a record. A record that differs is refused
-        #[arg(long, value_name = "T", requires = "branch", conflicts_with = "declared")]
+        #[arg(
+            long,
+            value_name = "T",
+            requires = "branch",
+            conflicts_with = "declared"
+        )]
         target: Option<String>,
         /// For a branch with no record: record it as `declared`. A record that differs is refused
         #[arg(long, requires = "branch")]

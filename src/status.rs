@@ -727,16 +727,17 @@ fn project_line(
         ProjectStanding::Unaligned => {
             State::AlignmentProjectUnaligned.of(crate::workspace::project_rel_path(project))
         }
-        ProjectStanding::Detached => {
-            State::AlignmentProjectDetached.of(crate::workspace::project_rel_path(project))
-        }
+        ProjectStanding::Detached => aligner.project_detached().ok()?,
     };
+    let aligned = aligner.state_aligned_text();
+    let judging = judging.project_repo().checkout(project_dir);
     Some(
-        judging
-            .project_repo()
-            .checkout(project_dir)
-            .bind("<b>", aligner.state_aligned_text())
-            .judge(vcs.as_ref()),
+        if aligned.is_empty() {
+            judging
+        } else {
+            judging.bind("<b>", aligned)
+        }
+        .judge(vcs.as_ref()),
     )
 }
 

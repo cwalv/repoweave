@@ -579,7 +579,10 @@ pub(crate) fn judge_name_taken(
     report: &mut Report,
 ) -> anyhow::Result<bool> {
     let raw = RawRefName::new(name.as_str());
-    let taken_locally = repo.vcs.resolve_local_branch_tip(&repo.dir, &raw)?.is_some();
+    let taken_locally = repo
+        .vcs
+        .resolve_local_branch_tip(&repo.dir, &raw)?
+        .is_some();
     let copies = repo.vcs.remote_copies(&repo.dir, &raw)?;
     if !taken_locally && (copies.is_empty() || remote_is_free) {
         return Ok(false);

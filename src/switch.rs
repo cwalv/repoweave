@@ -229,7 +229,11 @@ fn judge_members_at(
 
 /// The copy of `branch` a remote holds that this clone takes it from: the
 /// only one, else the project's home remote's.
-fn remote_copy(vcs: &dyn Vcs, dir: &Path, branch: &RawRefName) -> anyhow::Result<Option<RemoteTip>> {
+fn remote_copy(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &RawRefName,
+) -> anyhow::Result<Option<RemoteTip>> {
     let copies = vcs.remote_copies(dir, branch)?;
     Ok(match copies.as_slice() {
         [] => None,
@@ -379,7 +383,9 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
         Some(target) => match feature_record(&view, &new, target) {
             Ok(record) => Some(record),
             Err(error) => {
-                report.add(judged_write_error(vcs, &store, &project, &dir, &new, error)?);
+                report.add(judged_write_error(
+                    vcs, &store, &project, &dir, &new, error,
+                )?);
                 None
             }
         },
@@ -524,7 +530,10 @@ fn diverged_start(
         State::PushBranchDiverged
             .of(label(project))
             .project_repo()
-            .subject(format!("{target} and {}/{}", upstream.remote, upstream.branch))
+            .subject(format!(
+                "{target} and {}/{}",
+                upstream.remote, upstream.branch
+            ))
             .listing(
                 unpushed
                     .iter()
@@ -605,7 +614,9 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     } else {
         None
     };
-    let destination = local.clone().or_else(|| copy.as_ref().map(|c| c.tip.clone()));
+    let destination = local
+        .clone()
+        .or_else(|| copy.as_ref().map(|c| c.tip.clone()));
     let Some(destination) = destination else {
         return Err(no_branch_here(ctx, &project, vcs, &dir, &branch));
     };
@@ -776,19 +787,18 @@ fn no_branch_here(
         } else {
             ChoiceId::C24
         };
-        let remote = copy.map_or_else(|| "origin".to_owned(), |copy| copy.remote.to_string());
-        report.add(
-            State::NameNoSuchBranch
-                .of(&path)
-                .member()
-                .subject(format!("{branch} is a branch of {path} only"))
-                .checkout(&member_dir)
-                .bind("<r>", remote)
-                .bind("<b>", branch)
-                .by_verb(SWITCH)
-                .only(&[choice])
-                .judge(member_vcs.as_ref()),
-        );
+        let mut judging = State::NameNoSuchBranch
+            .of(&path)
+            .member()
+            .subject(format!("{branch} is a branch of {path} only"))
+            .checkout(&member_dir)
+            .bind("<b>", branch)
+            .by_verb(SWITCH)
+            .only(&[choice]);
+        if let Some(copy) = copy {
+            judging = judging.bind("<r>", copy.remote);
+        }
+        report.add(judging.judge(member_vcs.as_ref()));
     }
     report
         .into_result()

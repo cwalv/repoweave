@@ -688,27 +688,14 @@ pub(crate) fn read_old_lock(
 /// the pins on.
 pub(crate) fn refuse_detached(
     aligner: &Aligner,
-    project: &crate::manifest::ProjectName,
+    _project: &crate::manifest::ProjectName,
 ) -> anyhow::Result<()> {
     if aligner.standing != ProjectStanding::Detached && aligner.mode != Mode::Detached {
         return Ok(());
     }
-    let vcs = project_vcs();
-    let held = vcs
-        .head_revision(&aligner.project_dir)
-        .ok()
-        .map(|head| vcs.stray_commits(&aligner.project_dir, &head, None, None))
-        .transpose()?
-        .unwrap_or_default();
-    Err(State::AlignmentProjectDetached
-        .of(crate::workspace::project_rel_path(project))
-        .project_repo()
-        .listing(
-            held.iter()
-                .map(|c| format!("{} {}", c.id.short(), c.subject)),
-        )
-        .checkout(&aligner.project_dir)
-        .judge(vcs.as_ref())
+    Err(aligner
+        .project_detached()?
+        .judge(project_vcs().as_ref())
         .refused())
 }
 

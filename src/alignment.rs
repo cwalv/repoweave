@@ -584,6 +584,35 @@ impl Aligner {
         self.checked_out.as_deref()
     }
 
+    /// The line for a project repo whose HEAD is on no branch and whose
+    /// workspace was not made detached: the commits it holds that no branch
+    /// reaches, listed, with the choice that keeps them where it holds any,
+    /// else the one that returns the project repo to a branch.
+    pub fn project_detached(&self) -> anyhow::Result<crate::diagnosis::Judging> {
+        let vcs = project_vcs();
+        let held = match vcs.head_revision(&self.project_dir) {
+            Ok(head) => vcs.stray_commits(&self.project_dir, &head, None, None)?,
+            Err(_) => Vec::new(),
+        };
+        let choice = if held.is_empty() {
+            crate::diagnosis::ChoiceId::C30
+        } else {
+            crate::diagnosis::ChoiceId::C14
+        };
+        Ok(State::AlignmentProjectDetached
+            .of(crate::workspace::project_rel_path(&self.project))
+            .project_repo()
+            .listing(held.iter().map(|c| {
+                format!(
+                    "{} {}",
+                    crate::vcs::short_revision(c.id.as_str()),
+                    c.subject
+                )
+            }))
+            .checkout(&self.project_dir)
+            .only(&[choice]))
+    }
+
     /// The aligned branch as a choice spells it: its name, or `detached`.
     pub fn state_aligned_text(&self) -> String {
         match &self.state.aligned {
@@ -945,7 +974,9 @@ impl Aligner {
                     (Found::Local { tip } | Found::LocalGivenUpstream { tip, .. }, _) => {
                         Some(tip.clone())
                     }
-                    (Found::OnRemote { tip, .. }, Pin::At(pin)) if reaches(m.vcs, m.dir, pin, tip) => {
+                    (Found::OnRemote { tip, .. }, Pin::At(pin))
+                        if reaches(m.vcs, m.dir, pin, tip) =>
+                    {
                         Some(pin.clone())
                     }
                     (Found::OnRemote { tip, .. }, _) => Some(tip.clone()),

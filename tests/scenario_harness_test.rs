@@ -284,6 +284,21 @@ fn a_verb_for_an_inactive_project_refuses_instead_of_moving_a_shared_checkout() 
         .assert_fully_decided_green();
 }
 
+#[test]
+fn a_reserved_name_is_refused_by_a_create_and_nothing_is_created() {
+    runner::run(scenarios::records_reserved_name()).assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_leaves_the_lock_uncommitted_and_a_switch_refuses_until_it_is_committed() {
+    runner::run(scenarios::update_remote_writes_lock()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_create_from_a_detached_workspace_starts_at_its_head_and_carries_the_manifest() {
+    runner::run(scenarios::detached_create_start()).assert_fully_decided_green();
+}
+
 macro_rules! pending_on {
     ($($name:ident => $verb:ident),* $(,)?) => {
         $(
@@ -296,14 +311,14 @@ macro_rules! pending_on {
 }
 
 pending_on!(
-    resume_on_machine_b => WeaveBranch,
-    feature_in_primary_while_main_moves => WeaveBranch,
-    feature_off_stable => WeaveBranch,
+    resume_on_machine_b => Land,
+    feature_in_primary_while_main_moves => Land,
+    feature_off_stable => Declare,
     review_colleague_fix => Review,
-    stable_end_to_end => WeaveBranch,
-    main_change_into_stable => WeaveBranch,
+    stable_end_to_end => Declare,
+    main_change_into_stable => Land,
     nested_workweaves => WeaveBranch,
-    cherry_pick_onto_stable => WeaveBranch,
+    cherry_pick_onto_stable => CherryPick,
 );
 
 #[test]

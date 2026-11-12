@@ -177,9 +177,9 @@ fn an_unshipped_spelling_is_reported() {
     assert!(parse_failure("rwv push --repo <m>").is_none());
     assert!(parse_failure("rwv push --branch <W>").is_none());
     assert!(parse_failure("rwv workweave delete <ww>").is_none());
-    assert!(!Form::C16Switch.printable());
+    assert!(!Form::C31.printable());
     assert!(
-        Form::C16Switch
+        Form::C31
             .rwv_commands()
             .iter()
             .any(|c| parse_failure(c).is_some()),

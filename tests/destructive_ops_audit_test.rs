@@ -329,14 +329,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 4,
+        count: 5,
         callers: &[("restore_paths_from_head", 2)],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
             before writing anything, and with its last \
             caller gone the method went with the rest of the old surface. \
-            What remains is four sites, none of which can reposition a \
+            What remains is five sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
             (1) restore_paths_from_head: the one write both restore \
@@ -378,7 +378,16 @@ const ALLOWLIST: &[Allowed] = &[
             start point there is no checkout.guess and no tag lookup, and \
             the -- terminator keeps a path-shaped name out of the pathspec \
             list; the clone runs --no-checkout, so no working tree is ever \
-            materialized at the remote tip for this to overwrite.",
+            materialized at the remote tip for this to overwrite. \
+            (5) create_branch_and_attach: creates the branch a verb is \
+            about to put a checkout on and attaches HEAD to it in one git \
+            step (`checkout -b <name> <start>`), carrying edits as git's own \
+            branch creation does. It refuses a name already taken before \
+            git runs, and git itself refuses, with nothing created and \
+            nothing moved, a move that would overwrite modified paths; no -f. \
+            It takes the Departure proof, which for the project repo's own \
+            move keeps a detached HEAD's unreachable commits as a backup \
+            first.",
     },
     Allowed {
         file: "git.rs",

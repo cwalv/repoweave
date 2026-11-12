@@ -248,10 +248,7 @@ pub(crate) fn update_members(
 /// The alignment `switch` and `branch create` run once the project repo is on
 /// its branch: `rwv update`'s, reported under the verb's name, and moving a
 /// member that holds edits as the VCS carries them.
-pub(crate) fn align_after_switch(
-    ctx: &WorkspaceContext,
-    verb: &'static str,
-) -> anyhow::Result<()> {
+pub(crate) fn align_after_switch(ctx: &WorkspaceContext, verb: &'static str) -> anyhow::Result<()> {
     update_members_for(
         ctx,
         &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
@@ -312,7 +309,7 @@ fn update_members_for(
         &name,
         crate::alignment::Accounting::scan(ctx.primary_path()),
     )?;
-    refuse_detached_project(&aligner, &name, flavor.verb)?;
+    refuse_detached_project(&aligner, flavor.verb)?;
     let aligner = if flavor.carry_edits {
         aligner.carrying_edits()
     } else {
@@ -945,34 +942,14 @@ struct AlignRun {
     placed: Vec<(RepoPath, PathBuf, crate::share::FilePlacement)>,
 }
 
-fn refuse_detached_project(
-    aligner: &Aligner,
-    project: &crate::manifest::ProjectName,
-    verb: &'static str,
-) -> anyhow::Result<()> {
+fn refuse_detached_project(aligner: &Aligner, verb: &'static str) -> anyhow::Result<()> {
     if aligner.standing != ProjectStanding::Detached {
         return Ok(());
     }
-    let vcs = crate::vcs::project_vcs();
-    let held = vcs
-        .head_revision(&aligner.project_dir)
-        .ok()
-        .map(|head| vcs.stray_commits(&aligner.project_dir, &head, None, None))
-        .transpose()?
-        .unwrap_or_default();
-    Err(crate::diagnosis::State::AlignmentProjectDetached
-        .of(crate::workspace::project_rel_path(project))
-        .project_repo()
-        .listing(held.iter().map(|c| {
-            format!(
-                "{} {}",
-                crate::vcs::short_revision(c.id.as_str()),
-                c.subject
-            )
-        }))
-        .checkout(&aligner.project_dir)
+    Err(aligner
+        .project_detached()?
         .by_verb(verb)
-        .judge(vcs.as_ref())
+        .judge(crate::vcs::project_vcs().as_ref())
         .refused())
 }
 

@@ -225,7 +225,30 @@ pub fn resume_on_machine_b() -> Scenario {
     steps.extend([
         push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
         Step::new_machine(Machine::B),
-        Step::pending("open feat-x on machine B", MissingVerb::WeaveBranch),
+        Step::rwv(&b(), &["switch", "feat-x"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: b(),
+                repo: Repo::App,
+                branch: "feat-x",
+            })
+            .claim(Claim::OnBranch {
+                at: b(),
+                repo: Repo::Lib,
+                branch: "feat-x",
+            })
+            .claim(Claim::AtPin {
+                at: b(),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: b(),
+                repo: Repo::Lib,
+            }),
+        Step::pending(
+            "commit in lib on B, publish, then converge or land from A",
+            MissingVerb::Land,
+        ),
     ]);
     scenario("resume on machine B", steps)
 }
@@ -233,10 +256,34 @@ pub fn resume_on_machine_b() -> Scenario {
 pub fn feature_in_primary_while_main_moves() -> Scenario {
     scenario(
         "feature in the primary while main moves",
-        vec![Step::pending(
-            "start a feature branch in the primary",
-            MissingVerb::WeaveBranch,
-        )],
+        vec![
+            Step::rwv(&a(), &["branch", "create", "feat-x"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "feat-app"),
+            Step::rwv(&a(), &["switch", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "main",
+                }),
+            Step::rwv(&a(), &["switch", "feat-x"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "feat-x",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "feat-app",
+                }),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "feat-x"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::pending("take in the new main, then land", MissingVerb::Land),
+        ],
     )
 }
 
@@ -453,7 +500,7 @@ pub fn feature_off_stable() -> Scenario {
         "feature off stable",
         vec![Step::pending(
             "create stable holding lib behind",
-            MissingVerb::WeaveBranch,
+            MissingVerb::Declare,
         )],
     )
 }
@@ -520,7 +567,7 @@ pub fn stable_end_to_end() -> Scenario {
         "stable end to end",
         vec![Step::pending(
             "create stable holding lib behind",
-            MissingVerb::WeaveBranch,
+            MissingVerb::Declare,
         )],
     )
 }
@@ -528,7 +575,10 @@ pub fn stable_end_to_end() -> Scenario {
 pub fn main_change_into_stable() -> Scenario {
     scenario(
         "bring a main change into stable",
-        vec![Step::pending("create stable", MissingVerb::WeaveBranch)],
+        vec![
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            Step::pending("bring a main change into stable", MissingVerb::Land),
+        ],
     )
 }
 
@@ -817,7 +867,13 @@ pub fn worktree_add_force_on_weave_branch() -> Scenario {
 pub fn cherry_pick_onto_stable() -> Scenario {
     scenario(
         "cherry-pick onto stable a commit adding a member",
-        vec![Step::pending("create stable", MissingVerb::WeaveBranch)],
+        vec![
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            Step::pending(
+                "cherry-pick a commit adding a member",
+                MissingVerb::CherryPick,
+            ),
+        ],
     )
 }
 
@@ -2704,6 +2760,119 @@ pub fn member_pin_behind() -> Scenario {
             .may_rewind(&[Repo::Lib]),
             Step::rwv(&a(), &["status"]).claim(Claim::OutputContains("pin ahead")),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// records-reserved-name: the records branch's name and every name below it
+/// are no weave branch's; `branch create` refuses each and creates nothing.
+pub fn records_reserved_name() -> Scenario {
+    let refused = |name: &str| {
+        Step::rwv(&a(), &["branch", "create", name, "--declared"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("name reserved"))
+            .claim(Claim::LocalStateUnchanged(a()))
+    };
+    scenario(
+        "records: a reserved name is no weave branch",
+        vec![
+            refused("rwv-records"),
+            refused("rwv-records/x"),
+            Step::rwv(&a(), &["branch", "create", "rwv-records"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("name reserved"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// update-remote-writes-lock: `update --remote` writes the lock and leaves it
+/// uncommitted; `switch` refuses until `lock --commit` records it.
+pub fn update_remote_writes_lock() -> Scenario {
+    scenario(
+        "update --remote writes the lock uncommitted and switch refuses until it is committed",
+        vec![
+            Step::rwv(&a(), &["branch", "create", "feat-z"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "upstream-app",
+            }),
+            Step::rwv(&a(), &["update", "--remote"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "upstream-app",
+                }),
+            Step::rwv(&a(), &["switch", "feat-z"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("rwv lock --commit"))
+                .claim(Claim::OutputLacks("rwv branch create"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "feat-z"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "feat-z",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "feat-z",
+                }),
+        ],
+    )
+}
+
+/// detached-create-start: from a detached workspace holding an uncommitted
+/// `rwv.toml`, `branch create --declared` starts at HEAD and carries the file.
+pub fn detached_create_start() -> Scenario {
+    let declared = declared_branch_text(Repo::Lib, "main");
+    scenario(
+        "a create from a detached workspace starts at its HEAD and carries rwv.toml",
+        vec![
+            Step::commit(&a(), Repo::Proj, "detached-start"),
+            Step::rwv(&a(), &["switch", "--detach", "HEAD"]).expect(Exit::Succeeds),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                &declared,
+                &format!("{declared} # edited while detached"),
+            ),
+            Step::rwv(&a(), &["branch", "create", "w"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("--declared")),
+            Step::rwv(&a(), &["branch", "create", "w", "--declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "w",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "w",
+                    mark: "detached-start",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "main",
+                }),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                "# edited while detached",
+                "# edited while detached",
+            ),
         ],
     )
 }

@@ -2013,14 +2013,8 @@ fn refuse_uncommitted_project_state(
     project_dir: &Path,
     project_name: &ProjectName,
 ) -> anyhow::Result<()> {
-    let mut uncommitted = vcs
-        .tracked_dirty_file_names(project_dir)
+    let uncommitted = crate::switch::uncommitted_names(vcs, project_dir)
         .with_context(|| format!("failed to read project repo status for {project_name}"))?;
-    for name in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
-        if project_dir.join(name).exists() && !vcs.is_tracked(project_dir, Path::new(name))? {
-            uncommitted.push(name.to_owned());
-        }
-    }
     if uncommitted.is_empty() {
         return Ok(());
     }

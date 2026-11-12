@@ -196,7 +196,10 @@ fn at_starts_the_branch_at_the_revision_it_names() {
     let earlier = commit_in(&project, "a.txt");
     commit_in(&project, "b.txt");
 
-    succeed(&["branch", "create", "old", "--declared", "--at", &earlier], ws);
+    succeed(
+        &["branch", "create", "old", "--declared", "--at", &earlier],
+        ws,
+    );
 
     assert_eq!(tip(&project, "HEAD"), earlier);
     assert_eq!(head_branch(&project).as_deref(), Some("old"));
@@ -215,7 +218,10 @@ fn a_create_from_a_detached_project_repo_starts_at_its_head_carries_the_file_and
     std::fs::write(project.join("rwv.toml"), &toml).unwrap();
 
     let bare = refuse(&["branch", "create", "w"], ws);
-    assert!(bare.contains("--declared") && bare.contains("--target"), "{bare}");
+    assert!(
+        bare.contains("--declared") && bare.contains("--target"),
+        "{bare}"
+    );
     assert!(!has_branch(&project, "w"));
     let switched = refuse(&["switch", "main"], ws);
     assert!(
@@ -399,7 +405,10 @@ fn switch_refuses_a_project_branch_checked_out_in_another_workspace() {
     let out = refuse(&["switch", &minted], ws);
 
     assert_eq!(routes(&out), ["checkout"], "{out}");
-    assert!(out.contains("rwv switch <other>") || out.contains("rwv switch"), "{out}");
+    assert!(
+        out.contains("rwv switch <other>") || out.contains("rwv switch"),
+        "{out}"
+    );
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("main"));
 }
@@ -410,9 +419,15 @@ fn switch_with_no_branch_refuses_naming_update_and_no_such_branch_names_the_fetc
     let ws = &w.workspace;
 
     let none = refuse(&["switch"], ws);
-    assert!(none.contains("rwv update") || none.contains("--detach"), "{none}");
+    assert!(
+        none.contains("rwv update") || none.contains("--detach"),
+        "{none}"
+    );
     let missing = refuse(&["switch", "nowhere"], ws);
-    assert!(missing.contains("name no-such-branch (nowhere)"), "{missing}");
+    assert!(
+        missing.contains("name no-such-branch (nowhere)"),
+        "{missing}"
+    );
     assert!(missing.contains("rwv fetch"), "{missing}");
     assert!(
         !missing.contains("switch --detach"),
@@ -429,7 +444,10 @@ fn a_branch_only_a_member_has_is_refused_naming_the_member_and_a_way_to_look_at_
 
     let out = refuse(&["switch", "member-only"], ws);
 
-    assert!(out.contains(LIB) && out.contains("name no-such-branch"), "{out}");
+    assert!(
+        out.contains(LIB) && out.contains("name no-such-branch"),
+        "{out}"
+    );
     assert!(out.contains("switch --detach"), "{out}");
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
 }
@@ -475,7 +493,10 @@ fn edits_the_move_would_overwrite_refuse_before_anything_moves_and_other_edits_a
     assert!(refused.contains("edits dirty"), "{refused}");
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     assert_eq!(head_branch(&lib).as_deref(), Some("main"));
-    assert_eq!(std::fs::read_to_string(lib.join("README")).unwrap(), "local edit");
+    assert_eq!(
+        std::fs::read_to_string(lib.join("README")).unwrap(),
+        "local edit"
+    );
 
     git_ok(&lib, &["checkout", "-q", "--", "README"]);
     succeed(&["switch", "feat-x"], ws);
@@ -572,4 +593,148 @@ fn switching_from_a_detached_project_repo_keeps_what_it_held_and_ends_on_a_branc
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     let backups = succeed(&["backup", "list"], ws);
     assert!(backups.contains(&stranded[..7]), "{backups}");
+}
+
+fn remote_has(bare: &Path, branch: &str) -> bool {
+    common::git()
+        .args([
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ])
+        .current_dir(bare)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[test]
+fn a_first_project_publishes_to_its_only_remote_and_a_second_remote_needs_a_push_target() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    let origin = |name: &str| {
+        let bare = tmp.path().join("origin").join(format!("{name}.git"));
+        std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+        common::init_bare_repo_with_commit(&bare);
+        bare
+    };
+    let empty_bare = |name: &str| {
+        let bare = tmp.path().join(format!("{name}.git"));
+        common::git_in(
+            tmp.path(),
+            &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()],
+        );
+        bare
+    };
+    let (one, two) = (origin("one"), origin("two"));
+
+    succeed(&["init", "web"], &ws);
+    let project = ws.join("projects/web");
+    common::git_in(&project, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project, &["config", "user.name", "Test"]);
+    succeed(&["member", "add", &common::file_url(&one)], &ws);
+    succeed(&["member", "add", &common::file_url(&two)], &ws);
+    let lock = std::fs::read_to_string(project.join("rwv.lock")).unwrap();
+    for member in ["local/origin/one", "local/origin/two"] {
+        assert!(lock.contains(member), "member add pinned {member}: {lock}");
+    }
+    git_ok(&project, &["add", "-A"]);
+    git_ok(&project, &["commit", "-qm", "members"]);
+
+    let first = empty_bare("web");
+    git_ok(
+        &project,
+        &["remote", "add", "origin", &common::file_url(&first)],
+    );
+    succeed(&["push"], &ws);
+    assert!(remote_has(&first, "main"));
+
+    succeed(&["branch", "create", "feat-x"], &ws);
+    succeed(&["push"], &ws);
+    assert!(remote_has(&first, "feat-x"));
+
+    let second = empty_bare("elsewhere");
+    git_ok(
+        &project,
+        &["remote", "add", "second", &common::file_url(&second)],
+    );
+    succeed(&["branch", "create", "feat-y"], &ws);
+    let refused = refuse(&["push"], &ws);
+    assert!(refused.contains("push-branch no push target"), "{refused}");
+    assert!(refused.contains("pushRemote"), "{refused}");
+    assert!(!remote_has(&first, "feat-y") && !remote_has(&second, "feat-y"));
+
+    git_ok(&project, &["config", "branch.feat-y.pushRemote", "origin"]);
+    succeed(&["push"], &ws);
+    assert!(remote_has(&first, "feat-y"));
+}
+
+#[test]
+fn a_create_and_a_switch_run_in_a_workweave_and_leave_the_primary_where_it_is() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["workweave", "create", "--project", PROJECT, "side"], ws);
+    let side = ws.parent().unwrap().join(".workweaves").join("p--side");
+    let minted = format!("{PROJECT}--side");
+
+    succeed(&["branch", "create", "feat-w"], &side);
+
+    assert_eq!(
+        head_branch(&side.join("projects/p")).as_deref(),
+        Some("feat-w")
+    );
+    assert_eq!(head_branch(&side.join(LIB)).as_deref(), Some("feat-w"));
+    assert!(record_of(ws, "feat-w")
+        .unwrap()
+        .contains(&format!("target = \"{minted}\"")));
+    assert_eq!(head_branch(&project_dir(ws)).as_deref(), Some("main"));
+    assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("main"));
+
+    succeed(&["switch", &minted], &side);
+    assert_eq!(
+        head_branch(&side.join("projects/p")).as_deref(),
+        Some(minted.as_str())
+    );
+    assert_eq!(
+        head_branch(&side.join(LIB)).as_deref(),
+        Some(minted.as_str())
+    );
+}
+
+#[test]
+fn the_moved_and_detached_states_print_the_choices_that_switch_and_create_ship() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "feat-x"], ws);
+    git_ok(&project, &["switch", "-q", "main"]);
+
+    let moved = succeed(&["status"], ws);
+    assert!(
+        moved.contains("project moved") && moved.contains("rwv switch feat-x"),
+        "{moved}"
+    );
+
+    git_ok(&project, &["switch", "-q", "--detach"]);
+    let detached = succeed(&["status"], ws);
+    assert!(
+        detached.contains("alignment project detached"),
+        "{detached}"
+    );
+    assert!(detached.contains("rwv switch feat-x"), "{detached}");
+    assert!(
+        detached.contains("rwv branch create <W> --target <T>")
+            && detached.contains("rwv branch create <W> --declared"),
+        "{detached}"
+    );
+
+    commit_in(&project, "held.txt");
+    let held = succeed(&["status"], ws);
+    assert!(
+        held.contains("git -C") && !held.contains("rwv branch create"),
+        "{held}"
+    );
 }
