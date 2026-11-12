@@ -7258,6 +7258,76 @@ pub fn main_diverged_reset_leaves_the_expected_branch() -> Scenario {
     scenario("main diverged, its reset leaves the expected branch", steps)
 }
 
+/// A branch named by the `<m>:<branch>` operand of `update --remote` cannot
+/// be reset or merged under a landing that holds a claim on it: a landing
+/// into `rel`, a project branch declaring `lib`'s `main`, stopped once it
+/// composed, claims that `main`; `rwv abort` frees it.
+pub fn a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(
+    merge: bool,
+) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "create", "rel", "--declared"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        create("relw"),
+        Step::commit(&ww("relw"), Repo::Lib, "rel-lib"),
+    ];
+    steps.extend(member_change_leaves_main_unpushed());
+    steps.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "relb",
+                "--branch",
+                "rel",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("relb"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["workweave", "delete", "--project", "proj", "relb"])
+            .expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("relw"),
+            &["land", "--target", "rel", "--history", "linear"],
+            "composed",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::forge(Forge::Commit {
+            repo: Repo::Lib,
+            branch: "main",
+            mark: "lib-remote",
+        }),
+    ]);
+    let flags: &[&str] = if merge {
+        &["--merge-upstream", "--repo", LIB_MAIN]
+    } else {
+        &["--reset-to-upstream", LIB_MAIN]
+    };
+    let mut update = vec!["update", "--remote"];
+    update.extend_from_slice(flags);
+    steps.extend([
+        Step::rwv(&a(), &update)
+            .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&ww("relw"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::Lib, Repo::Proj]),
+        Step::rwv(&a(), &update)
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::Lib]),
+    ]);
+    scenario(
+        "a branch named by an update operand is refused under a landing claim",
+        steps,
+    )
+}
+
 /// A colleague's commit to `lib`'s `main` that conflicts with `alpha`, and
 /// the push refusing `main` diverged, then the printed merge refusing: `main`
 /// is checked out nowhere and its merge as refs would conflict.

@@ -137,6 +137,16 @@ fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on
 }
 
 #[test]
+fn a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim() {
+    for merge in [false, true] {
+        runner::run(
+            scenarios::a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(merge),
+        )
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
 fn a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards() {
     runner::run(scenarios::a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards())
         .assert_fully_decided_green();
@@ -1033,6 +1043,8 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::Drifted),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlan),
     a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards,
+    a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(false),
+    a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(true),
     in_place_fast_forward(scenarios::InPlaceEnd::Rewound),
     in_place_fast_forward(scenarios::InPlaceEnd::ContinuedAfterRelease),
     removal_is_member_change,
