@@ -35,7 +35,7 @@ src/alignment.rs	(untokened:internal-invariant)	-	2
 src/alignment.rs	alignment aligned	-	1
 src/alignment.rs	alignment detached	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	1
-src/alignment.rs	alignment on branch	tests/scenario/scenario_harness_test/scenarios.rs	1
+src/alignment.rs	alignment on branch	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment on branch with stray commits	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/alignment.rs	alignment unaligned	-	1
@@ -63,7 +63,7 @@ src/branch.rs	target unreadable	tests/weave/branch_gate_test.rs	1
 src/branch.rs	target unrecorded	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment detached	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	2
-src/check.rs	alignment on branch	tests/scenario/scenario_harness_test/scenarios.rs	2
+src/check.rs	alignment on branch	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment on branch with stray commits	tests/doctor/benign_staleness_test.rs	2
 src/check.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment unaligned	-	2
