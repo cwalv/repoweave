@@ -5105,24 +5105,27 @@ fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
 // are created in guard_and_mark for verb=Land (this spec's scope); sibling
 // .4 adds HEAD-verification on top of the savepoint restore.
 
-/// The branch the landing went into: the one checked out in the target
-/// workspace, which the op's lease keeps there until the op ends. The
-/// deletion rule judges the retired branches against it, a one-run
-/// `--target` included.
+/// The branch the landing went into, as its plan records it, never what the
+/// target workspace has checked out by the time the retire runs. The deletion
+/// rule judges the retired branches against it, a one-run `--target`
+/// included.
 fn landed_into(
     ctx: &OpContext<'_>,
     project: &crate::manifest::ProjectName,
 ) -> anyhow::Result<crate::records::BranchName> {
     let vcs = ctx.project_vcs.as_ref();
     let dir = project_dir(&ctx.dest_workspace_dir, project);
-    let Some(checked_out) = crate::branch::checked_out(vcs, &dir)? else {
-        return Err(crate::untokened!(
-            InternalInvariant,
-            "the landing's target workspace {} has no branch checked out",
-            dir.display()
-        ));
-    };
-    crate::branch::named(vcs, project, &dir, &checked_out)
+    let receiving = ctx
+        .take_in
+        .receiving
+        .get(&RepoKey::Project)
+        .ok_or_else(|| {
+            crate::untokened!(
+                InternalInvariant,
+                "the op record names no branch the landing went into"
+            )
+        })?;
+    crate::branch::named(vcs, project, &dir, &receiving.branch)
 }
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {

@@ -2217,6 +2217,37 @@ holding_rwv! {
         bad_steps("a landed branch moved again", steps).assert_fully_decided_green();
     }
 
+    /// The retire judges the deletion rule against the branch the plan
+    /// recorded the landing went into, whatever the target workspace has
+    /// checked out by then: switched onto a branch that lacks the work, or
+    /// detached, it neither keeps the landed branch nor stops the retire.
+    fn a_retire_judges_deletion_against_the_recorded_target() {
+        for (name, away) in [
+            ("switched", &["switch", "old"][..]),
+            ("detached", &["switch", "--detach", "HEAD"][..]),
+        ] {
+            let mut steps = vec![Step::git(&a(), Repo::Proj, &["branch", "old"])];
+            steps.extend(landing_from("held"));
+            steps.extend([
+                Step::rwv_paused(&ww("held"), &["land", "--retire"], "retire", "landing"),
+                Step::git(&a(), Repo::Proj, away),
+                Step::release("landing")
+                    .expect(Exit::Succeeds)
+                    .claim(landed())
+                    .claim(Claim::WorkweaveGone(ww("held"))),
+            ]);
+            bad_steps(
+                if name == "switched" {
+                    "a retire after the target switched away"
+                } else {
+                    "a retire after the target detached"
+                },
+                steps,
+            )
+            .assert_fully_decided_green();
+        }
+    }
+
     /// A target checkout switched to another branch while `land` is held
     /// refuses: the landing moves only the branch its plan names, never the
     /// branch the checkout happens to be on. After `rwv abort`, the landing
