@@ -804,6 +804,7 @@ every_scenario!(
     abort_after_another_landing_built_on_the_target(scenarios::TargetSide::InCheckout),
     abort_after_another_landing_built_on_the_target(scenarios::TargetSide::AsRefs),
     abort_at_retire_waits_for_the_target_back,
+    abort_at_retire_after_the_in_place_workspace_went,
     a_landing_meets_a_landing_stopped_as_refs,
     a_landing_meets_a_stopped_landing_in_a_checkout,
     a_landing_killed_before_its_plan_releases_its_claim_on_abort,
@@ -2795,6 +2796,13 @@ holding_rwv! {
             scenarios::TargetSide::InCheckout,
         ))
         .assert_green();
+    }
+
+    /// Abort at retire skips an in-place workspace that is gone, and
+    /// restores the rest.
+    fn abort_at_retire_after_the_in_place_workspace_went() {
+        runner::run(scenarios::abort_at_retire_after_the_in_place_workspace_went())
+            .assert_fully_decided_green();
     }
 
     /// Abort at retire takes the target back first, so it refuses while

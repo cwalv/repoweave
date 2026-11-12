@@ -8965,6 +8965,34 @@ pub fn land_into_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenar
     )
 }
 
+/// A landing fast-forwarded `lib` in place in workweave `w3` and stopped in
+/// its retire, having released `w3`; `w3` is then deleted. Abort no longer
+/// needs to lease `w3`: it says the workspace is gone and restores the rest.
+pub fn abort_at_retire_after_the_in_place_workspace_went() -> Scenario {
+    scenario(
+        "abort at retire after the in-place workspace went",
+        vec![
+            create("w"),
+            create("w3"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
+            Step::git(&ww("w3"), Repo::Lib, &["switch", "main"]),
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+            Step::kill("landing"),
+            Step::git(&ww("w3"), Repo::Lib, &["switch", "--detach"]),
+            Step::rwv(&a(), &["workweave", "delete", "w3"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib, Repo::Proj])
+                .may_restore(&[Repo::Lib, Repo::Proj])
+                .claim(Claim::OutputContains("gone, so nothing there is put back")),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ],
+    )
+}
+
 /// From the primary, a target checked out in a workweave refuses: the primary
 /// would switch onto it. Freeing the workweave's checkout as printed, the
 /// target is checked out nowhere: it lands as refs, and the primary switches
