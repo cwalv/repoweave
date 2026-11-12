@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const PROJECT: &str = "p";
 const LIB: &str = "github/o/lib";
 const APP: &str = "github/o/app";
@@ -826,9 +828,7 @@ fn a_create_onto_itself_is_a_target_cycle_with_or_without_at() {
         &["branch", "create", "x", "--target", "x", "--at", "main"][..],
         &["branch", "create", "x", "--target", "x"][..],
     ] {
-        let out = refuse(args, ws);
-        assert!(out.contains("target cycle"), "{out}");
-        assert!(!out.contains("panicked"), "{out}");
+        common::cli::refused(&run(args, ws), State::TargetCycle);
         assert!(!has_branch(&project, "x"));
     }
 }
@@ -901,18 +901,22 @@ fn opening_or_recording_a_feature_whose_name_a_live_branch_declares_is_refused()
     declare_lib_on_rel(ws, "feat-d");
     git_ok(&project, &["branch", "feat-d", "main"]);
 
-    let opened = refuse(&["switch", "feat-d", "--target", "main"], ws);
-    assert!(opened.contains("name declared"), "{opened}");
+    common::cli::refused(
+        &run(&["switch", "feat-d", "--target", "main"], ws),
+        State::NameDeclared,
+    );
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     assert!(record_of(ws, "feat-d").is_none());
 
-    let recorded = refuse(
-        &[
-            "branch", "set-mode", "feat-d", "feature", "--target", "main",
-        ],
-        ws,
+    common::cli::refused(
+        &run(
+            &[
+                "branch", "set-mode", "feat-d", "feature", "--target", "main",
+            ],
+            ws,
+        ),
+        State::NameDeclared,
     );
-    assert!(recorded.contains("name declared"), "{recorded}");
     assert!(record_of(ws, "feat-d").is_none());
 }
 
@@ -927,8 +931,7 @@ fn a_name_collision_seen_later_refuses_the_verbs_that_align_or_publish_the_featu
     git_ok(&project, &["switch", "-q", "feat-d"]);
 
     for verb in [&["update"][..], &["push"][..]] {
-        let out = refuse(verb, ws);
-        assert!(out.contains("name declared"), "{out}");
+        let out = common::cli::refused(&run(verb, ws), State::NameDeclared);
         assert!(out.contains("rwv branch set-mode feat-d declared"), "{out}");
     }
 }
@@ -960,7 +963,10 @@ fn a_spelling_that_differs_from_the_record_is_not_reported_as_a_records_conflict
     succeed(&["branch", "create", "rel", "--declared"], ws);
     succeed(&["switch", "main"], ws);
 
-    let out = refuse(&["switch", "rel", "--target", "main"], ws);
+    let out = common::cli::refused(
+        &run(&["switch", "rel", "--target", "main"], ws),
+        State::TargetDiffers,
+    );
 
     assert!(out.contains("target differs (rel)"), "{out}");
     assert!(!out.contains("target conflict"), "{out}");

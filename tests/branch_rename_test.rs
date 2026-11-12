@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use repoweave::diagnosis::State;
+
 const PROJECT: &str = "p";
 const LIB: &str = "github/o/lib";
 const APP: &str = "github/o/app";
@@ -447,6 +449,10 @@ fn a_new_name_holding_a_record_of_another_value_is_refused_and_nothing_changes()
     publish_project_branch(&w, "held", false);
     let stderr = refuse(&["branch", "rename", "held", "--adopt"], &ww);
     assert!(stderr.contains("target differs (held)"), "{stderr}");
+    common::cli::refused(
+        &run(&["branch", "rename", "held", "--adopt"], &ww),
+        State::TargetDiffers,
+    );
     assert!(
         stderr.contains("declared") && stderr.contains("feature onto main"),
         "{stderr}"
@@ -508,9 +514,8 @@ fn a_rename_that_would_close_a_target_cycle_is_refused_before_any_branch_moves()
         "a target that is gone",
     );
 
-    let out = refuse(&["branch", "rename", "new"], ws);
+    common::cli::refused(&run(&["branch", "rename", "new"], ws), State::TargetCycle);
 
-    assert!(out.contains("target cycle"), "{out}");
     assert!(has_branch(&ws.join(LIB), "old") && !has_branch(&ws.join(LIB), "new"));
     assert!(has_branch(&project, "old") && !has_branch(&project, "new"));
 }
@@ -522,9 +527,10 @@ fn a_never_recorded_branch_does_not_take_up_a_stale_record_of_the_new_name() {
     common::git_in(&project, &["switch", "-qc", "raw"]);
     common::records::edit_by_hand(&project, &[("new", "mode = \"declared\"\n")], &[], "stale");
 
-    let out = refuse(&["branch", "rename", "new"], &w.workspace);
-
-    assert!(out.contains("target unrecorded"), "{out}");
+    common::cli::refused(
+        &run(&["branch", "rename", "new"], &w.workspace),
+        State::TargetUnrecorded,
+    );
     assert!(has_branch(&project, "raw") && !has_branch(&project, "new"));
 }
 
@@ -556,9 +562,10 @@ fn a_rename_from_a_detached_project_repo_is_the_detached_state_with_its_choices(
     let project = project_dir(&w.workspace);
     common::git_in(&project, &["switch", "-q", "--detach"]);
 
-    let out = refuse(&["branch", "rename", "new"], &w.workspace);
-
-    assert!(out.contains("alignment project detached"), "{out}");
+    let out = common::cli::refused(
+        &run(&["branch", "rename", "new"], &w.workspace),
+        State::AlignmentProjectDetached,
+    );
     assert!(out.contains("rwv switch"), "{out}");
     assert_routes_to(&out, "alignment");
 }
