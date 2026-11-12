@@ -381,7 +381,7 @@ fn sync_to_ff_primary_advances_to_workweave_lock() {
 
     // From primary: sync from the workweave.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -415,7 +415,7 @@ fn sync_to_ff_is_symmetric_workweave_catches_up_to_primary() {
     );
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -580,7 +580,7 @@ fn sync_to_rebase_lands_lock_only_divergence() {
     let primary_tip_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -613,7 +613,7 @@ fn sync_to_rebase_first_unblocks_a_refused_ff() {
         .failure();
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -672,7 +672,7 @@ fn sync_to_rebase_replays_local_commits_on_source_tip() {
     // project repos; this test deliberately constructs that to exercise Phase
     // 2's rebase strategy on the manifest repo, so it opts in via
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -758,10 +758,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // Project repos diverged from independent lock commits.
     // is required to reach Phase 2 where the rebase conflict is the focus
     // (adapted from --force).
-    let _ = rwv()
-        .args(["land", "--history", "linear"])
-        .current_dir(&ww.root)
-        .assert();
+    let _ = rwv().args(["land"]).current_dir(&ww.root).assert();
 
     // Abort should restore ww/main back to pre-op state.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
@@ -927,7 +924,7 @@ fn sync_to_proceeds_when_source_lock_tag_matches_head() {
     );
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -946,7 +943,7 @@ fn sync_to_proceeds_when_source_lock_sha_matches_head() {
     assert!(!source_lock_sha.is_empty());
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -978,14 +975,14 @@ fn sync_to_roundtrip_converges_without_project_repo_growth() {
 
     // Sync primary → workweave (workweave catches up to C2).
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
     // Sync workweave → primary (now a no-op: ww is at C2, primary is already at C2).
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -1149,7 +1146,7 @@ fn sync_to_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
     // is fresh" — workweave-tip C1 == workweave-lock C1 — even though primary
     // has diverged.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1184,7 +1181,7 @@ fn sync_to_from_primary_with_marker_workweave_source_uses_source_own_lock() {
     // Primary syncs from the workweave. Source freshness must be checked
     // against the workweave's own lock (C2 vs ww-tip C2), not primary's lock.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .success();
@@ -1227,7 +1224,7 @@ fn sync_to_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     common::git_in(&ws.ww_server_dir, &["reset", "--hard", &ww_c1]);
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ws.ww_root)
         .assert()
         .failure()
@@ -1272,7 +1269,7 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
 
     // Land ww: target is C2, but ww is at C3 (C2 is ancestor of C3).
     let out = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1596,7 +1593,7 @@ fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::
     );
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .args(args)
         .current_dir(&ww.root)
         .output()

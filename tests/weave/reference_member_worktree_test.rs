@@ -324,7 +324,7 @@ fn sync_to_lands_an_owned_commit_past_a_detached_reference_member() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -360,7 +360,7 @@ fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
         ));
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -386,7 +386,7 @@ fn sync_to_retire_with_a_reference_member_retires_the_workweave() {
     rwv_lock_commit(&ww.root);
 
     rwv()
-        .args(["land", "--history", "linear", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .success();

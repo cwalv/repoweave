@@ -487,7 +487,7 @@ fn retire_adopts_children() {
     // Retire wwa to primary (bare land reads parent = primary).
     rebind(&main, &format!("{PROJECT}--wwb"), "main");
     let out = rwv()
-        .args(["land", "--history", "linear", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&wwa.root)
         .output()
         .unwrap();
@@ -539,14 +539,7 @@ fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
         .to_string_lossy()
         .into_owned();
     rwv()
-        .args([
-            "land",
-            "--history",
-            "linear",
-            "--retire",
-            "--target",
-            &branch,
-        ])
+        .args(["land", "--retire", "--target", &branch])
         .current_dir(&a.root)
         .output()
         .unwrap()

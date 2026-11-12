@@ -246,7 +246,7 @@ fn sync_to_places_the_end_of_op_reshare_under_two_workers() {
     commit(&weave.member(), &["N1", "N2"], "primary");
     succeed(&weave.primary, &["lock", "--commit"]);
 
-    let doc = envelope(&seat, &["land", "--history", "linear", "--json", "-j", "2"]);
+    let doc = envelope(&seat, &["land", "--json", "-j", "2"]);
     let context = format!("{doc:#}");
     let placements = doc["placements"].as_array().unwrap();
     assert_eq!(placements.len(), 1, "{context}");
@@ -311,14 +311,7 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
 
         let (records, placements) = outcomes_and_placements(
             &seat,
-            &[
-                "land",
-                "--history",
-                "linear",
-                "--target",
-                "app--target",
-                "--json",
-            ],
+            &["land", "--target", "app--target", "--json"],
             "outcomes",
             jobs,
         );

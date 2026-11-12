@@ -555,16 +555,14 @@ fn sync_to_continue_from_step3_ff() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 8: ff strategy refuses when CWD is not strictly ahead
-// ---------------------------------------------------------------------------
-
+/// A seat whose branches are only behind its target has nothing to land, so
+/// the landing reads no `history` setting, even under a one-run `ff-only`:
+/// it succeeds and leaves the target where it was.
 #[test]
-fn sync_to_ff_refuses_when_cwd_not_ahead() {
+fn a_seat_behind_its_target_lands_nothing_and_reads_no_setting() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
-    // Primary makes a unique commit — CWD (ww) is NOT ahead of primary.
     let primary_c2 = make_commit(
         &primary.server_dir,
         "primary.txt",
@@ -580,19 +578,18 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
         &primary.project_dir,
         &["commit", "-m", "lock: primary advance"],
     );
+    let project_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    // Trying land with --history=ff-only from ww (which is behind primary) should fail.
-    let err_output = rwv()
-        .args(["land", "--history=ff-only"])
-        .current_dir(&ww.root)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
-    assert!(
-        stderr.contains("rebase") || stderr.contains("strictly ahead") || stderr.contains("ff"),
-        "expected ff-refuses message mentioning rebase; got:\n{stderr}"
+    for args in [vec!["land"], vec!["land", "--history=ff-only"]] {
+        rwv().args(&args).current_dir(&ww.root).assert().success();
+    }
+    assert_eq!(
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]).trim(),
+        primary_c2.trim()
+    );
+    assert_eq!(
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
+        project_before
     );
 }
 
@@ -1180,7 +1177,7 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     // (the parent workweave), and retire must accept the work as merged
     // once the parent has it.
     rwv()
-        .args(["land", "--history", "linear", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1241,7 +1238,7 @@ fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
     child_work_ready_to_retire(&child_ww);
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1295,7 +1292,7 @@ fn a_retire_that_refuses_leaves_no_completion_claim_behind() {
     .unwrap();
     let parent_before = common::git_in(parent_ww.join(SERVER_PATH), &["rev-parse", "HEAD"]);
 
-    let out = common::cli::run(&["land", "--history", "linear", "--retire"], &child_ww);
+    let out = common::cli::run(&["land", "--retire"], &child_ww);
     let stderr = common::cli::refused(&out, State::EditsDirty);
     assert!(stderr.contains("scratch.txt"), "{stderr}");
     assert_eq!(
@@ -1323,7 +1320,7 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
     child_work_ready_to_retire(&child_ww);
 
     let assert = rwv()
-        .args(["land", "--history", "linear", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1463,7 +1460,7 @@ fn land_takes_no_target_operand() {
     common::git_in(&ww_project, &["commit", "-m", "lock: ww advance"]);
     let before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    let out = common::cli::run(&["land", "--history", "linear", "../../primary"], &ww_root);
+    let out = common::cli::run(&["land", "../../primary"], &ww_root);
     assert_eq!(
         out.status.code(),
         Some(2),

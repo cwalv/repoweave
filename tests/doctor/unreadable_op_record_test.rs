@@ -316,7 +316,7 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
     std::fs::remove_file(record_path(&parked)).unwrap();
 
     for (dir, args) in [
-        (&parked.seat.root, &["land", "--history", "linear"][..]),
+        (&parked.seat.root, &["land"][..]),
         (&target, &["abort"][..]),
         (&target, &["status"][..]),
     ] {

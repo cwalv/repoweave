@@ -2744,7 +2744,7 @@ holding_rwv! {
     fn an_abort_refuses_a_branch_the_landing_moved_that_moved_again() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::commit(&a(), Repo::Proj, "raced"),
             Step::release("landing")
                 .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
@@ -2781,7 +2781,7 @@ holding_rwv! {
             let mut steps = vec![Step::git(&a(), Repo::Proj, &["branch", "old"])];
             steps.extend(landing_from("held"));
             steps.extend([
-                Step::rwv_paused(&ww("held"), &["land", "--history", "linear", "--retire"], "retire", "landing"),
+                Step::rwv_paused(&ww("held"), &["land", "--retire"], "retire", "landing"),
                 Step::git(&a(), Repo::Proj, away),
                 Step::release("landing")
                     .expect(Exit::Succeeds)
@@ -2808,7 +2808,7 @@ holding_rwv! {
     fn a_landing_moves_only_the_branch_its_plan_names() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::git(&a(), Repo::App, &["switch", "-c", "hotfix"]),
             Step::release("landing")
                 .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
@@ -2821,7 +2821,7 @@ holding_rwv! {
             Step::rwv(&ww("held"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App]),
-            Step::rwv(&ww("held"), &["land", "--history", "linear"])
+            Step::rwv(&ww("held"), &["land"])
                 .expect(Exit::refuses(Repo::App, State::AlignmentOnBranch))
                 .claim(Claim::OutputContains("rwv update")),
             Step::rwv(&a(), &["update"])
@@ -2831,7 +2831,7 @@ holding_rwv! {
                     repo: Repo::App,
                     branch: "main",
                 }),
-            Step::rwv(&ww("held"), &["land", "--history", "linear"])
+            Step::rwv(&ww("held"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(landed()),
         ]);
@@ -2844,7 +2844,7 @@ holding_rwv! {
     fn a_landing_fast_forwards_the_tip_it_composed() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::commit(&ww("held"), Repo::Proj, "late"),
             Step::release("landing")
                 .expect(Exit::Succeeds)
@@ -2904,7 +2904,7 @@ holding_rwv! {
     fn a_landing_that_loses_on_a_member_aborts_leaving_the_member_as_moved() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::commit(&a(), Repo::App, "raced"),
             Step::release("landing")
                 .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation))
@@ -2923,7 +2923,7 @@ holding_rwv! {
                     rev: "main",
                     mark: "raced",
                 }),
-            Step::rwv(&ww("held"), &["land", "--history", "linear"])
+            Step::rwv(&ww("held"), &["land"])
                 .expect(Exit::refuses(Repo::App, State::PinUnpinned))
                 .claim(Claim::OutputContains("rwv lock --commit")),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -2947,7 +2947,7 @@ holding_rwv! {
     fn a_held_landing_released_unraced_lands() {
         let mut steps = landing_from("held");
         steps.extend([
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], ADVANCE_TARGET, "landing"),
+            Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
             Step::release("landing").expect(Exit::Succeeds).claim(landed()),
         ]);
         bad_steps("a held landing, unraced", steps).assert_green();
@@ -2958,7 +2958,7 @@ holding_rwv! {
     fn the_pause_holds_only_at_the_point_it_names() {
         let mut steps = landing_from("held");
         steps.push(
-            Step::rwv_paused(&ww("held"), &["land", "--history", "linear"], "no-such-point", "landing")
+            Step::rwv_paused(&ww("held"), &["land"], "no-such-point", "landing")
                 .expect(Exit::Undecided)
                 .claim(landed()),
         );
@@ -2977,7 +2977,7 @@ holding_rwv! {
     fn an_unarmed_landing_runs_through_its_pause_point() {
         let mut steps = landing_from("unarmed");
         steps.push(
-            Step::rwv(&ww("unarmed"), &["land", "--history", "linear"])
+            Step::rwv(&ww("unarmed"), &["land"])
                 .expect(Exit::Succeeds)
                 .claim(landed()),
         );
@@ -3121,7 +3121,7 @@ fn upstream_pins_what_this_clone_lacks(seed: Seed) -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
                 .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["fetch", "origin"]),
-            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::PinUnreachable))
                 .claim(Claim::OutputContains("rwv fetch")),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
@@ -3299,7 +3299,7 @@ fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
                 .expect(Exit::Succeeds),
             Step::commit(&a(), Repo::Proj, "a-notes"),
             Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
                 .claim(Claim::OutputContains("rwv pull --merge-upstream")),
             Step::rwv(&a(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),

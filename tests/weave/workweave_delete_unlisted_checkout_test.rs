@@ -139,7 +139,7 @@ fn seat_with_a_stranded_dirty_checkout(weave: &Weave) -> PathBuf {
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
-    let pulled = run(&s1, &["land", "--history", "linear"]);
+    let pulled = run(&s1, &["land"]);
     assert_eq!(
         pulled.status.code(),
         Some(1),
@@ -475,7 +475,7 @@ fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
     );
     std::fs::write(stray.join("scratch.txt"), "untracked\n").unwrap();
 
-    let out = run(&s1, &["land", "--history", "linear", "--retire"]);
+    let out = run(&s1, &["land", "--retire"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         std::fs::read_to_string(stray.join("scratch.txt")).ok(),

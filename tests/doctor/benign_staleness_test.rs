@@ -172,7 +172,7 @@ fn relation_ok_sync_to_succeeds() {
     // while the manifest repo stays at the ok lock relation.
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -225,7 +225,7 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
 
     let assert = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -297,7 +297,7 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     // that the hook fired at all — without it, every check below holds against
     // a run where the hook never ran and the relock succeeded.
     let assert = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -366,7 +366,7 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     // that was blocked must now go through.
     common::git_in(&f.ww.project_dir, &["config", "--unset", "core.hooksPath"]);
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -398,7 +398,7 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     let target_lock_before = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
     let cwd_project_before = head(&f.ww.project_dir);
 
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     let stderr = common::cli::refused(&out, State::PinUnpinned);
     assert!(
         stderr.contains(MANIFEST_REPO_PATH)
@@ -433,7 +433,7 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
 
     // No op-state leaked: a re-run repeats the SAME refusal rather than
     // reporting an in-flight op.
-    let again = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let again = common::cli::run(&["land"], &f.ww.root);
     let stderr_again = common::cli::refused(&again, State::PinUnpinned);
     assert!(
         !stderr_again.contains("--continue"),
@@ -467,7 +467,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
     commit_file(&child.project_dir, "note.txt", "n\n", "child: note");
 
     let ww_project_before = head(&f.ww.project_dir);
-    let out = common::cli::run(&["land", "--history", "linear"], &child.root);
+    let out = common::cli::run(&["land"], &child.root);
     let stderr = common::cli::refused(&out, State::PinUnpinned);
     assert!(
         stderr.contains("1 commit beyond the pin") && stderr.contains("rwv lock --commit"),
@@ -515,7 +515,7 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -626,7 +626,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
     common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
     let target_project_before = head(&f.main.project_dir);
 
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     let stderr = common::cli::refused(&out, State::PinBackwards);
     assert!(
         stderr.contains("behind"),
@@ -666,7 +666,7 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     let target_project_before = head(&f.main.project_dir);
     let target_lib_before = head(&f.main.manifest_repo);
 
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     let stderr = common::cli::refused(&out, State::PinBackwards);
     assert!(
         stderr.contains("diverged") && stderr.contains("rwv member pin"),
@@ -708,7 +708,7 @@ fn unresolvable_target_lock_refuses_naming_unknown_revision() {
     );
 
     let dest_lib_before = head(&f.ww.manifest_repo);
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     let stderr = common::cli::refused(&out, State::PinUnreachable);
     assert!(
         stderr.contains("v9.9.9-nope"),
@@ -731,7 +731,7 @@ fn no_lock_sync_to_refuses() {
     common::git_in(&f.ww.project_dir, &["commit", "-m", "drop lock"]);
     let target_project_before = head(&f.main.project_dir);
 
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     common::cli::refused(&out, State::PinNone);
     assert_eq!(
         head(&f.main.project_dir),
@@ -753,7 +753,7 @@ fn dirty_source_tracked_change_refuses_and_names_repo() {
     std::fs::write(f.ww.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -777,7 +777,7 @@ fn dirty_source_untracked_file_is_ignored() {
     std::fs::write(f.ww.manifest_repo.join("scratch.tmp"), "scratch\n").unwrap();
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -806,7 +806,7 @@ fn unborn(repo: &Path) {
 }
 
 fn land_refused(f: &Fixture) -> std::process::Output {
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     assert!(!out.status.success(), "{}", common::cli::describe(&out));
     out
 }
@@ -856,7 +856,7 @@ fn detached_source_project_repo_refuses_before_any_side_effect() {
 
 fn lands(f: &Fixture, commits: &[&str]) {
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -963,7 +963,7 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
     );
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -981,7 +981,7 @@ fn dirty_source_non_lock_project_change_refuses() {
     std::fs::write(&yaml_path, y).unwrap();
 
     let assert = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .failure();
@@ -1017,7 +1017,7 @@ fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
     commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
 
     let assert = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&f.ww.root)
         .assert()
         .success();
@@ -1064,7 +1064,7 @@ fn the_landing_refusals_that_named_a_stale_lock_are_judged_as_pin_states() {
         .assert()
         .success();
     common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     common::cli::refused(&out, State::PinBackwards);
     retired("stale-lock", &out);
 
@@ -1079,14 +1079,14 @@ fn the_landing_refusals_that_named_a_stale_lock_are_judged_as_pin_states() {
     );
     common::git_in(&f.main.project_dir, &["add", "rwv.lock"]);
     common::git_in(&f.main.project_dir, &["commit", "-m", "lock: no such tag"]);
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     common::cli::refused(&out, State::PinUnreachable);
     retired("unresolvable-lock-entry", &out);
 
     let f = fixture();
     commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: d1");
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
-    let out = common::cli::run(&["land", "--history", "linear"], &f.ww.root);
+    let out = common::cli::run(&["land"], &f.ww.root);
     common::cli::refused(&out, State::PinUnpinned);
     retired("target-lock-behind", &out);
 }

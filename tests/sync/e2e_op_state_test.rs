@@ -191,7 +191,7 @@ fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
 
     // First sync parks mid-replay on the real conflict.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -203,7 +203,7 @@ fn concurrent_op_detection_blocks_new_land_in_cwd_workspace() {
     // Attempt a new sync from ww while the op-state file is present.
     // It should fail with an in-progress error.
     let assertion = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -248,7 +248,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
     let before = unix_now();
     let assertion = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -313,7 +313,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
     let out = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -453,7 +453,7 @@ fn continue_with_history_flag_is_rejected() {
 
     // Passing --history alongside --continue must be rejected.
     let assertion = rwv()
-        .args(["sync", "--history", "linear", "--continue"])
+        .args(["sync", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -515,7 +515,7 @@ fn land_continue_with_history_flag_is_rejected() {
 
     // rwv land --history=linear --continue must be rejected.
     let assertion = rwv()
-        .args(["land", "--history", "linear", "--continue"])
+        .args(["land", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -771,7 +771,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
     plant_owner_record(&ww.root, "land", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
-        .args(["land", "--history", "linear", "--retire"])
+        .args(["land", "--retire"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -899,7 +899,7 @@ fn op_guard_precedes_lock_relation_classification() {
 
     // A `rwv land` must report the in-flight op, NOT a lock/relation error.
     let assertion = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -965,7 +965,7 @@ fn op_state_file_written_during_sync_to_and_removed_on_success() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();

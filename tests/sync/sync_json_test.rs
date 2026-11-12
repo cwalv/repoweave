@@ -157,7 +157,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["land", "--history", "linear", "--json"])
+        .args(["land", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -253,7 +253,7 @@ fn sync_json_names_a_member_already_at_its_lock_as_no_op() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
     let assert = rwv()
-        .args(["land", "--history", "linear", "--json"])
+        .args(["land", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -759,7 +759,7 @@ fn manifest_order() -> Vec<&'static str> {
 fn sync_from_primary(primary: &Workspace, ww: &Workspace, jobs: &str) -> Vec<u8> {
     let _ = primary;
     rwv()
-        .args(["land", "--history", "linear", "--json", "-j", jobs])
+        .args(["land", "--json", "-j", jobs])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1004,7 +1004,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
-        .args(["land", "--history", "linear", "--json"])
+        .args(["land", "--json"])
         .current_dir(&ww.root)
         .assert()
         .success();

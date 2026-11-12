@@ -444,7 +444,7 @@ fn sync_to_leaves_the_reference_members_read_only() {
     commit_all(&seat.join(OWNED_PATH), "seat: new owned file");
     succeed(&["lock", "--commit"], &seat);
 
-    succeed(&["land", "--history", "linear"], &seat);
+    succeed(&["land"], &seat);
 
     assert!(weave.owned.join("NEW").exists(), "the commit landed");
     assert_read_only(&weave.reference, "the primary's reference after land");

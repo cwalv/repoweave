@@ -732,7 +732,7 @@ fn land_retire_deletes_what_landed_into_the_target_it_names() {
     let branch = minted("feat");
     commit_in(&ww.join(LIB), "work.txt");
 
-    let out = run(&["land", "--history", "linear", "--retire"], &ww);
+    let out = run(&["land", "--retire"], &ww);
     assert!(out.status.success(), "{}", describe(&out));
     assert!(!ww.exists());
     assert!(
@@ -761,18 +761,7 @@ fn land_retire_deletes_what_landed_into_the_target_it_names() {
     );
     commit_in(&ww.join(LIB), "more.txt");
 
-    let out = run(
-        &[
-            "land",
-            "--history",
-            "linear",
-            "--retire",
-            "--json",
-            "--target",
-            "main",
-        ],
-        &ww,
-    );
+    let out = run(&["land", "--retire", "--json", "--target", "main"], &ww);
 
     assert!(out.status.success(), "{}", describe(&out));
     let doc = json(&out);

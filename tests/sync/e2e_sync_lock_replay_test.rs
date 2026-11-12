@@ -210,7 +210,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
     // Before the lock-replay fix landed this step would fail with a
     // `git rebase --continue` conflict on rwv.lock. After: success.
     rwv()
-        .args(["sync", "--history", "linear"])
+        .args(["sync"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -305,7 +305,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 
     // WB syncs primary (rebase) then lands in primary (ff).
     rwv()
-        .args(["sync", "--history", "linear"])
+        .args(["sync"])
         .current_dir(&wb.root)
         .assert()
         .success();
@@ -320,7 +320,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
     // (its initial rwv lock commit) that conflicts with the two prior lock-bumps.
     // Both should drop silently.
     rwv()
-        .args(["sync", "--history", "linear"])
+        .args(["sync"])
         .current_dir(&wc.root)
         .assert()
         .success();
@@ -494,11 +494,7 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     // From ww: attempt rebase sync onto primary. ww's OWN committed
     // .gitattributes is clean, so this must fail on primary's state, not
     // ww's — and the refusal must name primary's directory, not ww's.
-    let out = rwv()
-        .args(["land", "--history", "linear"])
-        .current_dir(&ww.root)
-        .output()
-        .unwrap();
+    let out = rwv().args(["land"]).current_dir(&ww.root).output().unwrap();
     let stderr = common::cli::refused(
         &out,
         repoweave::diagnosis::State::MissingLockMergeDriverAttributeLegacy,
@@ -668,7 +664,7 @@ fn sync_to_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() 
 
     // Start the rebase from ww. It must stop on F1's docs conflict.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -754,7 +750,7 @@ fn sync_to_continue_with_unstaged_resolution_bails_and_second_continue_succeeds(
 
     // First sync stops on the docs conflict, same as the golden path.
     rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();

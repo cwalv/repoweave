@@ -441,7 +441,7 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["lock"]),
         (&weave.seat, vec!["update", "--remote"]),
         (&weave.seat, vec!["sync"]),
-        (&weave.seat, vec!["land", "--history", "linear"]),
+        (&weave.seat, vec!["land"]),
         (
             &weave.primary,
             vec!["workweave", "delete", "--project", PROJECT, SEAT],

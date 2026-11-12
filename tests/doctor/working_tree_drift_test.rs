@@ -552,11 +552,7 @@ fn sync_leaves_drift_in_a_checkout_stopped_in_a_revert() {
     };
     let before = state(&server_ww);
 
-    let out = rwv()
-        .args(["sync", "--history", "linear"])
-        .current_dir(&ww_root)
-        .output()
-        .unwrap();
+    let out = rwv().args(["sync"]).current_dir(&ww_root).output().unwrap();
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("refreshed drift"), "{stderr}");

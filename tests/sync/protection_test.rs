@@ -109,7 +109,7 @@ fn a_sync_of_a_feature_whose_member_branch_another_branch_declares_is_refused_an
     declare_lib_on(&w.workspace, "line", "p--anon");
     let before = common::git_in(ww.join(LIB), &["rev-parse", "HEAD"]);
 
-    let out = run(&["sync", "--history", "linear"], &ww);
+    let out = run(&["sync"], &ww);
     let text = common::cli::refused(&out, repoweave::diagnosis::State::NameDeclared);
 
     assert!(text.contains("line (projects/p)"), "{text}");

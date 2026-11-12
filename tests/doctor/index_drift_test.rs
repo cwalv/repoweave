@@ -538,10 +538,7 @@ fn sync_to_precondition_accepts_tag_form_lock_entry() {
     common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
     // rwv land the source (tag-pinned lock) must not emit "lock is stale".
-    let out = rwv()
-        .args(["land", "--history", "linear"])
-        .current_dir(&cwd_root)
-        .assert();
+    let out = rwv().args(["land"]).current_dir(&cwd_root).assert();
 
     let output = out.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);

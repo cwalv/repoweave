@@ -296,7 +296,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     // First attempt: land must refuse via the dirty-source preflight, NOT
     // via the in-flight refusal (nothing is in flight yet).
     let assertion = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -321,7 +321,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
     // was idempotent and the first attempt didn't strand any records that
     // would now surface as an "in progress" error.
     let assertion = rwv()
-        .args(["land", "--history", "linear"])
+        .args(["land"])
         .current_dir(&ww.root)
         .assert()
         .failure();
