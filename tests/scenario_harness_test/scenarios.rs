@@ -2892,6 +2892,7 @@ pub fn three_way_pins() -> Scenario {
     three_way_pins_on(Seed::default())
 }
 
+#[cfg(unix)]
 pub fn three_way_pins_on_old_git() -> Scenario {
     three_way_pins_on(Seed::default().old_git())
 }

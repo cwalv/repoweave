@@ -395,6 +395,7 @@ fn a_pin_one_side_moved_backward_by_name_survives_a_merge_of_the_other() {
     assert!(pinned.contains(&one_back), "{pinned}");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_merge_without_merge_tree_gives_the_same_pins() {
     runner::run(scenarios::three_way_pins_on_old_git()).assert_fully_decided_green();

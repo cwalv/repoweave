@@ -237,6 +237,7 @@ impl Seed {
         self
     }
 
+    #[cfg(unix)]
     pub fn old_git(mut self) -> Seed {
         self.old_git = true;
         self
@@ -550,6 +551,7 @@ impl Sandbox {
     /// A directory holding a `git` that reports release 2.37 and refuses
     /// `merge-tree --write-tree` as that release does, and runs the real git
     /// for everything else.
+    #[cfg(unix)]
     fn install_git_shim(&self) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let real = String::from_utf8(
@@ -575,6 +577,11 @@ impl Sandbox {
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         dir
+    }
+
+    #[cfg(not(unix))]
+    fn install_git_shim(&self) -> PathBuf {
+        panic!("the git release shim is a shell script, which this platform's tests do not run")
     }
 
     fn hermetic(&self, mut cmd: Command) -> Command {
