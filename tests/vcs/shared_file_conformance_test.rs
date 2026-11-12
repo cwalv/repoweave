@@ -219,6 +219,7 @@ impl Update {
                     &w.before,
                     DerivedContentPolicy::vcs_default(),
                 )
+                .map(drop)
                 .unwrap(),
             Update::WorkingTreeRefresh => {
                 let branch = updater.file_name().unwrap().to_str().unwrap();

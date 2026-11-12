@@ -508,8 +508,38 @@ impl Vcs for FakeVcs {
         _onto: &ResolvedRevisionId,
         _upstream: &ResolvedRevisionId,
         _derived: DerivedContentPolicy,
-    ) -> Result<(), VcsError> {
+    ) -> Result<super::Replayed, VcsError> {
         unsupported("rebase")
+    }
+
+    fn replayed(
+        &self,
+        _repo: &Path,
+        _from: &CommitId,
+        _old: &CommitId,
+        _onto: &CommitId,
+        _new: &CommitId,
+    ) -> Result<super::Replayed, VcsError> {
+        unsupported("replayed")
+    }
+
+    fn copy_replayed(
+        &self,
+        _repo: &Path,
+        _commit: &CommitId,
+        _parent: &CommitId,
+        _changes: &[super::FileChange],
+    ) -> Result<CommitId, VcsError> {
+        unsupported("copy_replayed")
+    }
+
+    fn take_rewritten(
+        &self,
+        _on: &super::AttachedRef,
+        _from: &CommitId,
+        _to: &CommitId,
+    ) -> Result<(), VcsError> {
+        unsupported("take_rewritten")
     }
 
     fn rebase_continue(
@@ -832,7 +862,7 @@ impl Vcs for FakeVcs {
         _commit: &CommitId,
         _mainline: Option<usize>,
     ) -> Result<crate::vcs::Copied, VcsError> {
-        unsupported("copy_commit")
+        unsupported("copy_replayed")
     }
 
     fn continue_copy(&self, _checkout: &Path) -> Result<crate::vcs::Copied, VcsError> {

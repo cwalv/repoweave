@@ -401,6 +401,16 @@ pub enum Claim {
         member: Repo,
         mark: &'static str,
     },
+    /// The lock of the project commit `rev` at `at` pins `member` at a
+    /// commit whose subject is `subject` and that `member`'s checkout at `at`
+    /// reaches from its HEAD: a commit a rebase replayed there, never the
+    /// one it replayed.
+    PinsReplayed {
+        at: Place,
+        rev: &'static str,
+        member: Repo,
+        subject: &'static str,
+    },
     WorkweaveGone(Place),
     /// A backup in machine A's primary clone of `repo` reaches the commit
     /// `mark` names, and, where `marked` is given, is marked so.
@@ -2087,6 +2097,51 @@ impl Run<'_> {
                 let store = invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 self.contains(&store, pin, mark)
+            }
+            Claim::PinsReplayed {
+                at,
+                rev,
+                member,
+                subject,
+            } => {
+                let proj = sb.checkout(at, Repo::Proj);
+                let lock = sb.git_ok(&proj, &["show", &format!("{rev}:rwv.lock")]);
+                let parsed = repoweave::manifest::LockFile::from_json_str(&lock)
+                    .map_err(|e| format!("the lock at {rev} does not parse: {e:#}"))?;
+                let pin = parsed
+                    .iter_entries()
+                    .find(|(key, _)| Repo::from_member_key(&key.to_string()) == *member)
+                    .map(|(_, entry)| entry.version.to_string())
+                    .ok_or_else(|| format!("the lock at {rev} has no pin for {}", member.name()))?;
+                let dir = sb.checkout(at, *member);
+                let pinned = sb.git_ok(&dir, &["log", "-1", "--format=%s", &pin]);
+                if pinned.trim() != *subject {
+                    return Err(format!(
+                        "the lock at {rev} pins {} at {pin} ({}), not at a commit '{subject}'",
+                        member.name(),
+                        pinned.trim()
+                    ));
+                }
+                if !self
+                    .sandbox
+                    .git(&dir, &["merge-base", "--is-ancestor", &pin, "HEAD"])
+                    .status
+                    .success()
+                {
+                    return Err(format!(
+                        "the lock at {rev} pins {} at {pin} '{subject}', which its HEAD does not \
+                         reach: the commit the rebase replayed, not its image",
+                        member.name()
+                    ));
+                }
+                if self.mark(subject).is_ok_and(|original| *original == pin) {
+                    return Err(format!(
+                        "the lock at {rev} pins {} at the commit '{subject}' as it was before \
+                         any rebase",
+                        member.name()
+                    ));
+                }
+                Ok(())
             }
             Claim::WorkweaveGone(place) => {
                 if sb.place_root(place).exists() {

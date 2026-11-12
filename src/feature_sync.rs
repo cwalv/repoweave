@@ -1435,6 +1435,7 @@ fn act(
     } else {
         set_aside_authored(sync, &pre_manifest)?;
         take_project(sync, &head, &source, resets_project, output)?;
+        remap(sync, op, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }
     settle(sync, &pre_manifest, reported, output)?;
@@ -1638,6 +1639,15 @@ fn take_member(
         );
         return Ok(source.clone());
     }
+    crate::op_state::journal_rebasing(
+        workspace,
+        crate::op_state::Rebasing {
+            repo: RepoKey::Member(path.clone()),
+            branch: branch.as_str().to_owned(),
+            from: head.id().clone(),
+            onto: source.clone(),
+        },
+    )?;
     crate::backup::keep_rebased(
         vcs,
         dir,
@@ -1786,7 +1796,7 @@ fn take_project(
     let dir = &sync.dir;
     let label = sync.label();
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
-        vcs.rebase_continue(dir, DerivedContentPolicy::keep_target_side())
+        vcs.rebase_continue(dir, DerivedContentPolicy::rewritten_after())
             .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
         return Ok(());
     }
@@ -1832,6 +1842,15 @@ fn take_project(
         );
         return Ok(());
     }
+    crate::op_state::journal_rebasing(
+        sync.ctx.active_path(),
+        crate::op_state::Rebasing {
+            repo: RepoKey::Project,
+            branch: branch.as_str().to_owned(),
+            from: head.clone(),
+            onto: source.clone(),
+        },
+    )?;
     crate::backup::keep_rebased(
         vcs,
         dir,
@@ -1840,10 +1859,38 @@ fn take_project(
         sync.ctx.active_path(),
         RepoKey::Project,
     )?;
-    vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
+    vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
         .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
     report_dropped_derived(&label, dir, vcs, &src, &here);
     say(output, &format!("{label}: rebased onto {}", source.short()));
+    Ok(())
+}
+
+/// Pin each replayed project commit at what the member rebases made of the
+/// commits it pinned.
+fn remap(sync: &Sync<'_>, op: &Op, output: OutputMode) -> anyhow::Result<()> {
+    let rebases = crate::op_state::read_owner(&op.workspace)?
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebases)
+        .unwrap_or_default();
+    let remapped = crate::remap::remap_rebased_project(
+        sync.vcs.as_ref(),
+        &sync.dir,
+        sync.ctx.active_path(),
+        &rebases,
+    )?;
+    for moved in remapped.unwrap_or_default() {
+        say(
+            output,
+            &format!(
+                "{}: re-pinned {} to {}: the rebase dropped the commit it pinned, already on {}",
+                moved.member,
+                moved.was.short(),
+                moved.now.short(),
+                sync.source_name()
+            ),
+        );
+    }
     Ok(())
 }
 

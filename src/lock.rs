@@ -201,9 +201,15 @@ pub(crate) fn pinned_by_name_warning(
 /// raw [`LockFile`] (round-trip) or a [`ResolvedLockFile`] (post-lock
 /// generation). Both serialize as the same JSON shape — a single string
 /// per `version`.
-pub fn write_lock_in<L: serde::Serialize>(lock: &L, project_dir: &Path) -> anyhow::Result<()> {
+/// The text of `rwv.lock` holding `lock`.
+pub(crate) fn render<L: serde::Serialize>(lock: &L) -> anyhow::Result<String> {
     let mut json = serde_json::to_string_pretty(lock).context("failed to serialize lock file")?;
     json.push('\n');
+    Ok(json)
+}
+
+pub fn write_lock_in<L: serde::Serialize>(lock: &L, project_dir: &Path) -> anyhow::Result<()> {
+    let json = render(lock)?;
     let path = LockFile::path_in(project_dir);
     path.publish(json.as_bytes())
         .with_context(|| format!("failed to write {path}"))

@@ -533,6 +533,19 @@ pub struct TakeInRecord {
     /// refused or interrupted abort leaves a record only `rwv abort` takes up.
     #[serde(default)]
     pub abort_begun: bool,
+    /// Each rebase the op starts, written before it starts, so the replay can
+    /// be read back from the commits once it ends, by this process or by hand.
+    #[serde(default)]
+    pub rebases: Vec<Rebasing>,
+}
+
+/// A rebase of the branch `branch` in `repo`, from `from` onto `onto`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rebasing {
+    pub repo: RepoKey,
+    pub branch: String,
+    pub from: CommitId,
+    pub onto: CommitId,
 }
 
 /// One move a landing reports as it makes it.
@@ -562,6 +575,13 @@ pub enum LandingReport {
         repo: RepoKey,
         was: CommitId,
         backup: String,
+    },
+    /// A pin a replayed project commit held on a commit the rebase dropped,
+    /// moved to `now`, what the member's rebase made of the commits before it.
+    Remapped {
+        repo: RepoKey,
+        was: CommitId,
+        now: CommitId,
     },
     /// A pin moved backward by name.
     Repinned {
@@ -1513,6 +1533,25 @@ pub fn journal_rebased_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow:
         if !take_in.rebased_backups.contains(&kept) {
             take_in.rebased_backups.push(kept);
         }
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal `rebasing` on the op at `workspace_dir` before the rebase starts,
+/// replacing an earlier rebase of the same branch of the same repo.
+pub fn journal_rebasing(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in
+            .rebases
+            .retain(|r| !(r.repo == rebasing.repo && r.branch == rebasing.branch));
+        take_in.rebases.push(rebasing);
     }
     write_owner(workspace_dir, &record)
 }

@@ -651,6 +651,7 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    history_rebase_pin_remap,
     dc04_conflict_setter,
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
@@ -4370,6 +4371,11 @@ fn history_unset_moved_is_green() {
 #[test]
 fn history_contradicted_is_green() {
     runner::run(scenarios::history_contradicted()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_rebase_pin_remap_is_green() {
+    runner::run(scenarios::history_rebase_pin_remap()).assert_fully_decided_green();
 }
 
 #[test]

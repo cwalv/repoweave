@@ -28,7 +28,7 @@ fn sites(needle: &str) -> Vec<SourceLine> {
 /// goes through it.
 #[test]
 fn every_commit_of_a_staged_change_goes_through_the_record_writer() {
-    for needle in [".commit_only(", ".commit_merge("] {
+    for needle in [".commit_only(", ".commit_merge(", ".copy_replayed("] {
         let found = sites(needle);
         assert!(
             found.iter().any(|line| line.file == "repin.rs"),

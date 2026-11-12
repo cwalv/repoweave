@@ -718,6 +718,13 @@ pub enum LandingReportOutput {
         was: CommitId,
         backup: String,
     },
+    /// A pin a replayed project commit held on a commit the rebase of
+    /// `path` dropped, moved to what that rebase made of the commits before it.
+    Remapped {
+        path: String,
+        was: CommitId,
+        now: CommitId,
+    },
     /// A pin the landing moved backward, named by `--allow-member-change`.
     RePinned {
         path: String,
@@ -816,6 +823,11 @@ impl LandingReportOutput {
                 path: repo.to_string(),
                 was: was.clone(),
                 backup: backup.clone(),
+            },
+            op_state::LandingReport::Remapped { repo, was, now } => Self::Remapped {
+                path: repo.to_string(),
+                was: was.clone(),
+                now: now.clone(),
             },
             op_state::LandingReport::Repinned { repo, was, now } => Self::RePinned {
                 path: repo.to_string(),
@@ -941,6 +953,14 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                 outln!(
                     "  {repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
                     was.short()
+                );
+            }
+            op_state::LandingReport::Remapped { repo, was, now } => {
+                eprintln!(
+                    "  {repo}: re-pinned {} -> {}: the rebase dropped the commit a replayed \
+                     project commit pinned, already on the target",
+                    was.short(),
+                    now.short()
                 );
             }
             op_state::LandingReport::Repinned { repo, was, now } => {
@@ -1487,6 +1507,7 @@ fn apply_strategy(
                 target,
                 DerivedContentPolicy::keep_target_side(),
             )
+            .map(drop)
             .map_err(StrategyError::from_vcs)?;
         }
     }
@@ -5438,6 +5459,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         ctx.handler.record_member(member);
     }
 
+    remap_landing(ctx)?;
+
     settle_members(
         &ctx.cwd_workspace_dir,
         &ctx.cwd_project_dir,
@@ -5446,6 +5469,46 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+/// Pin each project commit the landing's rebase replayed at what the member
+/// rebases made of the commits it pinned, and record the project tip that
+/// leaves as the one the landing composed.
+fn remap_landing(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let rebases = op_state::read_owner(&ctx.owner_workspace_dir)?
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebases)
+        .unwrap_or_default();
+    let Some(remapped) = crate::remap::remap_rebased_project(
+        ctx.project_vcs.as_ref(),
+        &ctx.cwd_project_dir,
+        &ctx.cwd_workspace_dir,
+        &rebases,
+    )?
+    else {
+        return Ok(());
+    };
+    for moved in remapped {
+        report_landing(
+            ctx,
+            op_state::LandingReport::Remapped {
+                repo: RepoKey::Member(moved.member),
+                was: moved.was,
+                now: moved.now,
+            },
+        )?;
+    }
+    let tip = ctx.project_vcs.head_revision(&ctx.cwd_project_dir)?;
+    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: owner record missing after the pin re-map"
+        )
+    })?;
+    if let Some(advanced) = owner.tips.advanced_mut() {
+        advanced.insert(RepoKey::Project, tip.id().clone());
+    }
+    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
 }
 
 /// Keep the branch checked out in `dir` as a `rebased` backup before a rebase
@@ -5469,6 +5532,15 @@ fn keep_before_rebase(
         return Ok(());
     };
     let branch = crate::vcs::RawRefName::new(attached.to_string());
+    op_state::journal_rebasing(
+        &ctx.owner_workspace_dir,
+        op_state::Rebasing {
+            repo: repo.clone(),
+            branch: branch.as_str().to_owned(),
+            from: head.id().clone(),
+            onto: onto.id().clone(),
+        },
+    )?;
     let backup = crate::backup::keep_rebased(
         vcs,
         dir,
@@ -7098,18 +7170,16 @@ fn apply_project_strategy(
     {
         return Ok(());
     }
-    // The replay states `keep_target_side`, which holds the lock merge driver:
-    // lock-only commits become empty patches git drops, so the source's
-    // `rwv.lock` survives the replay and Phase 3 regenerates it.
     let outcome = if mid_rebase {
-        vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
+        vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::rewritten_after())
     } else {
         vcs.rebase(
             cwd_project_dir,
             source_tip,
             source_tip,
-            DerivedContentPolicy::keep_target_side(),
+            DerivedContentPolicy::rewritten_after(),
         )
+        .map(drop)
     };
     match outcome {
         Ok(()) => Ok(()),

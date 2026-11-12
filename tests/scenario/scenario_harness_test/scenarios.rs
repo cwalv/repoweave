@@ -11873,3 +11873,57 @@ pub fn cherry_pick_refuses_a_pin_this_clone_lacks() -> Scenario {
     ]);
     scenario("cherry-pick refuses a pin this clone lacks", steps)
 }
+/// `history-rebase-pin-remap`: a seat whose project branch holds two relock
+/// commits, each pinning `app` at a commit of its own, takes in a moved
+/// `linear` `main` and later lands into it once more moved: after each
+/// rebase every replayed project commit pins what the `app` rebase made of
+/// the commit it pinned, and the landing's lineage rule reads those pins.
+pub fn history_rebase_pin_remap() -> Scenario {
+    let pins_both = |at: Place, tip: &'static str, before: &'static str| {
+        [
+            Claim::PinsReplayed {
+                at: at.clone(),
+                rev: tip,
+                member: Repo::App,
+                subject: "w-app-2",
+            },
+            Claim::PinsReplayed {
+                at,
+                rev: before,
+                member: Repo::App,
+                subject: "w-app-1",
+            },
+        ]
+    };
+    let [sync_tip, sync_before] = pins_both(ww("w"), "HEAD", "HEAD~1");
+    let [land_tip, land_before] = pins_both(a(), "main", "main~1");
+    scenario(
+        "history: a rebased project branch pins what the member rebases made",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app-1"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app-1"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("local/remotes/app: rebased onto"))
+                .claim(sync_tip)
+                .claim(sync_before),
+            Step::commit(&a(), Repo::App, "main-app-2"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("local/remotes/app: rebased"))
+                .claim(Claim::OutputLacks("off lineage"))
+                .claim(Claim::WorkweaveGone(ww("w")))
+                .claim(land_tip)
+                .claim(land_before),
+        ],
+    )
+}

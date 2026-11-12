@@ -189,7 +189,7 @@ impl GitVcs {
         }
     }
 
-    fn head_commit(checkout: &Path) -> Result<CommitId, VcsError> {
+    pub(super) fn head_commit(checkout: &Path) -> Result<CommitId, VcsError> {
         let args = ["rev-parse", "--verify", "HEAD^{commit}"];
         commit_id(&Self::run_trimmed(args, checkout)?, &args, checkout)
     }

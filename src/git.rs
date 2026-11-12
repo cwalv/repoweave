@@ -13,7 +13,8 @@ use crate::vcs::{
     RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
     RecordsPublish, RecordsSite, RefMerge, RefOrigin, RefRestoreOutcome, RefSavepoint,
     RefreshScope, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch,
-    RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace, ResolvedEndpoint,
+    RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed,
+    ResolvedEndpoint,
     ResolvedRevisionId, SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness,
     TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
     VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
@@ -30,6 +31,7 @@ mod backup;
 mod merge;
 mod pick;
 mod records;
+mod replay;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -383,7 +385,8 @@ fn lock_driver_held_args() -> [String; 2] {
 /// so the repo's own config decides.
 fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
     match policy.resolution() {
-        DerivedContentResolution::KeepTargetSide => {
+        DerivedContentResolution::KeepTargetSide
+        | DerivedContentResolution::KeepTargetSideKeepingEmpty => {
             let mut args = vec![
                 "-c".to_owned(),
                 format!("{DERIVED_CONTENT_DRIVER_CONFIG_KEY}=true"),
@@ -2741,7 +2744,8 @@ impl Vcs for GitVcs {
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
-    ) -> Result<(), VcsError> {
+    ) -> Result<Replayed, VcsError> {
+        let old = Self::head_commit(repo)?;
         // `git rebase --onto <onto> <upstream>` replays commits in
         // <upstream>..HEAD onto <onto>. On conflict, git leaves the repo
         // mid-rebase (rebase-merge/ + conflict markers in WT). We detect that
@@ -2760,11 +2764,15 @@ impl Vcs for GitVcs {
         // `--force-rebase`: force a replay even when `upstream` is already an
         // ancestor of HEAD. Without it, git short-circuits to "up to date" —
         // and the commits that should have been dropped survive.
+        let empty = match derived.resolution() {
+            DerivedContentResolution::KeepTargetSideKeepingEmpty => "--empty=keep",
+            _ => "--empty=drop",
+        };
         let rebase_args = [
             "rebase",
             "--force-rebase",
             "--no-keep-empty",
-            "--empty=drop",
+            empty,
             "--onto",
             onto.id().as_str(),
             upstream.id().as_str(),
@@ -2786,7 +2794,8 @@ impl Vcs for GitVcs {
             })?;
 
         if output.status.success() {
-            return Ok(());
+            let new = Self::head_commit(repo)?;
+            return self.replayed(repo, upstream.id(), &old, onto.id(), &new);
         }
 
         // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
@@ -2806,6 +2815,37 @@ impl Vcs for GitVcs {
             repo: repo.to_path_buf(),
             stderr,
         })
+    }
+
+    fn replayed(
+        &self,
+        repo: &Path,
+        from: &CommitId,
+        old: &CommitId,
+        onto: &CommitId,
+        new: &CommitId,
+    ) -> Result<Replayed, VcsError> {
+        Self::pair_replayed(repo, from, old, onto, new)
+    }
+
+    fn copy_replayed(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        parent: &CommitId,
+        changes: &[FileChange],
+    ) -> Result<CommitId, VcsError> {
+        Self::copy_with_changes(repo, commit, parent, changes)
+    }
+
+    fn take_rewritten(
+        &self,
+        on: &AttachedRef,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<(), VcsError> {
+        self.verify_attachment(on)?;
+        Self::reset_keeping_to(on, from, to)
     }
 
     fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError> {

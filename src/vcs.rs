@@ -1401,6 +1401,35 @@ pub struct FileChange {
     pub content: Option<Vec<u8>>,
 }
 
+/// What a replay made of the commits it replayed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Replayed {
+    /// Each commit replayed, oldest first, with the commit it became; `None`
+    /// where the replay dropped it.
+    pub images: Vec<(CommitId, Option<CommitId>)>,
+    /// Each commit the replay wrote, oldest first, those that are no
+    /// commit's image included.
+    pub written: Vec<CommitId>,
+}
+
+impl Replayed {
+    /// The commit `old` became; `None` where it was dropped or not replayed.
+    pub fn image(&self, old: &CommitId) -> Option<&CommitId> {
+        self.images
+            .iter()
+            .find(|(o, _)| o == old)
+            .and_then(|(_, new)| new.as_ref())
+    }
+
+    /// The commit replayed into `new`; `None` for one no commit became.
+    pub fn original(&self, new: &CommitId) -> Option<&CommitId> {
+        self.images
+            .iter()
+            .find(|(_, n)| n.as_ref() == Some(new))
+            .map(|(old, _)| old)
+    }
+}
+
 /// A tree of files, named by the backend's object name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeId(String);
@@ -2610,6 +2639,10 @@ pub(crate) enum DerivedContentResolution {
     /// version already on the side being replayed onto (rebase) or merged
     /// into (merge), and the incoming edit is discarded.
     KeepTargetSide,
+    /// [`DerivedContentResolution::KeepTargetSide`], keeping a replayed
+    /// commit that ends up empty, for a caller that writes the declared paths
+    /// of every replayed commit itself afterward.
+    KeepTargetSideKeepingEmpty,
 }
 
 impl DerivedContentPolicy {
@@ -2640,6 +2673,15 @@ impl DerivedContentPolicy {
     /// which is the only half rwv owns per invocation.
     pub fn vcs_default() -> Self {
         Self(DerivedContentResolution::VcsDefault)
+    }
+
+    /// Declared derived paths keep the target-side version while the replay
+    /// runs, and a replayed commit left with no change is kept rather than
+    /// dropped: the caller rewrites each replayed commit's declared paths
+    /// once the replay ends, so a commit that changed only them still has a
+    /// change to carry.
+    pub fn rewritten_after() -> Self {
+        Self(DerivedContentResolution::KeepTargetSideKeepingEmpty)
     }
 
     /// Which resolution this policy names, for a [`Vcs`] impl to translate.
@@ -3228,6 +3270,48 @@ pub trait Vcs: Send + Sync {
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
+    ) -> Result<Replayed, VcsError>;
+
+    /// Which commit each commit of `from..old` became, where a replay wrote
+    /// `onto..new` from them: the replay keeps their order and their
+    /// authorship, so each written commit is paired with the next replayed
+    /// commit of the same authorship, those passed over being the ones the
+    /// replay dropped. A written commit paired with none is one the replay
+    /// added. Reads commits only, so it answers alike for a replay this
+    /// process ran and one finished by hand.
+    ///
+    /// For git: the author and author date of each commit, then its subject.
+    fn replayed(
+        &self,
+        repo: &Path,
+        from: &CommitId,
+        old: &CommitId,
+        onto: &CommitId,
+        new: &CommitId,
+    ) -> Result<Replayed, VcsError>;
+
+    /// A copy of `commit` whose parent is `parent`, its message and
+    /// authorship kept and its tree `commit`'s with `changes` applied,
+    /// referenced by nothing.
+    fn copy_replayed(
+        &self,
+        repo: &Path,
+        commit: &CommitId,
+        parent: &CommitId,
+        changes: &[FileChange],
+    ) -> Result<CommitId, VcsError>;
+
+    /// Move the branch `on` witnesses from `from`, where a replay left it, to
+    /// `to`, a copy of that replay whose commits differ from it only in
+    /// paths the checkout holds unchanged. Refuses a branch not at `from`
+    /// and an uncommitted change the move would overwrite.
+    ///
+    /// For git: `git reset --keep <to>`.
+    fn take_rewritten(
+        &self,
+        on: &AttachedRef,
+        from: &CommitId,
+        to: &CommitId,
     ) -> Result<(), VcsError>;
 
     /// Resume an in-flight rebase in `repo` after the operator has resolved
