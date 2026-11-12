@@ -761,6 +761,8 @@ every_scenario!(
     ),
     cherry_pick_abort_leaves_an_untouched_members_merge,
     pull_abort_refuses_a_merge_begun_on_the_operators_commit,
+    pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint,
+    abort_refuses_an_interactive_rebase_the_operator_began,
     cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit,
     pull_abort_refuses_a_merge_in_a_member_it_never_merges,
     update_remote_abort_refuses_a_merge_in_a_member_it_never_merges,
@@ -2877,6 +2879,22 @@ fn update_remote_abort_over_a_ref_moved_since_prints_the_choice_that_clears_it()
 #[test]
 fn abort_keeps_an_own_commit_on_a_rebase_finished_by_hand() {
     runner::run(scenarios::vcs_continue_mid_rebase_then_an_own_commit())
+        .assert_fully_decided_green();
+}
+
+/// An operator's merge begun at the savepoint, in a repo the pull merges,
+/// is refused as theirs: it takes in nothing the pull journaled.
+#[test]
+fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() {
+    runner::run(scenarios::pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint())
+        .assert_fully_decided_green();
+}
+
+/// An operator's interactive rebase, stopped at an `edit` with a commit made
+/// in it, is refused as theirs, and the abandon keeps that commit.
+#[test]
+fn abort_refuses_an_interactive_rebase_the_operator_began() {
+    runner::run(scenarios::abort_refuses_an_interactive_rebase_the_operator_began())
         .assert_fully_decided_green();
 }
 

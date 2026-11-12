@@ -274,6 +274,8 @@ struct OwnerRecordFixture {
     /// landing that reached `phase` journals: each repo with a converged tip
     /// once it is advancing the target, before it moves any.
     moved_in_target: Option<Vec<repoweave::manifest::RepoKey>>,
+    /// The rebases the landing journaled starting.
+    rebases: Vec<repoweave::op_state::Rebasing>,
 }
 
 fn tip_map_json(tips: &[(String, String)]) -> String {
@@ -318,6 +320,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
                     Vec::new()
                 }
             });
+            plan.rebases = rec.rebases.clone();
             serde_json::to_string(&plan).unwrap()
         } else {
             "null".to_owned()
@@ -681,6 +684,7 @@ fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
     plant_savepoint(&ww.server_dir, op_id);
     common::git_in(&ww.server_dir, &["checkout", "-b", "diverge", &pre_tip]);
     advance_one(&ww.server_dir, "conflict.txt", "diverge\n", "div: c");
+    let onto = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     common::git_in(&ww.server_dir, &["checkout", "ww/main"]);
     let _ = std::process::Command::new("git")
         .args(["rebase", "diverge"])
@@ -703,6 +707,15 @@ fn cell_m_replay_quiescent_sync_to_abort_cancels_mid_rebase_and_restores() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
+            rebases: vec![repoweave::op_state::Rebasing {
+                repo: repoweave::manifest::RepoKey::Member(
+                    repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+                ),
+                branch: "ww/main".to_owned(),
+                base: repoweave::vcs::CommitId::parse(&pre_tip).unwrap(),
+                from: repoweave::vcs::CommitId::parse(&sha).unwrap(),
+                onto: repoweave::vcs::CommitId::parse(&onto).unwrap(),
+            }],
             ..Default::default()
         },
     );
@@ -2850,6 +2863,53 @@ fn cell_owner_record_missing_advanced_tips_key_aborts_from_its_header() {
         !ww.root.join(".rwv-op").exists(),
         "[cell7] a clean abort clears the record it read"
     );
+}
+
+/// A record that reads header-only says nothing of what the op started, so
+/// a merge begun at the savepoint is not taken for the op's: abort refuses
+/// it, and naming the repo on `--abandon-foreign-tip` keeps its staged
+/// content as a backup before cancelling it.
+#[test]
+fn a_header_only_record_refuses_a_merge_begun_at_the_savepoint() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+    let op_id = "crash-matrix-header-only-merge";
+    std::fs::write(ww.root.join(".rwv-op"), cell7_record(&primary, &ww, op_id)).unwrap();
+    plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
+    plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
+    common::git_in(&ww.server_dir, &["switch", "-q", "-c", "own-side"]);
+    advance_one(&ww.server_dir, "own-side.txt", "own side\n", "own side");
+    common::git_in(&ww.server_dir, &["switch", "-q", "-"]);
+    common::git_in(
+        &ww.server_dir,
+        &["merge", "--no-ff", "--no-commit", "own-side"],
+    );
+
+    let out = common::cli::run(&["abort"], &ww.root);
+    common::cli::refused(&out, repoweave::refusal::RefusalKind::ForeignTip);
+    common::git_in(
+        &ww.server_dir,
+        &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+    );
+
+    let out = common::cli::run(&["abort", "--abandon-foreign-tip", SERVER_PATH], &ww.root);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("its uncommitted edits are kept as backup"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    assert_eq!(
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
+        ww_server_pre
+    );
+    assert!(!common::git_in(
+        &ww.server_dir,
+        &["log", "--all", "--format=%H", "--", "own-side.txt"]
+    )
+    .is_empty());
 }
 
 /// Cell 7b: a record whose header does not parse names no op, so abort

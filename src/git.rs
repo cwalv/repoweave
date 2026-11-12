@@ -19,7 +19,7 @@ use crate::vcs::{
     UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
     WorkspacePopulation,
 };
-use crate::vcs::{Attribution, Integrates, KeptWork};
+use crate::vcs::{Attribution, Integrates, KeptWork, OwnStep};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
@@ -5004,6 +5004,19 @@ impl Vcs for GitVcs {
         Self::merge_head(checkout)
     }
 
+    fn rebase_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        for state in ["rebase-merge/onto", "rebase-apply/onto"] {
+            let path = Self::run_trimmed(
+                ["rev-parse", "--path-format=absolute", "--git-path", state],
+                checkout,
+            )?;
+            if let Ok(id) = std::fs::read_to_string(path) {
+                return Ok(Self::ref_tip(checkout, id.trim())?.map(|tip| tip.id().clone()));
+            }
+        }
+        Ok(None)
+    }
+
     fn copy_commit(
         &self,
         checkout: &Path,
@@ -5182,6 +5195,55 @@ impl GitVcs {
         Ok(())
     }
 
+    /// Whether the operation `stopped` in `repo` takes in what one of the
+    /// op's journaled `steps` does: a merge of its source, a copy of its
+    /// commit, a rebase onto its `onto` whose commits so far each replay one
+    /// of its range. A revert is never the op's.
+    fn stopped_in_own_step(
+        &self,
+        repo: &Path,
+        stopped: ConflictOp,
+        steps: &[OwnStep],
+    ) -> Result<bool, VcsError> {
+        Ok(match stopped {
+            ConflictOp::Merge => match self.merge_in_flight(repo)? {
+                Some(source) => steps
+                    .iter()
+                    .any(|step| matches!(step, OwnStep::Merge { source: s } if *s == source)),
+                None => false,
+            },
+            ConflictOp::CherryPick => match self.copy_in_flight(repo)? {
+                Some(commit) => steps
+                    .iter()
+                    .any(|step| matches!(step, OwnStep::Copy { commit: c } if *c == commit)),
+                None => false,
+            },
+            ConflictOp::Revert => false,
+            ConflictOp::Rebase => {
+                let Some(onto) = self.rebase_in_flight(repo)? else {
+                    return Ok(false);
+                };
+                let head = self.head_revision(repo)?.id().clone();
+                steps.iter().any(|step| match step {
+                    OwnStep::Rebase {
+                        base,
+                        from,
+                        onto: o,
+                    } if *o == onto => {
+                        self.replayed(repo, base, from, o, &head)
+                            .is_ok_and(|replayed| {
+                                replayed
+                                    .written
+                                    .iter()
+                                    .all(|written| replayed.original(written).is_some())
+                            })
+                    }
+                    _ => false,
+                })
+            }
+        })
+    }
+
     /// The branch a rebase stopped in `checkout` will move when it finishes:
     /// git lists such a worktree as detached.
     fn rebasing(checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
@@ -5247,16 +5309,15 @@ impl GitVcs {
         if let Some(stopped) = self.mid_op(repo) {
             let returns_to = self.cancel_returns_to(repo)?;
             let own = attribution.integrates == Integrates::Yes
-                && returns_to.as_ref().is_some_and(|r| attributable(r.id()));
+                && returns_to.as_ref().is_some_and(|r| attributable(r.id()))
+                && self.stopped_in_own_step(repo, stopped, attribution.own_steps)?;
             let at_savepoint = returns_to.as_ref().map(|r| r.id()) == Some(savepoint.id());
             if !own {
                 if attribution.integrates == Integrates::No && at_savepoint {
                     self.drop_checkout_savepoint(repo, key)?;
                     return Ok(VerifiedRestoreOutcome::LeftStopped { stopped });
                 }
-                let unread_but_at_savepoint =
-                    attribution.integrates == Integrates::Unknown && at_savepoint;
-                if !unread_but_at_savepoint && foreign_tip_policy == ForeignTipPolicy::Refuse {
+                if foreign_tip_policy == ForeignTipPolicy::Refuse {
                     return Ok(VerifiedRestoreOutcome::StoppedForeign {
                         stopped,
                         returns_to: returns_to.map_or_else(

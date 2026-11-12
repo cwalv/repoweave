@@ -821,6 +821,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         &ws.root,
     );
     let op_id = owner.id.clone();
+    let mut owner = owner;
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
@@ -853,6 +854,18 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         "diverge version\n",
         "diverge: conflict",
     );
+
+    let onto = common::git_in(project_dir, &["rev-parse", "HEAD"]);
+    let id = |sha: &str| repoweave::vcs::CommitId::parse(sha).unwrap();
+    owner.take_in.get_or_insert_with(Default::default).rebases =
+        vec![repoweave::op_state::Rebasing {
+            repo: repoweave::manifest::RepoKey::Project,
+            branch: "main".to_owned(),
+            base: id(&sha),
+            from: id(&sha2),
+            onto: id(&onto),
+        }];
+    repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
     // Step 3: return to main, start rebase of diverge onto main — this will conflict.
     common::git_in(project_dir, &["checkout", "main"]);

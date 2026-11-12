@@ -9343,6 +9343,90 @@ fn abort_refuses_then_abandons_the_operators_merge(
 }
 
 /// `pull --merge-upstream` stopped on its conflict in `app`; the operator
+/// gives up that merge and, at the savepoint, starts one of their own. The
+/// pull integrates `app`, and cancelling returns to the savepoint, but the
+/// merge takes in a commit the pull never journaled: abort refuses it, and
+/// the printed abandon keeps its staged content as a backup before
+/// cancelling it.
+pub fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.push(Step::git(&b(), Repo::App, &["merge", "--abort"]));
+    steps.extend(own_merge_at_the_savepoint(&b(), Repo::App));
+    steps.extend([
+        Step::rwv(&b(), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(
+                "local/remotes/app: stopped in a merge begun at the savepoint",
+            )),
+        Step::git(
+            &b(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        ),
+        Step::git(&b(), Repo::App, &["diff", "--cached", "--name-only"])
+            .claim(Claim::OutputLine("own-side.txt")),
+        Step::rwv_printed(&b(), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "its uncommitted edits are kept as backup",
+            )),
+        Step::git(
+            &b(),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(
+            &b(),
+            Repo::App,
+            &["log", "--all", "--format=kept %s", "--", "own-side.txt"],
+        )
+        .claim(Claim::OutputContains("kept")),
+    ]);
+    scenario(
+        "pull abort refuses a merge the operator began at the savepoint",
+        steps,
+    )
+}
+
+/// A landing stopped in `app`'s rebase; the operator gives that rebase up
+/// and starts an interactive one of their own, stopped after its first
+/// pick, and commits there. Cancelling it returns to the savepoint, but it replays
+/// onto a commit the landing never journaled: abort refuses, and the printed
+/// abandon keeps the commit made inside it before cancelling.
+pub fn abort_refuses_an_interactive_rebase_the_operator_began() -> Scenario {
+    let (mut steps, _) = landing_stopped_mid_rebase(MidRebase::Member);
+    steps.extend([
+        Step::git(&ww("w"), Repo::App, &["rebase", "--abort"]),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rebase", "-q", "--exec", "exit 1", "HEAD~1"],
+        )
+        .expect(Exit::Code(1)),
+        Step::commit(&ww("w"), Repo::App, "inside-edit"),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: stopped in a rebase",
+            )),
+        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("kept as backup")),
+        Step::git(&ww("w"), Repo::App, &["log", "--all", "--format=%s"])
+            .claim(Claim::OutputContains("inside-edit")),
+    ]);
+    scenario(
+        "abort refuses an interactive rebase the operator began",
+        steps,
+    )
+}
+
+/// `pull --merge-upstream` stopped on its conflict in `app`; the operator
 /// gives up that merge, commits, and starts a merge of their own there. The
 /// pull integrates `app`, but abort cancels only its own merge: the
 /// operator's is refused, and their commit stays on its branch.
@@ -13140,12 +13224,12 @@ pub enum AfterHandContinue {
     Abort,
 }
 
-/// A `linear` landing stopped on a conflict at `stop`, which the operator
-/// resolves and finishes with the VCS's own continue; the repo it stopped in.
-fn landing_finished_mid_rebase_by_hand(stop: MidRebase) -> (Vec<Step>, Repo) {
-    let (conflicted, file) = match stop {
-        MidRebase::Member => (Repo::App, "README"),
-        MidRebase::Project => (Repo::Proj, "shared.txt"),
+/// A `linear` landing stopped on a conflict at `stop`; the repo it stopped
+/// in.
+fn landing_stopped_mid_rebase(stop: MidRebase) -> (Vec<Step>, Repo) {
+    let conflicted = match stop {
+        MidRebase::Member => Repo::App,
+        MidRebase::Project => Repo::Proj,
     };
     let mut steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
@@ -13182,6 +13266,19 @@ fn landing_finished_mid_rebase_by_hand(stop: MidRebase) -> (Vec<Step>, Repo) {
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("rwv land --continue"))
             .claim(Claim::OutputContains("rwv abort")),
+    ]);
+    (steps, conflicted)
+}
+
+/// [`landing_stopped_mid_rebase`], resolved by the operator and finished
+/// with the VCS's own continue.
+fn landing_finished_mid_rebase_by_hand(stop: MidRebase) -> (Vec<Step>, Repo) {
+    let (mut steps, conflicted) = landing_stopped_mid_rebase(stop);
+    let file = match stop {
+        MidRebase::Member => "README",
+        MidRebase::Project => "shared.txt",
+    };
+    steps.extend([
         Step::git(&ww("w"), conflicted, &["checkout", "--theirs", file]),
         Step::git(&ww("w"), conflicted, &["add", file]),
         Step::git(

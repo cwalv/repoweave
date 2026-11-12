@@ -866,6 +866,10 @@ impl Vcs for FakeVcs {
         unsupported("merge_in_flight")
     }
 
+    fn rebase_in_flight(&self, _checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        unsupported("rebase_in_flight")
+    }
+
     fn copy_commit(
         &self,
         _checkout: &Path,

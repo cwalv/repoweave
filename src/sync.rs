@@ -7832,8 +7832,9 @@ pub fn run_abort(
         eprintln!(
             "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
              No tips it recorded are read: a repo is restored only where it sits at its \
-             savepoint; one stopped in a rebase, merge or copy begun there is canceled once its \
-             edits are kept as a backup; any other tip is refused as foreign.",
+             savepoint; one stopped in a rebase, merge or copy is refused, and \
+             `--abandon-foreign-tip` names it to cancel it once its edits are kept as a backup; \
+             any other tip is refused as foreign.",
             op_state::OwnerRecord::path_in(owner_workspace.as_path()),
             header.id,
         );
@@ -7912,6 +7913,10 @@ pub fn run_abort(
             .and_then(|take_in| take_in.source_tip.as_ref()),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
+    let own_steps = match &reading {
+        op_state::OwnerReading::Whole(record) => record.own_steps(),
+        op_state::OwnerReading::HeaderOnly { .. } => Default::default(),
+    };
     let (rebases, carries): (Vec<op_state::Rebasing>, Vec<op_state::Carrying>) = match &reading {
         op_state::OwnerReading::Whole(record) => record
             .take_in
@@ -7941,6 +7946,7 @@ pub fn run_abort(
         source_tip,
         &rebases,
         &carries,
+        &own_steps,
         abandon,
         &mut tally,
     );
@@ -7976,6 +7982,7 @@ pub fn run_abort(
                             source_tip,
                             &rebases,
                             &carries,
+                            &own_steps,
                             abandon,
                             &mut tally,
                         );
@@ -8202,6 +8209,7 @@ fn restore_abort_workspace(
     source_tip: Option<&CommitId>,
     rebases: &[op_state::Rebasing],
     carries: &[op_state::Carrying],
+    own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -8337,6 +8345,10 @@ fn restore_abort_workspace(
                 _ => stopped_carry.as_ref(),
             },
             integrates,
+            own_steps: match side {
+                AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),
+                AbortSide::LandTarget => &[],
+            },
         };
         match abort_one_repo(vcs.as_ref(), &abs, &restore_key, &attribution, consented) {
             Ok(outcome) => report_abort_outcome(
@@ -8417,6 +8429,7 @@ fn restore_in_place(
                 converged: converged.and_then(|tips| tips.get(repo_key)),
                 started_from: None,
                 integrates: Integrates::No,
+                own_steps: &[],
             };
             match abort_one_repo(
                 vcs.as_ref(),

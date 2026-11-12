@@ -504,7 +504,6 @@ impl Carrier<'_> {
             composed: None,
         };
         crate::op_state::journal_carrying(self.workspace, carrying.clone())?;
-        crate::op_state::journal_integrating(self.workspace, repo.clone())?;
         vcs.set_detached_head(&dir, &rev(from))?;
         match vcs.rebase(&dir, &rev(onto), &rev(base), policy(repo)) {
             Ok(_) => {}

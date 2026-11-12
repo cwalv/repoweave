@@ -1016,6 +1016,23 @@ pub enum Integrates {
     Unknown,
 }
 
+/// A VCS operation an op journaled starting in a repo, by what it takes in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnStep {
+    Merge {
+        source: CommitId,
+    },
+    /// The commits `base..from` replayed onto `onto`.
+    Rebase {
+        base: CommitId,
+        from: CommitId,
+        onto: CommitId,
+    },
+    Copy {
+        commit: CommitId,
+    },
+}
+
 /// What an op recorded about one checkout: the tips it wrote there, and
 /// whether its own steps run there.
 #[derive(Debug, Clone, Copy, Default)]
@@ -1027,6 +1044,8 @@ pub struct Attribution<'a> {
     /// The tip the op committed before it began composing here.
     pub started_from: Option<&'a CommitId>,
     pub integrates: Integrates,
+    /// The operations the op journaled starting here.
+    pub own_steps: &'a [OwnStep],
 }
 
 impl Attribution<'_> {
@@ -4847,6 +4866,9 @@ pub trait Vcs: Send + Sync {
 
     /// The commit a merge in flight in `checkout` is merging in.
     fn merge_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// The commit a rebase stopped in `checkout` replays onto, if one is.
+    fn rebase_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
 
     /// Apply what `commit` introduced, against its parent number `mainline`
     /// (from 1; a merge commit needs one), as a new commit on the checkout,

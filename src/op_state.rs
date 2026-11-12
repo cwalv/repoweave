@@ -550,9 +550,10 @@ pub struct TakeInRecord {
     /// which go when it completes.
     #[serde(default)]
     pub rebased_backups: Vec<KeptBackup>,
-    /// Each repo the op started a merge in, written before it starts.
+    /// Each merge the op started, by its repo and the commit it merges in,
+    /// written before it starts.
     #[serde(default)]
-    pub integrating: Vec<RepoKey>,
+    pub merges: Vec<Merging>,
     /// `rwv abort` began restoring: written before it moves anything, so a
     /// refused or interrupted abort leaves a record only `rwv abort` takes up.
     #[serde(default)]
@@ -566,6 +567,13 @@ pub struct TakeInRecord {
     /// once it ends; the branch itself moves only once every carry composed.
     #[serde(default)]
     pub carries: Vec<Carrying>,
+}
+
+/// A merge of `source` into the checkout of `repo`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Merging {
+    pub repo: RepoKey,
+    pub source: CommitId,
 }
 
 /// A rebase of the branch `branch` in `repo`, the commits `base..from`
@@ -1153,7 +1161,7 @@ impl OwnerRecord {
     pub fn operates_in(&self) -> Option<std::collections::BTreeSet<RepoKey>> {
         let mut repos = std::collections::BTreeSet::new();
         if let Some(take_in) = &self.take_in {
-            repos.extend(take_in.integrating.iter().cloned());
+            repos.extend(take_in.merges.iter().map(|m| m.repo.clone()));
             repos.extend(take_in.rebases.iter().map(|r| r.repo.clone()));
             repos.extend(take_in.carries.iter().map(|c| c.repo.clone()));
         }
@@ -1185,6 +1193,75 @@ impl OwnerRecord {
             }
         }
         Some(repos)
+    }
+
+    /// Each VCS operation the op planned or journaled starting, by repo, with
+    /// what it takes in: a merge's source (a planned one merges in the tip
+    /// the plan takes in or lands on), a rebase's or carry's range, a copy's
+    /// commit. An operation in progress is the op's own only where it takes
+    /// in one of these.
+    pub fn own_steps(&self) -> std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>> {
+        use crate::vcs::OwnStep;
+        let mut steps: std::collections::BTreeMap<RepoKey, Vec<OwnStep>> = Default::default();
+        let Some(take_in) = &self.take_in else {
+            return steps;
+        };
+        let planned_sources = take_in
+            .upstream_tips
+            .iter()
+            .chain(take_in.receiving.iter().map(|(key, r)| (key, &r.tip)));
+        for (repo, source) in planned_sources {
+            steps.entry(repo.clone()).or_default().push(OwnStep::Merge {
+                source: source.clone(),
+            });
+        }
+        for merge in &take_in.merges {
+            steps
+                .entry(merge.repo.clone())
+                .or_default()
+                .push(OwnStep::Merge {
+                    source: merge.source.clone(),
+                });
+        }
+        for rebase in &take_in.rebases {
+            steps
+                .entry(rebase.repo.clone())
+                .or_default()
+                .push(OwnStep::Rebase {
+                    base: rebase.base.clone(),
+                    from: rebase.from.clone(),
+                    onto: rebase.onto.clone(),
+                });
+        }
+        for carry in &take_in.carries {
+            steps
+                .entry(carry.repo.clone())
+                .or_default()
+                .push(OwnStep::Rebase {
+                    base: carry.base.clone(),
+                    from: carry.from.clone(),
+                    onto: carry.onto.clone(),
+                });
+        }
+        if let Some(pick) = &take_in.pick {
+            for member in &pick.members {
+                steps
+                    .entry(member.repo.clone())
+                    .or_default()
+                    .extend(member.commits.iter().map(|commit| OwnStep::Copy {
+                        commit: commit.clone(),
+                    }));
+            }
+            if pick.project_started {
+                steps
+                    .entry(RepoKey::Project)
+                    .or_default()
+                    .push(OwnStep::Copy {
+                        commit: pick.rev.clone(),
+                    });
+            }
+        }
+        steps
     }
 
     /// The owner op-state file within `workspace_dir`.
@@ -1552,7 +1629,11 @@ pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyho
 
 /// Journal that the op is about to start a merge in `repo`, so `rwv abort`
 /// knows a merge stopped there may be the op's own.
-pub fn journal_integrating(workspace_dir: &Path, repo: RepoKey) -> anyhow::Result<()> {
+pub fn journal_merging(
+    workspace_dir: &Path,
+    repo: RepoKey,
+    source: &CommitId,
+) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
             InternalInvariant,
@@ -1560,11 +1641,15 @@ pub fn journal_integrating(workspace_dir: &Path, repo: RepoKey) -> anyhow::Resul
             workspace_dir.display()
         )
     })?;
+    let merging = Merging {
+        repo,
+        source: source.clone(),
+    };
     if let Some(take_in) = record.take_in.as_mut() {
-        if take_in.integrating.contains(&repo) {
+        if take_in.merges.contains(&merging) {
             return Ok(());
         }
-        take_in.integrating.push(repo);
+        take_in.merges.push(merging);
     }
     write_owner(workspace_dir, &record)
 }

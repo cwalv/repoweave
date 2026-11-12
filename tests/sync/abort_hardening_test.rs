@@ -147,6 +147,17 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
 /// phase, and per-repo converged_tips map (key → SHA). Mirrors the JSON
 /// `rwv abort` reads: a sync that takes in the project and the one member.
 fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips: &[(&str, &str)]) {
+    plant_owner_record_rebasing(workspace, op_id, phase, converged_tips, Vec::new());
+}
+
+/// [`plant_owner_record`], with the rebases the op journaled starting.
+fn plant_owner_record_rebasing(
+    workspace: &Path,
+    op_id: &str,
+    phase: &str,
+    converged_tips: &[(&str, &str)],
+    rebases: Vec<repoweave::op_state::Rebasing>,
+) {
     let tips_json = converged_tips
         .iter()
         .map(|(key, sha)| format!("\"{key}\": \"{sha}\""))
@@ -158,15 +169,16 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         root = common::json_escaped(workspace),
-        take_in = sync_plan(),
+        take_in = sync_plan(rebases),
     );
     std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
 }
 
-fn sync_plan() -> String {
+fn sync_plan(rebases: Vec<repoweave::op_state::Rebasing>) -> String {
     let planned = repoweave::vcs::CommitId::parse(&"0".repeat(40)).unwrap();
     let mut plan = repoweave::op_state::TakeInRecord {
         sync_from: Some(repoweave::op_state::SyncFrom::Target("main".to_owned())),
+        rebases,
         ..Default::default()
     };
     for key in [
@@ -498,6 +510,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
         "diverge: conflict",
     );
     common::git_in(&ws.server_dir, &["checkout", "main"]);
+    let onto = common::git_in(&ws.server_dir, &["rev-parse", "diverge"]);
     let _ = std::process::Command::new("git")
         .args(["rebase", "diverge"])
         .current_dir(&ws.server_dir)
@@ -516,7 +529,22 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
     let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
 
-    plant_owner_record(&ws.root, op_id, "replay", &[]);
+    let id = |sha: &str| repoweave::vcs::CommitId::parse(sha).unwrap();
+    plant_owner_record_rebasing(
+        &ws.root,
+        op_id,
+        "replay",
+        &[],
+        vec![repoweave::op_state::Rebasing {
+            repo: repoweave::manifest::RepoKey::Member(
+                repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap(),
+            ),
+            branch: "main".to_owned(),
+            base: id(&base),
+            from: id(&server_savepoint),
+            onto: id(&onto),
+        }],
+    );
 
     rwv().arg("abort").current_dir(&ws.root).assert().success();
 
