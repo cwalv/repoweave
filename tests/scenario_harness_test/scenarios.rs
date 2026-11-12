@@ -3384,3 +3384,46 @@ pub fn reset_acts_only_on_the_named_repo() -> Scenario {
         steps,
     )
 }
+
+/// dc15-moved-reports: `update` moving a member off a pushed `wip` with no
+/// stray commits reports where it moved it from; a member on a branch a
+/// project declares, and one on a recorded weave branch, are moved with no
+/// such report.
+pub fn dc15_moved_reports() -> Scenario {
+    Scenario {
+        name: "dc15: update reports a member moved off a branch nothing accounts for",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::App, &["switch", "-c", "wip"]),
+            Step::git(&a(), Repo::App, &["push", "-u", "origin", "wip"])
+                .pushes(Remote::origin(Repo::App), "wip"),
+            Step::git(&a(), Repo::Lib, &["switch", "dev"]),
+            Step::git(&a(), Repo::Proj, &["branch", "recorded"]),
+            Step::rwv(&a(), &["branch", "set-mode", "recorded", "declared"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Docs, &["switch", "-c", "recorded"]),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLine(
+                    "rwv update: local/remotes/app: moved from wip",
+                ))
+                .claim(Claim::OutputLacks("local/remotes/lib: moved from"))
+                .claim(Claim::OutputLacks("local/remotes/docs: moved from"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "main",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                })
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Docs,
+                    branch: "main",
+                }),
+        ],
+    }
+}

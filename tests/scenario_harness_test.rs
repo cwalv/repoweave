@@ -530,6 +530,7 @@ every_scenario!(
     records_reserved_name,
     update_remote_writes_lock,
     detached_create_start,
+    dc15_moved_reports,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source.
@@ -2490,4 +2491,9 @@ fn set_branch_new() {
 #[test]
 fn member_pin_behind() {
     runner::run(scenarios::member_pin_behind()).assert_fully_decided_green();
+}
+
+#[test]
+fn update_reports_a_member_moved_off_a_branch_nothing_accounts_for() {
+    runner::run(scenarios::dc15_moved_reports()).assert_fully_decided_green();
 }
