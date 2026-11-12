@@ -181,13 +181,18 @@ Refused, before anything changes: a `<W>` checked out in any workspace
   its tip as a backup (`rwv backup list`). It lifts the landed clause and no
   other: a pinned branch still survives.
 - `--delete-remote` also deletes each push branch of what belongs that has
-  landed on the target's remote-tracking branch.
+  landed on the target's remote-tracking branch: its upstream, never another
+  remote's branch of that name.
 - `--delete-remote-unlanded <repo>`, one repo per occurrence and needing
   `--discard-unlanded`, also deletes that repo's push branch whether or not it
   landed (a pull request's head included), after keeping its tip as a backup.
   The repo is its workspace-relative path, or `projects/<name>` for the project
-  repo. It never deletes the push branch of a declared-mode project branch.
-  Remote deletes are leased to the tip the last fetch saw.
+  repo. It never deletes the push branch of a declared-mode project branch,
+  and keeps one (`pinned`) while a published lock pins a commit no other
+  remote-tracking branch reaches. Remote deletes are leased to the tip the last
+  fetch saw; a remote that does not take one keeps the branch (`unconfirmed`,
+  its answer listed) and the rule goes on. A branch is never landed on a
+  branch of its own name.
 
 The rule starts with a pruning fetch of only the remotes these branches have an
 upstream or a push branch on. A branch on a remote that could not be fetched is

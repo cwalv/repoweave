@@ -214,12 +214,15 @@ with nothing changed. The report lists what was discarded by kind: edits,
 detached commits, unlanded branches.
 
 **`--delete-remote`** also deletes each push branch of what belongs that has
-landed on the target's remote-tracking branch. **`--delete-remote-unlanded
+landed on the target's remote-tracking branch, its upstream. **`--delete-remote-unlanded
 <repo>`**, one repo per occurrence and needing `--discard-unlanded`, also
 deletes that repo's push branch whether or not it landed, an open pull request's
-head included, after keeping its tip as a backup. A push branch of any other
+head included, after keeping its tip as a backup, and keeps one (`pinned`)
+while a published lock pins a commit no other remote-tracking branch reaches.
+A push branch of any other
 repo that has not landed is kept. Both are leased to the tip the last fetch
-saw: a push branch someone pushed to since is left. A declared-mode project
+saw: a push branch someone pushed to since, or a remote that does not take the
+delete, is left (`unconfirmed`, the answer listed). A declared-mode project
 branch's push branch is deleted by `--delete-remote` once landed and never by
 `--delete-remote-unlanded`.
 
@@ -436,7 +439,7 @@ Schema:
           ]
         },
         {
-          "description": "A remote it has a copy on could not be fetched.",
+          "description": "A remote it has a copy on could not be fetched, or did not take the delete.",
           "type": "string",
           "enum": [
             "unconfirmed"

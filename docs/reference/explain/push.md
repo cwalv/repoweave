@@ -53,8 +53,9 @@ the range the project branch publishes is judged too: where both its parents
 changed a member's pin to different commits under one declared branch, the
 lock at the pushed tip must pin a commit containing both, unless the tip
 declares the member elsewhere or a later lock in the range re-pins it backward,
-to a commit that does not reach the pin the merge left behind. A merge that
-does neither refuses as `pin` `unmerged`, listing the merge and the pins and
+to a commit that does not reach the pin the merge left behind; a merge's own
+lock that keeps either parent's pin, as settling a lock conflict by hand does,
+waives nothing. A merge that does neither refuses as `pin` `unmerged`, listing the merge and the pins and
 offering the VCS's merge; one a later lock waived is reported as `pin`
 `waived`, listing the merge and the re-pin. After the members are pushed, the
 project branch is withheld (`publish` `withheld`) while any pin its lock holds
@@ -62,7 +63,10 @@ is not reached as the gate requires: a feature's `owned` and `fork` pins by a
 remote-tracking branch of the url remote or of the push target, a declared
 branch's by the push branch of the branch each member declares, and a
 `dependency` or `reference` member's by a remote-tracking branch of its url
-remote. The refusal lists the branches that do reach each pin.
+remote, and a pin whose member is not materialized here is `pin`
+`unreachable`. The refusal lists the branches that do reach each pin. Each
+branch publishes the commit the push judged, so a branch that moves while the
+push runs keeps its new commits for the next push.
 
 **Where each branch goes.** A branch publishes to its push target, found in
 git's order: its `pushRemote`, `remote.pushDefault`, the remote it takes in
@@ -78,7 +82,9 @@ while it holds commits of its own. Two states complete instead: a branch
 branch whose upstream the remote deleted (`gone`) is left unpushed unless
 `--repo` names its repo. A branch that took in from nothing takes in from its
 push branch once pushed. A feature's member branch is pushed only when it holds
-commits no remote-tracking branch reaches.
+commits the target's pin for the member lacks, read in the target's lock at
+the newer of the target and its own upstream; a target diverged from its
+upstream refuses as `push-branch` `diverged`.
 
 **The record.** The branch's record, and every drop this machine has made of a
 record whose branch is gone everywhere, is published to the project branch's
@@ -93,8 +99,11 @@ is `declared`, the branch is published and the rejection reported as a fact.
 diverged push branch of a branch no weave branch declares and that is not a
 declared-mode project branch. The remote tip is kept as a backup first, the
 replacement is leased to that tip, so a remote that moved since the fetch
-refuses it, and it is refused (`pin` `would be unreachable`) while another
-live lock pins a commit only that tip reaches. `push` offers it nowhere.
+refuses it, and it is refused (`pin` `would be unreachable`) while a live
+lock pins a commit that, once replaced, no remote-tracking branch reaches (a
+published project branch's lock) or nothing reaches (a local one). The lock of
+the project branch this push republishes fast-forward is exempt. `push` offers
+it nowhere.
 
 Agents call `rwv push --json` to get machine-readable per-repo outcomes so
 they can react to partial failures without parsing human-readable text.
@@ -151,7 +160,8 @@ records carry a `message` field with the free-form error from the git push.
 choices as `rwv explain <axis>` lists them: the project repo's `edits` when it
 has uncommitted changes, before anything is pushed; and each member whose
 push the remote rejected, as `publish` `withheld`, when the project repo was
-not pushed because of it. It is empty, not absent, otherwise. `reported`
+not pushed because of it, and the project repo the same way when its own push
+was rejected. It is empty, not absent, otherwise. `reported`
 lists the repos judged `behind` or `gone`, and the merges a later lock waived
 (`pin` `waived`), and went past; it is empty when none was.
 

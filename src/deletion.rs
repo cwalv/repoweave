@@ -41,7 +41,8 @@ pub enum Reason {
     OpenHead,
     /// A member branch that belongs to it survives.
     Members,
-    /// A remote it has a copy on could not be fetched.
+    /// A remote it has a copy on could not be fetched, or did not take the
+    /// delete.
     Unconfirmed,
 }
 

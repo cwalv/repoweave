@@ -1006,7 +1006,7 @@ Schema:
           ]
         },
         {
-          "description": "A remote it has a copy on could not be fetched.",
+          "description": "A remote it has a copy on could not be fetched, or did not take the delete.",
           "type": "string",
           "enum": [
             "unconfirmed"
