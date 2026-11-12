@@ -683,14 +683,14 @@
       "description": "Classification of an orphaned savepoint, controlling `--fix` policy.",
       "oneOf": [
         {
-          "description": "The savepoint tip is reachable from the current branch tip, so the ref is redundant — the underlying commits are still anchored by the live branch and dropping the savepoint loses no objects. `--fix` may drop redundant savepoints.",
+          "description": "Every tip filed under the key, the checkout's and each branch's, is reached by a branch, so dropping the savepoints loses no commit.",
           "type": "string",
           "enum": [
             "redundant"
           ]
         },
         {
-          "description": "The savepoint tip is **not** reachable from the current branch tip. The ref is the last pointer to commits that would otherwise become unreachable. Auto-fixable: `--fix` keeps them as a backup, then drops the savepoint, so the commits stay reachable and `rwv backup` reaches them.",
+          "description": "Some tip filed under the key is reached by no branch: a savepoint is the last pointer to it. `--fix` keeps each such tip as a backup, then drops the key's savepoints.",
           "type": "string",
           "enum": [
             "live"
