@@ -33,22 +33,38 @@ pub enum Policy {
 /// worktree of, when it is one.
 ///
 /// `None` when the project directory is its own clone, is not a repository,
-/// or is not registered by the clone it links to.
-pub(crate) fn relation_primary(root: &Path, project: &ProjectName) -> Option<CanonicalPath> {
+/// or is not registered by the clone it links to. A registration that cannot
+/// be read is an error, never "not registered".
+pub(crate) fn relation_primary(
+    root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<Option<CanonicalPath>> {
     let vcs = project_vcs();
     let checkout = project_dir(root, project);
-    let clone = CanonicalPath::existing(&vcs.main_checkout(&checkout)?).ok()?;
+    let Some(clone) = vcs
+        .main_checkout(&checkout)
+        .and_then(|clone| CanonicalPath::existing(&clone).ok())
+    else {
+        return Ok(None);
+    };
     if clone.same_directory(&checkout) {
-        return None;
+        return Ok(None);
     }
-    let store = vcs.store_of(&checkout)?;
-    vcs.worktree_registration(&store, &checkout)
-        .ok()
-        .flatten()?;
+    let Some(store) = vcs.store_of(&checkout) else {
+        return Ok(None);
+    };
+    if vcs.worktree_registration(&store, &checkout)?.is_none() {
+        return Ok(None);
+    }
     let depth = project_rel_dir(project).components().count();
-    let primary = clone.as_path().ancestors().nth(depth)?;
-    let sits_at = CanonicalPath::existing(&primary.join(project_rel_dir(project))).ok()?;
-    (sits_at == clone && is_workspace_root(primary)).then(|| CanonicalPath::of(primary))
+    let Some(primary) = clone.as_path().ancestors().nth(depth) else {
+        return Ok(None);
+    };
+    let sits_at = CanonicalPath::existing(&primary.join(project_rel_dir(project))).ok();
+    Ok(
+        (sits_at.as_ref() == Some(&clone) && is_workspace_root(primary))
+            .then(|| CanonicalPath::of(primary)),
+    )
 }
 
 /// How the marker at a root fails to say what the index and the relation say.
@@ -147,21 +163,24 @@ fn describe_found(presence: &MarkerPresence) -> String {
     }
 }
 
-fn candidate_projects(root: &Path, presence: &MarkerPresence) -> Vec<ProjectName> {
+fn candidate_projects(root: &Path, presence: &MarkerPresence) -> anyhow::Result<Vec<ProjectName>> {
     match presence {
-        MarkerPresence::Usable(marker) => vec![marker.project().clone()],
+        MarkerPresence::Usable(marker) => Ok(vec![marker.project().clone()]),
         MarkerPresence::Defective {
             defect: MarkerDefect::Legacy | MarkerDefect::DanglingPrimary { .. },
             ..
-        } => Vec::new(),
+        } => Ok(Vec::new()),
         MarkerPresence::Absent | MarkerPresence::Defective { .. } => {
             if matches!(read_active_pointer(root), ActivePointer::Present(_)) {
-                return Vec::new();
+                return Ok(Vec::new());
             }
-            discover_projects(root)
-                .into_iter()
-                .filter(|project| relation_primary(root, project).is_some())
-                .collect()
+            let mut related = Vec::new();
+            for project in discover_projects(root) {
+                if relation_primary(root, &project)?.is_some() {
+                    related.push(project);
+                }
+            }
+            Ok(related)
         }
     }
 }
@@ -173,8 +192,8 @@ fn candidate_projects(root: &Path, presence: &MarkerPresence) -> Vec<ProjectName
 /// refuse then.
 pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
     let presence = observe_marker(&WorkweaveMarker::path_in(root));
-    for project in candidate_projects(root, &presence) {
-        let Some(primary) = relation_primary(root, &project) else {
+    for project in candidate_projects(root, &presence)? {
+        let Some(primary) = relation_primary(root, &project)? else {
             continue;
         };
         if crate::workweave_index::legacy_index_path(primary.as_path(), &project).exists() {
@@ -262,7 +281,7 @@ pub fn require_agreement(
     project: &ProjectName,
     dir: &Path,
 ) -> anyhow::Result<()> {
-    if relation_primary(dir, project).as_ref() != Some(primary) {
+    if relation_primary(dir, project)?.as_ref() != Some(primary) {
         return Err(crate::refusal::refusal(
             RefusalKind::StaleRegistryEntry,
             format!(
@@ -313,7 +332,7 @@ pub fn restore_marker_of_entry(
     entry: &crate::workweave_index::IndexedWorkweave,
 ) -> anyhow::Result<bool> {
     if !entry.path.as_path().is_dir()
-        || relation_primary(entry.path.as_path(), project).as_ref() != Some(primary)
+        || relation_primary(entry.path.as_path(), project)?.as_ref() != Some(primary)
     {
         return Ok(false);
     }

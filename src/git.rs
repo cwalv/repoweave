@@ -3225,8 +3225,16 @@ impl Vcs for GitVcs {
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &Self::work_dir_for_store(store),
         )?;
-        let Ok(registrations) = std::fs::read_dir(Path::new(&common).join("worktrees")) else {
-            return Ok(None);
+        let dir = Path::new(&common).join("worktrees");
+        let registrations = match std::fs::read_dir(&dir) {
+            Ok(registrations) => registrations,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to list {}", dir.display()),
+                    source: e,
+                })
+            }
         };
         let link = store_path_in(checkout);
         Ok(registrations
@@ -3881,8 +3889,10 @@ impl Vcs for GitVcs {
         for name in Self::remote_names(repo)? {
             let remote = RemoteHandle::new(name);
             let qualified = remote_tracking(&remote, branch.as_str());
-            if let Ok(tip) = self.resolve_revision(repo, &qualified) {
-                found.push(RemoteTip { remote, tip });
+            match self.resolve_revision(repo, &qualified) {
+                Ok(tip) => found.push(RemoteTip { remote, tip }),
+                Err(VcsError::RevisionNotFound { .. }) => {}
+                Err(e) => return Err(e),
             }
         }
         Ok(found)
@@ -7711,6 +7721,26 @@ mod peer_registration_tests {
     }
 
     const LATER: Duration = Duration::from_millis(200);
+
+    #[cfg(unix)]
+    #[test]
+    fn registrations_that_cannot_be_listed_are_an_error_not_an_absence() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = Fixture::new();
+        let registrations = fx.store.join(".git").join("worktrees");
+        let found = GitVcs.worktree_registration(&fx.store, &fx.path("other"));
+        assert!(found.unwrap().is_some());
+
+        std::fs::set_permissions(&registrations, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&registrations).is_ok() {
+            std::fs::set_permissions(&registrations, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            return;
+        }
+        let found = GitVcs.worktree_registration(&fx.store, &fx.path("other"));
+        std::fs::set_permissions(&registrations, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(found.is_err(), "{found:?}");
+    }
 
     #[test]
     fn listing_worktrees_waits_for_a_peer_to_finish_its_registration() {
