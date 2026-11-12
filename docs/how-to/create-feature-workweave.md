@@ -32,7 +32,7 @@ rwv switch main
 rwv switch payments
 ```
 
-`rwv branch create payments --declared` records a branch whose members keep following the branches its `rwv.toml` entries declare; `--target <T>` makes the feature land into `<T>` instead of the checked-out branch. A branch made with `git switch -c` has no record: `rwv switch <branch> --target <T>` records it as it opens it.
+`rwv branch create payments --declared` records a branch whose members keep following the branches its `rwv.toml` entries declare; `--target <T>` makes the feature land into `<T>` instead of the checked-out branch. A branch made with `git switch -c` has no record: `rwv branch set-mode <branch> feature --target <T>` records it, and then `rwv switch <branch>` opens it.
 
 ## Work across repos
 

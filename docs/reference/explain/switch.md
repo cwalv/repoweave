@@ -13,14 +13,10 @@ A branch's **record** says how it is used (see `rwv explain branch`), and
 - A recorded branch reopens bare: `rwv switch feat-x`. A feature's `owned` and
   `fork` members move onto branches named after it; a `declared` branch's
   members move to the branches its `rwv.toml` entries declare.
-- An unrecorded branch is never opened by guess. `--target <T>` records it as a
-  feature that lands into `<T>` (which needs a record of its own), `--declared`
-  as `declared`; the record is written as `rwv branch set-mode` would write it
-  and is published with the next push of the branch. Without a spelling the
-  branch is refused as `target` `unrecorded`.
-- A spelling that differs from the record is refused as `target` `conflict`,
-  listing both values and naming `rwv branch set-mode`; one that agrees is
-  accepted.
+- An unrecorded branch is never opened by guess or by flag: it is refused as
+  `target` `unrecorded`, naming `rwv fetch` and `rwv branch set-mode`. Record it
+  with `rwv branch set-mode <W> feature --target <T>` or `rwv branch set-mode <W>
+  declared` (which work for a branch local or only on a remote), then open it.
 - `<W>` may exist locally or only on a remote as last fetched; a remote-only
   branch is created from the remote's copy, taking in from it.
 
@@ -69,7 +65,7 @@ switched onto and the run stops before any member moves, refused as
 ## Invocation
 
 ```
-rwv switch <W> [--target <T> | --declared] [--project <name>]
+rwv switch <W> [--project <name>]
 rwv switch --detach <rev> [--project <name>]
 ```
 
@@ -77,8 +73,7 @@ Run `rwv switch --help` for the full clap surface.
 
 ## Output
 
-`switched to <W>` after the project repo moved, `recorded <W>: <record>` where
-an opening spelling wrote one, then the alignment `update` reports, under the
+`switched to <W>` after the project repo moved, then the alignment `update` reports, under the
 `rwv switch` prefix: `moved from <branch>`, `checkout` facts, and each member
 left where it was with its choices. `--detach` prints `detached at <rev>`.
 
@@ -97,10 +92,11 @@ rwv switch main
 rwv switch feat-x
 ```
 
-Open a branch made by hand as a feature that lands into `main`:
+Open a branch made by hand: record it, then switch to it:
 
 ```
-rwv switch hotfix --target main
+rwv branch set-mode hotfix feature --target main
+rwv switch hotfix
 ```
 
 Look at a commit without a branch:
@@ -111,11 +107,9 @@ rwv switch --detach v1.2.0
 
 ## Common errors
 
-- *target unrecorded* — the branch has no record. Add `--target <T>` or
-  `--declared`, or run `rwv fetch` (its record may be published but not yet
-  fetched).
-- *target conflict* — the spelling differs from the record; `rwv branch set-mode`
-  changes the record.
+- *target unrecorded* — the branch has no record. Run `rwv fetch` (its record
+  may be published but not yet fetched), or record it with `rwv branch set-mode`,
+  then switch.
 - *checkout* — the branch is checked out in another workspace (named).
 - *edits* — a repo it would move holds an operation in progress, edits the move
   would overwrite, or an uncommitted `rwv.toml` or `rwv.lock`.

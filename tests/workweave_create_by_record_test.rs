@@ -18,6 +18,7 @@
 //!   is written, on both create verbs.
 
 use repoweave::diagnosis::State;
+use repoweave::refusal::RefusalKind;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -265,8 +266,8 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
     );
     let recorded = record_of(ws, "feat-x");
 
-    let differs = refuse(
-        &[
+    for flag in ["--declared", "--target"] {
+        let mut args = vec![
             "workweave",
             "create",
             "--project",
@@ -274,12 +275,14 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
             "w2",
             "--branch",
             "feat-x",
-            "--declared",
-        ],
-        ws,
-        State::TargetConflict,
-    );
-    assert!(differs.contains("rwv branch set-mode"), "{differs}");
+            flag,
+        ];
+        if flag == "--target" {
+            args.push("main");
+        }
+        let out = run(&args, ws);
+        assert_eq!(out.status.code(), Some(2), "{}", describe(&out));
+    }
     assert_eq!(record_of(ws, "feat-x"), recorded);
 
     common::git_in(&project, &["branch", "raw-branch"]);
@@ -299,6 +302,29 @@ fn opening_reads_the_branchs_record_and_never_guesses_one() {
     assert!(unrecorded.contains("unrecorded"), "{unrecorded}");
     assert!(record_of(ws, "raw-branch").is_none());
     assert!(!workweave_of(ws, "w3").exists());
+    assert!(unrecorded.contains("rwv fetch"), "{unrecorded}");
+    assert!(
+        unrecorded.contains("rwv branch set-mode raw-branch declared"),
+        "{unrecorded}"
+    );
+    succeed(&["fetch"], ws);
+    succeed(&["branch", "set-mode", "raw-branch", "declared"], ws);
+    succeed(
+        &[
+            "workweave",
+            "create",
+            "--project",
+            PROJECT,
+            "w3",
+            "--branch",
+            "raw-branch",
+        ],
+        ws,
+    );
+    assert_eq!(
+        head_branch(&project_dir(&workweave_of(ws, "w3"))).as_deref(),
+        Some("raw-branch")
+    );
 
     let missing = refuse(
         &[
@@ -614,4 +640,85 @@ fn set_flags_on_a_branch_create_set_the_entries_in_the_branchs_first_commit() {
         "1"
     );
     assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("lib-b"));
+}
+
+fn lib_with_a_second_commit(ws: &Path) -> (String, String) {
+    let lib = ws.join(LIB);
+    let first = tip(&lib, "HEAD");
+    std::fs::write(lib.join("more.txt"), "more").unwrap();
+    common::git_in(&lib, &["add", "."]);
+    common::git_in(&lib, &["commit", "-qm", "more"]);
+    (first, tip(&lib, "HEAD"))
+}
+
+#[test]
+fn a_branch_name_holding_at_is_created_under_that_name_and_pin_starts_it_at_the_revision() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let (first, _) = lib_with_a_second_commit(ws);
+    let branch = format!("{LIB}=release@2024");
+    let pin = format!("{LIB}={first}");
+
+    succeed(
+        &[
+            "branch",
+            "create",
+            "dec",
+            "--declared",
+            "--set-new-branch",
+            &branch,
+            "--pin",
+            &pin,
+        ],
+        ws,
+    );
+
+    assert!(has_branch(&ws.join(LIB), "release@2024"));
+    assert_eq!(tip(&ws.join(LIB), "release@2024"), first);
+    let manifest = std::fs::read_to_string(project_dir(ws).join("rwv.toml")).unwrap();
+    assert!(manifest.contains("release@2024"), "{manifest}");
+}
+
+#[test]
+fn a_pin_with_no_flag_naming_its_member_or_two_for_one_member_refuse_before_anything_is_written() {
+    let w = weave(&[LIB, APP]);
+    let ws = &w.workspace;
+    let (first, _) = lib_with_a_second_commit(ws);
+    let records_before = common::git_in(project_dir(ws), &["rev-parse", "rwv-records"]);
+    let lib_branches = common::git_in(ws.join(LIB), &["branch", "--list"]);
+    let branch = format!("{LIB}=lib-new");
+    let orphan = format!("{APP}={first}");
+    let pin = format!("{LIB}={first}");
+
+    for verb in [
+        vec!["branch", "create", "dec", "--declared"],
+        vec![
+            "workweave",
+            "create",
+            "--project",
+            PROJECT,
+            "ww",
+            "--declared",
+        ],
+    ] {
+        for pins in [vec![&orphan], vec![&pin, &pin]] {
+            let mut args = verb.clone();
+            args.extend(["--set-new-branch", &branch]);
+            for pin in pins {
+                args.extend(["--pin", pin]);
+            }
+            let out = run(&args, ws);
+            common::cli::refused(&out, RefusalKind::InapplicableFlag);
+            assert_eq!(head_branch(&project_dir(ws)).as_deref(), Some("main"));
+            assert!(!workweave_of(ws, "ww").exists());
+            assert_eq!(
+                common::git_in(project_dir(ws), &["rev-parse", "rwv-records"]),
+                records_before
+            );
+            assert_eq!(
+                common::git_in(ws.join(LIB), &["branch", "--list"]),
+                lib_branches
+            );
+        }
+    }
 }

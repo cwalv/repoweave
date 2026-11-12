@@ -84,9 +84,10 @@ fn resolve_cwd_override(operand: Operand, cwd: &InvocationDir) -> anyhow::Result
 fn branch_entries(
     existing: Vec<String>,
     created: Vec<String>,
+    pins: Vec<String>,
 ) -> anyhow::Result<Vec<crate::member_branch::BranchEntry>> {
     use crate::member_branch::{BranchEntry, Creation};
-    existing
+    let entries = existing
         .iter()
         .map(|spec| BranchEntry::parse(spec, Creation::Existing))
         .chain(
@@ -94,7 +95,8 @@ fn branch_entries(
                 .iter()
                 .map(|spec| BranchEntry::parse(spec, Creation::New)),
         )
-        .collect()
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    BranchEntry::pinned(entries, &pins)
 }
 
 fn spelling_of(target: Option<String>, declared: bool) -> Option<crate::switch::Spelling> {
@@ -1002,6 +1004,7 @@ pub fn run() -> anyhow::Result<()> {
                         declared,
                         set_branch,
                         set_new_branch,
+                        pin,
                         at,
                         dir,
                         basedir,
@@ -1036,7 +1039,7 @@ pub fn run() -> anyhow::Result<()> {
                                 branch,
                                 spelling: spelling_of(target, declared),
                                 at,
-                                entries: branch_entries(set_branch, set_new_branch)?,
+                                entries: branch_entries(set_branch, set_new_branch, pin)?,
                                 placement: &placement,
                                 activation: activate::ActivateOptions { no_materialize },
                             });
@@ -1218,6 +1221,7 @@ pub fn run() -> anyhow::Result<()> {
                 declared,
                 set_branch,
                 set_new_branch,
+                pin,
                 at,
                 project,
             } => {
@@ -1230,7 +1234,7 @@ pub fn run() -> anyhow::Result<()> {
                         branch,
                         spelling: spelling_of(target, declared),
                         at,
-                        entries: branch_entries(set_branch, set_new_branch)?,
+                        entries: branch_entries(set_branch, set_new_branch, pin)?,
                     },
                 )?;
             }
@@ -1258,16 +1262,11 @@ pub fn run() -> anyhow::Result<()> {
         },
         Some(Commands::Switch {
             branch,
-            target,
-            declared,
             detach,
             project,
         }) => {
             let request = match (branch, detach) {
-                (Some(branch), None) => crate::switch::Switch::Branch {
-                    branch,
-                    spelling: spelling_of(target, declared),
-                },
+                (Some(branch), None) => crate::switch::Switch::Branch(branch),
                 (None, Some(rev)) => crate::switch::Switch::Detach(rev),
                 _ => Cli::command()
                     .find_subcommand_mut("switch")

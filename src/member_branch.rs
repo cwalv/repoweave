@@ -22,8 +22,9 @@ pub enum Creation {
     New,
 }
 
-/// One declaration of a member's branch: `<m>=<b>[@<rev>]` as a creating verb
-/// spells it, or the arguments of `member set-branch`.
+/// One declaration of a member's branch: `<m>=<b>` as a creating verb spells
+/// it, with `--pin <m>=<rev>` giving its start, or the arguments of `member
+/// set-branch`.
 #[derive(Debug, Clone)]
 pub struct BranchEntry {
     pub member: RepoPath,
@@ -32,31 +33,55 @@ pub struct BranchEntry {
     pub creation: Creation,
 }
 
+fn split_flag<'a>(flag: &str, spec: &'a str) -> anyhow::Result<(&'a str, &'a str)> {
+    match spec.split_once('=') {
+        Some((member, rest)) if !member.is_empty() && !rest.is_empty() => Ok((member, rest)),
+        _ => crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "'{spec}' is not `{flag} <member>=<value>`"
+        ),
+    }
+}
+
 impl BranchEntry {
-    /// Read `<m>=<b>[@<rev>]`.
+    /// Read `<m>=<b>`: the member path holds no `=`, and the whole remainder
+    /// is the branch name.
     pub fn parse(spec: &str, creation: Creation) -> anyhow::Result<Self> {
-        let Some((member, rest)) = spec.split_once('=') else {
-            return Err(crate::untokened!(
-                Owed,
-                "'{spec}' is not `<member>=<branch>[@<rev>]`"
-            ));
+        let flag = match creation {
+            Creation::Existing => "--set-branch",
+            Creation::New => "--set-new-branch",
         };
-        let (branch, rev) = match rest.split_once('@') {
-            Some((branch, rev)) => (branch, Some(rev.to_owned())),
-            None => (rest, None),
-        };
-        if branch.is_empty() || rev.as_deref() == Some("") {
-            return Err(crate::untokened!(
-                Owed,
-                "'{spec}' is not `<member>=<branch>[@<rev>]`"
-            ));
-        }
+        let (member, branch) = split_flag(flag, spec)?;
         Ok(Self {
             member: RepoPath::new(member)?,
             branch: branch.to_owned(),
-            rev,
+            rev: None,
             creation,
         })
+    }
+
+    /// Give each `--pin <m>=<rev>` to the entry naming the same member.
+    pub fn pinned(mut entries: Vec<Self>, pins: &[String]) -> anyhow::Result<Vec<Self>> {
+        let mut seen: Vec<RepoPath> = Vec::new();
+        for spec in pins {
+            let (member, rev) = split_flag("--pin", spec)?;
+            let member = RepoPath::new(member)?;
+            if seen.contains(&member) {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "--pin names {member} more than once"
+                );
+            }
+            let Some(entry) = entries.iter_mut().find(|entry| entry.member == member) else {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "--pin {member}={rev} needs a --set-branch or --set-new-branch naming {member}"
+                );
+            };
+            entry.rev = Some(rev.to_owned());
+            seen.push(member);
+        }
+        Ok(entries)
     }
 }
 

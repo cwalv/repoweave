@@ -37,7 +37,7 @@ Commands:
   init         Initialize a new project
   member       Add a repo to the active project, remove one, pin one at a commit, or change a member's role or submodule setting
   branch       Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one
-  switch       Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one needs `--target` or `--declared`; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
+  switch       Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one is refused until `rwv branch set-mode` records it; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
   lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc

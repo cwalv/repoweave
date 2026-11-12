@@ -1768,34 +1768,34 @@ pub struct CreateWorkweave<'a> {
 const CREATE: &str = "workweave create";
 
 /// What a create decided before it changed anything on disk.
-struct Intent<'v> {
+struct Intent {
     start: ResolvedRevisionId,
     head: ResolvedRevisionId,
     branch: Option<crate::records::BranchName>,
     creating: Option<crate::records::Record>,
-    opening: Option<crate::switch::Opening<'v>>,
+    opening: Option<crate::switch::Opening>,
     steps: Vec<crate::member_branch::EntryStep>,
 }
 
-impl Intent<'_> {
+impl Intent {
     fn feature(&self) -> bool {
         matches!(self.creating, Some(crate::records::Record::Feature { .. }))
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn judge_intent<'v>(
+fn judge_intent(
     ctx: &crate::workspace::WorkspaceContext,
-    vcs: &'v dyn Vcs,
+    vcs: &dyn Vcs,
     project: &ProjectName,
-    source_project: &'v Path,
+    source_project: &Path,
     flat: &crate::naming::FlatAddress,
     branch: &BranchChoice,
     spelling: Option<&crate::switch::Spelling>,
     at: Option<&str>,
     entries: &[crate::member_branch::BranchEntry],
     report: &mut crate::diagnosis::Report,
-) -> anyhow::Result<Option<Intent<'v>>> {
+) -> anyhow::Result<Option<Intent>> {
     let head = vcs.head_revision(source_project)?;
     let mut intent = match branch {
         BranchChoice::Minted | BranchChoice::New(_) => {
@@ -1834,7 +1834,6 @@ fn judge_intent<'v>(
                 project,
                 source_project,
                 text,
-                spelling,
                 CREATE,
                 crate::switch::Checkouts::All,
                 report,
@@ -2410,12 +2409,6 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             {
                 eprintln!("rwv workweave create: {line}");
             }
-        }
-    }
-    if let Some(opening) = &intent.opening {
-        if let Some(line) = crate::switch::write_opened_record(vcs, project, &project_dir, opening)?
-        {
-            eprintln!("rwv workweave create: {line}");
         }
     }
     let seat = crate::workspace::WorkspaceContext::resolve_for_project(&workweave_dir, project)?;

@@ -175,7 +175,7 @@ pub enum Commands {
         action: BranchAction,
     },
 
-    /// Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one needs `--target` or `--declared`; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
+    /// Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one is refused until `rwv branch set-mode` records it; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
     ///
     /// The project repo moves as the VCS moves it, carrying edits that the move
     /// does not overwrite, and every member it would move is judged first:
@@ -191,19 +191,8 @@ pub enum Commands {
         /// The branch to switch to, local or on a remote as last fetched
         #[arg(value_name = "W", conflicts_with = "detach")]
         branch: Option<String>,
-        /// For a branch with no record: record it as a feature that lands into `<T>`, which must itself have a record. A record that differs is refused
-        #[arg(
-            long,
-            value_name = "T",
-            requires = "branch",
-            conflicts_with = "declared"
-        )]
-        target: Option<String>,
-        /// For a branch with no record: record it as `declared`. A record that differs is refused
-        #[arg(long, requires = "branch")]
-        declared: bool,
         /// Detach the workspace at this revision instead: every repo sits at the pins of its lock, and no record is written
-        #[arg(long, value_name = "REV", conflicts_with_all = ["target", "declared"])]
+        #[arg(long, value_name = "REV", conflicts_with = "branch")]
         detach: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
@@ -686,12 +675,15 @@ pub enum BranchAction {
         /// Record it as `declared`: its members follow the branches its own `rwv.toml` entries declare
         #[arg(long)]
         declared: bool,
-        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
-        #[arg(long, value_name = "M=B[@REV]")]
+        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>`, the whole remainder being the branch name; repeat per member
+        #[arg(long, value_name = "M=B")]
         set_branch: Vec<String>,
-        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
-        #[arg(long, value_name = "M=B[@REV]")]
+        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>`, the whole remainder being the branch name; repeat per member
+        #[arg(long, value_name = "M=B")]
         set_new_branch: Vec<String>,
+        /// Start the branch a `--set-branch` or `--set-new-branch` names for the same member at this revision: `<member>=<rev>`; repeat per member
+        #[arg(long, value_name = "M=REV")]
+        pin: Vec<String>,
         /// Start the branch at this revision
         #[arg(long, value_name = "REV")]
         at: Option<String>,
@@ -892,36 +884,47 @@ pub enum WorkweaveAction {
             conflicts_with_all = ["branch", "detach"]
         )]
         new_branch: Option<String>,
-        /// Open this weave branch by its record. A branch with no record needs `--target` or `--declared`; a branch checked out in another workspace is refused
+        /// Open this weave branch by its record. A branch with no record is refused until `rwv branch set-mode` records it; a branch checked out in another workspace is refused
         #[arg(long, value_name = "W", conflicts_with = "detach")]
         branch: Option<String>,
         /// Make a detached workspace at this revision: every repo sits at the pins of its lock, a branch another workspace has checked out included, and no record is written
         #[arg(
             long,
             value_name = "REV",
-            conflicts_with_all = ["target", "declared", "at", "set_branch", "set_new_branch"]
+            conflicts_with_all = ["target", "declared", "at", "set_branch", "set_new_branch", "pin"]
         )]
         detach: Option<String>,
-        /// Record the branch as a feature that lands into `<T>`, which must itself have a record
-        #[arg(long, value_name = "T", conflicts_with = "declared")]
-        target: Option<String>,
-        /// Record the branch as `declared`: its members follow the branches its own `rwv.toml` entries declare
-        #[arg(long)]
-        declared: bool,
-        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        /// Record the created branch as a feature that lands into `<T>`, which must itself have a record
         #[arg(
             long,
-            value_name = "M=B[@REV]",
+            value_name = "T",
+            conflicts_with_all = ["declared", "branch"]
+        )]
+        target: Option<String>,
+        /// Record the created branch as `declared`: its members follow the branches its own `rwv.toml` entries declare
+        #[arg(long, conflicts_with = "branch")]
+        declared: bool,
+        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>`, the whole remainder being the branch name; repeat per member
+        #[arg(
+            long,
+            value_name = "M=B",
             conflicts_with_all = ["branch", "detach"]
         )]
         set_branch: Vec<String>,
-        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>`, the whole remainder being the branch name; repeat per member
         #[arg(
             long,
-            value_name = "M=B[@REV]",
+            value_name = "M=B",
             conflicts_with_all = ["branch", "detach"]
         )]
         set_new_branch: Vec<String>,
+        /// Start the branch a `--set-branch` or `--set-new-branch` names for the same member at this revision: `<member>=<rev>`; repeat per member
+        #[arg(
+            long,
+            value_name = "M=REV",
+            conflicts_with_all = ["branch", "detach"]
+        )]
+        pin: Vec<String>,
         /// Start the branch at this revision
         #[arg(long, value_name = "REV", conflicts_with_all = ["branch", "detach"])]
         at: Option<String>,

@@ -12,7 +12,7 @@
 //! - a reserved, existing, declared or other-feature name refuses and nothing
 //!   is created;
 //! - `switch` reopens a recorded branch bare, opens an unrecorded one only
-//!   with a spelling, refuses a spelling that differs from the record, and
+//!   never by flag or guess, and
 //!   refuses a branch checked out in another workspace;
 //! - `switch` judges every checkout it must move before anything moves: an
 //!   operation in progress, edits it would overwrite and an uncommitted lock
@@ -362,7 +362,7 @@ fn switch_reopens_a_recorded_branch_bare_and_aligns_the_members_both_ways() {
 }
 
 #[test]
-fn switch_opens_an_unrecorded_branch_only_with_a_spelling_and_refuses_one_that_differs() {
+fn switch_never_opens_an_unrecorded_branch_by_flag_or_guess_and_opens_a_recorded_one_bare() {
     let w = weave(&[LIB]);
     let ws = &w.workspace;
     let project = project_dir(ws);
@@ -371,25 +371,38 @@ fn switch_opens_an_unrecorded_branch_only_with_a_spelling_and_refuses_one_that_d
 
     let bare = refuse(&["switch", "raw"], ws);
     assert!(bare.contains("target unrecorded (raw)"), "{bare}");
+    assert!(bare.contains("rwv fetch"), "{bare}");
+    assert!(
+        bare.contains("rwv branch set-mode raw feature --target <T>"),
+        "{bare}"
+    );
+    assert!(bare.contains("rwv branch set-mode raw declared"), "{bare}");
     assert_eq!(head_branch(&project).as_deref(), Some("main"));
     assert!(record_of(ws, "raw").is_none());
 
-    succeed(&["switch", "raw", "--target", "main"], ws);
+    for flag in [["--target", "main"], ["--declared", ""]] {
+        let args: Vec<&str> = ["switch", "raw"]
+            .into_iter()
+            .chain(flag.into_iter().filter(|f| !f.is_empty()))
+            .collect();
+        let out = run(&args, ws);
+        assert_eq!(out.status.code(), Some(2), "{}", describe(&out));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
+    }
+    assert!(record_of(ws, "raw").is_none());
+
+    succeed(&["fetch"], ws);
+    succeed(
+        &["branch", "set-mode", "raw", "feature", "--target", "main"],
+        ws,
+    );
+    succeed(&["switch", "raw"], ws);
     assert_eq!(head_branch(&project).as_deref(), Some("raw"));
     assert!(record_of(ws, "raw").unwrap().contains("target = \"main\""));
     assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("raw"));
 
-    git_ok(&project, &["branch", "raw3"]);
-    succeed(&["branch", "set-mode", "raw3", "declared"], ws);
-    let differing = refuse(&["switch", "raw", "--target", "raw3"], ws);
-    assert!(differing.contains("target conflict"), "{differing}");
-    assert!(differing.contains("rwv branch set-mode"), "{differing}");
-    let also = refuse(&["switch", "raw", "--declared"], ws);
-    assert!(also.contains("target conflict"), "{also}");
-    assert_eq!(head_branch(&project).as_deref(), Some("raw"));
-
-    succeed(&["switch", "raw", "--target", "main"], ws);
-    succeed(&["switch", "raw2", "--declared"], ws);
+    succeed(&["branch", "set-mode", "raw2", "declared"], ws);
+    succeed(&["switch", "raw2"], ws);
     assert_eq!(record_of(ws, "raw2").unwrap().trim(), "mode = \"declared\"");
     assert_eq!(head_branch(&ws.join(LIB)).as_deref(), Some("main"));
 }

@@ -3698,7 +3698,7 @@ pub fn records_bare_open_second_machine() -> Scenario {
 
 pub fn records_raw_push_unrecorded() -> Scenario {
     scenario(
-        "a raw-pushed branch opens only with a spelling, which the next push publishes",
+        "a raw-pushed branch opens only once recorded, and the next push publishes the record",
         vec![
             Step::git(&a(), Repo::Proj, &["switch", "-c", "feat-x"]),
             Step::commit(&a(), Repo::Proj, "raw-feat"),
@@ -3727,6 +3727,19 @@ pub fn records_raw_push_unrecorded() -> Scenario {
                 branch: "feat-x",
                 record: None,
             }),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &b(),
+                &[
+                    "branch", "set-mode", "feat-x", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::B,
+                branch: "feat-x",
+                record: Some(feature_onto("main", Mode::Declared)),
+            }),
             Step::rwv(
                 &b(),
                 &[
@@ -3737,8 +3750,6 @@ pub fn records_raw_push_unrecorded() -> Scenario {
                     "ww",
                     "--branch",
                     "feat-x",
-                    "--target",
-                    "main",
                 ],
             )
             .expect(Exit::Succeeds)
@@ -3746,11 +3757,6 @@ pub fn records_raw_push_unrecorded() -> Scenario {
                 at: b_ww("ww"),
                 repo: Repo::Proj,
                 branch: "feat-x",
-            })
-            .claim(Claim::RecordIs {
-                machine: Machine::B,
-                branch: "feat-x",
-                record: Some(feature_onto("main", Mode::Declared)),
             }),
             publishes_records(Step::rwv(&b_ww("ww"), &["push", "--branch", "feat-x"]))
                 .pushes(Remote::origin(Repo::Proj), "feat-x")

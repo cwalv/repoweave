@@ -515,7 +515,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
-### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>[@<rev>]]... [--set-new-branch <m>=<b>[@<rev>]]... [--at <rev>] [--project <name>]`
+### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--project <name>]`
 
 Create `<W>`, write its record, and switch the workspace to it, as the VCS's own branch creation switches: uncommitted edits are carried, an uncommitted `rwv.toml` included. A bare create is a `feature` onto the checked-out branch, which must have a record that reads (`target` `unrecorded` otherwise); a feature's `owned` and `fork` members get branches `<W>` at their pins. A `declared` branch's members keep following the branches its entries declare. Every repo is judged first and nothing is written while any is refused.
 
@@ -523,8 +523,9 @@ Create `<W>`, write its record, and switch the workspace to it, as the VCS's own
 |---|---|
 | `--target <T>` | A `feature` onto `<T>`, which must have a record that reads. Starts at `<T>`'s tip |
 | `--declared` | A `declared` branch, starting at the checked-out commit |
-| `--set-branch <m>=<b>[@<rev>]` | Declare the existing branch `<b>` for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch` does; repeat per member |
-| `--set-new-branch <m>=<b>[@<rev>]` | Create `<b>` and declare it for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch --new` does; repeat per member |
+| `--set-branch <m>=<b>` | Declare the existing branch `<b>` for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch` does; repeat per member |
+| `--set-new-branch <m>=<b>` | Create `<b>` and declare it for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch --new` does; repeat per member |
+| `--pin <m>=<rev>` | Start `<m>`'s branch at `<rev>`, as `rwv member set-branch --at` does; needs a `--set-branch` or `--set-new-branch` naming `<m>`, and may be given once per member |
 | `--at <rev>` | Start at this revision. An uncommitted `rwv.lock` is carried only where the branch starts at the checked-out commit; elsewhere it is refused (`edits`) |
 | `--project <name>` | Operate on this project instead of the active project |
 
@@ -575,14 +576,13 @@ Refused before anything changes: a `<W>` checked out in any workspace (`checkout
 
 `--json` emits the envelope `{"$schema": "...", "branch": "...", "landed_on": "...", "deleted": [...], "survivors": [...], "records_dropped": [...]}`. Each `deleted` record has `path`, `branch`, `site` (`local` or `remote <name>`), `because` and `backup` when one was kept first; each survivor has `path`, `branch`, `reason` and `detail`. See [JSON envelope convention](#--json-envelope-convention).
 
-### `rwv switch <W> [--target <T> | --declared] [--project <name>]`
+### `rwv switch <W> [--project <name>]`
 ### `rwv switch --detach <rev> [--project <name>]`
 
-Put the project repo on `<W>` and align the members to it, or detach the workspace at `<rev>`. A recorded branch reopens bare. An unrecorded branch is refused (`target` `unrecorded`) unless `--target <T>` or `--declared` records it, as `rwv branch set-mode` would; a spelling that differs from the record is refused (`target` `conflict`, naming `rwv branch set-mode`). `<W>` may exist only on a remote as last fetched. `rwv switch` with no branch is refused: aligning members for the checked-out branch is `rwv update`.
+Put the project repo on `<W>` and align the members to it, or detach the workspace at `<rev>`. A recorded branch reopens bare. An unrecorded branch is refused (`target` `unrecorded`, naming `rwv fetch` and `rwv branch set-mode`): record it, then open it. `<W>` may exist only on a remote as last fetched. `rwv switch` with no branch is refused: aligning members for the checked-out branch is `rwv update`.
 
 | Flag | Effect |
 |---|---|
-| `--target <T>`, `--declared` | Record an unrecorded `<W>` as a feature onto `<T>`, or as `declared` |
 | `--detach <rev>` | Detach the project repo at `<rev>` and every member at the pin the lock holds there; no record is written |
 | `--project <name>` | Operate on this project instead of the active project |
 
@@ -658,7 +658,7 @@ Without `--kind`, the exit code is non-zero when any finding is an error, and a 
 
 See [Doctor findings](./doctor-findings.md) for the complete catalog of wire `--kind` / `sub_kind` tokens, their severities (`error` vs `warning`), and their `--fix` dispositions.
 
-### `rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--set-branch <m>=<b>[@<rev>]]... [--set-new-branch <m>=<b>[@<rev>]]... [--at <rev>] [--dir <path> | --basedir <path>]`
+### `rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--dir <path> | --basedir <path>]`
 
 Create an isolated workweave for the project the invocation resolves to (see [Project resolution](#project-resolution)); `--project <name>` names another. The workspace the verb runs in is the new workweave's parent and provenance only: it does not switch, and what it holds uncommitted, `rwv.toml` and `rwv.lock` included, stays there as it is, reported. The workweave starts from commits: the parent's checked-out commit, or `--at`, or the tip of the `--target` branch, with each member at the pin of that commit's `rwv.lock`. To fork a workweave from the one you are in, run `rwv workweave create <name>` inside it.
 
@@ -679,8 +679,8 @@ A failure before the install hooks rolls the workweave back. An install hook tha
 | `--new-branch <W>` | Create `<W>` for the workweave, as `rwv branch create` does |
 | `--branch <W>` | Open `<W>` by its record |
 | `--detach <rev>` | A detached workspace at `<rev>`; no record is written |
-| `--target <T>`, `--declared` | How a created or opened branch is used, as for `rwv branch create`; for an opened branch they must agree with its record |
-| `--set-branch <m>=<b>[@<rev>]`, `--set-new-branch <m>=<b>[@<rev>]` | As for `rwv branch create`; with `--new-branch` or the minted name only |
+| `--target <T>`, `--declared` | How a created branch is used, as for `rwv branch create`; refused with `--branch` |
+| `--set-branch <m>=<b>`, `--set-new-branch <m>=<b>`, `--pin <m>=<rev>` | As for `rwv branch create`; with `--new-branch` or the minted name only |
 | `--at <rev>` | Start the created branch at this revision |
 | `--dir <path>` | The exact path to place the workweave at; there is no default (recorded in the index as the absolute path it resolves to). Absolute paths are used as-is; relative paths resolve against the invocation directory. Refused together with `--basedir` |
 | `--basedir <path>` | The directory to place the workweave under for this invocation, in place of the recorded default: the workweave lands at `<path>/<project>--<name>`. Relative paths resolve against the invocation directory. Refused together with `--dir` |

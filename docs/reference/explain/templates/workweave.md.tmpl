@@ -49,25 +49,28 @@ names, from the workspace the verb runs in. To fork a workweave from the one
 you are in, run `create` inside it.
 
 ```
-rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--set-branch <m>=<b>[@<rev>]]... [--set-new-branch <m>=<b>[@<rev>]]... [--at <rev>] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
+rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--set-branch <m>=<b>]... [--set-new-branch <m>=<b>]... [--pin <m>=<rev>]... [--at <rev>] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
 ```
 
 - `--new-branch <W>` — create `W` for the workweave as `rwv branch create`
   does: bare, a feature onto the parent's checked-out branch; `--target <T>`,
   a feature onto `T`; `--declared`, a branch whose members follow its own
   entries. A name any repo already has is refused (`name` `exists`).
-- `--branch <W>` — open `W` by its record. A branch with no record needs
-  `--target` or `--declared`, which is then recorded; a spelling that differs
-  from the record is refused (`target` `conflict`). A branch another workspace
-  has checked out is refused (`checkout`).
+- `--branch <W>` — open `W` by its record. A branch with no record is refused
+  (`target` `unrecorded`): record it with `rwv branch set-mode`, then open it. A
+  branch another workspace has checked out is refused (`checkout`).
 - `--detach <rev>` — a detached workspace at any revision, a branch another
   workspace has checked out included. Every repo sits at the pins of that
   commit's lock, and no record is written.
-- `--target <T>`, `--declared` — how a created or opened branch is used.
-- `--set-branch <m>=<b>[@<rev>]`, `--set-new-branch <m>=<b>[@<rev>]` — declare
+- `--target <T>`, `--declared` — how a created branch is used; refused with
+  `--branch`.
+- `--set-branch <m>=<b>`, `--set-new-branch <m>=<b>`, `--pin <m>=<rev>` — declare
   an existing (or newly created) branch `b` for member `m` in the new branch's
-  first commit, as `rwv member set-branch` does. Every one is judged before
-  anything is written.
+  first commit, as `rwv member set-branch` does; the whole remainder after the
+  first `=` is the branch name. `--pin <m>=<rev>` starts the branch for the same
+  member at `<rev>`, as `member set-branch --at <rev>` does; a `--pin` with no
+  `--set-branch` or `--set-new-branch` for its member, or two for one member, is
+  refused. Every one is judged before anything is written.
 - `--at <rev>` — start a created branch at this revision. Otherwise it starts
   at the parent's checked-out commit, or at the tip of the `--target` branch.
 - `--dir <path>` — the exact path to place the workweave at; there is no

@@ -923,9 +923,9 @@ impl State {
                              `rwv push`, for the project repo's checked-out branch; `rwv \
                              workweave create`, for the branch it forks from; `rwv branch \
                              create` with no spelling, for the branch it starts at, and `--target`, \
-                             for a target that has no record; `rwv switch`, for a branch with no \
-                             record and no spelling; `rwv branch set-mode`, for a `--target` that \
-                             has no record",
+                             for a target that has no record; `rwv switch` and `rwv workweave \
+                             create --branch`, for a branch with no record; `rwv branch \
+                             set-mode`, for a `--target` that has no record",
                 offers: &[Form::C33, Form::C12Feature, Form::C12Declared],
                 verb_offers: &[],
             },

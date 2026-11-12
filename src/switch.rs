@@ -39,10 +39,7 @@ pub struct Create {
 /// What `rwv switch` is asked to do.
 #[derive(Debug, Clone)]
 pub enum Switch {
-    Branch {
-        branch: String,
-        spelling: Option<Spelling>,
-    },
+    Branch(String),
     Detach(String),
 }
 
@@ -709,37 +706,31 @@ pub(crate) enum Checkouts<'a> {
     All,
 }
 
-/// What opening a branch found: where it is, the record it is opened by,
-/// and the record that spelling writes where it has none.
-pub(crate) struct Opening<'v> {
+/// What opening a branch found: where it is and the record it is opened by.
+pub(crate) struct Opening {
     pub branch: BranchName,
     pub raw: RawRefName,
-    pub store: Store<'v>,
     pub record: Option<Record>,
-    pub to_write: Option<Record>,
     pub local: Option<ResolvedRevisionId>,
     pub copy: Option<RemoteTip>,
     pub destination: ResolvedRevisionId,
 }
 
 /// The rules `switch` and `workweave create --branch` share for opening a
-/// branch: it must exist here or on a remote, its record is read bare or
-/// written from the spelling, a spelling that differs from the record is
-/// refused, and a branch checked out elsewhere is refused. `skip` is the
-/// checkout that is not elsewhere. Findings go into `report`; nothing is
-/// written.
+/// branch: it must exist here or on a remote, it must have a record, which
+/// opens it, and a branch checked out elsewhere is refused. Findings go into
+/// `report`; nothing is written.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn judge_opening<'v>(
+pub(crate) fn judge_opening(
     ctx: &WorkspaceContext,
-    vcs: &'v dyn Vcs,
+    vcs: &dyn Vcs,
     project: &ProjectName,
-    dir: &'v Path,
+    dir: &Path,
     text: &str,
-    spelling: Option<&Spelling>,
     verb: &'static str,
     checkouts: Checkouts<'_>,
     report: &mut Report,
-) -> anyhow::Result<Opening<'v>> {
+) -> anyhow::Result<Opening> {
     let parse = |text: &str| named(vcs, project, dir, text, verb);
     let branch = parse(text)?;
     let raw = RawRefName::new(branch.as_str());
@@ -761,36 +752,9 @@ pub(crate) fn judge_opening<'v>(
     let view = store
         .settle()
         .map_err(|e| write_refusal(vcs, &store, project, dir, &branch, e))?;
-    let mut to_write: Option<Record> = None;
-    let record = match (view.lookup(&branch), spelling) {
-        (Lookup::Value(record), None) => Some(record),
-        (Lookup::Value(record), Some(spelling)) => {
-            match spelled_record(&view, &branch, spelling, &parse)? {
-                Ok(spelled) if agrees(&record, &spelled) => Some(record),
-                Ok(spelled) => {
-                    report.add(judge_lookup(
-                        vcs,
-                        &store,
-                        project,
-                        dir,
-                        &branch,
-                        Lookup::Conflict(record, spelled),
-                    )?);
-                    None
-                }
-                Err(error) => return Err(write_refusal(vcs, &store, project, dir, &branch, error)),
-            }
-        }
-        (Lookup::Unrecorded, Some(spelling)) => {
-            match spelled_record(&view, &branch, spelling, &parse)? {
-                Ok(spelled) => {
-                    to_write = Some(spelled.clone());
-                    Some(spelled)
-                }
-                Err(error) => return Err(write_refusal(vcs, &store, project, dir, &branch, error)),
-            }
-        }
-        (lookup, _) => {
+    let record = match view.lookup(&branch) {
+        Lookup::Value(record) => Some(record),
+        lookup => {
             report.add(judge_lookup(vcs, &store, project, dir, &branch, lookup)?);
             None
         }
@@ -818,48 +782,16 @@ pub(crate) fn judge_opening<'v>(
     Ok(Opening {
         branch,
         raw,
-        store,
         record,
-        to_write,
         local,
         copy,
         destination,
     })
 }
 
-/// Write the record a spelling gave an unrecorded branch.
-pub(crate) fn write_opened_record(
-    vcs: &dyn Vcs,
-    project: &ProjectName,
-    dir: &Path,
-    opening: &Opening<'_>,
-) -> anyhow::Result<Option<String>> {
-    let Some(record) = &opening.to_write else {
-        return Ok(None);
-    };
-    let branch = &opening.branch;
-    opening
-        .store
-        .write(|view| {
-            Ok(vec![Write {
-                branch: branch.clone(),
-                record: match record {
-                    Record::Declared => Record::Declared,
-                    Record::Feature { target, .. } => feature_record(view, branch, target)?,
-                },
-            }])
-        })
-        .map_err(|e| write_refusal(vcs, &opening.store, project, dir, branch, e))?;
-    Ok(Some(format!("recorded {branch}: {record}")))
-}
-
 /// Give the project repo a local branch from the remote copy a branch only
 /// a remote had.
-pub(crate) fn localize_opened(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    opening: &Opening<'_>,
-) -> anyhow::Result<()> {
+pub(crate) fn localize_opened(vcs: &dyn Vcs, dir: &Path, opening: &Opening) -> anyhow::Result<()> {
     if opening.local.is_some() {
         return Ok(());
     }
@@ -885,9 +817,9 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     let (project, dir) = find_project(ctx)?;
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
-    let (text, spelling) = match &request {
+    let text = match &request {
         Switch::Detach(rev) => return switch_detached(ctx, vcs, &project, &dir, rev),
-        Switch::Branch { branch, spelling } => (branch, spelling),
+        Switch::Branch(branch) => branch,
     };
     let current = checked_out(vcs, &dir)?;
     let detached = current.is_none();
@@ -899,7 +831,6 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
         &project,
         &dir,
         text,
-        spelling.as_ref(),
         SWITCH,
         if already {
             Checkouts::Unchecked
@@ -940,9 +871,6 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     }
     report.into_result()?;
 
-    if let Some(line) = write_opened_record(vcs, &project, &dir, &opening)? {
-        outln!("{line}");
-    }
     if current.as_deref() != Some(branch.as_str()) {
         let departure = Departure::of_project_move(vcs, &dir, &destination)?;
         localize_opened(vcs, &dir, &opening)?;

@@ -39,8 +39,9 @@ rwv workweave create <name> --branch <W>         # open W by its record
 rwv workweave create <name> --detach <rev>       # a detached workspace
 ```
 
-`--target <T>`, `--declared`, `--at <rev>`, `--set-branch` and
-`--set-new-branch` are spelled as for `rwv branch create`.
+`--target <T>`, `--declared`, `--at <rev>`, `--set-branch`,
+`--set-new-branch` and `--pin` go with a created branch and are spelled as for
+`rwv branch create`; an opened branch takes none of them.
 
 ### What create writes
 
