@@ -3091,8 +3091,8 @@ fn run_preconditions_after_acquire(
             for line in dirty.lines() {
                 let judged = report.lines().iter().any(|l| l.repo() == line.repo());
                 let drift_alone = drifted.iter().any(|d| {
-                    d.elsewhere.is_none()
-                        && d.repo == line.repo()
+                    d.at.elsewhere.is_none()
+                        && d.at.repo == line.repo()
                         && line.listed().iter().all(|f| d.reading.refreshes(f))
                 });
                 if !judged && !drift_alone && line.repo() != project_repo {
@@ -4022,10 +4022,12 @@ fn judge_edits_target_preflight<'m>(
         if target_repo.exists() {
             judge_edits_beside_drift(
                 vcs_for(entry.vcs_type),
-                RepoKey::Member(repo_path.clone()),
-                repo_path.to_string(),
-                &target_repo,
-                Some(target_workspace_dir),
+                JudgedCheckout {
+                    key: RepoKey::Member(repo_path.clone()),
+                    repo: repo_path.to_string(),
+                    dir: target_repo,
+                    elsewhere: Some(target_workspace_dir.to_path_buf()),
+                },
                 |dirt| dirt,
                 report,
                 drifted,
@@ -4034,10 +4036,12 @@ fn judge_edits_target_preflight<'m>(
     }
     judge_edits_beside_drift(
         project_vcs(),
-        RepoKey::Project,
-        project_rel_path(&cwd_project.name),
-        target_project_dir,
-        Some(target_workspace_dir),
+        JudgedCheckout {
+            key: RepoKey::Project,
+            repo: project_rel_path(&cwd_project.name),
+            dir: target_project_dir.to_path_buf(),
+            elsewhere: Some(target_workspace_dir.to_path_buf()),
+        },
         |dirt| dirt,
         report,
         drifted,
@@ -4047,15 +4051,21 @@ fn judge_edits_target_preflight<'m>(
 /// A checkout a landing found drift in while judging its edits.
 pub(crate) struct DriftedCheckout {
     vcs: Box<dyn Vcs>,
-    key: RepoKey,
-    repo: String,
-    dir: PathBuf,
-    elsewhere: Option<PathBuf>,
+    at: JudgedCheckout,
     reading: crate::check::DriftReading,
     edits_refused: bool,
 }
 
-/// Judge `dir`'s edits on what a drift refresh would leave: shared-ref drift
+/// A checkout whose edits a landing judges: its repo, the label its edits
+/// line names it by, and the workspace it is in when that is not this one.
+pub(crate) struct JudgedCheckout {
+    key: RepoKey,
+    repo: String,
+    dir: PathBuf,
+    elsewhere: Option<PathBuf>,
+}
+
+/// Judge the checkout's edits on what a drift refresh would leave: shared-ref drift
 /// is classified first, so a path drift explains is neither refused as an
 /// edit nor listed under the choice that commits edits. A checkout stopped
 /// in an operation, or one whose reading fails, is judged on all its dirt.
@@ -4063,23 +4073,26 @@ pub(crate) struct DriftedCheckout {
 /// lock.
 fn judge_edits_beside_drift(
     vcs: Box<dyn Vcs>,
-    key: RepoKey,
-    repo: String,
-    dir: &Path,
-    elsewhere: Option<&Path>,
+    at: JudgedCheckout,
     keep: impl Fn(Vec<String>) -> Vec<String>,
     report: &mut Report,
     drifted: &mut Vec<DriftedCheckout>,
 ) {
-    let reading = match vcs.mid_operation(dir) {
+    let reading = match vcs.mid_operation(&at.dir) {
         Some(_) => crate::check::DriftReading::default(),
-        None => crate::check::read_drift(vcs.as_ref(), dir).unwrap_or_default(),
+        None => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
     };
-    let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), dir))
+    let dirt: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir))
         .into_iter()
         .filter(|file| !reading.refreshes(file))
         .collect();
-    let judged = crate::diagnosis::judge_edits(vcs.as_ref(), &repo, dir, dirt, elsewhere);
+    let judged = crate::diagnosis::judge_edits(
+        vcs.as_ref(),
+        &at.repo,
+        &at.dir,
+        dirt,
+        at.elsewhere.as_deref(),
+    );
     let edits_refused = judged.is_some();
     if let Some(judged) = judged {
         report.add(judged);
@@ -4087,10 +4100,7 @@ fn judge_edits_beside_drift(
     if reading.is_refreshable() {
         drifted.push(DriftedCheckout {
             vcs,
-            key,
-            repo,
-            dir: dir.to_path_buf(),
-            elsewhere: elsewhere.map(Path::to_path_buf),
+            at,
             reading,
             edits_refused,
         });
@@ -4113,18 +4123,18 @@ fn refresh_drifted(
             continue;
         }
         let refreshed =
-            crate::check::refresh_drift(checkout.vcs.as_ref(), &checkout.dir, &checkout.reading)
+            crate::check::refresh_drift(checkout.vcs.as_ref(), &checkout.at.dir, &checkout.reading)
                 .map_err(|e| {
                     crate::untokened!(
                         EnvironmentPassthrough,
                         "refreshing the drift in {} failed: {e:#}",
-                        checkout.dir.display()
+                        checkout.at.dir.display()
                     )
                 })?;
         if let Some(refreshed) = refreshed {
             reports.push(op_state::LandingReport::Refreshed {
-                repo: checkout.key.clone(),
-                checkout: checkout.dir.clone(),
+                repo: checkout.at.key.clone(),
+                checkout: checkout.at.dir.clone(),
                 moved_from: refreshed.moved_from,
                 moved_to: refreshed.moved_to,
                 files: refreshed.files,
@@ -4206,10 +4216,12 @@ fn judge_edits_source_preflight(
         if repo.exists() {
             judge_edits_beside_drift(
                 vcs_for(entry.vcs_type),
-                RepoKey::Member(repo_path.clone()),
-                repo_path.to_string(),
-                &repo,
-                None,
+                JudgedCheckout {
+                    key: RepoKey::Member(repo_path.clone()),
+                    repo: repo_path.to_string(),
+                    dir: repo,
+                    elsewhere: None,
+                },
                 |dirt| dirt,
                 report,
                 drifted,
@@ -4221,10 +4233,12 @@ fn judge_edits_source_preflight(
     // rwv.lock is the auto-relock's expected input, not dirt.
     judge_edits_beside_drift(
         project_vcs(),
-        RepoKey::Project,
-        project_rel_path(&cwd_project.name),
-        cwd_project_dir,
-        None,
+        JudgedCheckout {
+            key: RepoKey::Project,
+            repo: project_rel_path(&cwd_project.name),
+            dir: cwd_project_dir.to_path_buf(),
+            elsewhere: None,
+        },
         |dirt| {
             dirt.into_iter()
                 .filter(|p| p.as_str() != LockFile::FILE_NAME)
