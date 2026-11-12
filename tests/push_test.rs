@@ -1708,7 +1708,7 @@ fn rewritten_feature(ws: &common::PushWorkspace) -> String {
 
 fn relock_by_name(ws: &common::PushWorkspace) {
     rwv()
-        .args(["lock", "--repo", "local/org/a", "--commit"])
+        .args(["member", "pin", "local/org/a", "HEAD", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
