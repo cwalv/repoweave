@@ -4666,7 +4666,11 @@ fn leaves_commits_behind(
 /// skipped, as is a checkout stopped in the middle of an operation of its
 /// own: git refuses to switch branches mid-rebase, and moving HEAD
 /// mid-bisect abandons the bisect.
-pub fn scan_alignment(ws_root: &Path, projects: &[Project]) -> Vec<CheckViolation> {
+pub fn scan_alignment(
+    ws_root: &Path,
+    projects: &[Project],
+    unjudged: &mut Vec<String>,
+) -> Vec<CheckViolation> {
     let mut out = Vec::new();
     let accounting = crate::alignment::Accounting::scan(ws_root);
     for project in projects {
@@ -4678,7 +4682,14 @@ pub fn scan_alignment(ws_root: &Path, projects: &[Project]) -> Vec<CheckViolatio
                 .map(|(_, dir)| dir),
         );
         for workspace in workspaces {
-            scan_workspace_alignment(ws_root, &workspace, project, &accounting, &mut out);
+            scan_workspace_alignment(
+                ws_root,
+                &workspace,
+                project,
+                &accounting,
+                &mut out,
+                unjudged,
+            );
         }
     }
     out
@@ -4690,6 +4701,7 @@ fn scan_workspace_alignment(
     project: &Project,
     accounting: &crate::alignment::Accounting,
     out: &mut Vec<CheckViolation>,
+    unjudged: &mut Vec<String>,
 ) {
     use crate::alignment::{Aligner, Member};
     use crate::diagnosis::State;
@@ -4709,8 +4721,15 @@ fn scan_workspace_alignment(
         return;
     };
     let lock = LockFile::from_state(&LockFile::path_in(&project_dir)).ok();
-    let Ok(aligner) = Aligner::open(workspace, &project.name, accounting.clone()) else {
-        return;
+    let aligner = match Aligner::open(workspace, &project.name, accounting.clone()) {
+        Ok(aligner) => aligner,
+        Err(e) => {
+            unjudged.push(format!(
+                "{}: the alignment of its workspace could not be read: {e:#}",
+                project_dir.display()
+            ));
+            return;
+        }
     };
     if aligner.standing == crate::alignment::ProjectStanding::Detached {
         let vcs = crate::vcs::project_vcs();
@@ -4759,8 +4778,15 @@ fn scan_workspace_alignment(
             dir: &dir,
             vcs: member_vcs.as_ref(),
         };
-        let Ok(lines) = aligner.status_lines(&member, lock.as_ref(), repo_path) else {
-            continue;
+        let lines = match aligner.status_lines(&member, lock.as_ref(), repo_path) {
+            Ok(lines) => lines,
+            Err(e) => {
+                unjudged.push(format!(
+                    "{}: its alignment could not be read: {e:#}",
+                    dir.display()
+                ));
+                continue;
+            }
         };
         for line in lines {
             let sub_kind = match line.state() {
@@ -5028,7 +5054,11 @@ fn scan_locks_pinned_by_name(projects: &[Project]) -> Vec<CheckViolation> {
 /// resolved lock, so tag-form, branch-form and SHA-form pins compare as the
 /// commits they name. A project with no lock file is a separate, unlocked
 /// state and earns no finding.
-fn scan_pins(ctx: &crate::workspace::WorkspaceContext, world: &DoctorWorld) -> Vec<CheckViolation> {
+fn scan_pins(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    unjudged: &mut Vec<String>,
+) -> Vec<CheckViolation> {
     let input = &world.input;
     let mut live = None;
     let mut found = Vec::new();
@@ -5066,15 +5096,26 @@ fn scan_pins(ctx: &crate::workspace::WorkspaceContext, world: &DoctorWorld) -> V
             }
             let dir = world.workspace_dir.join(repo.as_path());
             let vcs = crate::vcs::vcs_for(entry.vcs_type);
-            let live = live.get_or_insert_with(|| {
-                crate::pins::live_pins(ctx.primary_path()).unwrap_or_default()
-            });
+            let live =
+                live.get_or_insert_with(|| match crate::pins::live_pins(ctx.primary_path()) {
+                    Ok(live) => live,
+                    Err(e) => {
+                        unjudged.push(format!("the weave's live pins could not be read: {e:#}"));
+                        Default::default()
+                    }
+                });
             let held = live.get(repo).map(Vec::as_slice).unwrap_or_default();
-            let Ok(standing) =
-                crate::pins::standing(vcs.as_ref(), &dir, head, &entry.version, held)
-            else {
-                continue;
-            };
+            let standing =
+                match crate::pins::standing(vcs.as_ref(), &dir, head, &entry.version, held) {
+                    Ok(standing) => standing,
+                    Err(e) => {
+                        unjudged.push(format!(
+                            "{}: its pin could not be judged: {e:#}",
+                            dir.display()
+                        ));
+                        continue;
+                    }
+                };
             let (sub_kind, listed) = match standing {
                 crate::pins::Standing::At => continue,
                 crate::pins::Standing::Behind { .. } => (PinKind::Behind, Vec::new()),
@@ -8934,7 +8975,8 @@ fn collect_doctor_violations(
     });
     violations.extend(leftovers);
     violations.extend(scan_locks_pinned_by_name(&input.projects));
-    violations.extend(scan_pins(ctx, world));
+    let mut unjudged: Vec<String> = Vec::new();
+    violations.extend(scan_pins(ctx, world, &mut unjudged));
 
     match primary_pointer(ctx.primary_path()) {
         Some(PointerContent::Selects(active_name)) => {
@@ -9064,7 +9106,7 @@ fn collect_doctor_violations(
     ));
 
     violations.extend(
-        scan_alignment(ctx.primary_path(), &input.projects)
+        scan_alignment(ctx.primary_path(), &input.projects, &mut unjudged)
             .into_iter()
             .filter(|v| match (project_scope, v) {
                 (Some(active), CheckViolation::Alignment { project, .. }) => project == active,
@@ -9308,7 +9350,16 @@ fn collect_doctor_violations(
 
     DoctorFindings {
         violations,
-        issues: Vec::new(),
+        issues: unjudged
+            .into_iter()
+            .map(|message| Issue {
+                kind: IssueKind::CoreFinding,
+                source: IssueSource::Core,
+                severity: crate::integration::Severity::Error,
+                message: message.into(),
+                safe_to_fix: false,
+            })
+            .collect(),
         filtered: false,
         workweave_dirs,
         repo_locations,

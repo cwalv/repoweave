@@ -167,3 +167,38 @@ fn a_project_repo_on_no_branch_is_reported_in_the_primary() {
         ["project-detached"]
     );
 }
+
+#[test]
+fn a_member_whose_alignment_cannot_be_read_fails_the_run_and_the_others_are_still_reported() {
+    let w = weave();
+    let dependency = w.workspace.join(DEPENDENCY);
+    common::git_in(&dependency, &["checkout", "-q", "--detach"]);
+    commit(&dependency, "stray.txt");
+    let owned = w.workspace.join(OWNED);
+    common::git_in(&owned, &["checkout", "-q", "--detach"]);
+    commit(&owned, "lost.txt");
+    let lost = common::git_in(&owned, &["rev-parse", "HEAD"]);
+    std::fs::remove_file(owned.join(".git/objects").join(&lost[..2]).join(&lost[2..])).unwrap();
+
+    let out = rwv()
+        .args(["doctor"])
+        .current_dir(&w.workspace)
+        .output()
+        .unwrap();
+
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("[error: core-finding]") && l.contains(OWNED)),
+        "the unread member is named, with the cause: {text}"
+    );
+    assert!(
+        text.contains("alignment/detached-with-unpushed-commits"),
+        "the other member's finding is still printed: {text}"
+    );
+}
