@@ -6111,6 +6111,54 @@ pub fn records_drop_races_create() -> Scenario {
     )
 }
 
+/// A lock commit that pinned a member commit no ref keeps (locked, then
+/// amended and re-pinned by name) lands into a target that did not move.
+/// Every clone judges a landing by the pins of the target's history, so the
+/// push of the target is withheld until a remote reaches that pin; once C27
+/// publishes it, a second machine's landing in that member passes.
+pub fn landed_history_pin_no_ref_keeps() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "a landed history pin no ref keeps",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["commit", "--amend", "-q", "-m", "w-app amended"],
+            )
+            .may_strand(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+            Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["push"])
+                .pushes(Remote::origin(Repo::App), "main")
+                .expect(Exit::refuses(Repo::App, State::PublishWithheld))
+                .claim(Claim::OutputContains(
+                    "reached by no remote-tracking branch",
+                )),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["push", "-q", "origin", "proj--w@{1}:refs/heads/kept"],
+            )
+            .pushes(Remote::origin(Repo::App), "kept"),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&b_ww("w2"), &["land"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// `parallel-retire-fetch`: four published seats retire in one clone. A
 /// pruning fetch that meets the store's fetch claim held by a retiring seat
 /// waits for it rather than failing on a ref lock, and each retire's

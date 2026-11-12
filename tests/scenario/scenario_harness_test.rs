@@ -606,6 +606,7 @@ every_scenario!(
     concurrent_landing_merge_upstream,
     records_local_writers,
     records_drop_races_create,
+    landed_history_pin_no_ref_keeps,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     cross_repo_pr,
@@ -3459,6 +3460,11 @@ holding_rwv! {
     fn retiring_seats_fetch_one_at_a_time_under_the_store_claim_and_each_deletion_completes() {
         runner::run(scenarios::parallel_retire_fetch()).assert_green();
     }
+}
+
+#[test]
+fn a_landed_history_pin_no_ref_keeps_does_not_stop_a_second_machines_landing() {
+    runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
 }
 
 #[test]
