@@ -102,8 +102,14 @@ the refusal names the holder's own continue command, read from its record.
 
 The claim names its op and the workspace holding the op's record (JSON). The
 record is written before the claim is taken and cleared only after it is
-released, so a claim whose workspace records no op with its id, or no record
-at all, is dead, and the next `take` removes it. Removal is serialized by a
+released, so a claim whose workspace is here (it reads as a workspace root)
+and records no op with its id, or no record at all, is dead, and the next
+`take` removes it. Only that is evidence: a workspace that is not here to read
+(deleted, on another mount, outside a sandbox) is never judged dead, since
+from here a deleted workweave and one this process cannot see look alike. A
+landing waits on such a claim and refuses `claim-owner-unreachable`;
+`rwv doctor` reports it and `--fix` releases it (`unreachable_claims`,
+`release_unreachable`). Removal is serialized by a
 takeover lock beside the claim, `<claim>.takeover.<dead op>`, created
 exclusively and naming its holder as the claim does: only that holder
 removes the claim, and only after re-reading the bytes it judged dead. While

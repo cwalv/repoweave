@@ -1213,8 +1213,10 @@ that operation's workspace and the command that continues it. The holder is
 a landing into the same branch, or a `sync` or landing that carries the
 branch along as a dependent of the branch it rewrites. End it there with the
 printed continue (`rwv land --continue` or `rwv sync --continue`) or `rwv
-abort`; never delete its claim. A landing claim whose operation is no longer
-recorded is taken over by the next landing.
+abort`; never delete its claim. A landing claim whose workspace is here and
+no longer records its operation is taken over by the next landing; one whose
+workspace is not here to read is refused as
+[`claim-owner-unreachable`](doctor-findings.md#claim-owner-unreachable).
 
 ### `surfacing-path-occupied`
 

@@ -772,6 +772,40 @@ mod tests {
     }
 
     #[test]
+    fn a_claim_a_sync_holds_is_judged_as_a_landings_is() {
+        let tmp = crate::tempdir().unwrap();
+        let carrying = tmp.path().join("carrying");
+        std::fs::create_dir_all(carrying.join("projects")).unwrap();
+        let sync = crate::op_state::OwnerRecord::new_sync(
+            &op(1),
+            None,
+            ProjectName::new("p").unwrap(),
+            &carrying,
+            &carrying,
+        );
+        crate::op_state::write_owner(&carrying, &sync).unwrap();
+        let path = claim_in(tmp.path());
+        let _held = take_within(path.clone(), "t", &op(1), &carrying, Duration::ZERO).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(2));
+        let waited = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&waited) == Some(RefusalKind::StateClaimHeld));
+
+        let moved = tmp.path().join("moved");
+        std::fs::rename(&carrying, &moved).unwrap();
+        let unreachable =
+            take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert!(crate::refusal::kind_of(&unreachable) == Some(RefusalKind::ClaimOwnerUnreachable));
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
+
+        std::fs::rename(&moved, &carrying).unwrap();
+        crate::op_state::clear_owner(&carrying);
+        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+        assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
+    }
+
+    #[test]
     fn a_claim_whose_owner_is_back_is_not_released_by_a_doctor_fix() {
         let tmp = crate::tempdir().unwrap();
         let owner = tmp.path().join("owner");
