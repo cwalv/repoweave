@@ -208,8 +208,8 @@ pub(crate) fn governing(
     }
 }
 
-/// The first merge commit among the commits `tip` holds beyond its merge base
-/// with `onto`: the commits a rebase onto `onto` would replay.
+/// The first merge commit among the commits `tip` holds that `onto` lacks:
+/// the commits a rebase onto `onto` would replay.
 pub(crate) fn merge_in_range(
     vcs: &dyn crate::vcs::Vcs,
     dir: &std::path::Path,
@@ -217,8 +217,7 @@ pub(crate) fn merge_in_range(
     onto: &crate::vcs::CommitId,
 ) -> Result<Option<crate::vcs::CommitId>, crate::vcs::VcsError> {
     let rev = |c: &crate::vcs::CommitId| crate::vcs::ResolvedRevisionId::from(c.clone());
-    let base = vcs.merge_bases(dir, tip, onto)?.into_iter().next();
-    let range = vcs.pushed_range(dir, &rev(tip), base.as_ref().map(rev).as_ref())?;
+    let range = vcs.pushed_range(dir, &rev(tip), Some(&rev(onto)))?;
     Ok(range
         .into_iter()
         .find(|c| c.parents.len() > 1)
@@ -248,4 +247,59 @@ pub(crate) fn merged_line(repo: &dyn std::fmt::Display, merge: &crate::vcs::Comm
          would flatten, so they are integrated by a merge commit",
         merge.short()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::git_vcs;
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn tip(dir: &std::path::Path) -> crate::vcs::CommitId {
+        crate::vcs::CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap()
+    }
+
+    #[test]
+    fn a_range_with_no_merge_base_holds_its_merge_though_every_commit_is_pushed() {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path();
+        git(repo, &["init", "-b", "main"]);
+        for (key, value) in [("user.email", "t@t"), ("user.name", "T")] {
+            git(repo, &["config", key, value]);
+        }
+        git(repo, &["commit", "--allow-empty", "-m", "main"]);
+        let onto = tip(repo);
+        git(repo, &["checkout", "--orphan", "unrelated"]);
+        git(repo, &["commit", "--allow-empty", "-m", "u1"]);
+        git(repo, &["checkout", "-b", "side"]);
+        git(repo, &["commit", "--allow-empty", "-m", "side"]);
+        git(repo, &["checkout", "unrelated"]);
+        git(repo, &["merge", "--no-ff", "side", "-m", "merge"]);
+        let merge = tip(repo);
+        git(
+            repo,
+            &[
+                "update-ref",
+                "refs/remotes/origin/unrelated",
+                merge.as_str(),
+            ],
+        );
+
+        let found = merge_in_range(git_vcs().as_ref(), repo, &merge, &onto).unwrap();
+
+        assert_eq!(found, Some(merge));
+    }
 }
