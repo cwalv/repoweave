@@ -92,9 +92,17 @@ while it names its own op.
 The claim names its op and the workspace holding the op's record (JSON). The
 record is written before the claim is taken and cleared only after it is
 released, so a claim whose workspace records no op with its id, or no record
-at all, is dead: the next `take` moves it aside under a name of its own,
-compares what it moved with what it judged, and removes it, linking it back
-if it was not the dead one. No process id, host or clock is consulted, so a
+at all, is dead, and the next `take` removes it. Removal is serialized by a
+takeover lock beside the claim, `<claim>.takeover.<dead op>`, created
+exclusively and naming its holder as the claim does: only that holder
+removes the claim, and only after re-reading the bytes it judged dead. While
+the claim reads those bytes nothing can replace it (no create succeeds on an
+occupied path, and its dead op releases nothing), so the re-read and the
+removal are one step to every other taker; a taker that judged an older
+claim dead finds the live one and leaves it. A lock whose holder is dead is
+passed over for one named after that holder as well, so no lock is removed
+but by its holder, and `rwv abort` of an op removes the locks it holds.
+The claim path is never emptied while it holds a live claim. No process id, host or clock is consulted, so a
 claim whose op is recorded is never taken from it. A claim whose bytes this
 rwv does not read is never judged dead. Taking it is a hard-link publish of a
 fully written temp (`durable_file::create_new`), which fails on an occupied
