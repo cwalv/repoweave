@@ -235,14 +235,18 @@ pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
 /// Reconcile the root `cwd` runs in, before the verb resolves it.
 ///
 /// A directory that is no weave root, or whose records agree, is left alone.
-pub fn reconcile_invocation(cwd: &Path, policy: Policy) -> anyhow::Result<()> {
+/// `policy` decides from the root what the verb will do there.
+pub fn reconcile_invocation(
+    cwd: &Path,
+    policy: impl FnOnce(&Path) -> anyhow::Result<Policy>,
+) -> anyhow::Result<()> {
     let Ok((site, _)) = walk_to_weave_root(cwd) else {
         return Ok(());
     };
     let Some(disagreement) = disagreement_at(site.dir.as_path())? else {
         return Ok(());
     };
-    match policy {
+    match policy(site.dir.as_path())? {
         Policy::Restore => {
             eprintln!("rwv: {}", disagreement.apply()?);
             Ok(())

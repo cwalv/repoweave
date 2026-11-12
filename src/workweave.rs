@@ -3878,12 +3878,9 @@ pub fn report_deletion(
 /// --retire`).
 ///
 /// `workweave_dir` is the on-disk path resolved by the sync engine at op
-/// start; this path is authoritative here and bypasses the primary-side
-/// registry lookup. Retire runs from inside the workweave and has already
-/// validated its marker; a missing registry entry (mid-crash resume, or
-/// bootstrap workspace that never wrote its index) must not prevent retire
-/// from cleaning up. The marker round-trip is still enforced inside
-/// `delete_workweave_inner_at`.
+/// start, so no name is looked up; the marker, the index and the worktree
+/// relation must still agree on it, as for `workweave delete`, however long
+/// the op was parked.
 ///
 /// `--retire` has no waiver flag, so it holds neither consent: uncommitted
 /// work and a detached HEAD holding unlanded commits refuse, and a branch
@@ -3894,6 +3891,7 @@ pub(crate) fn delete_workweave_for_retire(
     name: &WorkweaveName,
     workweave_dir: &Path,
 ) -> anyhow::Result<WorkweaveDeletion> {
+    crate::workspace::require_agreement(&CanonicalPath::of(ws_root), project, workweave_dir)?;
     delete_workweave_inner_at(
         ws_root,
         project,

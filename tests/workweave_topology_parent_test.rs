@@ -565,6 +565,93 @@ fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
     );
 }
 
+/// Drop the index entry the primary keeps for `ww`, leaving its marker and
+/// its project checkout as they are.
+fn unlist(main: &MainWorkspace, ww: &Workweave) {
+    let project = repoweave::manifest::ProjectName::new(PROJECT).unwrap();
+    let index = repoweave::workweave_index::read(&main.root, &project)
+        .unwrap()
+        .expect("the primary keeps an index");
+    let (name, _) = index
+        .entry_at(&ww.root)
+        .unwrap_or_else(|| panic!("{} is listed", ww.root.display()));
+    repoweave::workweave_index::forget_workweave(&main.root, &project, name).unwrap();
+}
+
+fn listed(main: &MainWorkspace, ww: &Workweave) -> bool {
+    let project = repoweave::manifest::ProjectName::new(PROJECT).unwrap();
+    repoweave::workweave_index::read(&main.root, &project)
+        .unwrap()
+        .is_some_and(|index| index.entry_at(&ww.root).is_some())
+}
+
+fn routes(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect()
+}
+
+/// A parked retire resumed with `--continue` is still a retire: records that
+/// came to disagree while it was parked are refused, not repaired and then
+/// deleted.
+#[test]
+fn continuing_a_parked_retire_refuses_records_that_disagree() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "parked", None);
+    let op_json = format!(
+        "{{\"id\": \"planted-retire-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
+        src = common::json_escaped(&ww.root),
+        tgt = common::json_escaped(&main.root),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
+    unlist(&main, &ww);
+
+    let out = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert_eq!(routes(&stderr), vec!["stale-registry-entry"], "{stderr}");
+    assert!(
+        !listed(&main, &ww),
+        "a resumed retire lists nothing again; it said:\n{stderr}"
+    );
+    assert!(ww.root.exists());
+}
+
+/// Records that come to disagree while a retire is landing stop the retire
+/// before the workweave is deleted.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_retire_whose_records_come_to_disagree_mid_op_deletes_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "landing", None);
+    commit_file(&ww.manifest_repo, "w.txt", "w\n", "w: add w.txt");
+    rwv_lock_commit(&ww.root);
+
+    let mut retire = common::rwv_std();
+    retire
+        .args(["sync-to", "--retire", "--strategy=ff"])
+        .current_dir(&ww.root);
+    let held = common::pause::Paused::spawn(retire, "advance-target", &tmp.path().join("pause"))
+        .unwrap_or_else(|e| panic!("{e}"));
+    unlist(&main, &ww);
+    let out = held.release();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert_eq!(routes(&stderr), vec!["stale-registry-entry"], "{stderr}");
+    assert!(ww.root.exists(), "the retire deleted nothing");
+}
+
 /// A checkout the manifest does not name that is its own store, holding
 /// commits no remote has, cannot be retired over: nothing a backup written
 /// there could keep would survive the directory.
