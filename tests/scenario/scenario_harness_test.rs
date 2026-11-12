@@ -2174,7 +2174,7 @@ fn first_parent_check_catches_a_merge_with_an_upstream_that_brought_nothing() {
 /// not yet advanced.
 #[test]
 fn first_parent_check_spares_a_target_composed_onto_the_branch_it_lands_into() {
-    let git = |args: &[&str]| Step::git(&a(), Repo::App, args);
+    let git = |args: &[&str]| Step::git(&a(), Repo::Proj, args);
     let report = bad_steps(
         "w, a target, moved onto its merge into main",
         vec![
@@ -2191,9 +2191,9 @@ fn first_parent_check_spares_a_target_composed_onto_the_branch_it_lands_into() {
                 ],
             ),
             git(&["switch", "-c", "w"]),
-            Step::commit(&a(), Repo::App, "w-1"),
+            Step::commit(&a(), Repo::Proj, "w-1"),
             git(&["switch", "main"]),
-            Step::commit(&a(), Repo::App, "main-1"),
+            Step::commit(&a(), Repo::Proj, "main-1"),
             git(&["switch", "--detach", "main"]),
             git(&["merge", "--no-ff", "--no-edit", "w"]),
             git(&["branch", "-f", "w", "HEAD"]),
