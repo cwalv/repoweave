@@ -4883,3 +4883,37 @@ pub fn waiver_own_lock() -> Scenario {
         ],
     )
 }
+
+/// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
+/// each other's only choice: `lock --commit` refuses the member, naming
+/// `update`, and `update` aligns it under the uncommitted file, leaving the
+/// file as it stands, so `lock --commit` then commits it.
+pub fn uncommitted_manifest_beside_an_unaligned_member() -> Scenario {
+    let declared = declared_branch_text(Repo::App, "main");
+    let edited = format!("{declared}\nrecurse-submodules = false");
+    scenario(
+        "an uncommitted rwv.toml beside an unaligned member",
+        vec![
+            Step::git(&a(), Repo::Lib, &["switch", "-c", "side"]),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &declared, &edited),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
+                .claim(Claim::OutputContains("rwv update"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                }),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["diff", "--quiet", "HEAD", "--", "rwv.lock"],
+            ),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["diff", "--quiet", "HEAD"]),
+        ],
+    )
+}

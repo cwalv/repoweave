@@ -588,6 +588,7 @@ every_scenario!(
     sync_from_another_branch_always_merges,
     sync_writes_no_record,
     waiver_own_lock,
+    uncommitted_manifest_beside_an_unaligned_member,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2692,6 +2693,12 @@ fn sync_reads_the_record_and_never_writes_it() {
 #[test]
 fn a_reset_to_target_in_syncs_own_lock_commit_waives_the_merge_it_abandons() {
     runner::run(scenarios::waiver_own_lock()).assert_fully_decided_green();
+}
+
+#[test]
+fn update_aligns_under_an_uncommitted_manifest_so_lock_commit_can_follow() {
+    runner::run(scenarios::uncommitted_manifest_beside_an_unaligned_member())
+        .assert_fully_decided_green();
 }
 
 #[test]
