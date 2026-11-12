@@ -17,7 +17,7 @@ fn the_harness_can_create_with_named_roots() {
         r#"
         use repoweave::activate::ActivateOptions;
         use repoweave::manifest::{ProjectName, WorkweaveName};
-        use repoweave::workweave::{create_workweave, CreateWorkweave, DirtySource};
+        use repoweave::workweave::{create_workweave, CreateWorkweave};
         use std::path::Path;
         pub fn create(primary: &Path, source: &Path, p: &ProjectName, n: &WorkweaveName) {
             let _ = create_workweave(CreateWorkweave {
@@ -25,8 +25,10 @@ fn the_harness_can_create_with_named_roots() {
                 source_root: source,
                 project: p,
                 name: n,
-                replace_existing: None,
-                dirty_source: DirtySource::Refuse,
+                branch: repoweave::workweave::BranchChoice::Minted,
+                spelling: None,
+                at: None,
+                entries: Vec::new(),
                 placement: &repoweave::workweave::Placement::DefaultBasedir,
                 activation: ActivateOptions::default(),
             });
@@ -44,7 +46,7 @@ fn the_roots_cannot_be_passed_by_position() {
         r#"
         use repoweave::activate::ActivateOptions;
         use repoweave::manifest::{ProjectName, WorkweaveName};
-        use repoweave::workweave::{create_workweave, DirtySource};
+        use repoweave::workweave::{create_workweave, BranchChoice};
         use std::path::Path;
         pub fn create(primary: &Path, source: &Path, p: &ProjectName, n: &WorkweaveName) {
             let _ = create_workweave(
@@ -52,9 +54,11 @@ fn the_roots_cannot_be_passed_by_position() {
                 primary,
                 p,
                 n,
+                BranchChoice::Minted,
                 None,
-                DirtySource::Refuse,
                 None,
+                Vec::new(),
+                &repoweave::workweave::Placement::DefaultBasedir,
                 ActivateOptions::default(),
             );
         }

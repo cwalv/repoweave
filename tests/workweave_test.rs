@@ -1428,12 +1428,11 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     );
 }
 
-/// The stale-leftover case: the workweave's branch, still at exactly the start
-/// point, left behind by a create that did not finish. The re-run takes it
-/// rather than refusing, because the comparison with the start point is run,
-/// not assumed.
+/// The stale-leftover case: the workweave's branch, left behind by a create
+/// that did not finish, is a branch that exists. A create over it is refused
+/// and the branch is untouched.
 #[test]
-fn create_reuses_its_own_unmoved_leftover() {
+fn create_refuses_the_branch_its_own_dead_create_left() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -1475,16 +1474,17 @@ fn create_reuses_its_own_unmoved_leftover() {
         "precondition: the branch must still be standing"
     );
 
-    // Recreating the same workweave proceeds: the branch stands at the start point.
+    // The branch the dead create left is a name that exists: the create is
+    // refused and the branch is untouched.
     rwv()
         .args(["workweave", "create", "--project", "web-app", "leftover"])
         .current_dir(&ws)
         .assert()
-        .success();
-    assert!(
-        ww_dir.join("github/org/repo").exists(),
-        "the workweave should be created over its own unmoved leftover"
-    );
+        .failure()
+        .stderr(predicate::str::contains("name exists"));
+    assert!(branch_names(&primary_repo)
+        .iter()
+        .any(|b| b == "web-app--leftover"));
 }
 
 // ============================================================================
@@ -1620,90 +1620,25 @@ fn seat_named_apart_from_its_dir(
 }
 
 #[test]
-fn workweave_create_from_a_bare_name_forks_that_workweave() {
+fn workweave_create_inside_a_seat_forks_that_seat_wherever_it_lives() {
     let tmp = common::tempdir().unwrap();
     let (_ws, seats, rig_head) = seat_named_apart_from_its_dir(tmp.path(), "rig-dir");
 
-    // No `./rig` exists here: only the workweave can answer to the name.
-    assert!(!seats.join("rig").exists());
     rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "peer",
-            "--from",
-            "rig",
-        ])
-        .current_dir(&seats)
+        .args(["workweave", "create", "--project", "web-app", "peer"])
+        .current_dir(seats.join("rig-dir"))
         .assert()
         .success();
 
     assert_eq!(
         head_sha(&tmp.path().join(".workweaves/web-app--peer/github/org/repo")),
         rig_head,
-        "`--from rig` must fork the workweave named rig"
+        "a create run inside the rig seat forks the rig"
     );
 }
 
 #[test]
-fn workweave_create_from_a_bare_word_naming_no_workweave_refuses_and_names_the_path_spelling() {
-    let tmp = common::tempdir().unwrap();
-    let (_ws, seats, rig_head) = seat_named_apart_from_its_dir(tmp.path(), "rig-dir");
-    let peer = tmp.path().join(".workweaves/web-app--peer");
-
-    // `rig-dir` is a directory here, and no workweave carries that name.
-    let out = rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "peer",
-            "--from",
-            "rig-dir",
-        ])
-        .current_dir(&seats)
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !out.status.success(),
-        "a bare word is a workweave name:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("\n\nrwv explain no-such-workweave\n") && stderr.contains("`./rig-dir`"),
-        "the refusal must name the directory spelling:\n{stderr}"
-    );
-    assert!(!peer.exists(), "a refused create leaves nothing behind");
-
-    rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "peer",
-            "--from",
-            "./rig-dir",
-        ])
-        .current_dir(&seats)
-        .assert()
-        .success();
-    assert_eq!(
-        head_sha(&peer.join("github/org/repo")),
-        rig_head,
-        "`./rig-dir` names the directory, and the directory is the seat"
-    );
-}
-
-#[test]
-fn workweave_create_from_primary_flag_overrides_active_path() {
-    // When invoked from inside a workweave with `--from primary`, the new
-    // peer should fork from primary's HEAD even though CWD's active
-    // workspace is the rig. Escape hatch for operators who want the old
-    // behavior explicitly.
+fn workweave_create_from_the_primary_forks_the_primary_not_a_rig() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -1729,16 +1664,8 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
     assert_ne!(primary_head, rig_head);
 
     rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "peer",
-            "--from",
-            "primary",
-        ])
-        .current_dir(&rig_dir)
+        .args(["workweave", "create", "--project", "web-app", "peer"])
+        .current_dir(&ws)
         .assert()
         .success();
 
@@ -1746,7 +1673,7 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
     let peer_head = head_sha(&peer_repo);
     assert_eq!(
         peer_head, primary_head,
-        "peer with --from primary should start at primary's HEAD ({primary_head}), got peer={peer_head}, rig={rig_head}"
+        "peer created in the primary should start at primary's HEAD ({primary_head}), got peer={peer_head}, rig={rig_head}"
     );
 }
 
@@ -2515,9 +2442,7 @@ role = "owned"
 }
 
 /// When the no-marker detection fires (workweave dir exists, marker absent),
-/// the diagnostic must name the likely cause — partial create — and recommend
-/// --replace-existing as the fix. This lets users understand the error without reading
-/// source code.
+/// the create is refused as `name` taken and says there is no marker.
 #[test]
 fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
     let tmp = common::tempdir().unwrap();
@@ -2535,136 +2460,8 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
         .current_dir(&ws)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("partially created")
-                .or(predicate::str::contains("previous failed")),
-        )
-        .stderr(predicate::str::contains("--replace-existing"));
-}
-
-// ============================================================================
-// --replace-existing prunes orphan worktree refs from prior partial creates
-// ============================================================================
-
-/// `rwv workweave create --replace-existing` must succeed even when the primary repo
-/// already has a stale `.git/worktrees/<name>` registration pointing at the
-/// (now-absent) workweave worktree path.
-///
-/// Scenario:
-///   1. Workspace with one real repo.
-///   2. Workweave directory exists on disk but has NO `.rwv-workweave` marker
-///      (simulates a partial create that survived after interruption).
-///   3. Primary repo has an orphan `.git/worktrees/<name>` registration pointing
-///      at a path inside the workweave dir — created by a prior `git worktree add`
-///      whose directory was subsequently removed.
-///   4. `rwv workweave <proj> create <ww> --replace-existing` must:
-///      a. Prune the orphan registration before re-creating.
-///      b. Succeed — exit 0 and produce a valid workweave with marker.
-///      c. Leave no orphan registrations in the primary repo.
-#[test]
-fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "web-app");
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    // ── Step 1: manufacture the "stale partial create" state ──────────────
-    // Create the workweave dir without a marker.
-    let ww_dir = weaveroot.join("web-app--stale-ww");
-    let wt_dest = ww_dir.join("github/org/repo");
-    std::fs::create_dir_all(&wt_dest).unwrap();
-
-    // Run `git worktree add` in the primary repo, pointing into the workweave
-    // dir.  This writes a `.git/worktrees/<name>` registration in the primary
-    // repo.  The branch name is incidental to what this test measures and is
-    // deliberately OUTSIDE the workweave's `web-app--stale-ww` namespace:
-    // a name inside it would make the create refuse on the namespace
-    // collision, which is a different test's subject.
-    let primary_repo = ws.join("github/org/repo");
-    common::git_in(
-        &primary_repo,
-        &[
-            "worktree",
-            "add",
-            "--force",
-            wt_dest.to_str().unwrap(),
-            "-b",
-            "fixture/orphan-registration",
-        ],
-    );
-
-    // Remove the worktree directory to create an orphan registration —
-    // the `.git/worktrees/<name>` entry now points at a missing path.
-    std::fs::remove_dir_all(&wt_dest).unwrap();
-
-    // Verify that the primary repo sees the stale registration before the replace.
-    let before = common::git()
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&primary_repo)
-        .output()
-        .expect("git worktree list should work");
-    let before_listing = String::from_utf8_lossy(&before.stdout);
-    assert!(
-        before_listing.contains("stale-ww"),
-        "precondition: orphan registration must be present before the replace; \
-         got:\n{before_listing}"
-    );
-
-    // ── Step 2: --replace-existing create must succeed ────────────────────
-    let replace_out = rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "stale-ww",
-            "--replace-existing",
-        ])
-        .current_dir(&ws)
-        .output()
-        .expect("rwv should spawn");
-    let replace_stderr = String::from_utf8_lossy(&replace_out.stderr).to_string();
-    assert!(
-        replace_out.status.success(),
-        "--replace-existing create must succeed; stderr:\n{replace_stderr}"
-    );
-
-    // Workweave directory must exist with a marker.
-    assert!(
-        ww_dir.exists(),
-        "workweave dir must exist after --replace-existing create"
-    );
-    assert!(
-        ww_dir.join(".rwv-workweave").exists(),
-        "--replace-existing create must write the .rwv-workweave marker"
-    );
-
-    // ── Step 3: primary repo must have no leftover orphan registrations ───
-    let after = common::git()
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&primary_repo)
-        .output()
-        .expect("git worktree list should work");
-    let after_listing = String::from_utf8_lossy(&after.stdout);
-
-    // The only worktree entry remaining should be the newly-created one inside
-    // the fresh workweave — not a duplicate stale entry.
-    let fresh_worktree =
-        common::flatten_path_spelling(&ww_dir.join("github/org/repo").to_string_lossy());
-    let stale_count = after_listing
-        .lines()
-        .filter(|l| {
-            l.starts_with("worktree ")
-                && l.contains("stale-ww")
-                && !common::flatten_path_spelling(l).contains(&fresh_worktree)
-        })
-        .count();
-    assert_eq!(
-        stale_count, 0,
-        "--replace-existing must prune orphan worktree registrations; \
-         git worktree list after:\n{after_listing}\n\
-         create's stderr (prune warnings appear here):\n{replace_stderr}"
-    );
+        .stderr(predicate::str::contains("name taken"))
+        .stderr(predicate::str::contains("no .rwv-workweave marker"));
 }
 
 #[test]
@@ -2798,16 +2595,10 @@ fn workweave_delete_clean_succeeds_without_waivers() {
 // ============================================================================
 
 #[test]
-fn workweave_create_picks_up_uncommitted_rwv_yaml() {
-    // make_workspace_with_project_repo commits the manifest. We then edit
-    // the working-tree rwv.toml WITHOUT committing and verify that:
-    //   (a) plain `create` refuses and names the dirty file
-    //   (b) `create --capture-dirty` succeeds and the workweave sees the edit
+fn workweave_create_leaves_an_uncommitted_manifest_in_the_parent_and_reports_it() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "uncommit-test");
 
-    // Append a comment to rwv.toml in the primary's working tree, without
-    // committing. The committed version still says no comment.
     let primary_manifest = ws.join("projects/uncommit-test/rwv.toml");
     let original = std::fs::read_to_string(&primary_manifest).unwrap();
     let edited = format!("{original}# UNCOMMITTED-MARKER\n");
@@ -2816,68 +2607,33 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // --- (a) plain create must refuse and name the dirty file ---
-    let refuse_assert = rwv()
+    let out = rwv()
         .args([
             "workweave",
             "create",
             "--project",
             "uncommit-test",
             "ww-uncommit",
-        ])
-        .current_dir(&ws)
-        .assert()
-        .failure();
-    let refuse_stderr = String::from_utf8_lossy(&refuse_assert.get_output().stderr);
-    assert!(
-        refuse_stderr.contains("uncommitted changes"),
-        "expected 'uncommitted changes' in refusal message, got:\n{refuse_stderr}"
-    );
-    assert!(
-        refuse_stderr.contains("rwv.toml"),
-        "refusal message should name the dirty file (rwv.toml), got:\n{refuse_stderr}"
-    );
-    assert!(
-        refuse_stderr.contains("--capture-dirty"),
-        "refusal message should hint at --capture-dirty, got:\n{refuse_stderr}"
-    );
-
-    // The workweave must not be left on disk after the refusal.
-    let ww_dir = weaveroot.join("uncommit-test--ww-uncommit");
-    assert!(
-        !ww_dir.exists(),
-        "create must not leave a partial workweave dir on refusal, found: {}",
-        ww_dir.display()
-    );
-
-    // --- (b) --capture-dirty succeeds and captures the edit ---
-    let capture_assert = rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "uncommit-test",
-            "ww-uncommit",
-            "--capture-dirty",
         ])
         .current_dir(&ws)
         .assert()
         .success();
-
-    // The CLI must emit a warning about dirty state (so the operator
-    // notices the working tree was captured).
-    let capture_stderr = String::from_utf8_lossy(&capture_assert.get_output().stderr);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
     assert!(
-        capture_stderr.contains("uncommitted") || capture_stderr.contains("working-tree"),
-        "expected dirty-state warning with --capture-dirty, got stderr: {capture_stderr}"
+        stderr.contains("rwv.toml") && stderr.contains("stay there"),
+        "the create must report the parent's uncommitted rwv.toml, got:\n{stderr}"
     );
 
-    // The workweave's project worktree must have the UNCOMMITTED marker.
     let ww_manifest = weaveroot.join("uncommit-test--ww-uncommit/projects/uncommit-test/rwv.toml");
     let ww_content = std::fs::read_to_string(&ww_manifest).unwrap();
     assert!(
-        ww_content.contains("UNCOMMITTED-MARKER"),
-        "workweave's rwv.toml should reflect the primary's uncommitted edit with --capture-dirty, got:\n{ww_content}"
+        !ww_content.contains("UNCOMMITTED-MARKER"),
+        "the workweave starts from the committed manifest, got:\n{ww_content}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&primary_manifest).unwrap(),
+        edited,
+        "the parent keeps its uncommitted edit"
     );
 }
 
@@ -2905,92 +2661,39 @@ fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
 }
 
 // ============================================================================
-// --capture-dirty: refuse dirty primary by default
+// A dirty parent does not block a create
 // ============================================================================
 
-/// Default `create` refuses when the project dir has uncommitted changes,
-/// names the dirty files, and hints at all three remediation options.
+/// The parent's uncommitted files stay where they are, named in the report,
+/// and the new workweave does not carry them.
 #[test]
-fn workweave_create_refuses_dirty_primary_by_default() {
+fn workweave_create_from_a_dirty_primary_succeeds_and_leaves_the_edit() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "dirty-proj");
 
-    // Write an uncommitted file in the project dir.
     let project_dir = ws.join("projects/dirty-proj");
     std::fs::write(project_dir.join("in-progress.txt"), "work in progress").unwrap();
+    common::git_in(&project_dir, &["add", "in-progress.txt"]);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let assert = rwv()
-        .args(["workweave", "create", "--project", "dirty-proj", "blocked"])
-        .current_dir(&ws)
-        .assert()
-        .failure();
-
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-
-    // Must name the dirty file.
-    assert!(
-        stderr.contains("in-progress.txt"),
-        "error must name the dirty file, got:\n{stderr}"
-    );
-    // Must hint at all three remediation options.
-    assert!(
-        stderr.contains("commit"),
-        "error must hint at committing, got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("stash"),
-        "error must hint at stashing, got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("--capture-dirty"),
-        "error must hint at --capture-dirty, got:\n{stderr}"
-    );
-
-    // No partial workweave dir must be left behind.
-    let ww_dir = weaveroot.join("dirty-proj--blocked");
-    assert!(
-        !ww_dir.exists(),
-        "create must not leave a partial workweave dir after refusal, found: {}",
-        ww_dir.display()
-    );
-}
-
-/// `--capture-dirty` opts in to the old behavior: create succeeds even when
-/// the project dir has uncommitted changes.
-#[test]
-fn workweave_create_capture_dirty_allows_dirty_primary() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace_with_project_repo(tmp.path(), "dirty-ok");
-
-    // Write an uncommitted file in the project dir.
-    let project_dir = ws.join("projects/dirty-ok");
-    std::fs::write(project_dir.join("draft.txt"), "draft content").unwrap();
-
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "dirty-ok",
-            "allowed",
-            "--capture-dirty",
-        ])
+        .args(["workweave", "create", "--project", "dirty-proj", "allowed"])
         .current_dir(&ws)
         .assert()
         .success();
-
-    // The workweave directory must exist.
-    let ww_dir = weaveroot.join("dirty-ok--allowed");
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(
-        ww_dir.exists(),
-        "--capture-dirty create must succeed and leave the workweave dir at {}",
-        ww_dir.display()
+        stderr.contains("in-progress.txt"),
+        "the report must name the uncommitted file, got:\n{stderr}"
+    );
+    let ww_dir = weaveroot.join("dirty-proj--allowed");
+    assert!(ww_dir.exists());
+    assert!(!ww_dir.join("projects/dirty-proj/in-progress.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("in-progress.txt")).unwrap(),
+        "work in progress"
     );
 }
 
@@ -3620,8 +3323,10 @@ role = "owned"
         source_root: &ws,
         project: &project,
         name: &ww_name,
-        replace_existing: None,
-        dirty_source: repoweave::workweave::DirtySource::Refuse,
+        branch: repoweave::workweave::BranchChoice::Minted,
+        spelling: None,
+        at: None,
+        entries: Vec::new(),
         placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     });

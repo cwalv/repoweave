@@ -93,10 +93,9 @@ impl Weave {
     fn create(&self, name: &str, from: Option<&Path>) -> PathBuf {
         let mut cmd = rwv();
         cmd.args(["workweave", "create", "--project", PROJECT, name]);
-        if let Some(from) = from {
-            cmd.args(["--from", &from.to_string_lossy()]);
-        }
-        cmd.current_dir(&self.primary).assert().success();
+        cmd.current_dir(from.unwrap_or(&self.primary))
+            .assert()
+            .success();
         self.workweave(name)
     }
 }

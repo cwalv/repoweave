@@ -33,6 +33,7 @@ pub struct Create {
     pub branch: String,
     pub spelling: Option<Spelling>,
     pub at: Option<String>,
+    pub entries: Vec<crate::member_branch::BranchEntry>,
 }
 
 /// What `rwv switch` is asked to do.
@@ -48,7 +49,7 @@ pub enum Switch {
 const CREATE: &str = "branch create";
 const SWITCH: &str = "switch";
 
-fn named(
+pub(crate) fn named(
     vcs: &dyn Vcs,
     project: &ProjectName,
     dir: &Path,
@@ -74,7 +75,7 @@ fn named(
 
 /// The project repo's files as the workspace will read them at `at`: the
 /// working tree's where `at` is the commit checked out, else the commit's.
-fn project_files(
+pub(crate) fn project_files(
     vcs: &dyn Vcs,
     dir: &Path,
     at: &ResolvedRevisionId,
@@ -87,6 +88,16 @@ fn project_files(
             .flatten();
         return (Manifest::from_path(&dir.join(Manifest::FILE_NAME)), lock);
     }
+    committed_files(vcs, dir, at)
+}
+
+/// The manifest and lock the project repo holds at the commit `at`, whatever
+/// its working tree says.
+pub(crate) fn committed_files(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    at: &ResolvedRevisionId,
+) -> (anyhow::Result<Manifest>, Option<LockFile>) {
     let manifest = vcs
         .read_file_at_revision(dir, at, Path::new(Manifest::FILE_NAME))
         .map_err(anyhow::Error::from)
@@ -259,7 +270,7 @@ fn branch_tip(
     Ok(remote_copy(vcs, dir, branch)?.map(|copy| copy.tip))
 }
 
-fn no_such_branch(
+pub(crate) fn no_such_branch(
     vcs: &dyn Vcs,
     project: &ProjectName,
     dir: &Path,
@@ -337,6 +348,21 @@ fn spelled_record(
     })
 }
 
+pub(crate) fn spelling_agrees(
+    view: &View,
+    branch: &BranchName,
+    spelling: &Spelling,
+    existing: &Record,
+    vcs: &dyn Vcs,
+    (project, dir, verb): (&ProjectName, &Path, &'static str),
+) -> anyhow::Result<bool> {
+    let parse = |text: &str| named(vcs, project, dir, text, verb);
+    Ok(match spelled_record(view, branch, spelling, &parse)? {
+        Ok(spelled) => agrees(existing, &spelled),
+        Err(_) => false,
+    })
+}
+
 fn agrees(existing: &Record, spelled: &Record) -> bool {
     match (existing, spelled) {
         (Record::Declared, Record::Declared) => true,
@@ -345,37 +371,59 @@ fn agrees(existing: &Record, spelled: &Record) -> bool {
     }
 }
 
-/// `rwv branch create <W> [--target <T> | --declared] [--at <rev>]`.
-pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()> {
-    let (project, dir) = find_project(ctx)?;
-    let vcs = project_vcs();
-    let vcs = vcs.as_ref();
-    let parse = |text: &str| named(vcs, &project, &dir, text, CREATE);
-    let new = parse(&request.branch)?;
-    let new_raw = RawRefName::new(new.as_str());
-    let current = checked_out(vcs, &dir)?;
-    let detached = current.is_none();
-    let head = vcs.head_revision(&dir)?;
+/// What a create judged: the branch, its record (`None` where the record did
+/// not compute, which the report says), where it starts, and the parent
+/// project repo's own commit.
+pub(crate) struct Planned {
+    pub new: BranchName,
+    pub record: Option<Record>,
+    pub start: ResolvedRevisionId,
+    pub head: ResolvedRevisionId,
+    pub detached: bool,
+}
 
-    let target = match (&request.spelling, &current) {
+/// The rules `branch create` and `workweave create` share for a new branch:
+/// its name, the spelling that records it, where it starts, and whether any
+/// repo of the workspace already has it. Everything it finds goes into
+/// `report`; nothing is written.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn judge_creation(
+    ctx: &WorkspaceContext,
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &str,
+    spelling: Option<&Spelling>,
+    at: Option<&str>,
+    verb: &'static str,
+    from_commits: bool,
+    report: &mut Report,
+) -> anyhow::Result<Option<Planned>> {
+    let parse = |text: &str| named(vcs, project, dir, text, verb);
+    let new = parse(branch)?;
+    let current = checked_out(vcs, dir)?;
+    let detached = current.is_none();
+    let head = vcs.head_revision(dir)?;
+
+    let target = match (spelling, &current) {
         (Some(Spelling::Declared), _) => None,
         (Some(Spelling::Target(text)), _) => Some(parse(text)?),
         (None, Some(text)) => Some(parse(text)?),
         (None, None) => {
             return Err(refusal(
                 RefusalKind::HeadNotOnBranch,
-                "rwv branch create: the project repo is on a detached HEAD, so a bare create has \
-                 no branch to land into; spell it: `rwv branch create <W> --target <T>` or \
-                 `rwv branch create <W> --declared`",
+                format!(
+                    "rwv {verb}: the project repo is on a detached HEAD, so a bare create has \
+                     no branch to land into; spell it with `--target <T>` or `--declared`"
+                ),
             ));
         }
     };
 
-    let store = Store::open(vcs, &dir)?;
+    let store = Store::open(vcs, dir)?;
     let view = store
         .settle()
-        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &new, e))?;
-    let mut report = Report::default();
+        .map_err(|e| write_refusal(vcs, &store, project, dir, &new, e))?;
 
     let record = match &target {
         None => Some(Record::Declared),
@@ -383,35 +431,26 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
         Some(target) => match feature_record(&view, &new, target) {
             Ok(record) => Some(record),
             Err(error) => {
-                report.add(judged_write_error(
-                    vcs, &store, &project, &dir, &new, error,
-                )?);
+                report.add(judged_write_error(vcs, &store, project, dir, &new, error)?);
                 None
             }
         },
     };
 
     let target_raw = target.as_ref().map(|t| RawRefName::new(t.as_str()));
-    let start_text = request.at.clone();
-    let start = match (&start_text, &target_raw, &request.spelling) {
-        (Some(rev), _, _) => match vcs.resolve_revision(&dir, rev) {
+    let start = match (at, &target_raw, spelling) {
+        (Some(rev), _, _) => match vcs.resolve_revision(dir, rev) {
             Ok(at) => Some(at),
             Err(_) => {
-                report.add(no_such_branch(vcs, &project, &dir, rev, CREATE));
+                report.add(no_such_branch(vcs, project, dir, rev, verb));
                 None
             }
         },
-        (None, Some(target_raw), _) if request.spelling.is_some() => {
-            match branch_tip(vcs, &dir, target_raw)? {
+        (None, Some(target_raw), _) if spelling.is_some() => {
+            match branch_tip(vcs, dir, target_raw)? {
                 Some(tip) => Some(tip),
                 None => {
-                    report.add(no_such_branch(
-                        vcs,
-                        &project,
-                        &dir,
-                        target_raw.as_str(),
-                        CREATE,
-                    ));
+                    report.add(no_such_branch(vcs, project, dir, target_raw.as_str(), verb));
                     None
                 }
             }
@@ -419,23 +458,96 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
         _ => Some(head.clone()),
     };
 
-    if let (Some(target_raw), None, Some(_)) = (&target_raw, &start_text, &start) {
-        diverged_start(vcs, &project, &dir, target_raw, &mut report)?;
+    if let (Some(target_raw), None, Some(_)) = (&target_raw, at, &start) {
+        diverged_start(vcs, project, dir, target_raw, verb, report)?;
     }
 
     let Some(start) = start else {
-        return report.into_result();
+        return Ok(None);
     };
     report_names(
         ctx,
         vcs,
-        &project,
-        &dir,
+        project,
+        dir,
         &new,
         record.as_ref(),
         &start,
-        &mut report,
+        verb,
+        from_commits,
+        report,
     )?;
+    Ok(Some(Planned {
+        new,
+        record,
+        start,
+        head,
+        detached,
+    }))
+}
+
+/// Write `record` as `new`'s, reporting a record it replaced because its
+/// branch exists nowhere.
+pub(crate) fn write_created_record(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    new: &BranchName,
+    record: &Record,
+) -> anyhow::Result<Option<String>> {
+    let store = Store::open(vcs, dir)?;
+    let replaced = store.settle().ok().and_then(|view| view.entry(new));
+    store
+        .write(|view| {
+            Ok(vec![Write {
+                branch: new.clone(),
+                record: match record {
+                    Record::Declared => Record::Declared,
+                    Record::Feature { target, .. } => feature_record(view, new, target)?,
+                },
+            }])
+        })
+        .map_err(|e| write_refusal(vcs, &store, project, dir, new, e))?;
+    Ok(replaced.map(|old| {
+        format!(
+            "replaced the record of {new}: its branch exists nowhere ({})",
+            match old {
+                Entry::Value(old) => old.to_string(),
+                Entry::Conflict(..) => "conflict".to_owned(),
+                Entry::Unreadable(why) => format!("unreadable: {why}"),
+            }
+        )
+    }))
+}
+
+/// `rwv branch create <W> [--target <T> | --declared] [--at <rev>]`.
+pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()> {
+    let (project, dir) = find_project(ctx)?;
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let mut report = Report::default();
+    let Some(Planned {
+        new,
+        record,
+        start,
+        head,
+        detached,
+    }) = judge_creation(
+        ctx,
+        vcs,
+        &project,
+        &dir,
+        &request.branch,
+        request.spelling.as_ref(),
+        request.at.as_deref(),
+        CREATE,
+        false,
+        &mut report,
+    )?
+    else {
+        return report.into_result();
+    };
+    let new_raw = RawRefName::new(new.as_str());
 
     let at_head = start == head;
     ProjectMove {
@@ -462,30 +574,26 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
             &mut report,
         )?;
     }
+    let mut steps = Vec::new();
+    if let Some(record) = &record {
+        let (manifest, lock) = project_files(vcs, &dir, &start);
+        if let Ok(manifest) = manifest {
+            steps = crate::member_branch::judge_entries(
+                ctx,
+                CREATE,
+                (manifest, lock),
+                (&new, record),
+                &request.entries,
+                true,
+                &mut report,
+            )?;
+        }
+    }
     report.into_result()?;
     let record = record.expect("a record that did not read refused above");
 
-    let replaced = view.entry(&new);
-    store
-        .write(|view| {
-            Ok(vec![Write {
-                branch: new.clone(),
-                record: match &record {
-                    Record::Declared => Record::Declared,
-                    Record::Feature { target, .. } => feature_record(view, &new, target)?,
-                },
-            }])
-        })
-        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &new, e))?;
-    if let Some(old) = replaced {
-        outln!(
-            "replaced the record of {new}: its branch exists nowhere ({})",
-            match old {
-                Entry::Value(old) => old.to_string(),
-                Entry::Conflict(..) => "conflict".to_owned(),
-                Entry::Unreadable(why) => format!("unreadable: {why}"),
-            }
-        );
+    if let Some(line) = write_created_record(vcs, &project, &dir, &new, &record)? {
+        outln!("{line}");
     }
     let departure = Departure::of_project_move(vcs, &dir, &start)?;
     vcs.create_branch_and_attach(&dir, &new_raw, &start, &departure)
@@ -499,7 +607,13 @@ pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()>
             outln!("{line}");
         }
     }
-    after_project_move(ctx, &dir, CREATE)
+    after_project_move(ctx, &dir, CREATE)?;
+    crate::member_branch::apply_entries(
+        ctx,
+        CREATE,
+        &steps,
+        crate::activate::ActivateOptions::default(),
+    )
 }
 
 fn diverged_start(
@@ -507,6 +621,7 @@ fn diverged_start(
     project: &ProjectName,
     dir: &Path,
     target: &RawRefName,
+    verb: &'static str,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let home = vcs.project_url_remote(dir)?;
@@ -528,7 +643,7 @@ fn diverged_start(
             )
             .checkout(dir)
             .bind("<T>", target)
-            .by_verb(CREATE)
+            .by_verb(verb)
             .only(&[ChoiceId::C34])
             .judge(vcs),
     );
@@ -544,9 +659,15 @@ fn report_names(
     new: &BranchName,
     record: Option<&Record>,
     start: &ResolvedRevisionId,
+    verb: &'static str,
+    from_commits: bool,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let (manifest, _) = project_files(vcs, dir, start);
+    let (manifest, _) = if from_commits {
+        committed_files(vcs, dir, start)
+    } else {
+        project_files(vcs, dir, start)
+    };
     let manifest = manifest?;
     let mut repos = vec![(
         Moving::present(label(project), dir.to_path_buf(), project_vcs(), None),
@@ -571,10 +692,190 @@ fn report_names(
     let feature = matches!(record, Some(Record::Feature { .. }));
     for (repo, role) in &repos {
         if feature && matches!(role, Some(Role::Owned | Role::Fork)) {
-            judge_feature_name(repo, new, &scan, CREATE, report);
+            judge_feature_name(repo, new, &scan, verb, report);
         }
-        judge_name_taken(repo, new, false, CREATE, report)?;
+        judge_name_taken(repo, new, false, verb, report)?;
     }
+    Ok(())
+}
+
+/// Which checkouts of the branch an opening refuses.
+pub(crate) enum Checkouts<'a> {
+    /// The branch is where the workspace already is.
+    Unchecked,
+    /// Any checkout but this one.
+    Except(&'a Path),
+    /// Any checkout: the opening makes a new workspace.
+    All,
+}
+
+/// What opening a branch found: where it is, the record it is opened by,
+/// and the record that spelling writes where it has none.
+pub(crate) struct Opening<'v> {
+    pub branch: BranchName,
+    pub raw: RawRefName,
+    pub store: Store<'v>,
+    pub record: Option<Record>,
+    pub to_write: Option<Record>,
+    pub local: Option<ResolvedRevisionId>,
+    pub copy: Option<RemoteTip>,
+    pub destination: ResolvedRevisionId,
+}
+
+/// The rules `switch` and `workweave create --branch` share for opening a
+/// branch: it must exist here or on a remote, its record is read bare or
+/// written from the spelling, a spelling that differs from the record is
+/// refused, and a branch checked out elsewhere is refused. `skip` is the
+/// checkout that is not elsewhere. Findings go into `report`; nothing is
+/// written.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn judge_opening<'v>(
+    ctx: &WorkspaceContext,
+    vcs: &'v dyn Vcs,
+    project: &ProjectName,
+    dir: &'v Path,
+    text: &str,
+    spelling: Option<&Spelling>,
+    verb: &'static str,
+    checkouts: Checkouts<'_>,
+    report: &mut Report,
+) -> anyhow::Result<Opening<'v>> {
+    let parse = |text: &str| named(vcs, project, dir, text, verb);
+    let branch = parse(text)?;
+    let raw = RawRefName::new(branch.as_str());
+
+    let local = vcs.resolve_local_branch_tip(dir, &raw)?;
+    let copy = if local.is_none() {
+        remote_copy(vcs, dir, &raw)?
+    } else {
+        None
+    };
+    let destination = local
+        .clone()
+        .or_else(|| copy.as_ref().map(|c| c.tip.clone()));
+    let Some(destination) = destination else {
+        return Err(no_branch_here(ctx, project, vcs, dir, &branch, verb));
+    };
+
+    let store = Store::open(vcs, dir)?;
+    let view = store
+        .settle()
+        .map_err(|e| write_refusal(vcs, &store, project, dir, &branch, e))?;
+    let mut to_write: Option<Record> = None;
+    let record = match (view.lookup(&branch), spelling) {
+        (Lookup::Value(record), None) => Some(record),
+        (Lookup::Value(record), Some(spelling)) => {
+            match spelled_record(&view, &branch, spelling, &parse)? {
+                Ok(spelled) if agrees(&record, &spelled) => Some(record),
+                Ok(spelled) => {
+                    report.add(judge_lookup(
+                        vcs,
+                        &store,
+                        project,
+                        dir,
+                        &branch,
+                        Lookup::Conflict(record, spelled),
+                    )?);
+                    None
+                }
+                Err(error) => return Err(write_refusal(vcs, &store, project, dir, &branch, error)),
+            }
+        }
+        (Lookup::Unrecorded, Some(spelling)) => {
+            match spelled_record(&view, &branch, spelling, &parse)? {
+                Ok(spelled) => {
+                    to_write = Some(spelled.clone());
+                    Some(spelled)
+                }
+                Err(error) => return Err(write_refusal(vcs, &store, project, dir, &branch, error)),
+            }
+        }
+        (lookup, _) => {
+            report.add(judge_lookup(vcs, &store, project, dir, &branch, lookup)?);
+            None
+        }
+    };
+
+    if !matches!(checkouts, Checkouts::Unchecked) {
+        let recorded = crate::sync::recorded_workweaves(ctx.primary_path())?;
+        let here = match checkouts {
+            Checkouts::Except(here) => Some(crate::path_spelling::CanonicalPath::of(here)),
+            _ => None,
+        };
+        for checkout in vcs.checkouts_of_branch(dir, &raw)? {
+            if Some(crate::path_spelling::CanonicalPath::of(&checkout)) != here {
+                report.add(crate::sync::judge_checkout(
+                    vcs,
+                    label(project),
+                    &checkout,
+                    dir,
+                    &recorded,
+                    Some((verb, branch.as_str())),
+                ));
+            }
+        }
+    }
+    Ok(Opening {
+        branch,
+        raw,
+        store,
+        record,
+        to_write,
+        local,
+        copy,
+        destination,
+    })
+}
+
+/// Write the record a spelling gave an unrecorded branch.
+pub(crate) fn write_opened_record(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    opening: &Opening<'_>,
+) -> anyhow::Result<Option<String>> {
+    let Some(record) = &opening.to_write else {
+        return Ok(None);
+    };
+    let branch = &opening.branch;
+    opening
+        .store
+        .write(|view| {
+            Ok(vec![Write {
+                branch: branch.clone(),
+                record: match record {
+                    Record::Declared => Record::Declared,
+                    Record::Feature { target, .. } => feature_record(view, branch, target)?,
+                },
+            }])
+        })
+        .map_err(|e| write_refusal(vcs, &opening.store, project, dir, branch, e))?;
+    Ok(Some(format!("recorded {branch}: {record}")))
+}
+
+/// Give the project repo a local branch from the remote copy a branch only
+/// a remote had.
+pub(crate) fn localize_opened(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    opening: &Opening<'_>,
+) -> anyhow::Result<()> {
+    if opening.local.is_some() {
+        return Ok(());
+    }
+    let copy = opening
+        .copy
+        .clone()
+        .expect("a branch found nowhere refused before");
+    vcs.create_branch(
+        dir,
+        &opening.raw,
+        &copy.tip,
+        Some(&Upstream {
+            remote: copy.remote,
+            branch: opening.raw.clone(),
+        }),
+    )?;
     Ok(())
 }
 
@@ -588,84 +889,34 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
         Switch::Detach(rev) => return switch_detached(ctx, vcs, &project, &dir, rev),
         Switch::Branch { branch, spelling } => (branch, spelling),
     };
-    let parse = |text: &str| named(vcs, &project, &dir, text, SWITCH);
-    let branch = parse(text)?;
-    let raw = RawRefName::new(branch.as_str());
     let current = checked_out(vcs, &dir)?;
     let detached = current.is_none();
     let mut report = Report::default();
-
-    let local = vcs.resolve_local_branch_tip(&dir, &raw)?;
-    let copy = if local.is_none() {
-        remote_copy(vcs, &dir, &raw)?
-    } else {
-        None
-    };
-    let destination = local
-        .clone()
-        .or_else(|| copy.as_ref().map(|c| c.tip.clone()));
-    let Some(destination) = destination else {
-        return Err(no_branch_here(ctx, &project, vcs, &dir, &branch));
-    };
-
-    let store = Store::open(vcs, &dir)?;
-    let view = store
-        .settle()
-        .map_err(|e| write_refusal(vcs, &store, &project, &dir, &branch, e))?;
-    let mut to_write: Option<Record> = None;
-    let record = match (view.lookup(&branch), spelling) {
-        (Lookup::Value(record), None) => Some(record),
-        (Lookup::Value(record), Some(spelling)) => {
-            match spelled_record(&view, &branch, spelling, &parse)? {
-                Ok(spelled) if agrees(&record, &spelled) => Some(record),
-                Ok(spelled) => {
-                    report.add(judge_lookup(
-                        vcs,
-                        &store,
-                        &project,
-                        &dir,
-                        &branch,
-                        Lookup::Conflict(record, spelled),
-                    )?);
-                    None
-                }
-                Err(error) => {
-                    return Err(write_refusal(vcs, &store, &project, &dir, &branch, error))
-                }
-            }
-        }
-        (Lookup::Unrecorded, Some(spelling)) => {
-            match spelled_record(&view, &branch, spelling, &parse)? {
-                Ok(spelled) => {
-                    to_write = Some(spelled.clone());
-                    Some(spelled)
-                }
-                Err(error) => {
-                    return Err(write_refusal(vcs, &store, &project, &dir, &branch, error))
-                }
-            }
-        }
-        (lookup, _) => {
-            report.add(judge_lookup(vcs, &store, &project, &dir, &branch, lookup)?);
-            None
-        }
-    };
-
-    if current.as_deref() != Some(branch.as_str()) {
-        let recorded = crate::sync::recorded_workweaves(ctx.primary_path())?;
-        let here = crate::path_spelling::CanonicalPath::of(&dir);
-        for checkout in vcs.checkouts_of_branch(&dir, &raw)? {
-            if crate::path_spelling::CanonicalPath::of(&checkout) != here {
-                report.add(crate::sync::judge_checkout(
-                    vcs,
-                    label(&project),
-                    &checkout,
-                    &dir,
-                    &recorded,
-                ));
-            }
-        }
-    }
+    let already = current.as_deref() == Some(text.as_str());
+    let opening = judge_opening(
+        ctx,
+        vcs,
+        &project,
+        &dir,
+        text,
+        spelling.as_ref(),
+        SWITCH,
+        if already {
+            Checkouts::Unchecked
+        } else {
+            Checkouts::Except(&dir)
+        },
+        &mut report,
+    )?;
+    let Opening {
+        branch,
+        raw,
+        record,
+        destination,
+        ..
+    } = &opening;
+    let (branch, raw, destination) = (branch.clone(), raw.clone(), destination.clone());
+    let record = record.clone();
 
     ProjectMove {
         project: &project,
@@ -689,34 +940,12 @@ pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()>
     }
     report.into_result()?;
 
-    if let Some(record) = to_write {
-        store
-            .write(|view| {
-                Ok(vec![Write {
-                    branch: branch.clone(),
-                    record: match &record {
-                        Record::Declared => Record::Declared,
-                        Record::Feature { target, .. } => feature_record(view, &branch, target)?,
-                    },
-                }])
-            })
-            .map_err(|e| write_refusal(vcs, &store, &project, &dir, &branch, e))?;
-        outln!("recorded {branch}: {record}");
+    if let Some(line) = write_opened_record(vcs, &project, &dir, &opening)? {
+        outln!("{line}");
     }
     if current.as_deref() != Some(branch.as_str()) {
         let departure = Departure::of_project_move(vcs, &dir, &destination)?;
-        if local.is_none() {
-            let copy = copy.expect("a branch found nowhere refused above");
-            vcs.create_branch(
-                &dir,
-                &raw,
-                &copy.tip,
-                Some(&Upstream {
-                    remote: copy.remote,
-                    branch: raw.clone(),
-                }),
-            )?;
-        }
+        localize_opened(vcs, &dir, &opening)?;
         vcs.reattach_head(
             vcs.head_attachment(&dir)?,
             &LocalRefName::of_branch(&raw),
@@ -734,6 +963,7 @@ fn no_branch_here(
     vcs: &dyn Vcs,
     dir: &Path,
     branch: &BranchName,
+    verb: &'static str,
 ) -> anyhow::Error {
     let raw = RawRefName::new(branch.as_str());
     let mut report = Report::default();
@@ -760,7 +990,7 @@ fn no_branch_here(
         }
     }
     if members.is_empty() {
-        report.add(no_such_branch(vcs, project, dir, branch, SWITCH));
+        report.add(no_such_branch(vcs, project, dir, branch, verb));
     }
     for (path, member_dir, member_vcs, copy) in members {
         let unpushed = match member_vcs.observe_head(&member_dir) {
@@ -781,7 +1011,7 @@ fn no_branch_here(
             .subject(format!("{branch} is a branch of {path} only"))
             .checkout(&member_dir)
             .bind("<b>", branch)
-            .by_verb(SWITCH)
+            .by_verb(verb)
             .only(&[choice]);
         if let Some(copy) = copy {
             judging = judging.bind("<r>", copy.remote);

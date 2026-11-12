@@ -573,10 +573,14 @@ impl State {
                 means: "a workweave's checkout derives from the clone, named; or the \
                         branch is checked out there",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
-                             of a dropped member there; `rwv branch delete` and `rwv switch`, \
-                             for a project branch checked out in another workspace",
+                             of a dropped member there; `rwv branch delete`, `rwv switch` and \
+                             `rwv workweave create --branch`, for a project branch checked out \
+                             in another workspace",
                 offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
-                verb_offers: &[],
+                verb_offers: &[
+                    ("switch", Form::C16Detach),
+                    ("workweave create", Form::C16Detach),
+                ],
             },
             Self::CheckoutInRawWorktree => &StateRow {
                 axis: Axis::Checkout,
@@ -595,15 +599,19 @@ impl State {
                 means: "the branch and its upstream each hold commits the other lacks, counted \
                         on the line",
                 refused_by: "`rwv pull`, for the project branch; `rwv update --remote`, for a \
-                             member; `rwv branch create`, for a branch that would start at the \
-                             tip of a branch that has diverged from its upstream",
+                             member; `rwv branch create` and `rwv workweave create`, for a \
+                             branch that would start at the tip of a branch that has diverged \
+                             from its upstream",
                 offers: &[
                     Form::C2Pull,
                     Form::C3Pull,
                     Form::C2UpdateRemote,
                     Form::C3UpdateRemote,
                 ],
-                verb_offers: &[("branch create", Form::C34)],
+                verb_offers: &[
+                    ("branch create", Form::C34),
+                    ("workweave create", Form::C34),
+                ],
             },
             Self::PushBranchBehind => &StateRow {
                 axis: Axis::PushBranch,
@@ -693,7 +701,9 @@ impl State {
                 axis: Axis::Name,
                 name: "taken",
                 means: "the project already records a workweave by this name at another path, \
-                        or the directory the workweave would take is another workweave's; or a \
+                        or the directory the workweave would take is another workweave's, or \
+                        holds a workweave that is not clean, was made from another parent, or \
+                        holds something other than what this spelling would make; or a \
                         member's clone has a remote holding the name its url remote would take, \
                         with another url",
                 refused_by: "`rwv workweave create`; for a member's url remote, `rwv fetch`, \
@@ -730,6 +740,7 @@ impl State {
                     ("workweave create", Form::AnotherName),
                     ("branch create", Form::AnotherName),
                     ("branch create", Form::OpenSwitch),
+                    ("workweave create", Form::OpenWorkweave),
                     ("branch rename", Form::C10),
                     ("branch rename", Form::C10Adopt),
                     ("member set-branch", Form::C11SetBranch),
@@ -1576,6 +1587,7 @@ pub enum Form {
     C16Switch,
     C16WorkweaveDelete,
     C16Raw,
+    C16Detach,
     C17,
     C18,
     C19,
@@ -1602,6 +1614,7 @@ pub enum Form {
     C40,
     AnotherName,
     OpenSwitch,
+    OpenWorkweave,
     DoctorFix,
     ConvertIndex,
 }
@@ -1615,7 +1628,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 67] = [
+    pub const ALL: [Form; 69] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1655,6 +1668,7 @@ impl Form {
         Self::C16Switch,
         Self::C16WorkweaveDelete,
         Self::C16Raw,
+        Self::C16Detach,
         Self::C17,
         Self::C18,
         Self::C19,
@@ -1681,6 +1695,7 @@ impl Form {
         Self::C40,
         Self::AnotherName,
         Self::OpenSwitch,
+        Self::OpenWorkweave,
         Self::DoctorFix,
         Self::ConvertIndex,
     ];
@@ -1925,6 +1940,12 @@ impl Form {
                 at: W::Checkout,
                 shipped: true,
             },
+            Self::C16Detach => &FormRow {
+                choice: C::C16,
+                steps: &[Rwv("rwv workweave create <new> --detach <W>")],
+                at: W::Here,
+                shipped: true,
+            },
             Self::C17 => &FormRow {
                 choice: C::C17,
                 steps: &[
@@ -2058,7 +2079,7 @@ impl Form {
                 choice: C::C37,
                 steps: &[Rwv("rwv workweave create <ww>")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C38 => &FormRow {
                 choice: C::C38,
@@ -2087,6 +2108,12 @@ impl Form {
             Self::OpenSwitch => &FormRow {
                 choice: C::OpenIt,
                 steps: &[Rwv("rwv switch <W>")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::OpenWorkweave => &FormRow {
+                choice: C::OpenIt,
+                steps: &[Rwv("rwv workweave create <ww> --branch <W>")],
                 at: W::Here,
                 shipped: true,
             },

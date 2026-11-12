@@ -621,6 +621,7 @@ fn judge_rename_of(
             &checkout,
             &repo.dir,
             &recorded,
+            None,
         ));
     }
     if let Some(path) = &repo.member {

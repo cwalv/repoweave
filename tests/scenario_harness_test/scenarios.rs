@@ -697,12 +697,50 @@ pub fn shared_member_pinned_behind() -> Scenario {
 }
 
 pub fn nested_workweaves() -> Scenario {
+    let w1_root = "../proj--w1";
     scenario(
-        "nested workweaves",
-        vec![Step::pending(
-            "create w1 with -b w1",
-            MissingVerb::WeaveBranch,
-        )],
+        "nested workweaves, each on a branch it names",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w1",
+                    "--new-branch",
+                    "w1",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("w1"),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w2",
+                    "--new-branch",
+                    "w2",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&ww("w2"), &["sync-to"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: ww("w1"),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "w2-app",
+                }),
+            Step::rwv(&ww("w2"), &["sync", w1_root]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["sync-to", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+        ],
     )
 }
 
@@ -714,15 +752,7 @@ pub fn nested_workweaves_without_naming() -> Scenario {
             create("w1"),
             Step::rwv(
                 &ww("w1"),
-                &[
-                    "workweave",
-                    "create",
-                    "--project",
-                    "proj",
-                    "w2",
-                    "--from",
-                    ".",
-                ],
+                &["workweave", "create", "--project", "proj", "w2"],
             )
             .expect(Exit::Succeeds),
             Step::commit(&ww("w2"), Repo::App, "w2-app"),
@@ -2950,6 +2980,27 @@ pub fn set_branch_new() -> Scenario {
                     repo: Repo::Lib,
                 })
                 .claim(Claim::OutputContains("Committed rwv.toml, rwv.lock")),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "create",
+                    "dec",
+                    "--declared",
+                    "--set-new-branch",
+                    "local/remotes/lib=hold-too",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "hold-too",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::Lib,
+            }),
         ],
     )
 }
@@ -3587,6 +3638,360 @@ pub fn dc18_partial_delete_status() -> Scenario {
                 .claim(Claim::OutputContains(
                     "left: local/remotes/lib proj--feat2: unlanded",
                 )),
+        ],
+    )
+}
+
+fn b_ww(name: &str) -> Place {
+    Place::ww(Machine::B, name)
+}
+
+pub fn records_bare_open_second_machine() -> Scenario {
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
+        Step::new_machine(Machine::B),
+        Step::rwv(
+            &b(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "ww",
+                "--branch",
+                "feat-x",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OnBranch {
+            at: b_ww("ww"),
+            repo: Repo::Proj,
+            branch: "feat-x",
+        })
+        .claim(Claim::OnBranch {
+            at: b_ww("ww"),
+            repo: Repo::App,
+            branch: "feat-x",
+        })
+        .claim(Claim::OnBranch {
+            at: b_ww("ww"),
+            repo: Repo::Lib,
+            branch: "feat-x",
+        })
+        .claim(Claim::AtPin {
+            at: b_ww("ww"),
+            repo: Repo::App,
+        })
+        .claim(Claim::RecordIs {
+            machine: Machine::B,
+            branch: "feat-x",
+            record: feat_x_record(),
+        })
+        .claim(Claim::MarkerParent {
+            at: b_ww("ww"),
+            parent: b(),
+        }),
+    ]);
+    scenario("a second machine opens a published branch bare", steps)
+}
+
+pub fn records_raw_push_unrecorded() -> Scenario {
+    scenario(
+        "a raw-pushed branch opens only with a spelling, which the next push publishes",
+        vec![
+            Step::git(&a(), Repo::Proj, &["switch", "-c", "feat-x"]),
+            Step::commit(&a(), Repo::Proj, "raw-feat"),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "feat-x"])
+                .pushes(Remote::origin(Repo::Proj), "feat-x"),
+            Step::git(&a(), Repo::Proj, &["switch", "main"]),
+            Step::new_machine(Machine::B),
+            Step::rwv(
+                &b(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww",
+                    "--branch",
+                    "feat-x",
+                ],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::TargetUnrecorded))
+            .claim(Claim::OutputContains("unrecorded"))
+            .claim(Claim::OutputContains("rwv fetch"))
+            .claim(Claim::OutputContains("rwv branch set-mode feat-x declared"))
+            .claim(Claim::RecordIs {
+                machine: Machine::B,
+                branch: "feat-x",
+                record: None,
+            }),
+            Step::rwv(
+                &b(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww",
+                    "--branch",
+                    "feat-x",
+                    "--target",
+                    "main",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: b_ww("ww"),
+                repo: Repo::Proj,
+                branch: "feat-x",
+            })
+            .claim(Claim::RecordIs {
+                machine: Machine::B,
+                branch: "feat-x",
+                record: Some(feature_onto("main", Mode::Declared)),
+            }),
+            publishes_records(Step::rwv(&b_ww("ww"), &["push", "--branch", "feat-x"]))
+                .pushes(Remote::origin(Repo::Proj), "feat-x")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: Some(feature_onto("main", Mode::Declared)),
+                }),
+        ],
+    )
+}
+
+pub fn project_branch_elsewhere() -> Scenario {
+    scenario(
+        "a project branch checked out in another workspace is not taken, and can be looked at detached",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww1",
+                    "--new-branch",
+                    "feat-x",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "feat-x"])
+                .expect(Exit::refuses(Repo::Proj, State::CheckoutInAnotherWorkspace))
+                .claim(Claim::OutputContains("checkout"))
+                .claim(Claim::OutputContains("proj--ww1"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww2",
+                    "--branch",
+                    "feat-x",
+                ],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::CheckoutInAnotherWorkspace))
+            .claim(Claim::OutputContains("checkout"))
+            .claim(Claim::OutputContains("proj--ww1"))
+            .claim(Claim::OutputContains(
+                "rwv workweave create <new> --detach feat-x",
+            ))
+            .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww2",
+                    "--detach",
+                    "feat-x",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+pub fn create_diverged_at() -> Scenario {
+    scenario(
+        "a create at a branch that diverged from its upstream refuses and starts at the local branch with --at",
+        vec![
+            Step::commit(&a(), Repo::Proj, "local-landing"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Proj,
+                branch: "main",
+                mark: "teammate",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww"])
+                .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+                .claim(Claim::OutputContains("diverged"))
+                .claim(Claim::OutputContains("--at main"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww",
+                    "--at",
+                    "main",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: ww("ww"),
+                repo: Repo::Proj,
+                rev: "HEAD",
+                mark: "local-landing",
+            }),
+        ],
+    )
+}
+
+pub fn workweave_create_dirty_parent() -> Scenario {
+    let declared = declared_branch_text(Repo::Lib, "main");
+    scenario(
+        "a create leaves the parent's uncommitted manifest where it is, reported",
+        vec![
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                &declared,
+                &format!("{declared} # edited"),
+            ),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("rwv.toml"))
+                .claim(Claim::OutputContains("stay there"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Proj,
+                    branch: "main",
+                }),
+        ],
+    )
+}
+
+pub fn dc19_idempotent_create() -> Scenario {
+    scenario(
+        "dc19: the same create twice returns the workweave; a different spelling refuses",
+        vec![
+            create("ww"),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("returned as it is"))
+                .claim(Claim::LocalStateUnchanged(ww("ww"))),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww",
+                    "--new-branch",
+                    "other",
+                ],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::NameTaken))
+            .claim(Claim::OutputContains("name taken"))
+            .claim(Claim::LocalStateUnchanged(ww("ww"))),
+        ],
+    )
+}
+
+pub fn dc08_set_mode_own_workspace() -> Scenario {
+    scenario(
+        "dc08: set-mode in the primary leaves a workweave on the branch as it is",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "ww1",
+                    "--new-branch",
+                    "feat-x",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-x", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: ww("ww1"),
+                    repo: Repo::Proj,
+                    branch: "feat-x",
+                })
+                .claim(Claim::OnBranch {
+                    at: ww("ww1"),
+                    repo: Repo::App,
+                    branch: "feat-x",
+                }),
+            Step::rwv(&ww("ww1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("alignment"))
+                .claim(Claim::OutputContains("rwv update")),
+        ],
+    )
+}
+
+pub fn detached_review_lib_fix() -> Scenario {
+    scenario(
+        "detached review workspace: an unrelated lib commit is kept on a branch, then update returns lib to its pin",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "rv",
+                    "--detach",
+                    "main",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::AtPin {
+                at: ww("rv"),
+                repo: Repo::Lib,
+            }),
+            Step::commit(&ww("rv"), Repo::Lib, "lib-fix"),
+            Step::rwv(&ww("rv"), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("detached with unpushed commits"))
+                .claim(Claim::OutputContains("branch <name> <sha>")),
+            Step::git(&ww("rv"), Repo::Lib, &["branch", "lib-fix-branch"]),
+            Step::rwv(&ww("rv"), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::AtPin {
+                    at: ww("rv"),
+                    repo: Repo::Lib,
+                })
+                .claim(Claim::Contains {
+                    at: ww("rv"),
+                    repo: Repo::Lib,
+                    rev: "lib-fix-branch",
+                    mark: "lib-fix",
+                }),
+            Step::git(&ww("rv"), Repo::Lib, &["push", "origin", "lib-fix-branch"])
+                .pushes(Remote::origin(Repo::Lib), "lib-fix-branch"),
         ],
     )
 }

@@ -24,40 +24,41 @@ stay on the branch `rwv.toml` declares for each member (`branch`, which
 rwv workweave create <name>
 ```
 
-Create forks from CWD's active workspace by default. Inside a workweave,
-the fork source is the surrounding workweave; from a primary weave, it is
-primary. To specify a different source:
+The workspace the command runs in is the new workweave's parent, and only
+its provenance: it does not switch, and the workweave starts from commits. Inside
+a workweave, the parent is that workweave; from a primary weave, it is primary.
+To fork from another workspace, run `create` there. A parent whose `rwv.lock`
+is committed and current gives each member its intended pin.
+
+The branch the project repo ends on is chosen by flag:
 
 ```bash
-rwv workweave create <name> --from primary
-rwv workweave create <name> --from other
-rwv workweave create <name> --from ../.workweaves/<project>--other
+rwv workweave create <name>                      # a feature named {project}--{name}
+rwv workweave create <name> --new-branch <W>     # a feature named W
+rwv workweave create <name> --branch <W>         # open W by its record
+rwv workweave create <name> --detach <rev>       # a detached workspace
 ```
 
-`--from` reads its source as `rwv sync` does: `primary`, a bare workweave name
-of the project, or a path, absolute or relative to the directory rwv runs in
-(or the `-C`/`-w` directory). The last example runs from the primary weave
-root. A bare word always names a workweave, so a directory with a bare name is
-written `./<dir>`. The source must be a workspace whose `rwv.lock` is committed
-and current.
+`--target <T>`, `--declared`, `--at <rev>`, `--set-branch` and
+`--set-new-branch` are spelled as for `rwv branch create`.
 
 ### What create writes
 
 1. One `git worktree` per member repo, whatever its role (plus the project
-   repo), at `{workweave}/{repo-path}/`. The project repo and each `owned` or
-   `fork` member is on a fresh flat ephemeral branch named `{project}--{name}`
-   (with `/` in scoped project names encoded as `+`); each `dependency` or
-   `reference` member is detached at the commit the lock pins, and carries no
-   branch of the workweave's.
+   repo), at `{workweave}/{repo-path}/`. The project repo is on the workweave's
+   branch (by default `{project}--{name}`, with `/` in scoped project names
+   encoded as `+`) or detached; each `owned` or `fork` member of a feature is
+   on a branch of the same name at its pin; every other member is detached at
+   the commit the lock pins.
    Each worktree belongs to the canonical weave-root clone, so a nested
    workweave's worktrees belong to the same store as its parent's. A
    `role = "reference"` repo's tracked files are read-only. Where the
    filesystem allows, a member's files share storage with another workspace's
    copy rather than being written afresh.
 2. `[workweave]` artifacts from `rwv.toml` (`copy = [...]` entries deep-copied;
-   `link = [...]` entries are absolute symlinks into the source root).
+   `link = [...]` entries are absolute symlinks into the parent's root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
-   `parent` is the workspace forked from — it becomes the auto-target for
+   `parent` is the workspace the command ran in — it becomes the auto-target for
    bare `rwv sync-to` from inside the workweave. This is the workweave
    root's **only** identity file: no `.rwv-active` is written beside it.
    The pointer records project *selection*, which is primary-only — a
@@ -78,49 +79,20 @@ and current.
    [skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them
    ```
 
-### Dirty-source check
+### Uncommitted files in the parent
 
-`create` checks for uncommitted changes in `projects/<project>/` before
-proceeding. If the project directory is dirty it refuses with a clear
-error:
-
-```
-Error: rwv workweave create: refusing to create workweave — projects/web-app has uncommitted changes:
-  rwv.toml
-
-To proceed, do one of:
-  1. commit the changes: git -C projects/web-app commit
-  2. stash the changes: git -C projects/web-app stash
-  3. capture them into the workweave: rwv workweave create payments --capture-dirty
-
-rwv explain dirty-project-dir
-```
-
-The check covers only `projects/<project>/`. Member-repo worktrees are
-forked at HEAD by `git worktree add`, so uncommitted edits in member
-repos are not captured and not checked.
-
-Pass `--capture-dirty` to move the uncommitted edits to `rwv.toml` and
-`rwv.lock` into the workweave: once it exists, the source's copies go back
-to their committed versions, so landing the edits from the workweave later
-meets no dirty target. `create` names each file it moved, and names any
-other uncommitted file in `projects/<project>/`, which stays in the source
-only. Commit the captured edits inside the workweave before running
-`rwv sync-to`.
+`create` starts from commits. Uncommitted files in the parent, `rwv.toml` and
+`rwv.lock` included, stay there as they are, and `create` names them. Commit
+an edit the workweave should carry before creating it.
 
 ### Re-invocation (idempotent path)
 
-If the workweave already exists and is clean, re-invoking `create` without
-`--replace-existing` validates the `.rwv-workweave` marker (same primary and
-project) and returns immediately. Non-git state written between invocations
-(`.runtime/`, `.claude/`, etc.) is preserved in place. This is the standard
-"ensure workweave exists" path.
-
-Use `--replace-existing` to tear down and recreate from scratch. It refuses if
-any checkout under the existing workweave, a manifest member or not, holds
-uncommitted changes or unmerged commits — the operator must discard those
-explicitly with `rwv workweave delete <name> --discard-uncommitted
---discard-unlanded`.
+Running an identical spelling on a clean workweave whose `.rwv-workweave`
+marker matches (same primary, project and parent) returns it, reported.
+Non-git state written between invocations (`.runtime/`, `.claude/`, etc.) is
+preserved in place. This is the standard "ensure workweave exists" path. Any
+difference is refused (`name` taken), listing what differs, and changes
+nothing; replacing a workweave is `rwv workweave delete` followed by `create`.
 
 ## Working state
 

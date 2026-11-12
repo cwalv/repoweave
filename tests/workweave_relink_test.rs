@@ -600,6 +600,10 @@ fn a_create_over_a_moved_branch_refuses_and_succeeds_once_it_is_renamed() {
         "the refusal names the branch in the way: {refusal}"
     );
     common::git_in(w.canonical(), &["branch", "-m", "demo--feat", "keep-feat"]);
+    common::git_in(
+        w.primary.join("projects/demo"),
+        &["branch", "-m", "demo--feat", "keep-project-feat"],
+    );
 
     rwv(
         &w.primary,

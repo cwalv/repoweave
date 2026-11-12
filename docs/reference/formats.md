@@ -220,7 +220,7 @@ Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv clone` or `r
 
 Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent. The project clone's workweave index keeps the same `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv sync-to --retire` refuse instead, naming `rwv doctor --fix`.
 
-Written by `rwv workweave create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave delete <name>` or `rwv sync-to --retire`.
+Written by `rwv workweave create <name>`, which, run inside a workweave, also duplicates that workweave's state; removed with the workweave by `rwv workweave delete <name>` or `rwv sync-to --retire`.
 
 ```json
 {
@@ -322,7 +322,7 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
         └── .rwv-workweave                    # primary: ~/work, parent: ~/work
 ```
 
-The `.workweaves/` subtree is created and destroyed by `rwv workweave create` and `rwv workweave delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
+The `.workweaves/` subtree is created and destroyed by `rwv workweave create` and `rwv workweave delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create` run inside a workweave is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
 
 The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`, plus `local`, which names no host at all. The set is not configurable. A URL on any other host still resolves: the segment becomes the URL's own host, or `local` for a `file://` URL — the same segment name the `local` registry uses, though reached by that host-derivation rule rather than by looking the registry up by name.
 

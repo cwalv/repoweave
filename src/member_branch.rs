@@ -640,6 +640,225 @@ pub(crate) fn align_member(
     Ok(notes)
 }
 
+/// Judge every `--set-branch` and `--set-new-branch` of a creating verb
+/// against the workspace as the new branch will leave it, with `manifest` and
+/// `lock` as its first commit starts from. Nothing is written. `moves` also
+/// judges the move of each member this workspace aligns, and what the commit
+/// would sweep up.
+pub(crate) fn judge_entries(
+    ctx: &WorkspaceContext,
+    verb: &'static str,
+    (manifest, lock): (Manifest, Option<LockFile>),
+    branch: (&crate::records::BranchName, &crate::records::Record),
+    entries: &[BranchEntry],
+    moves: bool,
+    refusals: &mut Report,
+) -> anyhow::Result<Vec<EntryStep>> {
+    let (project, workweave_dir) = crate::lock::scope(ctx)?;
+    let project_dir = project_dir(ctx.active_path(), &project);
+    let aligner = Aligner::prospective(
+        ctx.active_path(),
+        &project,
+        Accounting::scan(ctx.primary_path()),
+        Some(branch),
+    )?;
+    let loaded = Loaded {
+        project,
+        project_dir,
+        workweave_dir,
+        manifest,
+        old: lock,
+        aligner,
+    };
+    let mut seen: Vec<&RepoPath> = Vec::new();
+    for entry in entries {
+        anyhow::ensure!(
+            !seen.contains(&&entry.member),
+            "rwv {verb}: {} is named by more than one --set-branch or --set-new-branch",
+            entry.member
+        );
+        seen.push(&entry.member);
+    }
+    let mut steps = Vec::new();
+    let mut pinned = loaded.old.clone().unwrap_or(LockFile {
+        repositories: Default::default(),
+    });
+    for entry in entries {
+        let Some(step) = judge_entry(ctx, &loaded, verb, entry, refusals)? else {
+            continue;
+        };
+        let member_entry = loaded
+            .manifest
+            .get_entry(&entry.member)
+            .expect("a judged member is in the manifest");
+        let located = loaded.checkout(ctx, &entry.member);
+        let owned_in_feature =
+            loaded.in_feature() && matches!(member_entry.role, Role::Owned | Role::Fork);
+        let mut after = member_entry.clone();
+        after.branch = step.branch.clone();
+        if let Some(pin) = &step.pin {
+            pinned.insert_entry(
+                entry.member.clone(),
+                crate::manifest::LockEntry {
+                    vcs_type: after.vcs_type,
+                    url: after.url.clone(),
+                    version: crate::vcs::RawRevisionId::new(pin.id().as_str()),
+                },
+            );
+        }
+        if moves && located.aligns && !owned_in_feature {
+            let vcs = vcs_for(after.vcs_type);
+            judge_move(
+                &loaded,
+                vcs.as_ref(),
+                &entry.member,
+                &located.dir,
+                &after,
+                &step,
+                &pinned,
+                refusals,
+            )?;
+        }
+        steps.push(step);
+    }
+    if moves && !steps.is_empty() {
+        let authored =
+            crate::manifest_commit::authored_across(ctx, &loaded.project, &[&loaded.manifest]);
+        if let Err(e) =
+            crate::manifest_commit::judge(&loaded.project, &loaded.project_dir, &authored)
+        {
+            crate::member_url::merge_refusal(refusals, e)?;
+        }
+    }
+    Ok(steps)
+}
+
+/// Run the steps `judge_entries` judged, in the first commit of the branch
+/// the workspace is now on: the branches they create, the entries and pins
+/// they set, each member they move, and one commit for all of them with no
+/// relock between.
+pub(crate) fn apply_entries(
+    ctx: &WorkspaceContext,
+    verb: &'static str,
+    steps: &[EntryStep],
+    opts: crate::activate::ActivateOptions,
+) -> anyhow::Result<()> {
+    if steps.is_empty() {
+        return Ok(());
+    }
+    let loaded = Loaded::open(ctx, verb)?;
+    let mut manifest = loaded.manifest.clone();
+    let mut lock = loaded.old.clone().unwrap_or(LockFile {
+        repositories: Default::default(),
+    });
+    let mut moved: Vec<(&EntryStep, MemberDir, crate::manifest::RepoEntry)> = Vec::new();
+    for step in steps {
+        let entry = manifest
+            .get_entry(&step.member)
+            .expect("a judged member is in the manifest")
+            .clone();
+        let located = loaded.checkout(ctx, &step.member);
+        let vcs = vcs_for(entry.vcs_type);
+        let aligns = located.aligns
+            && !(loaded.in_feature() && matches!(entry.role, Role::Owned | Role::Fork));
+        if aligns {
+            vcs.backup_unpreserved_head(&located.dir)?;
+        }
+        step.apply(vcs.as_ref(), &located.dir, &mut manifest, &mut lock)?;
+        if aligns {
+            let mut after = entry.clone();
+            after.branch = step.branch.clone();
+            moved.push((step, located, after));
+        }
+    }
+    crate::add_remove::settle_manifest(ctx, &loaded.project, Some(&manifest), &[], opts)?;
+    let touches_lock = steps.iter().any(|step| step.pin.is_some());
+    if touches_lock {
+        crate::lock::write_lock_in(&lock, &loaded.project_dir)?;
+    }
+    for (step, located, after) in &moved {
+        let vcs = vcs_for(after.vcs_type);
+        for note in align_member(
+            &loaded,
+            vcs.as_ref(),
+            &step.member,
+            &located.dir,
+            after,
+            &lock,
+            verb,
+        )? {
+            eprintln!("rwv {verb}: {}: {note}", step.member);
+        }
+    }
+
+    let edits: Vec<(RepoPath, crate::manifest::RepoEntry)> = steps
+        .iter()
+        .map(|step| {
+            let mut held = manifest
+                .get_entry(&step.member)
+                .cloned()
+                .expect("a judged member is in the manifest");
+            held.branch = step.branch.clone();
+            (step.member.clone(), held)
+        })
+        .collect();
+    let edit_manifest = move |m: &mut Manifest| {
+        for (member, held) in &edits {
+            if m.get_entry(member).is_some() {
+                m.insert_repo(member.clone(), held.clone());
+            }
+        }
+    };
+    let pins: Vec<(RepoPath, crate::manifest::LockEntry)> = steps
+        .iter()
+        .filter_map(|step| {
+            let pin = step.pin.as_ref()?;
+            let entry = manifest.get_entry(&step.member)?;
+            Some((
+                step.member.clone(),
+                crate::manifest::LockEntry {
+                    vcs_type: entry.vcs_type,
+                    url: entry.url.clone(),
+                    version: crate::vcs::RawRevisionId::new(pin.id().as_str()),
+                },
+            ))
+        })
+        .collect();
+    let edit_lock = move |l: &mut LockFile| {
+        for (member, entry) in &pins {
+            l.insert_entry(member.clone(), entry.clone());
+        }
+    };
+    let authored = crate::manifest_commit::authored_across(
+        ctx,
+        &loaded.project,
+        &[&loaded.manifest, &manifest],
+    );
+    let listing: String = steps
+        .iter()
+        .map(|step| {
+            let was = loaded
+                .manifest
+                .get_entry(&step.member)
+                .map(|e| e.branch.to_string())
+                .unwrap_or_default();
+            format!("\n  - {}: branch {was} -> {}", step.member, step.branch)
+        })
+        .collect();
+    crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
+        project: &loaded.project,
+        project_dir: &loaded.project_dir,
+        edit_manifest: &edit_manifest,
+        edit_lock: touches_lock.then_some(&edit_lock as &dyn Fn(&mut LockFile)),
+        authored: &authored,
+        message: &format!("{verb}: set member branches\n{listing}"),
+    })?;
+    for step in steps {
+        eprintln!("rwv {verb}: {}: branch -> {}", step.member, step.branch);
+    }
+    Ok(())
+}
+
 /// The arguments of `rwv member set-branch`.
 pub struct SetBranch<'a> {
     pub repo: &'a str,

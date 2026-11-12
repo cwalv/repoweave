@@ -28,9 +28,7 @@
 //!   orphans. Silent auto-adoption in read paths is deliberately not done —
 //!   adoption is a doctor act with the operator's consent.
 
-use crate::cli::consent::{
-    DiscardUncommittedConsent, DiscardUnlandedConsent, ReplaceExistingConsent,
-};
+use crate::cli::consent::{DiscardUncommittedConsent, DiscardUnlandedConsent};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoPath, Role, SubmoduleRecursion, WorkweaveId, WorkweaveName,
 };
@@ -1713,16 +1711,18 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// What [`create_workweave`] does with uncommitted changes in the source
-/// project directory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirtySource {
-    /// Refuse, naming the dirty files.
-    Refuse,
-    /// Move uncommitted edits to `rwv.toml` and `rwv.lock` into the new
-    /// workweave's project worktree, discarding from the source only what the
-    /// copy holds, once the workweave exists.
-    Capture,
+/// Which branch the new workweave's project repo is on, and how it came to
+/// be there.
+#[derive(Debug, Clone)]
+pub enum BranchChoice {
+    /// A feature under the name minted from the workweave's identity.
+    Minted,
+    /// A new branch of this name, created as `branch create` creates one.
+    New(String),
+    /// An existing branch, opened by its record.
+    Open(String),
+    /// No branch: a detached workspace at this revision.
+    Detach(String),
 }
 
 /// Where `rwv workweave create` puts the workweave. Every path is already
@@ -1752,18 +1752,13 @@ pub struct CreateWorkweave<'a> {
     pub source_root: &'a Path,
     pub project: &'a ProjectName,
     pub name: &'a WorkweaveName,
-    /// If the workweave directory already exists:
-    /// - `None`: validate that the existing workweave matches this
-    ///   `(primary, project)` pair and has no local modifications relative to
-    ///   the source, then short-circuit. This preserves non-git state (e.g.
-    ///   `.runtime/`, `.claude/`) written by agents between invocations, which
-    ///   agent runtimes rely on across a restart. Refuses if the marker is
-    ///   missing or for a different project, or if any worktree has
-    ///   uncommitted changes or has diverged from the source.
-    /// - `Some`: destroy the existing workweave and recreate from scratch,
-    ///   refusing while it holds uncommitted or unmerged work.
-    pub replace_existing: Option<ReplaceExistingConsent>,
-    pub dirty_source: DirtySource,
+    pub branch: BranchChoice,
+    /// How a created or opened branch is used, where its record does not say.
+    pub spelling: Option<crate::switch::Spelling>,
+    /// The revision a created branch starts at.
+    pub at: Option<String>,
+    /// The member entries the branch's first commit sets.
+    pub entries: Vec<crate::member_branch::BranchEntry>,
     /// Where the workweave lands. Whichever way it is chosen, the resulting
     /// absolute path is recorded in the registry, so a per-workweave placement
     /// is as visible to a later `list` / `delete` / doctor as a default one.
@@ -1773,11 +1768,139 @@ pub struct CreateWorkweave<'a> {
     pub activation: crate::activate::ActivateOptions,
 }
 
-/// Create a workweave: for each repo in the manifest, create a worktree in the
-/// workweave directory on an ephemeral branch `{project}--{workweave_name}`.
-/// Also creates a worktree for the project repo, processes `workweave:` artifacts,
-/// writes the marker file, and runs activate. No `.rwv-active` is written: the
-/// marker names the project, and the two files are mutually exclusive.
+const CREATE: &str = "workweave create";
+
+/// What a create decided before it changed anything on disk.
+struct Intent<'v> {
+    start: ResolvedRevisionId,
+    head: ResolvedRevisionId,
+    branch: Option<crate::records::BranchName>,
+    creating: Option<crate::records::Record>,
+    opening: Option<crate::switch::Opening<'v>>,
+    steps: Vec<crate::member_branch::EntryStep>,
+}
+
+impl Intent<'_> {
+    fn feature(&self) -> bool {
+        matches!(self.creating, Some(crate::records::Record::Feature { .. }))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn judge_intent<'v>(
+    ctx: &crate::workspace::WorkspaceContext,
+    vcs: &'v dyn Vcs,
+    project: &ProjectName,
+    source_project: &'v Path,
+    flat: &crate::naming::FlatAddress,
+    branch: &BranchChoice,
+    spelling: Option<&crate::switch::Spelling>,
+    at: Option<&str>,
+    entries: &[crate::member_branch::BranchEntry],
+    report: &mut crate::diagnosis::Report,
+) -> anyhow::Result<Option<Intent<'v>>> {
+    let head = vcs.head_revision(source_project)?;
+    let mut intent = match branch {
+        BranchChoice::Minted | BranchChoice::New(_) => {
+            let text = match branch {
+                BranchChoice::New(text) => text.clone(),
+                _ => EphemeralRefName::mint(flat).to_string(),
+            };
+            let Some(planned) = crate::switch::judge_creation(
+                ctx,
+                vcs,
+                project,
+                source_project,
+                &text,
+                spelling,
+                at,
+                CREATE,
+                true,
+                report,
+            )?
+            else {
+                return Ok(None);
+            };
+            Intent {
+                start: planned.start,
+                head,
+                branch: Some(planned.new),
+                creating: planned.record,
+                opening: None,
+                steps: Vec::new(),
+            }
+        }
+        BranchChoice::Open(text) => {
+            let opening = crate::switch::judge_opening(
+                ctx,
+                vcs,
+                project,
+                source_project,
+                text,
+                spelling,
+                CREATE,
+                crate::switch::Checkouts::All,
+                report,
+            )?;
+            Intent {
+                start: opening.destination.clone(),
+                head,
+                branch: Some(opening.branch.clone()),
+                creating: None,
+                opening: Some(opening),
+                steps: Vec::new(),
+            }
+        }
+        BranchChoice::Detach(rev) => {
+            let Ok(start) = vcs.resolve_revision(source_project, rev) else {
+                report.add(crate::switch::no_such_branch(
+                    vcs,
+                    project,
+                    source_project,
+                    rev,
+                    CREATE,
+                ));
+                return Ok(None);
+            };
+            Intent {
+                start,
+                head,
+                branch: None,
+                creating: None,
+                opening: None,
+                steps: Vec::new(),
+            }
+        }
+    };
+    if let (Some(branch), Some(record)) = (&intent.branch, &intent.creating) {
+        let (manifest, lock) = crate::switch::committed_files(vcs, source_project, &intent.start);
+        if let Ok(manifest) = manifest {
+            intent.steps = crate::member_branch::judge_entries(
+                ctx,
+                CREATE,
+                (manifest, lock),
+                (branch, record),
+                entries,
+                false,
+                report,
+            )?;
+        }
+    }
+    Ok(Some(intent))
+}
+
+/// Create a workweave from the workspace `source_root`, which is its parent
+/// and nothing more: the new workweave starts from commits, so the parent
+/// does not switch and what it holds uncommitted stays there, reported.
+///
+/// The project repo is on a branch the create makes (the minted
+/// `{project}--{workweave}` unless `branch` names one), on a branch opened by
+/// its record, or detached. Each member repo is a worktree at the pin of the
+/// project commit the workweave starts from, on the same branch where the
+/// branch is a feature and the member is `owned` or `fork`. Also processes
+/// `workweave:` artifacts, writes the marker file, and runs activate. No
+/// `.rwv-active` is written: the marker names the project, and the two files
+/// are mutually exclusive.
 ///
 /// Returns the absolute path of the created workweave directory.
 pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf> {
@@ -1786,13 +1909,14 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         source_root,
         project,
         name,
-        replace_existing,
-        dirty_source,
+        branch,
+        spelling,
+        at,
+        entries,
         placement,
         activation,
     } = request;
     let project_vcs = project_vcs();
-    let manifest = load_manifest(source_root, project)?;
     workweave_index::require_clone(primary_root, project)?;
     refuse_symlinked_members(source_root, project)?;
     let flat = WorkweaveId {
@@ -1800,10 +1924,6 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         name: name.clone(),
     }
     .flat();
-    // Placement is authoritative here (create direction): either the caller
-    // named an explicit path (recorded verbatim) or a basedir, the recorded
-    // one by default. The registry entry is written after the marker
-    // lands — see the bottom of this function.
     let workweave_dir = match placement {
         Placement::Dir(dir) => dir.clone(),
         Placement::Basedir(basedir) => basedir.join(&flat),
@@ -1811,15 +1931,9 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     };
 
     // Name uniqueness is checked against the workweave INDEX, not just the
-    // container directory. The directory check below sees only the slot this
+    // container directory: the directory check below sees only the slot this
     // invocation picked, so `--dir` walks straight past it, and the index
-    // insert is a silent last-writer-wins. Two workweaves of one project
-    // sharing a name mint the *same* flat branch in the same store, where the
-    // second create's collision handling would be pointed at the first's live
-    // ref. The two
-    // guards are complementary: this one refuses the duplicate name outright,
-    // and `birth_ephemeral_worktree` refuses to destroy a ref it cannot prove
-    // is a stale leftover.
+    // insert is a silent last-writer-wins.
     if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name)? {
         if recorded != CanonicalPath::of(&workweave_dir) {
             let mut listed = vec![format!("recorded at {}", recorded.as_path().display())];
@@ -1829,11 +1943,6 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                         .to_owned(),
                 );
             }
-            listed.push(format!(
-                "a second one at {} would mint the same branch `{}` in each store",
-                workweave_dir.display(),
-                EphemeralRefName::mint(&flat),
-            ));
             return Err(name_taken(project, name, listed)
                 .bind("<project>", project)
                 .bind("<ww>", name)
@@ -1843,11 +1952,13 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         }
     }
 
+    let source_project = project_dir(source_root, project);
+    let ctx = crate::workspace::WorkspaceContext::resolve_for_project(source_root, project)?;
+
     if workweave_dir.exists() {
         // Whatever is there may not be this workweave. On a filesystem that
         // folds case the lookup above answers for a directory spelled another
-        // way, and both arms below would then act on someone else's seat —
-        // reuse would adopt it, replace would destroy it.
+        // way, and the reuse below would adopt someone else's seat.
         if crate::workspace::diverged_occupant(&workweave_dir).is_some() {
             return Err(name_taken(
                 project,
@@ -1863,138 +1974,47 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             .refused());
         }
         refuse_symlinked_members(&workweave_dir, project)?;
-        if replace_existing.is_some() {
-            // Destructive reuse. Prefer delete_workweave (which also
-            // prunes worktrees and ephemeral branches) when the marker
-            // belongs to this project; fall back to a raw remove
-            // otherwise since delete_workweave loads a manifest tied to
-            // `project` and would fail on wrong-marker / missing-marker
-            // cases.
-            let can_use_structured_delete = match WorkweaveMarker::read(&workweave_dir)? {
-                Some(m) => m.project() == project,
-                None => false,
-            };
-            // Even under --replace-existing, refuse to replace a workweave
-            // holding uncommitted work. create's --replace-existing consents
-            // to replacing the directory, but the operator never saw what was
-            // inside it — unlike `workweave delete`, which lists the dirty
-            // paths before a discard flag is retried. Explicit destruction of
-            // dirty workweaves stays with `workweave delete
-            // --discard-uncommitted`.
-            let at_risk = if can_use_structured_delete {
-                // Uncommitted changes plus committed-but-unmerged work —
-                // both are destroyed by the replace.
-                let mut paths =
-                    collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
-                let baselines =
-                    merge_baselines(&workweave_dir, &CanonicalPath::of(primary_root), None);
-                paths.extend(collect_diverged_paths(
-                    project_vcs.as_ref(),
-                    &workweave_dir,
-                    project,
-                    &manifest,
-                    &baselines,
-                ));
-                paths
-            } else {
-                // Marker missing/foreign: no manifest can be trusted to
-                // enumerate the contents, so scan for repos directly.
-                collect_dirty_repos_by_walk(project_vcs.as_ref(), &workweave_dir)
-            };
-            if !at_risk.is_empty() {
-                crate::refuse!(
-                    RefusalKind::ReplaceTargetHoldsWork,
-                    "workweave {} already exists and holds unsaved or unmerged work; \
-                     refusing to replace it:\n  {}\n\
-                     Commit/merge that work, or delete it explicitly with \
-                     `rwv workweave delete {} --project {} --discard-uncommitted \
-                     --discard-unlanded`.",
-                    name.as_str(),
-                    at_risk.join("\n  "),
-                    name.as_str(),
-                    project.as_str(),
-                );
-            }
-            if can_use_structured_delete {
-                // No waiver: the scan above found nothing to lose, so the
-                // delete's own preconditions pass on their merits.
-                delete_workweave(
-                    primary_root,
-                    project,
-                    name,
-                    Some(&workweave_dir),
-                    None,
-                    None,
-                    &crate::deletion::RemoteDeletes::default(),
-                )?
-                .print();
-            } else {
-                // No valid marker for this project, so delete_workweave
-                // cannot be used (it would load the wrong manifest).
-                // Still prune orphan worktree registrations — a previous
-                // partial create may have left `.git/worktrees/<name>`
-                // entries in the primary repos even though the workweave
-                // directory survived (or had its marker stripped).
-                // Build (repo_abs, worktree_dest) pairs from the
-                // manifest and prune before the raw remove.
-                let orphan_pairs = orphan_prune_pairs(&manifest, source_root, &workweave_dir);
-                prune_orphan_worktrees_for(project_vcs.as_ref(), &orphan_pairs);
-                std::fs::remove_dir_all(&workweave_dir)?;
-            }
-        } else {
-            return reuse_existing_workweave(
+        return reuse_existing_workweave(
+            &ReuseRequest {
                 primary_root,
                 source_root,
                 project,
                 name,
-                &workweave_dir,
-                &manifest,
-            );
-        }
+                flat: &flat,
+                branch: &branch,
+                spelling: spelling.as_ref(),
+                at: at.as_deref(),
+                entries: &entries,
+            },
+            &workweave_dir,
+        );
     }
 
-    // Dirty state captured into a workweave becomes an obstacle at retire
-    // time ("Your local changes to the following files would be overwritten
-    // by merge"), so capturing it is opt-in.
-    //
-    // Only the project directory is checked here — manifest-repo worktrees are
-    // forked at HEAD (committed state) by `git worktree add`, so dirty state
-    // in those repos is not captured. The project dir is special because we
-    // explicitly overlay its working-tree `rwv.toml`/`rwv.lock` below.
-    if dirty_source == DirtySource::Refuse {
-        let project_dir = project_dir(source_root, project);
-        if project_vcs.is_repo(&project_dir) {
-            match project_vcs.dirty_file_names(&project_dir) {
-                Ok(dirty) if !dirty.is_empty() => {
-                    crate::refuse!(
-                        RefusalKind::DirtyProjectDir,
-                        "rwv workweave create: refusing to create workweave — \
-                         projects/{project} has uncommitted changes:\n  {files}\n\n\
-                         To proceed, do one of:\n  \
-                         1. commit the changes: git -C projects/{project} commit\n  \
-                         2. stash the changes: git -C projects/{project} stash\n  \
-                         3. capture them into the workweave: rwv workweave create {name} --project {project} --capture-dirty",
-                        project = project.as_str(),
-                        name = name.as_str(),
-                        files = dirty.join("\n  "),
-                    );
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    // Cannot determine dirty status — be conservative and refuse.
-                    crate::refuse!(
-                        RefusalKind::UnreadableStatus,
-                        "rwv workweave create: refusing to create workweave — \
-                         could not check projects/{project} for uncommitted changes: {e:#}\n\n\
-                         To bypass this check, use --capture-dirty.",
-                        project = project.as_str(),
-                    );
-                }
-            }
-        }
+    let mut report = crate::diagnosis::Report::default();
+    let Some(intent) = judge_intent(
+        &ctx,
+        project_vcs.as_ref(),
+        project,
+        &source_project,
+        &flat,
+        &branch,
+        spelling.as_ref(),
+        at.as_deref(),
+        &entries,
+        &mut report,
+    )?
+    else {
+        return Err(report
+            .into_result()
+            .expect_err("a create with no start reports why"));
+    };
+    report.into_result()?;
+    let (manifest, workspace_lock) =
+        crate::switch::committed_files(project_vcs.as_ref(), &source_project, &intent.start);
+    let manifest = manifest?;
+    if let Some(opening) = &intent.opening {
+        crate::switch::localize_opened(project_vcs.as_ref(), &source_project, opening)?;
     }
-
-    let parent = crate::branch::workweave_parent(&project_dir(source_root, project), project)?;
 
     // Pre-flight: verify every repo we are about to worktree has at least one
     // commit. `git worktree add` requires a resolvable HEAD; without this check
@@ -2003,29 +2023,11 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // so a missing-HEAD failure leaves no partial workweave directory behind.
     preflight_check_heads(project_vcs.as_ref(), source_root, project, &manifest)?;
 
-    // Pre-add prune: clear any orphaned `.git/worktrees/<name>` registrations
-    // left over from a previous (failed or manually-deleted) create attempt.
-    //
-    // The failure mode this targets: the workweave directory is fully gone (rm
-    // -rf'd, or a partial create was interrupted before the directory was
-    // written) yet the `.git/worktrees/<name>` administrative entry survives in
-    // one or more canonical repos. Without this prune, the subsequent
-    // `git worktree add` calls fail with:
-    //
-    //   fatal: '<path>' is a missing but already registered worktree;
-    //          use 'add -f' to override, or 'prune'/'remove' to clear
-    //
-    // This is idempotent: `prune_orphan_worktrees_for` only calls
-    // `git worktree remove --force` when the worktree directory EXISTS on disk
-    // (so a live workweave's files are never touched), and then always calls
-    // `git worktree prune`, which only removes administrative entries whose
-    // worktree directory is absent. A clean repo with no stale registration
-    // is a no-op.
-    //
-    // This does NOT duplicate the dir-exists path above (which either runs
-    // delete_workweave or prune_orphan_worktrees_for on the surviving dir): at
-    // this point we know workweave_dir does NOT exist (the block above handled
-    // the exists() case and either returned or deleted the directory).
+    // Clear any orphaned `.git/worktrees/<name>` registrations left over from
+    // a previous (failed or manually-deleted) create attempt. Without this
+    // prune, `git worktree add` fails with "a missing but already registered
+    // worktree". `prune_orphan_worktrees_for` only removes a registration
+    // whose directory is absent, so a live workweave's files are never touched.
     prune_orphan_worktrees_for(
         project_vcs.as_ref(),
         &orphan_prune_pairs(&manifest, source_root, &workweave_dir),
@@ -2043,26 +2045,16 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         );
     }
 
-    // B7: Rollback guard — automatically undoes partial state on any failure
-    // path (including `bail!` / `?` propagation). Tracks which repos got
-    // worktrees added so orphan `.git/worktrees/` registrations can be pruned
-    // in addition to removing the workweave directory.
+    // Rollback guard: undoes partial state on any failure path (including
+    // `bail!` / `?` propagation). Tracks which repos got worktrees added so
+    // orphan `.git/worktrees/` registrations can be pruned in addition to
+    // removing the workweave directory.
     let mut rollback = CreateRollbackGuard::new(crate::vcs::project_vcs(), workweave_dir.clone());
 
-    // The one ephemeral name this create uses, in every store it touches,
-    // minted from the identity with nothing observed feeding in. Two repos of
-    // one workweave live in different object stores, so one name per store is
-    // enough.
-    let ephemeral = EphemeralRefName::mint(&flat);
-
-    let workspace_lock = {
-        let path = LockFile::path_in(&project_dir(source_root, project));
-        if path.exists() {
-            LockFile::from_state(&path).ok()
-        } else {
-            None
-        }
-    };
+    let ephemeral = intent
+        .branch
+        .as_ref()
+        .map(|branch| EphemeralRefName::chosen(branch.as_str()));
 
     let mut errors: Vec<String> = Vec::new();
     let mut submodule_warnings: Vec<String> = Vec::new();
@@ -2091,9 +2083,34 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             // checkout on even when the birth call failed, which is the
             // hook-failure case: the rollback needs it to clear what the
             // failed add left.
-            if matches!(entry.role, Role::Dependency | Role::Reference) {
-                let started = pinned_start(&workspace_lock, vcs.as_ref(), &repo_abs, repo_path);
-                match started.and_then(|at| {
+            let on_branch = intent.feature()
+                && matches!(entry.role, Role::Owned | Role::Fork)
+                && ephemeral.is_some();
+            let started = pinned_start(&workspace_lock, vcs.as_ref(), &repo_abs, repo_path);
+            match (&ephemeral, on_branch) {
+                (Some(ephemeral), true) => match started.and_then(|start| {
+                    birth_ephemeral_worktree(
+                        vcs.as_ref(),
+                        &repo_abs,
+                        &worktree_dest,
+                        ephemeral,
+                        start,
+                        WorktreeFiles::Shared(&Filesystem, entry.role),
+                        BranchPolicy::Fresh,
+                    )
+                }) {
+                    Ok(outcome) => {
+                        placement = outcome.placement;
+                        rollback.record_ref_attempt(outcome.found, outcome.birth);
+                        if let Some(e) = outcome.failure {
+                            result = Err(e);
+                        }
+                    }
+                    // Failed before a branch was found: nothing was placed, so
+                    // there is nothing for the guard to undo in this repo.
+                    Err(e) => result = Err(e),
+                },
+                _ => match started.and_then(|at| {
                     crate::share::create_detached_populated(
                         vcs.as_ref(),
                         &repo_abs,
@@ -2105,33 +2122,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                 }) {
                     Ok(files) => placement = files,
                     Err(e) => result = Err(e),
-                }
-            } else {
-                match vcs
-                    .head_revision(&repo_abs)
-                    .map_err(anyhow::Error::from)
-                    .and_then(|start| {
-                        birth_ephemeral_worktree(
-                            vcs.as_ref(),
-                            &repo_abs,
-                            &worktree_dest,
-                            &ephemeral,
-                            start,
-                            WorktreeFiles::Shared(&Filesystem, entry.role),
-                            BranchPolicy::Fresh,
-                        )
-                    }) {
-                    Ok(outcome) => {
-                        placement = outcome.placement;
-                        rollback.record_ref_attempt(outcome.found, outcome.birth);
-                        if let Some(e) = outcome.failure {
-                            result = Err(e);
-                        }
-                    }
-                    // Failed before a branch was found: nothing was placed, so
-                    // there is nothing for the guard to undo in this repo.
-                    Err(e) => result = Err(e),
-                }
+                },
             }
         }
 
@@ -2205,17 +2196,9 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         );
     }
 
-    // Create worktree for the project repo (if it is a git repo).
-    // If the project directory exists but is not a git repo, copy it into the
-    // workweave so that activate_workweave can find rwv.toml there.
     let project_wt_dest = project_dir(&workweave_dir, project);
     let project_dir = project_dir(source_root, project);
-    if project_vcs.is_repo(&project_dir) {
-        // B8: project-worktree creation failure must NOT silently fall
-        // through to a static directory copy. The copy fallback is for
-        // the "project dir exists but is not a git repo" branch only.
-        // Producing a non-worktree copy here looks identical to a real
-        // workweave on disk but has no upstream — commits go nowhere.
+    {
         std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
         if project_vcs.prune_stale_worktree_registration(&project_dir, &project_wt_dest)?
             == RegistrationPrune::Locked
@@ -2236,29 +2219,38 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         // The project repo is an instance of the model, so this arm runs the
         // identical birth over the identical ephemeral name.
         rollback.record_attempted_repo(project_dir.clone());
-        let birth = match project_vcs
-            .head_revision(&project_dir)
-            .map_err(anyhow::Error::from)
-            .and_then(|start| {
-                birth_ephemeral_worktree(
-                    project_vcs.as_ref(),
-                    &project_dir,
-                    &project_wt_dest,
-                    &ephemeral,
-                    start,
-                    WorktreeFiles::Written,
-                    BranchPolicy::Fresh,
-                )
-            }) {
-            Ok(outcome) => {
+        let birth = match &ephemeral {
+            Some(ephemeral) => birth_ephemeral_worktree(
+                project_vcs.as_ref(),
+                &project_dir,
+                &project_wt_dest,
+                ephemeral,
+                intent.start.clone(),
+                WorktreeFiles::Written,
+                BranchPolicy::Fresh,
+            )
+            .and_then(|outcome| {
                 let failure = outcome.failure;
-                rollback.record_ref_attempt(outcome.found, outcome.birth);
+                let birth = if intent.opening.is_some() {
+                    RefBirth::Adopted
+                } else {
+                    outcome.birth
+                };
+                rollback.record_ref_attempt(outcome.found, birth);
                 match failure {
                     Some(e) => Err(e),
                     None => Ok(()),
                 }
-            }
-            Err(e) => Err(e),
+            }),
+            None => crate::share::create_detached_populated(
+                project_vcs.as_ref(),
+                &project_dir,
+                &project_wt_dest,
+                &intent.start,
+                Role::Owned,
+                &Filesystem,
+            )
+            .map(|_| ()),
         };
         match birth {
             Ok(()) => {
@@ -2288,63 +2280,6 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     "could not create project worktree projects/{}: {e:#}{hook_hint}{cleanup_note}",
                     project.as_str()
                 ));
-            }
-        }
-    } else if project_dir.exists() {
-        // Project dir is not a git repo — copy it so activate has access to rwv.toml.
-        copy_dir_recursive(&project_dir, &project_wt_dest)?;
-    }
-
-    // The project worktree above was checked out from a ref, so its `rwv.toml`
-    // is the last committed version — any uncommitted edits in source_root's
-    // working tree were dropped. Overlay the source's
-    // working-tree `rwv.toml` (and `rwv.lock` for completeness) so the
-    // workweave captures the operator's in-flight state. Warn loudly when
-    // we're doing this so dirty creates don't surprise.
-    //
-    // Limited to `rwv.toml` / `rwv.lock` deliberately: these are the files
-    // that change workweave behavior (manifest = what worktrees to create,
-    // workweave config; lock = lockfile shared with downstream). Other
-    // uncommitted project files remain at their committed state, matching
-    // the existing worktree-from-ref contract for everything else.
-    // Whether either file is dirty is git's question, not a byte
-    // comparison's: the worktree checkout above sits on the far side of
-    // git's clean/smudge filter, so under `core.autocrlf` its bytes differ
-    // from the source working tree's for a file git considers unchanged,
-    // and an overlay driven by byte inequality writes the source's line
-    // endings into a tree whose index expects the filtered ones — tracked
-    // dirt in a workweave that started clean.
-    let mut captured = CapturedEdits::default();
-    if project_dir.exists() && project_wt_dest.exists() && project_vcs.is_repo(&project_dir) {
-        let dirty_names = project_vcs
-            .dirty_file_names(&project_dir)
-            .context("failed to read project repo status for the dirty-state overlay")?;
-        captured.uncovered = dirty_names
-            .iter()
-            .filter(|n| ![Manifest::FILE_NAME, LockFile::FILE_NAME].contains(&n.as_str()))
-            .cloned()
-            .collect();
-        for fname in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
-            let src = project_dir.join(fname);
-            let dst = project_wt_dest.join(fname);
-            if !src.exists() || !dirty_names.iter().any(|n| n == fname) {
-                continue;
-            }
-            eprintln!(
-                "rwv workweave create: using working-tree projects/{}/{fname} \
-                 (uncommitted changes; workweave captures dirty state)",
-                project.as_str(),
-            );
-            match std::fs::read(&src).and_then(|bytes| std::fs::write(&dst, &bytes).map(|_| bytes))
-            {
-                Ok(bytes) => captured.files.push((fname, bytes)),
-                Err(e) => {
-                    captured.incomplete = true;
-                    eprintln!(
-                        "rwv workweave create: warning: failed to overlay {}: {e:#}",
-                        dst.display()
-                    );
-                }
             }
         }
     }
@@ -2377,7 +2312,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // would run an ecosystem resolver against a registry that has moved since
     // the source resolved, giving the fork a different dependency set than the
     // workspace it forked from; copying is what makes the two agree.
-    if project_dir.exists() && project_wt_dest.exists() {
+    if project_dir.exists() && project_wt_dest.exists() && intent.start == intent.head {
         if let Err(e) =
             crate::owned_state::carry_attested_owned_files(&project_dir, &project_wt_dest)
         {
@@ -2465,23 +2400,42 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     )
     .context("failed to record workweave in the primary-side registry")?;
 
-    if let Some(parent) = &parent {
-        for line in
-            crate::branch::record_workweave(&project_dir, project, parent, &ephemeral.to_string())?
+    let vcs = project_vcs.as_ref();
+    if let (Some(branch), Some(record)) = (&intent.branch, &intent.creating) {
+        if let Some(line) =
+            crate::switch::write_created_record(vcs, project, &project_dir, branch, record)?
+        {
+            eprintln!("rwv workweave create: {line}");
+        }
+        if let crate::records::Record::Feature { target, as_mode } = record {
+            for line in
+                crate::branch::target_recorded_lines(vcs, &project_dir, branch, target, *as_mode)?
+            {
+                eprintln!("rwv workweave create: {line}");
+            }
+        }
+    }
+    if let Some(opening) = &intent.opening {
+        if let Some(line) = crate::switch::write_opened_record(vcs, project, &project_dir, opening)?
         {
             eprintln!("rwv workweave create: {line}");
         }
     }
-    crate::alignment::record(&workweave_dir, project)?;
+    let seat = crate::workspace::WorkspaceContext::resolve_for_project(&workweave_dir, project)?;
+    crate::member_branch::apply_entries(&seat, CREATE, &intent.steps, activation)?;
+    align_new_workweave(&seat, project, primary_root, intent.branch.is_none())?;
 
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
 
-    // Only now does the workweave certainly keep what was copied into it: a
-    // failure above rolled it back, and with it the only other copy.
-    if dirty_source == DirtySource::Capture {
-        release_captured_edits(project_vcs.as_ref(), &project_dir, project, &captured);
-    }
+    report_parent_leftovers(
+        vcs,
+        source_root,
+        project,
+        &project_dir,
+        &manifest,
+        &workweave_dir,
+    );
 
     if let Some(cause) = hooks_failed {
         return Err(HooksIncomplete {
@@ -2492,6 +2446,102 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     }
 
     Ok(workweave_dir)
+}
+
+/// Put the members of a new workweave where `rwv update` would, and record
+/// the workspace as aligned for what its project repo has checked out.
+fn align_new_workweave(
+    seat: &crate::workspace::WorkspaceContext,
+    project: &ProjectName,
+    primary_root: &Path,
+    detached: bool,
+) -> anyhow::Result<()> {
+    let root = seat.active_path();
+    let project_dir = project_dir(root, project);
+    let vcs = project_vcs();
+    if detached {
+        let aligner = crate::alignment::Aligner::open(
+            root,
+            project,
+            crate::alignment::Accounting::default(),
+        )?;
+        let mut state = aligner.state.clone();
+        state.aligned = Some(crate::alignment::Aligned::Detached);
+        crate::alignment::store_state(vcs.as_ref(), &project_dir, &state)?;
+        return Ok(());
+    }
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let lock_path = LockFile::path_in(&project_dir);
+    let lock = lock_path
+        .exists()
+        .then(|| LockFile::from_state(&lock_path).ok())
+        .flatten();
+    let aligner = crate::alignment::Aligner::open(
+        root,
+        project,
+        crate::alignment::Accounting::scan(primary_root),
+    )?;
+    for (path, entry) in manifest.iter_entries() {
+        let dir = root.join(path.as_path());
+        let member_vcs = vcs_for(entry.vcs_type);
+        if is_symlinked_member(&dir) || is_dangling_link(&dir) || !member_vcs.is_repo(&dir) {
+            continue;
+        }
+        let member = crate::alignment::Member {
+            path,
+            entry,
+            dir: &dir,
+            vcs: member_vcs.as_ref(),
+        };
+        let plan = aligner.plan(&member, lock.as_ref())?;
+        match aligner.apply(&member, &plan, path)? {
+            crate::alignment::Applied::Aligned { .. } => {}
+            crate::alignment::Applied::Left { judged } => {
+                let mut report = crate::diagnosis::Report::default();
+                for line in judged {
+                    report.add(line);
+                }
+                eprint!("{}", report.render(CREATE));
+            }
+        }
+    }
+    crate::alignment::record(root, project)?;
+    Ok(())
+}
+
+/// Say what the parent holds uncommitted, which the new workweave does not
+/// carry: it starts from commits.
+fn report_parent_leftovers(
+    project_vcs: &dyn Vcs,
+    source_root: &Path,
+    project: &ProjectName,
+    source_project: &Path,
+    manifest: &Manifest,
+    workweave_dir: &Path,
+) {
+    let mut held: Vec<String> = Vec::new();
+    for name in project_vcs
+        .dirty_file_names(source_project)
+        .unwrap_or_default()
+    {
+        held.push(format!("{}/{name}", project_rel_path(project)));
+    }
+    for (path, entry) in manifest.iter_entries() {
+        let vcs = vcs_for(entry.vcs_type);
+        let dir = source_root.join(path.as_path());
+        if vcs.is_repo(&dir) && vcs.has_uncommitted_changes(&dir).unwrap_or(false) {
+            held.push(format!("{path} (uncommitted changes)"));
+        }
+    }
+    if !held.is_empty() {
+        eprintln!(
+            "rwv workweave create: {} holds uncommitted changes that stay there, as {} starts \
+             from commits: {}",
+            source_root.display(),
+            workweave_dir.display(),
+            held.join(", ")
+        );
+    }
 }
 
 /// [`create_workweave`]'s error when the workweave was created and registered
@@ -2545,190 +2595,242 @@ pub fn hand_over_seat(created: anyhow::Result<PathBuf>) -> anyhow::Result<PathBu
     }
 }
 
-/// What `--capture-dirty` copied into a new workweave, held so the source
-/// gives up exactly what the copy took.
-#[derive(Default)]
-struct CapturedEdits {
-    /// Each copied file's name and the bytes the workweave received.
-    files: Vec<(&'static str, Vec<u8>)>,
-    /// A file the capture covers failed to copy.
-    incomplete: bool,
-    /// Uncommitted files in the source the capture does not cover.
-    uncovered: Vec<String>,
+/// The spelling of a create, as an existing workweave is compared against it.
+struct ReuseRequest<'a> {
+    primary_root: &'a Path,
+    source_root: &'a Path,
+    project: &'a ProjectName,
+    name: &'a WorkweaveName,
+    flat: &'a crate::naming::FlatAddress,
+    branch: &'a BranchChoice,
+    spelling: Option<&'a crate::switch::Spelling>,
+    at: Option<&'a str>,
+    entries: &'a [crate::member_branch::BranchEntry],
 }
 
-/// Discard from the source project directory the edits `captured` moved into
-/// the new workweave, so the source is not left carrying a second copy that
-/// would stop the workweave landing back on it.
-///
-/// Nothing is discarded unless every covered file copied; and a file is
-/// discarded only while it still holds the bytes copied, with nothing staged
-/// that those bytes do not show. Whatever is left is named, and none of it
-/// fails the create: the workweave already holds a copy.
-fn release_captured_edits(
-    vcs: &dyn Vcs,
-    project_dir: &Path,
-    project: &ProjectName,
-    captured: &CapturedEdits,
-) {
-    if captured.incomplete {
-        eprintln!(
-            "rwv workweave create: warning: the uncommitted edits stay in projects/{project} \
-             as well: copying them into the workweave did not complete, so nothing was \
-             discarded from the source"
-        );
-        return;
-    }
-    for (fname, bytes) in &captured.files {
-        let left = match vcs.discard_captured_change(project_dir, Path::new(fname), bytes) {
-            Ok(crate::vcs::DiscardOutcome::Discarded) => {
-                eprintln!(
-                    "rwv workweave create: moved the uncommitted changes to \
-                     projects/{project}/{fname} into the workweave; the source holds its \
-                     committed version"
-                );
-                continue;
-            }
-            Ok(crate::vcs::DiscardOutcome::ChangedSinceCapture) => {
-                "it changed after it was copied".to_string()
-            }
-            Ok(crate::vcs::DiscardOutcome::HoldsUncapturedChange) => {
-                "it has staged changes its working file does not show, and only the \
-                 working file was copied"
-                    .to_string()
-            }
-            Err(e) => format!("discarding it failed: {e:#}"),
-        };
-        eprintln!(
-            "rwv workweave create: warning: projects/{project}/{fname} stays uncommitted in \
-             the source as well as in the workweave: {left}"
-        );
-    }
-    if !captured.uncovered.is_empty() {
-        eprintln!(
-            "rwv workweave create: these uncommitted files in projects/{project} are not \
-             captured and stay in the source only: {}",
-            captured.uncovered.join(", ")
-        );
-    }
-}
-
-/// Validate that an existing workweave directory matches `(primary_root, project, name)`
-/// and is in a clean state relative to `source_root`, then return its path
-/// without modifying anything.
-///
-/// Called from [`create_workweave`] on re-invocation without
-/// `--replace-existing`. Refuses
-/// if the `.rwv-workweave` marker is missing or for a different primary/project,
-/// or if any per-repo worktree has uncommitted changes or has diverged from the
-/// source's HEAD.
+/// Return the workweave at `workweave_dir` when it is clean, its marker names
+/// this primary, project and parent, and it holds what the same spelling
+/// would make; anything else is refused as `name` taken, listing what
+/// differs. Nothing changes either way, so non-git state an agent wrote
+/// between invocations survives.
 fn reuse_existing_workweave(
-    primary_root: &Path,
-    source_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
+    request: &ReuseRequest<'_>,
     workweave_dir: &Path,
-    manifest: &Manifest,
 ) -> anyhow::Result<PathBuf> {
-    let marker = WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
-        crate::refusal::refusal(
-            RefusalKind::TargetDirOccupied,
-            format!(
-                "workweave directory {} exists but has no .rwv-workweave marker — \
-                 likely a partially created workweave from a previous failed attempt; \
-                 safe to recreate with --replace-existing",
-                workweave_dir.display()
-            ),
-        )
-    })?;
-
+    let ReuseRequest {
+        primary_root,
+        source_root,
+        project,
+        name,
+        ..
+    } = *request;
+    let taken = |held_by: Vec<String>| {
+        name_taken(project, name, held_by)
+            .bind("<project>", project)
+            .in_primary(primary_root, source_root)
+            .judge(project_vcs().as_ref())
+            .refused()
+    };
+    let Some(marker) = WorkweaveMarker::read(workweave_dir)? else {
+        return Err(taken(vec![format!(
+            "{} has no .rwv-workweave marker, so it is no workweave of this project",
+            workweave_dir.display()
+        )]));
+    };
     if marker.project() != project {
-        return Err(name_taken(
-            project,
-            name,
-            [format!(
-                "{} is project `{}`'s workweave",
-                workweave_dir.display(),
-                marker.project()
-            )],
-        )
-        .bind("<project>", marker.project())
-        .in_primary(primary_root, source_root)
-        .judge(project_vcs().as_ref())
-        .refused());
+        return Err(taken(vec![format!(
+            "{} is project `{}`'s workweave",
+            workweave_dir.display(),
+            marker.project()
+        )]));
     }
-
     if !marker.names_primary(&CanonicalPath::of(primary_root)) {
-        return Err(name_taken(
-            project,
-            name,
-            [format!(
-                "{} is a workweave of the primary at {}",
-                workweave_dir.display(),
-                marker.primary().as_path().display()
-            )],
-        )
-        .bind("<project>", project)
-        .in_primary(marker.primary().as_path(), source_root)
-        .judge(project_vcs().as_ref())
-        .refused());
+        return Err(taken(vec![format!(
+            "{} is a workweave of the primary at {}",
+            workweave_dir.display(),
+            marker.primary().as_path().display()
+        )]));
+    }
+    if *marker.parent() != CanonicalPath::of(source_root) {
+        return Err(taken(vec![format!(
+            "{} was created from {}, not from {}",
+            workweave_dir.display(),
+            marker.parent().as_path().display(),
+            source_root.display()
+        )]));
     }
 
-    // Detect local modifications (uncommitted changes or HEAD divergence
-    // from source) in any existing worktree. Missing worktrees are not
-    // "modified" — a manifest may have grown since the workweave was
-    // created; `rwv workweave sync` is the path for adding them.
-    let mut modified: Vec<String> = Vec::new();
+    let manifest =
+        Manifest::from_path(&project_dir(workweave_dir, project).join(Manifest::FILE_NAME))?;
+    let mut differing: Vec<String> = Vec::new();
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
-        let worktree_dest = workweave_dir.join(repo_path.as_path());
-        if !worktree_dest.exists() {
-            continue;
-        }
-        if vcs.has_uncommitted_changes(&worktree_dest)? {
-            modified.push(format!("{}: uncommitted changes", repo_path.as_str()));
-            continue;
-        }
-        let repo_abs = source_root.join(repo_path.as_path());
-        let wt_head = vcs.head_revision(&worktree_dest)?;
-        let source_head = vcs.head_revision(&repo_abs)?;
-        if wt_head != source_head {
-            modified.push(format!(
-                "{}: worktree has diverged from source ({} vs {})",
-                repo_path.as_str(),
-                wt_head.id().short(),
-                source_head.id().short(),
-            ));
+        let dest = workweave_dir.join(repo_path.as_path());
+        if dest.exists() && vcs.has_uncommitted_changes(&dest)? {
+            differing.push(format!("{}: uncommitted changes", repo_path.as_str()));
         }
     }
-
-    if !modified.is_empty() {
-        crate::refuse!(
-            RefusalKind::ReplaceTargetHoldsWork,
-            "workweave at {} has local modifications; refusing to recreate without \
-             --replace-existing:\n  {}",
-            workweave_dir.display(),
-            modified.join("\n  ")
-        );
+    let project_vcs = project_vcs();
+    let seat_project = project_dir(workweave_dir, project);
+    if project_vcs.is_repo(&seat_project) && project_vcs.has_uncommitted_changes(&seat_project)? {
+        differing.push(format!(
+            "{}: uncommitted changes",
+            project_rel_path(project)
+        ));
     }
+    differing.extend(spelling_differences(
+        request,
+        project_vcs.as_ref(),
+        &seat_project,
+        &manifest,
+    )?);
+    if !differing.is_empty() {
+        return Err(taken(differing));
+    }
+    record_what_a_stopped_create_left(request, project_vcs.as_ref())?;
+    eprintln!(
+        "rwv workweave create: {name} already exists at {} and holds what this create would \
+         make; returned as it is",
+        workweave_dir.display()
+    );
+    Ok(workweave_dir.to_path_buf())
+}
 
-    let source_project = project_dir(source_root, project);
-    if let Some(parent) = crate::branch::workweave_parent(&source_project, project)? {
-        let minted = EphemeralRefName::mint(
-            &WorkweaveId {
-                project: project.clone(),
-                name: name.clone(),
-            }
-            .flat(),
-        );
+/// A create that stopped before it recorded its branch left the workweave
+/// without a record: the same spelling, run again, writes the one it would
+/// have written.
+fn record_what_a_stopped_create_left(
+    request: &ReuseRequest<'_>,
+    vcs: &dyn Vcs,
+) -> anyhow::Result<()> {
+    let text = match request.branch {
+        BranchChoice::Minted => EphemeralRefName::mint(request.flat).to_string(),
+        BranchChoice::New(text) => text.clone(),
+        BranchChoice::Open(_) | BranchChoice::Detach(_) => return Ok(()),
+    };
+    let project = request.project;
+    let source_project = project_dir(request.source_root, project);
+    let branch = crate::switch::named(vcs, project, &source_project, &text, CREATE)?;
+    let store = crate::records::Store::open(vcs, &source_project)?;
+    let view = store.view()?;
+    if !matches!(view.lookup(&branch), crate::records::Lookup::Unrecorded) {
+        return Ok(());
+    }
+    let record = match request.spelling {
+        Some(crate::switch::Spelling::Declared) => crate::records::Record::Declared,
+        Some(crate::switch::Spelling::Target(target)) => {
+            let target = crate::switch::named(vcs, project, &source_project, target, CREATE)?;
+            crate::branch::feature_record(&view, &branch, &target).map_err(|e| {
+                crate::branch::write_refusal(vcs, &store, project, &source_project, &branch, e)
+            })?
+        }
+        None => {
+            let Some(parent) = crate::branch::workweave_parent(&source_project, project)? else {
+                return Ok(());
+            };
+            crate::branch::feature_record(&view, &branch, &parent).map_err(|e| {
+                crate::branch::write_refusal(vcs, &store, project, &source_project, &branch, e)
+            })?
+        }
+    };
+    if let Some(line) =
+        crate::switch::write_created_record(vcs, project, &source_project, &branch, &record)?
+    {
+        eprintln!("rwv workweave create: {line}");
+    }
+    if let crate::records::Record::Feature { target, as_mode } = &record {
         for line in
-            crate::branch::record_workweave(&source_project, project, &parent, &minted.to_string())?
+            crate::branch::target_recorded_lines(vcs, &source_project, &branch, target, *as_mode)?
         {
             eprintln!("rwv workweave create: {line}");
         }
     }
+    Ok(())
+}
 
-    Ok(workweave_dir.to_path_buf())
+/// What the workweave's project repo holds that the create's spelling would
+/// not have made.
+fn spelling_differences(
+    request: &ReuseRequest<'_>,
+    vcs: &dyn Vcs,
+    seat_project: &Path,
+    seat_manifest: &Manifest,
+) -> anyhow::Result<Vec<String>> {
+    let source_project = project_dir(request.source_root, request.project);
+    let on = crate::branch::checked_out(vcs, seat_project)?;
+    let mut differing = Vec::new();
+    let wanted = match request.branch {
+        BranchChoice::Minted => Some(EphemeralRefName::mint(request.flat).to_string()),
+        BranchChoice::New(text) | BranchChoice::Open(text) => Some(text.clone()),
+        BranchChoice::Detach(rev) => {
+            let head = vcs.head_revision(seat_project)?;
+            let wanted = vcs.resolve_revision(&source_project, rev).ok();
+            if on.is_some() || wanted.as_ref() != Some(&head) {
+                differing.push(format!("it is not a detached workspace at {rev}"));
+            }
+            return Ok(differing);
+        }
+    };
+    if on != wanted {
+        differing.push(format!(
+            "its project repo is on {}, not {}",
+            on.as_deref().unwrap_or("no branch"),
+            wanted.as_deref().unwrap_or("no branch")
+        ));
+        return Ok(differing);
+    }
+    let branch = crate::switch::named(
+        vcs,
+        request.project,
+        &source_project,
+        wanted.as_deref().expect("a branch choice names a branch"),
+        CREATE,
+    )?;
+    if let Some(spelling) = request.spelling {
+        let store = crate::records::Store::open(vcs, &source_project)?;
+        let view = store.view()?;
+        let agrees = match view.lookup(&branch) {
+            crate::records::Lookup::Value(record) => crate::switch::spelling_agrees(
+                &view,
+                &branch,
+                spelling,
+                &record,
+                vcs,
+                (request.project, &source_project, CREATE),
+            )?,
+            _ => false,
+        };
+        if !agrees {
+            differing.push(format!(
+                "the record of {branch} is not the one this spelling gives"
+            ));
+        }
+    }
+    if let Some(at) = request.at {
+        let seat_head = vcs.head_revision(seat_project)?;
+        let reaches = vcs
+            .resolve_revision(&source_project, at)
+            .ok()
+            .is_some_and(|at| {
+                vcs.is_ancestor(seat_project, &at, &seat_head)
+                    .unwrap_or(false)
+            });
+        if !reaches {
+            differing.push(format!("it does not start at {at}"));
+        }
+    }
+    for entry in request.entries {
+        let declared = seat_manifest
+            .get_entry(&entry.member)
+            .map(|held| held.branch.local_counterpart().as_str().to_owned());
+        if declared.as_deref() != Some(entry.branch.as_str()) {
+            differing.push(format!(
+                "{} does not declare {}",
+                entry.member, entry.branch
+            ));
+        }
+    }
+    Ok(differing)
 }
 
 /// `name` judged taken for a new workweave of `project`, with what holds it.
@@ -2937,152 +3039,6 @@ fn merge_baselines(
         .into_iter()
         .map(CanonicalPath::into_path_buf)
         .collect()
-}
-
-/// Walk the workweave's repos and report those whose worktree HEAD holds
-/// commits not reachable from the same repo's HEAD in ANY of the `baselines`
-/// (see [`merge_baselines`]).
-///
-/// Deleting such a workweave destroys committed work: the ephemeral-branch
-/// cleanup force-deletes the only ref pointing at those commits. A worktree
-/// whose HEAD cannot be read is reported as diverged (conservative: "we
-/// couldn't confirm safe"); a member present in no baseline at all is
-/// skipped, matching the dirty check's missing-repo behavior, and a checkout
-/// outside the manifest is reported.
-fn collect_diverged_paths(
-    project_vcs: &dyn Vcs,
-    workweave_dir: &Path,
-    project: &ProjectName,
-    manifest: &Manifest,
-    baselines: &[PathBuf],
-) -> Vec<String> {
-    let mut diverged = Vec::new();
-
-    let mut check = |vcs: &dyn Vcs, wt: &Path, rel: &Path, label: String, vouch_required: bool| {
-        if !wt.exists() {
-            return;
-        }
-        let wt_head = match vcs.head_revision(wt) {
-            Ok(h) => h,
-            Err(e) => {
-                diverged.push(format!("{label}: HEAD check failed: {e:#}"));
-                return;
-            }
-        };
-        // Resolve the workweave checkout's actual canonical store. The
-        // `is_ancestor` query below MUST run in a DAG that contains BOTH
-        // wt_head AND the baseline tip; the workweave checkout shares its
-        // canonical store with the linked-workspace baselines (under
-        // tier-0 invariants), so asking in the resolved canonical store
-        // gives a sound answer even when the workweave dir is itself a
-        // worktree. Under tier-0 violations the canonical store for the
-        // workweave checkout differs from the baseline's canonical store,
-        // and we conservatively decline to vouch — see below.
-        let wt_canonical = match vcs.main_checkout(wt).map(|main| CanonicalPath::of(&main)) {
-            Some(p) => p,
-            None => {
-                diverged.push(format!(
-                    "{label}: canonical-store lookup failed: not a repo"
-                ));
-                return;
-            }
-        };
-        let mut candidates = 0;
-        for base in baselines {
-            let canonical = base.join(rel);
-            if !vcs.is_repo(&canonical) {
-                continue;
-            }
-            candidates += 1;
-            // Refuse to vouch across distinct canonical stores: an
-            // is_ancestor query whose operands live in different object
-            // DAGs is silently unsound
-            // (see docs/explanation/joints/clone-topology.md).
-            // When the baseline's canonical store differs from the
-            // workweave checkout's, treat as not-vouched-by-this-baseline
-            // and let the operator run `rwv doctor`.
-            let base_canonical = match vcs
-                .main_checkout(&canonical)
-                .map(|main| CanonicalPath::of(&main))
-            {
-                Some(p) => p,
-                None => continue,
-            };
-            if base_canonical != wt_canonical {
-                continue;
-            }
-            if let Ok(c) = vcs.head_revision(&canonical) {
-                // Run is_ancestor in the resolved canonical store so the
-                // query is rooted in the DAG that contains both refs.
-                if vcs
-                    .is_ancestor(wt_canonical.as_path(), &wt_head, &c)
-                    .unwrap_or(false)
-                {
-                    return; // vouched: this baseline contains the work
-                }
-            }
-        }
-        if candidates > 0 || vouch_required {
-            diverged.push(label);
-        }
-    };
-
-    let project_rel = project_rel_dir(project);
-    let project_wt = workweave_dir.join(&project_rel);
-    if project_vcs.is_repo(&project_wt) {
-        check(
-            project_vcs,
-            &project_wt,
-            &project_rel,
-            project_rel_path(project),
-            false,
-        );
-    }
-
-    // No manifest entry says where a checkout outside it came from, so a
-    // baseline lacking the repo is no reason to skip it: nothing else may
-    // hold its commits.
-    for checkout in member_depth_checkouts(workweave_dir, manifest) {
-        check(
-            checkout.vcs.as_ref(),
-            &workweave_dir.join(checkout.repo_path.as_path()),
-            &checkout.repo_path.as_path(),
-            checkout.label(),
-            !checkout.in_manifest,
-        );
-    }
-
-    diverged
-}
-
-/// Manifest-independent dirty scan: walk `dir` for git repos (worktrees or
-/// clones) and report those with uncommitted changes, relative to `dir`.
-///
-/// Used when a workweave's marker is missing or belongs to another project,
-/// so no manifest can be trusted to enumerate its contents. Descent stops at
-/// each repo root (no nested-repo scanning), and a repo whose dirty check
-/// fails is reported as dirty (conservative: "we couldn't confirm clean").
-fn collect_dirty_repos_by_walk(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
-    fn walk(vcs: &dyn Vcs, base: &Path, cur: &Path, dirty: &mut Vec<String>) {
-        if crate::git::has_git_dir(cur) {
-            if vcs.has_uncommitted_changes(cur).unwrap_or(true) {
-                let rel = cur.strip_prefix(base).unwrap_or(cur);
-                dirty.push(rel.display().to_string());
-            }
-            return;
-        }
-        if let Ok(entries) = std::fs::read_dir(cur) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    walk(vcs, base, &path, dirty);
-                }
-            }
-        }
-    }
-    let mut dirty = Vec::new();
-    walk(vcs, dir, dir, &mut dirty);
-    dirty
 }
 
 /// Resolve the canonical store path that owns a workweave checkout, for the
@@ -4398,8 +4354,10 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 source_root,
                 project: &project,
                 name: &WorkweaveName::new(&name)?,
-                replace_existing: None,
-                dirty_source: DirtySource::Refuse,
+                branch: BranchChoice::Minted,
+                spelling: None,
+                at: None,
+                entries: Vec::new(),
                 placement: &Placement::DefaultBasedir,
                 activation: crate::activate::ActivateOptions::default(),
             }))?;

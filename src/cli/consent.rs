@@ -173,26 +173,6 @@ impl DiscardUncommittedConsent {
     }
 }
 
-/// Proof that the operator consented to `workweave create` destroying an
-/// existing workweave at the name it creates. Minted from
-/// `--replace-existing`.
-///
-/// Replacing covers the workweave, not work inside it: uncommitted or
-/// unmerged work there still refuses, because the operator never saw it.
-///
-/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
-#[derive(Debug, Clone, Copy)]
-pub struct ReplaceExistingConsent(());
-
-impl ReplaceExistingConsent {
-    /// Mint from the parsed `--replace-existing` value: `Some` iff the
-    /// operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
-    pub(in crate::cli) fn from_flag(replace_existing: bool) -> Option<Self> {
-        replace_existing.then_some(Self(()))
-    }
-}
-
 /// Proof that the operator consented to giving up a workweave member's
 /// pinned commits that are in no clone, relinking its checkout onto the
 /// workweave's branch created at the canonical clone's HEAD. Minted from

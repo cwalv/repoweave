@@ -54,8 +54,8 @@ flowchart TD
 ```
 
 - **Creation direction** (primary → workweave). `rwv workweave create`
-  forks from the current workspace. The child starts pinned to the
-  parent's lock.
+  starts from the current workspace's commits. The child starts pinned to the
+  parent's committed lock, and the parent does not switch.
 - **Landing direction** (workweave → parent). `rwv sync-to` pushes the
   child's committed work *up* toward the root. Each `rwv sync-to`
   advances exactly one edge (one hop, see below). `rwv sync` goes the
@@ -185,7 +185,7 @@ disk.
 
 ## Ephemeral branch names and the git worktree constraint
 
-Each workweave runs on a flat per-workweave ephemeral branch name — e.g.
+By default each workweave runs on a flat per-workweave minted branch name — e.g.
 `web-app--hotfix` (or `chatly+web-app--hotfix` for a scoped project)
 rather than `main`. This is what lets `rwv sync-to` work cleanly as a
 local-to-local primitive.
@@ -207,7 +207,7 @@ ephemeral naming scheme is not just bookkeeping — it is what makes
 
 ## A workweave's branch is recorded
 
-Creating a workweave records its ephemeral branch as a **feature onto the
+Creating a workweave with no branch flag records its minted branch as a **feature onto the
 branch the workspace it was forked from has checked out**, with that branch's
 mode as it stands: `rwv workweave create` from a primary on `main`, which is
 `declared`, records `{ target: main, as: declared }`, and reports where the

@@ -475,6 +475,7 @@ impl<'a> Rule<'a> {
                     &checkout,
                     &repo.dir,
                     &recorded,
+                    None,
                 ));
             }
         }

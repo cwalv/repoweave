@@ -515,7 +515,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
-### `rwv branch create <W> [--target <T> | --declared] [--at <rev>] [--project <name>]`
+### `rwv branch create <W> [--target <T> | --declared] [--set-branch <m>=<b>[@<rev>]]... [--set-new-branch <m>=<b>[@<rev>]]... [--at <rev>] [--project <name>]`
 
 Create `<W>`, write its record, and switch the workspace to it, as the VCS's own branch creation switches: uncommitted edits are carried, an uncommitted `rwv.toml` included. A bare create is a `feature` onto the checked-out branch, which must have a record that reads (`target` `unrecorded` otherwise); a feature's `owned` and `fork` members get branches `<W>` at their pins. A `declared` branch's members keep following the branches its entries declare. Every repo is judged first and nothing is written while any is refused.
 
@@ -523,6 +523,8 @@ Create `<W>`, write its record, and switch the workspace to it, as the VCS's own
 |---|---|
 | `--target <T>` | A `feature` onto `<T>`, which must have a record that reads. Starts at `<T>`'s tip |
 | `--declared` | A `declared` branch, starting at the checked-out commit |
+| `--set-branch <m>=<b>[@<rev>]` | Declare the existing branch `<b>` for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch` does; repeat per member |
+| `--set-new-branch <m>=<b>[@<rev>]` | Create `<b>` and declare it for member `<m>`, in `<W>`'s first commit, as `rwv member set-branch --new` does; repeat per member |
 | `--at <rev>` | Start at this revision. An uncommitted `rwv.lock` is carried only where the branch starts at the checked-out commit; elsewhere it is refused (`edits`) |
 | `--project <name>` | Operate on this project instead of the active project |
 
@@ -656,21 +658,30 @@ Without `--kind`, the exit code is non-zero when any finding is an error, and a 
 
 See [Doctor findings](./doctor-findings.md) for the complete catalog of wire `--kind` / `sub_kind` tokens, their severities (`error` vs `warning`), and their `--fix` dispositions.
 
-### `rwv workweave create <name>`
+### `rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--set-branch <m>=<b>[@<rev>]]... [--set-new-branch <m>=<b>[@<rev>]]... [--at <rev>] [--dir <path> | --basedir <path>]`
 
-Create an isolated workweave for the project the invocation resolves to (see [Project resolution](#project-resolution)); `--project <name>` names another:
+Create an isolated workweave for the project the invocation resolves to (see [Project resolution](#project-resolution)); `--project <name>` names another. The workspace the verb runs in is the new workweave's parent and provenance only: it does not switch, and what it holds uncommitted, `rwv.toml` and `rwv.lock` included, stays there as it is, reported. The workweave starts from commits: the parent's checked-out commit, or `--at`, or the tip of the `--target` branch, with each member at the pin of that commit's `rwv.lock`. To fork a workweave from the one you are in, run `rwv workweave create <name>` inside it.
 
-1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every member repo (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
-2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on `<project>--<name>` and writes `.rwv-workweave` at the workweave root.
+With no branch flag the project repo is on a feature under the minted name `<project>--<name>`, onto the branch the parent has checked out; the minted name is never published. `--new-branch <W>` creates `W` as `rwv branch create` does (bare: a feature onto the parent's branch; `--target <T>`: onto `T`; `--declared`), refusing a name any repo already has (`name` exists). `--branch <W>` opens `W` by its record; a branch with no record needs `--target` or `--declared`, and a spelling that differs from the record is refused (`target` conflict). A branch checked out in another workspace is refused (`checkout`); `--detach <rev>` makes a detached workspace at any revision, such a branch included, and writes no record. Each `--set-branch` and `--set-new-branch` sets a member's declared branch in the new branch's first commit, as `rwv member set-branch` does; every one is judged before anything is written.
+
+Re-running an identical spelling on a clean workweave whose marker matches returns it, reported; any difference is refused (`name` taken) and changes nothing.
+
+1. **Manifest worktrees**
+
+1. **Manifest worktrees** — creates a git worktree for every member repo, on the project's branch name for an `owned` or `fork` member of a feature and detached at its pin otherwise (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
+2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on the workweave's branch (or detached) and writes `.rwv-workweave` at the workweave root.
 3. **Activation** — surfaces workweave-root symlinks, fits host settings such as the cargo `rustc-wrapper` key, runs the integration install hooks (`npm install`, `uv sync`, `cargo fetch`, …) in the new workweave, then verifies the integration files in `projects/<project>/`: a missing or drifted one is reported as a warning naming `rwv doctor --fix`, and `create` authors none. `--no-materialize` skips the hooks; `rwv materialize` inside the workweave runs them later.
 
 A failure before the install hooks rolls the workweave back. An install hook that fails after the workweave is created and registered does not: the workweave is kept, and `create` exits 1 with `workweave created at <path>; only its install hooks did not complete. Fix the cause, then run rwv materialize inside it`. Under `--hook-mode` and `--claude-hook` the same failure is a warning on stderr and `create` exits 0, so the agent runtime that asked for the workweave still gets its path. A missing tool is a `tool-missing` warning in every mode.
 
 | Flag | Effect |
 |---|---|
-| `--from <source>` | Fork from a specific source (default: CWD's active workspace). `<source>` reads as `rwv sync <source>` reads it: `primary`, a bare workweave name of this project, or a path (absolute, or relative to the invocation directory). A directory with a bare name is written `./<dir>`; a bare word that names no workweave refuses with `no-such-workweave`. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
-| `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
-| `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock` are **moved**: copied into the new workweave's project worktree, then returned to their committed version in the source, so a later `rwv sync-to` from the workweave is not refused over the source's copy. Other uncommitted files stay in the source only, and `create` lists them. Without this flag, `create` refuses (`dirty-project-dir`) |
+| `--new-branch <W>` | Create `<W>` for the workweave, as `rwv branch create` does |
+| `--branch <W>` | Open `<W>` by its record |
+| `--detach <rev>` | A detached workspace at `<rev>`; no record is written |
+| `--target <T>`, `--declared` | How a created or opened branch is used, as for `rwv branch create`; for an opened branch they must agree with its record |
+| `--set-branch <m>=<b>[@<rev>]`, `--set-new-branch <m>=<b>[@<rev>]` | As for `rwv branch create`; with `--new-branch` or the minted name only |
+| `--at <rev>` | Start the created branch at this revision |
 | `--dir <path>` | The exact path to place the workweave at; there is no default (recorded in the index as the absolute path it resolves to). Absolute paths are used as-is; relative paths resolve against the invocation directory. Refused together with `--basedir` |
 | `--basedir <path>` | The directory to place the workweave under for this invocation, in place of the recorded default: the workweave lands at `<path>/<project>--<name>`. Relative paths resolve against the invocation directory. Refused together with `--dir` |
 | `--project <name>` | Create the workweave for this project instead of the active project (does not change `.rwv-active`) |
@@ -692,7 +703,7 @@ Neither discard flag discards for good: each keeps what it consents to losing as
 
 `--delete-remote` also deletes each push branch of what belongs that has landed on the target's remote-tracking branch, and `--delete-remote-unlanded <repo>`, needing `--discard-unlanded`, also deletes the named repo's push branch whether or not it landed, after keeping its tip as a backup. A push branch of a repo no flag names that has not landed is kept.
 
-Both refusals cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`. `create --replace-existing` weighs the same set.
+Both refusals cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`.
 
 `--json` emits the envelope `{"$schema": "...", "project": "...", "discarded": {"edits": [...], "detached_commits": [...], "unlanded_branches": [...]}, "deleted": [...], "survivors": [...], "records_dropped": [...]}`; the last three are the deletion rule's, as `rwv branch delete` emits them, and are empty when the workweave's aligned branch is not a feature.
 

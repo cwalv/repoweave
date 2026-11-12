@@ -1,5 +1,5 @@
-//! `rwv workweave delete` and `create --replace-existing` weigh
-//! every checkout they destroy, not only the members the primary weave's
+//! `rwv workweave delete` weighs
+//! every checkout it destroys, not only the members the primary weave's
 //! manifest names.
 //!
 //! The workweave directory is removed whole, so a checkout under it that no
@@ -212,30 +212,6 @@ fn discard_uncommitted_waives_the_unlisted_checkout_too() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!s1.exists());
-}
-
-#[test]
-fn replace_existing_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
-    let weave = weave();
-    let s1 = seat_with_a_stranded_dirty_checkout(&weave);
-
-    let out = run(
-        &weave.root,
-        &[
-            "workweave",
-            "create",
-            "--project",
-            PROJECT,
-            "s1",
-            "--replace-existing",
-        ],
-    );
-    assert_refused_with_the_work_intact(
-        &out,
-        &s1,
-        "replace-target-holds-work",
-        &format!("  {EXTRA} {OUTSIDE}"),
-    );
 }
 
 /// The seat adds a member the primary has never had and commits in it: the

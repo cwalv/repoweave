@@ -81,6 +81,22 @@ fn resolve_cwd_override(operand: Operand, cwd: &InvocationDir) -> anyhow::Result
 /// the mode, so a branch named like a mode is still a branch when two words
 /// are given. A mode that is neither, `--target` with `declared`, and
 /// `feature` without `--target` are usage errors, as clap's own are.
+fn branch_entries(
+    existing: Vec<String>,
+    created: Vec<String>,
+) -> anyhow::Result<Vec<crate::member_branch::BranchEntry>> {
+    use crate::member_branch::{BranchEntry, Creation};
+    existing
+        .iter()
+        .map(|spec| BranchEntry::parse(spec, Creation::Existing))
+        .chain(
+            created
+                .iter()
+                .map(|spec| BranchEntry::parse(spec, Creation::New)),
+        )
+        .collect()
+}
+
 fn spelling_of(target: Option<String>, declared: bool) -> Option<crate::switch::Spelling> {
     match (target, declared) {
         (Some(target), _) => Some(crate::switch::Spelling::Target(target)),
@@ -979,9 +995,14 @@ pub fn run() -> anyhow::Result<()> {
                     }
                     WorkweaveAction::Create {
                         name,
-                        replace_existing,
-                        from,
-                        capture_dirty,
+                        new_branch,
+                        branch,
+                        detach,
+                        target,
+                        declared,
+                        set_branch,
+                        set_new_branch,
+                        at,
                         dir,
                         basedir,
                         project,
@@ -990,12 +1011,7 @@ pub fn run() -> anyhow::Result<()> {
                         let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
                         let primary_root = ctx.primary_path();
                         let project = ctx.require_active_project_on_disk()?;
-                        let source_root = match from {
-                            None => ctx.active_path().to_path_buf(),
-                            Some(source) => source
-                                .locate(&invocation)
-                                .resolve_in_project(primary_root, project)?,
-                        };
+                        let source_root = ctx.active_path().to_path_buf();
                         let placement = match (dir, basedir) {
                             (Some(dir), _) => {
                                 crate::workweave::Placement::Dir(dir.locate(&invocation))
@@ -1005,20 +1021,22 @@ pub fn run() -> anyhow::Result<()> {
                             }
                             (None, None) => crate::workweave::Placement::DefaultBasedir,
                         };
+                        let branch = match (new_branch, branch, detach) {
+                            (Some(new), _, _) => crate::workweave::BranchChoice::New(new),
+                            (None, Some(open), _) => crate::workweave::BranchChoice::Open(open),
+                            (None, None, Some(rev)) => crate::workweave::BranchChoice::Detach(rev),
+                            (None, None, None) => crate::workweave::BranchChoice::Minted,
+                        };
                         let created =
                             crate::workweave::create_workweave(crate::workweave::CreateWorkweave {
                                 primary_root,
                                 source_root: &source_root,
                                 project,
                                 name: &WorkweaveName::new(name)?,
-                                replace_existing: consent::ReplaceExistingConsent::from_flag(
-                                    replace_existing,
-                                ),
-                                dirty_source: if capture_dirty {
-                                    crate::workweave::DirtySource::Capture
-                                } else {
-                                    crate::workweave::DirtySource::Refuse
-                                },
+                                branch,
+                                spelling: spelling_of(target, declared),
+                                at,
+                                entries: branch_entries(set_branch, set_new_branch)?,
                                 placement: &placement,
                                 activation: activate::ActivateOptions { no_materialize },
                             });
@@ -1198,6 +1216,8 @@ pub fn run() -> anyhow::Result<()> {
                 branch,
                 target,
                 declared,
+                set_branch,
+                set_new_branch,
                 at,
                 project,
             } => {
@@ -1210,6 +1230,7 @@ pub fn run() -> anyhow::Result<()> {
                         branch,
                         spelling: spelling_of(target, declared),
                         at,
+                        entries: branch_entries(set_branch, set_new_branch)?,
                     },
                 )?;
             }

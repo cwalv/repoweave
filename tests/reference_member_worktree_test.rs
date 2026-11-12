@@ -223,16 +223,8 @@ fn a_nested_workweave_links_its_reference_worktree_into_the_canonical_store() {
     let parent = create_workweave(&primary, "parent");
 
     rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            PROJECT,
-            "child",
-            "--from",
-            &parent.root.to_string_lossy(),
-        ])
-        .current_dir(&primary.root)
+        .args(["workweave", "create", "--project", PROJECT, "child"])
+        .current_dir(&parent.root)
         .assert()
         .success();
     let child = workweave_at(parent.root.parent().unwrap().join("app--child"));

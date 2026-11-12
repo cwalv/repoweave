@@ -1154,16 +1154,8 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
     let parent_ww = weaveroot.join("web-app--parent");
 
     rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "child",
-            "--from",
-            &parent_ww.to_string_lossy(),
-        ])
-        .current_dir(&primary_root)
+        .args(["workweave", "create", "--project", "web-app", "child"])
+        .current_dir(&parent_ww)
         .assert()
         .success();
     let child_ww = weaveroot.join("web-app--child");

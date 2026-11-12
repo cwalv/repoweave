@@ -7,33 +7,15 @@ rwv workweave create payments
 cd ../.workweaves/web-app--payments
 ```
 
-This forks from CWD's active workspace (the primary weave, or the surrounding workweave when invoked inside one) and creates `../.workweaves/web-app--payments/` — a sibling of the weave root by default — containing:
+The workspace the command runs in (the primary weave, or the surrounding workweave when run inside one) is the new workweave's parent: it does not switch, and the new workweave starts from its committed state. The command creates `../.workweaves/web-app--payments/` — a sibling of the weave root by default — containing:
 
-- a git worktree on an ephemeral `web-app--payments` branch for every member repo (`role = "reference"` members included, with read-only permissions on tracked regular files), populated via copy-on-write reflinks or read-only hardlinks where the filesystem supports them
+- a git worktree for every member repo, on a `web-app--payments` feature branch for an `owned` or `fork` member and detached at its pin for the rest (`role = "reference"` members included, with read-only permissions on tracked regular files), populated via copy-on-write reflinks or read-only hardlinks where the filesystem supports them
 - surfaced ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, `pyproject.toml`) and isolated tool state (`node_modules/`, `target/`, `.venv/`), installed by the integration install hooks `create` runs in the new workweave (pass `--no-materialize` to skip them; `rwv materialize` inside the workweave runs them later)
 - a `.rwv-workweave` marker recording the parent workspace and project
 
-`rwv workweave create` checks for uncommitted changes in `projects/<project>/` before proceeding. If the project repo is dirty, it refuses and lists three options:
+The new workweave starts from commits, so uncommitted files in the parent, `rwv.toml` and `rwv.lock` included, stay there as they are, and `create` names them. Commit an edit that the workweave should carry before creating it.
 
-```text
-Error: rwv workweave create: refusing to create workweave — projects/web-app has uncommitted changes:
-  rwv.toml
-
-To proceed, do one of:
-  1. commit the changes: git -C projects/web-app commit
-  2. stash the changes: git -C projects/web-app stash
-  3. capture them into the workweave: rwv workweave create payments --capture-dirty
-
-rwv explain dirty-project-dir
-```
-
-Pass `--capture-dirty` when the uncommitted `rwv.toml` edit is meant for the new workweave:
-
-```bash
-rwv workweave create payments --capture-dirty
-```
-
-`--capture-dirty` moves uncommitted edits to `rwv.toml` and `rwv.lock` into the workweave: once the workweave exists, `projects/web-app/` in the source holds their committed versions again, so a later `rwv sync-to` is not refused over the source's copy. Other uncommitted files in `projects/web-app/` stay in the source, and `create` lists them. Commit or stash the captured edits in the workweave before running `rwv sync-to`.
+By default the project repo is on a feature named `web-app--payments`, onto the branch the parent has checked out; that name is never published. To name the branch, create it with `--new-branch payments`; to open a branch that already has a record, use `--branch payments`; to look at a branch another workspace has checked out, use `--detach payments`. Running the same `create` again on a clean workweave returns it; any other spelling for that name is refused (`name` taken).
 
 ## Start the feature in the workspace you are in
 
@@ -54,7 +36,7 @@ rwv switch payments
 
 ## Work across repos
 
-Every member repo is already checked out on its `web-app--payments` ephemeral branch. Edit, test, and commit directly in each worktree:
+Every `owned` and `fork` member is already checked out on the `web-app--payments` feature branch. Edit, test, and commit directly in each worktree:
 
 ```bash
 cd github/chatly/protocol
@@ -95,6 +77,6 @@ Deletion refuses if any checkout in the workweave, a manifest member or not, has
 
 - [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync-to` options, multi-workweave landing, and conflict recovery
 - [Review a PR with a workweave](./review-pr-with-workweave.md) — using a disposable workweave to test a pull request
-- [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — parent/child lineage and ephemeral branch naming
+- [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — parent/child lineage and branch naming
 - [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md) — creation, landing, and deletion contracts
 - [Lock as derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is per-workspace

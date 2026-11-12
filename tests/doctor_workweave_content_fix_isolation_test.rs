@@ -326,8 +326,10 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
         source_root: &ws,
         project: &ww_project,
         name: &ww_name,
-        replace_existing: None,
-        dirty_source: repoweave::workweave::DirtySource::Refuse,
+        branch: repoweave::workweave::BranchChoice::Minted,
+        spelling: None,
+        at: None,
+        entries: Vec::new(),
         placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     })

@@ -273,14 +273,7 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
     std::fs::write(&config, "# an operator's local, uncommitted edit\n").unwrap();
 
     let create = rwv_with_path(
-        &[
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "agent-1",
-            "--capture-dirty",
-        ],
+        &["workweave", "create", "--project", "web-app", "agent-1"],
         &ws,
         &path,
     );
@@ -333,14 +326,7 @@ fn create_over_committed_symlink(link_parent: bool) -> (tempfile::TempDir, PathB
     std::fs::write(&config, bytes).unwrap();
 
     rwv_with_path(
-        &[
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "agent-1",
-            "--capture-dirty",
-        ],
+        &["workweave", "create", "--project", "web-app", "agent-1"],
         &ws,
         &path,
     );

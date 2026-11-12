@@ -118,10 +118,9 @@ struct Workweave {
 fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Workweave {
     let mut cmd = rwv();
     cmd.args(["workweave", "create", "--project", PROJECT, name]);
-    if let Some(f) = from {
-        cmd.args(["--from", &f.to_string_lossy()]);
-    }
-    cmd.current_dir(&main.root).assert().success();
+    cmd.current_dir(from.unwrap_or(&main.root))
+        .assert()
+        .success();
 
     let root = main.weaveroot.join(format!("{PROJECT}--{name}"));
     Workweave {

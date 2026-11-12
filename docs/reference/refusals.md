@@ -103,7 +103,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete` and `rwv switch`, for a project branch checked out in another workspace |
+| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, `rwv switch` and `rwv workweave create --branch`, for a project branch checked out in another workspace |
 | `in a raw worktree` | a worktree no workweave records derives from the clone, named by path; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in a raw worktree |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -112,6 +112,8 @@ The others follow.
 |---|---|---|---|---|
 | `in another workspace` | C16: free the other checkout | `rwv switch <other>` | the other checkout | removal refuses over edits |
 | `in another workspace` | C16: free the other checkout | `rwv workweave delete <ww> --project <project>` | the primary | removal refuses over edits |
+| `in another workspace`, for `rwv switch` | C16: free the other checkout | `rwv workweave create <new> --detach <W>` | here | removal refuses over edits |
+| `in another workspace`, for `rwv workweave create` | C16: free the other checkout | `rwv workweave create <new> --detach <W>` | here | removal refuses over edits |
 | `in a raw worktree` | C16: free the other checkout | VCS action (git: `git -C <checkout> worktree remove <worktree>`) | the checkout | removal refuses over edits |
 
 **Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
@@ -126,7 +128,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv update --remote`, for a member; `rwv branch create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
+| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch; `rwv branch create` and `rwv workweave create`, for a branch that would start at the tip of a branch that has diverged from its upstream |
 | `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
 | `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it; `rwv push` publishes it |
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
@@ -138,11 +140,8 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
-| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
+| `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
@@ -167,7 +166,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
+| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's, or holds a workweave that is not clean, was made from another parent, or holds something other than what this spelling would make; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
 | `exists` | a repo already has a branch of the name the verb would give its checkout, standing at a revision other than the one the verb would start it at, which the line lists; it holds commits the verb did not put there. For a rename, the new name is a local branch of the project repo or of a member the rename would move, or a branch a remote has, as last fetched; `--adopt` takes up the remote's | `rwv workweave create`, for the branch it mints in the project repo and in each owned or fork member; `rwv branch rename`; `rwv member set-branch --new`, for a branch the member's repo already has; `rwv branch create`, for a name any repo of the workspace has, locally or on a remote as last fetched |
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on; `rwv member set-branch` |
 | `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched; `rwv member set-branch`, for a branch the member's repo has neither locally nor on a remote as last fetched; `rwv lock --commit`, for a declared branch a hand edit named that exists nowhere; `rwv switch`, for a branch the project repo lacks, and `rwv branch create`, for a `--target` or `--at` that names nothing here |
@@ -191,6 +190,7 @@ The others follow.
 | `exists`, for `rwv workweave create` | use another name | — | here | nothing changes |
 | `exists`, for `rwv branch create` | use another name | — | here | nothing changes |
 | `exists`, for `rwv branch create` | open it | `rwv switch <W>` | here | moves only what alignment moves |
+| `exists`, for `rwv workweave create` | open it | `rwv workweave create <ww> --branch <W>` | here | moves only what alignment moves |
 | `exists`, for `rwv branch rename` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
 | `exists`, for `rwv branch rename` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
 | `exists`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
@@ -291,8 +291,6 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Destructive operations](../explanation/destructive-operations.md).
 
@@ -435,21 +433,6 @@ mid-write, the record would attest a derivation that never happened as a whole.
 so the previous state is intact.
 
 **Where this sits.** [File ownership](../explanation/joints/file-ownership.md).
-
-### `dirty-project-dir`
-
-**Condition.** `rwv workweave create` found uncommitted changes in the source
-project directory and no `--capture-dirty`.
-
-**Why.** A workweave forks the project repo. Uncommitted work is not on any
-branch, so a plain fork silently leaves it behind in the source while the
-operator believes it came along.
-
-**Exits.** Commit the changes and create; or pass `--capture-dirty`, which
-moves uncommitted edits to `rwv.toml` and `rwv.lock` into the new workweave
-and returns the source's copies to their committed version — the flag is named
-for the consequence it accepts. Other uncommitted files stay in the source,
-and `create` lists them.
 
 ### `dropped-repo-has-unique-commits`
 
@@ -774,9 +757,9 @@ looks like a workweave but is not recorded in the project clone's workweave inde
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name. A source for `rwv sync`,
-`rwv sync-to` or `rwv workweave create --from` that is a bare word names a
-workweave; to name a directory, write `./<dir>`.
+in the recorded container under the expected name. A source for `rwv sync`
+or `rwv sync-to` that is a bare word names a workweave; to name a directory,
+write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
 
@@ -966,25 +949,6 @@ touching, and repairing it would act on a state nobody surveyed.
 **Exits.** Re-run `rwv doctor --fix`. This is a race rather than a fault:
 whether it vanished or merely moved is timing, which is why one token covers
 both.
-
-### `replace-target-holds-work`
-
-**Condition.** The workweave `rwv workweave create` would reuse or replace
-holds work that no flag available here consents to losing: uncommitted
-changes or unlanded commits in any checkout under it, a member or not. A
-checkout the manifest does not name is listed with the suffix
-`(not a manifest member)`.
-
-**Why.** Consent flags are named for the specific consequence they accept. This
-state mixes predicates — uncommitted changes and unlanded commits together —
-and no single flag on `create` names that combined loss, so none is offered.
-
-**Exits.** Deal with the work directly: commit or discard the changes, land or
-abandon the commits, then re-run. Or delete the workweave explicitly with `rwv
-workweave <project> delete <name>`, whose two discard flags each name one of
-the losses, and create it again. The refusal lists what it found.
-
-**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
 ### `repo-not-in-manifest`
 

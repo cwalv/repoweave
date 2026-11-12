@@ -13,9 +13,6 @@ use crate::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Un
 /// recorded and the scenario stops there: nothing stands in for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MissingVerb {
-    /// Name a branch when creating or opening a workweave, rather than take
-    /// the one it mints.
-    WeaveBranch,
     /// Materialize a branch someone else pushed, in a workweave of its own.
     Review,
     /// Take a target's work into a feature, or land a feature into its
@@ -28,7 +25,6 @@ pub enum MissingVerb {
 impl MissingVerb {
     pub fn describe(self) -> &'static str {
         match self {
-            MissingVerb::WeaveBranch => "name a branch when creating or opening a workweave",
             MissingVerb::Review => "materialize someone else's pushed branch",
             MissingVerb::Land => "take in or land a feature by its record",
             MissingVerb::CherryPick => "port a project commit into a feature or a line",

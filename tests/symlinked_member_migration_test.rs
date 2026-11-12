@@ -454,16 +454,8 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
             vec!["workweave", "delete", "--project", PROJECT, SEAT],
         ),
         (
-            &weave.primary,
-            vec![
-                "workweave",
-                "create",
-                "--project",
-                PROJECT,
-                "next",
-                "--from",
-                &seat_arg,
-            ],
+            &weave.seat,
+            vec!["workweave", "create", "--project", PROJECT, "next"],
         ),
     ];
     for (dir, args) in refusals {

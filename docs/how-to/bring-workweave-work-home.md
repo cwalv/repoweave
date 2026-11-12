@@ -12,7 +12,7 @@ Bare `rwv sync-to` reads `.rwv-workweave` and targets the recorded parent worksp
 1. **Auto-relock CWD and replay onto the parent's tip.** If any member repo in the workweave has commits ahead of the workweave's `rwv.lock`, `sync-to` snapshots and commits `rwv.lock` automatically. It then replays the workweave's unique project commits onto the parent's project tip and aligns member repos.
 2. **Re-derive `rwv.lock` if member tips moved.** If step 1's alignment changed any member revisions, `rwv.lock` is regenerated and committed in the workweave.
 3. **Fast-forward the parent.** The parent's project repo and member checkouts advance to the workweave's new tips.
-4. **Retire on `--retire`.** After step 3 succeeds, `--retire` verifies that every worktree in the workweave is clean and converged with the parent, then deletes the workweave's worktrees, ephemeral branches, and directory.
+4. **Retire on `--retire`.** After step 3 succeeds, `--retire` verifies that every worktree in the workweave is clean and converged with the parent, then deletes the workweave's worktrees, the branches that belong to it by the deletion rule, and its directory.
 
 To land into a workspace other than the recorded parent, pass the target explicitly:
 

@@ -54,12 +54,8 @@ impl Weaves {
     }
 
     fn create(&self, name: &str, from: Option<&Path>) -> PathBuf {
-        let mut args = vec!["workweave", "create", "--project", "alpha", name];
-        let from = from.map(|p| p.to_string_lossy().into_owned());
-        if let Some(from) = &from {
-            args.extend(["--from", from.as_str()]);
-        }
-        let out = rwv_output(&self.primary, &args);
+        let args = vec!["workweave", "create", "--project", "alpha", name];
+        let out = rwv_output(from.unwrap_or(&self.primary), &args);
         let dir = self.containers.join(format!("alpha--{name}"));
         assert!(
             dir.join(".rwv-workweave").is_file(),

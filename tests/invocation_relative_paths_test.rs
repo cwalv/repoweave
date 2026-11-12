@@ -110,7 +110,7 @@ fn create_dir_reads_a_relative_path_from_the_c_directory() {
 }
 
 #[test]
-fn create_from_reads_a_relative_path_from_the_invocation_subdirectory() {
+fn a_create_inside_a_workweave_records_that_workweave_as_the_parent() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_member(tmp.path());
     common::rwv()
@@ -122,16 +122,8 @@ fn create_from_reads_a_relative_path_from_the_invocation_subdirectory() {
     assert!(a.is_dir());
 
     common::rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "b",
-            "--from",
-            "../../.workweaves/web-app--a",
-        ])
-        .current_dir(ws.join("projects"))
+        .args(["workweave", "create", "--project", "web-app", "b"])
+        .current_dir(&a)
         .assert()
         .success();
 

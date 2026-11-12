@@ -195,8 +195,8 @@ fn workweave_recreate_preserves_non_git_state() {
 }
 
 /// Re-invoking `rwv workweave PROJECT create NAME` on a workweave that has
-/// local modifications (uncommitted changes OR commits on the ephemeral
-/// branch) must refuse without `--replace-existing`, preserving the user's work.
+/// uncommitted changes must refuse as `name` taken, preserving the user's work;
+/// one that only holds commits on its branch is clean and is returned.
 ///
 /// This protects against silent loss when a user has done work inside a
 /// workweave and then accidentally (or a tool) re-issues the create
@@ -227,6 +227,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
         .current_dir(&ws)
         .assert()
         .failure()
+        .stderr(predicate::str::contains("name taken"))
         .stderr(predicate::str::contains("uncommitted changes"));
 
     // Dirty file must still be there.
@@ -259,14 +260,13 @@ fn workweave_recreate_refuses_on_local_modifications() {
         .args(["workweave", "create", "--project", "web-app", "advanced"])
         .current_dir(&ws)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("diverged from source"));
+        .success()
+        .stderr(predicate::str::contains("returned as it is"));
 
-    // Commit must still be there.
     assert_eq!(
         head_sha(&weave2_repo),
         advanced_head,
-        "ephemeral-branch commit should survive a refused re-invocation"
+        "ephemeral-branch commit should survive a re-invocation"
     );
     assert!(
         weave2_repo.join("new-file.txt").exists(),
@@ -331,97 +331,6 @@ role = "owned"
     );
 }
 
-/// `--replace-existing` recreates the workweave, but only when nothing unsaved
-/// or unmerged would be lost: a dirty workweave is refused (the operator
-/// never saw what it holds), and once clean, the replace destroys non-git
-/// state and rebuilds. This is the explicit rebuild path (corruption
-/// recovery, reusing a slot for a new purpose).
-#[test]
-fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "web-app");
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    rwv()
-        .args(["workweave", "create", "--project", "web-app", "reset"])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let ww_dir = weaveroot.join("web-app--reset");
-    let weave_repo = ww_dir.join("github/org/repo");
-
-    // Dirty it, plus non-git state that --replace-existing may legitimately wipe.
-    std::fs::write(weave_repo.join("scratch.txt"), "local work\n").unwrap();
-    let sentinel = ww_dir.join(".runtime/sentinel.txt");
-    std::fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
-    std::fs::write(&sentinel, "will be wiped\n").unwrap();
-    let head_before = head_sha(&weave_repo);
-
-    // While the workweave is dirty, the replace must refuse and name the work
-    // at risk — blind replacement is not consented destruction.
-    let err_output = rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "reset",
-            "--replace-existing",
-        ])
-        .current_dir(&ws)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
-    assert!(
-        stderr.contains("refusing to replace"),
-        "create --replace-existing over a dirty workweave must refuse; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("github/org/repo") && stderr.contains("delete"),
-        "refusal must list the dirty repo and point at the explicit delete verb; got:\n{stderr}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(weave_repo.join("scratch.txt")).unwrap(),
-        "local work\n",
-        "uncommitted content must survive a refused create --replace-existing"
-    );
-
-    // Clean the workweave; the replace now proceeds and wipes the
-    // non-git state.
-    std::fs::remove_file(weave_repo.join("scratch.txt")).unwrap();
-    rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "reset",
-            "--replace-existing",
-        ])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    assert!(
-        !sentinel.exists(),
-        "sentinel file should be wiped by the --replace-existing recreate"
-    );
-
-    // Workweave is rebuilt: marker present, worktree on expected branch,
-    // HEAD matching primary's current branch.
-    assert!(ww_dir.join(".rwv-workweave").exists());
-    assert_eq!(current_branch(&weave_repo), "web-app--reset");
-    assert_eq!(
-        head_sha(&weave_repo),
-        head_before,
-        "rebuilt worktree HEAD should match primary's current-branch HEAD"
-    );
-}
-
 fn head_sha(dir: &Path) -> String {
     let output = common::git()
         .args(["rev-parse", "HEAD"])
@@ -440,13 +349,11 @@ fn head_sha(dir: &Path) -> String {
         .to_string()
 }
 
-/// With the `.rwv-workweave` marker missing (or foreign), `create
-/// --replace-existing`
-/// cannot trust any manifest to enumerate the workweave — it must still
-/// find dirty repos by scanning, refuse while work is at risk, and only
-/// replace once clean.
+/// A directory holding no `.rwv-workweave` marker is no workweave of this
+/// project, so a create at its name is refused as `name` taken and changes
+/// nothing.
 #[test]
-fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
+fn workweave_recreate_refuses_when_marker_missing() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
@@ -460,53 +367,21 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
 
     let ww_dir = weaveroot.join("web-app--reset");
     let weave_repo = ww_dir.join("github/org/repo");
-
-    // Strip the marker (simulating corruption) and dirty the repo worktree.
     std::fs::remove_file(ww_dir.join(".rwv-workweave")).unwrap();
     std::fs::write(weave_repo.join("scratch.txt"), "local work\n").unwrap();
 
-    let err_output = rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "reset",
-            "--replace-existing",
-        ])
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "reset"])
         .current_dir(&ws)
         .assert()
         .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
-    assert!(
-        stderr.contains("refusing to replace")
-            && stderr.replace('\\', "/").contains("github/org/repo"),
-        "marker-less create --replace-existing must refuse via the repo scan; \
-         got:\n{stderr}"
-    );
+        .stderr(predicate::str::contains("name taken"))
+        .stderr(predicate::str::contains("no .rwv-workweave marker"));
     assert_eq!(
         std::fs::read_to_string(weave_repo.join("scratch.txt")).unwrap(),
-        "local work\n",
-        "uncommitted content must survive the refusal"
+        "local work\n"
     );
-
-    // Clean → the raw-replace path proceeds.
-    std::fs::remove_file(weave_repo.join("scratch.txt")).unwrap();
-    rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "web-app",
-            "reset",
-            "--replace-existing",
-        ])
-        .current_dir(&ws)
-        .assert()
-        .success();
-    assert!(ww_dir.join(".rwv-workweave").exists());
+    assert!(!ww_dir.join(".rwv-workweave").exists());
 }
 
 /// After the workweave directory is removed (e.g. `rm -rf`) but the
@@ -591,7 +466,15 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 
     // ---- Re-create: must succeed WITHOUT any manual git worktree prune. ----
     rwv()
-        .args(["workweave", "create", "--project", "web-app", "target"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "target",
+            "--new-branch",
+            "target-again",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

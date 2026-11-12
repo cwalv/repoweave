@@ -1652,6 +1652,12 @@ impl EphemeralRefName {
         Self(flat.as_str().to_owned())
     }
 
+    /// The branch a create was told to put the workweave on, rather than the
+    /// name its identity mints.
+    pub fn chosen(branch: &str) -> Self {
+        Self(branch.to_owned())
+    }
+
     /// The requested name at the parse boundary, for the VCS impl to spell.
     ///
     /// Deliberately not `as_str()`: handing back a [`RawRefName`] grants

@@ -18,7 +18,7 @@
 
 use repoweave::deletion::RemoteDeletes;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::workweave::{create_workweave, delete_workweave, CreateWorkweave, DirtySource};
+use repoweave::workweave::{create_workweave, delete_workweave, CreateWorkweave};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -65,8 +65,10 @@ fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
         source_root: ws,
         project: &ProjectName::new(project).unwrap(),
         name: &WorkweaveName::new(name).unwrap(),
-        replace_existing: None,
-        dirty_source: DirtySource::Refuse,
+        branch: repoweave::workweave::BranchChoice::Minted,
+        spelling: None,
+        at: None,
+        entries: Vec::new(),
         placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     })

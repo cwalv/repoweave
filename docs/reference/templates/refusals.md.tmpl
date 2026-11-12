@@ -203,21 +203,6 @@ so the previous state is intact.
 
 **Where this sits.** [File ownership](../explanation/joints/file-ownership.md).
 
-### `dirty-project-dir`
-
-**Condition.** `rwv workweave create` found uncommitted changes in the source
-project directory and no `--capture-dirty`.
-
-**Why.** A workweave forks the project repo. Uncommitted work is not on any
-branch, so a plain fork silently leaves it behind in the source while the
-operator believes it came along.
-
-**Exits.** Commit the changes and create; or pass `--capture-dirty`, which
-moves uncommitted edits to `rwv.toml` and `rwv.lock` into the new workweave
-and returns the source's copies to their committed version — the flag is named
-for the consequence it accepts. Other uncommitted files stay in the source,
-and `create` lists them.
-
 ### `dropped-repo-has-unique-commits`
 
 **Condition.** A checkout being dropped from the lock, or deleted by `rwv
@@ -541,9 +526,9 @@ looks like a workweave but is not recorded in the project clone's workweave inde
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name. A source for `rwv sync`,
-`rwv sync-to` or `rwv workweave create --from` that is a bare word names a
-workweave; to name a directory, write `./<dir>`.
+in the recorded container under the expected name. A source for `rwv sync`
+or `rwv sync-to` that is a bare word names a workweave; to name a directory,
+write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
 
@@ -733,25 +718,6 @@ touching, and repairing it would act on a state nobody surveyed.
 **Exits.** Re-run `rwv doctor --fix`. This is a race rather than a fault:
 whether it vanished or merely moved is timing, which is why one token covers
 both.
-
-### `replace-target-holds-work`
-
-**Condition.** The workweave `rwv workweave create` would reuse or replace
-holds work that no flag available here consents to losing: uncommitted
-changes or unlanded commits in any checkout under it, a member or not. A
-checkout the manifest does not name is listed with the suffix
-`(not a manifest member)`.
-
-**Why.** Consent flags are named for the specific consequence they accept. This
-state mixes predicates — uncommitted changes and unlanded commits together —
-and no single flag on `create` names that combined loss, so none is offered.
-
-**Exits.** Deal with the work directly: commit or discard the changes, land or
-abandon the commits, then re-run. Or delete the workweave explicitly with `rwv
-workweave <project> delete <name>`, whose two discard flags each name one of
-the losses, and create it again. The refusal lists what it found.
-
-**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
 ### `repo-not-in-manifest`
 

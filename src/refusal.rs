@@ -125,11 +125,6 @@ pub enum RefusalKind {
     RepoWithoutCommits,
     /// The directory slot is taken by a non-addressable occupant.
     TargetDirOccupied,
-    /// The reuse/replace target holds work no flag here can consent to lose.
-    ReplaceTargetHoldsWork,
-    /// The source project directory is dirty and `--capture-dirty` was not
-    /// given.
-    DirtyProjectDir,
     /// Two paths both claim to be this workweave.
     RegistryPathDisagreement,
 

@@ -548,8 +548,7 @@ pub const GIT_DIR_ENTRY_NAME: &str = ".git";
 /// A construction, not a probe: the answer is the same whether or not `dir` is
 /// a repo at all. Callers comparing an observed store against where one
 /// *should* sit want this; callers asking whether a repo lives there want
-/// `has_git_dir`, and callers wanting the store git actually resolves want
-/// [`Vcs::store_of`].
+/// `has_git_dir`, andXX
 pub fn store_path_in(dir: &Path) -> PathBuf {
     dir.join(GIT_DIR_ENTRY_NAME)
 }
@@ -652,16 +651,6 @@ pub fn store_above_worktree_dir(git_dir: &Path) -> Option<PathBuf> {
 pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
     let dot_git = store_path_in(checkout);
     dot_git.exists() && dot_git.is_file()
-}
-
-/// True when `dir` carries a `.git` entry of either shape.
-///
-/// A cheap on-disk probe for a directory walk that has no manifest to consult
-/// and cannot afford a subprocess per candidate. It answers "does git live
-/// here", which only git's layout can be asked; [`Vcs::is_repo`] is the
-/// backend-neutral question and costs a process.
-pub(crate) fn has_git_dir(dir: &Path) -> bool {
-    store_path_in(dir).exists()
 }
 
 // ---------------------------------------------------------------------------

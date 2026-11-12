@@ -117,14 +117,14 @@ fn a_clean_source_births_a_clean_workweave_under_the_eol_filter() {
 }
 
 #[test]
-fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
+fn a_genuinely_dirty_lock_stays_in_the_source_and_the_workweave_holds_the_committed_one() {
     let tmp = common::tempdir().unwrap();
     let (home, ws) = smudging_weave(tmp.path());
 
     let app = ws.join("projects/app");
     // raw lock bytes: an append onto the committed lock, so it reads as
-    // tracked-dirty for `--capture-dirty` to carry. The shared builder writes
-    // a whole file for given content and cannot make an existing one dirty.
+    // tracked-dirty. The shared builder writes a whole file for given content
+    // and cannot make an existing one dirty.
     let committed = std::fs::read(app.join("rwv.lock")).unwrap();
     let mut dirty = committed.clone();
     dirty.extend_from_slice(b"\n");
@@ -132,14 +132,7 @@ fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
 
     common::rwv()
         .env("HOME", &home)
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "app",
-            "ww1",
-            "--capture-dirty",
-        ])
+        .args(["workweave", "create", "--project", "app", "ww1"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -147,10 +140,21 @@ fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
     let ww_lock = tmp
         .path()
         .join(".workweaves/app--ww1/projects/app/rwv.lock");
-    let captured = std::fs::read(ww_lock).unwrap();
+    let unsmudged = |bytes: Vec<u8>| {
+        bytes
+            .into_iter()
+            .filter(|b| *b != b'\r')
+            .collect::<Vec<u8>>()
+    };
     assert_eq!(
-        captured, dirty,
-        "the workweave must hold the source's dirty lock bytes verbatim"
+        unsmudged(std::fs::read(ww_lock).unwrap()),
+        unsmudged(committed),
+        "the workweave starts from commits and holds the committed lock"
+    );
+    assert_eq!(
+        std::fs::read(app.join("rwv.lock")).unwrap(),
+        dirty,
+        "the source keeps its uncommitted lock"
     );
 }
 

@@ -305,6 +305,11 @@ fn permanent_seat_lands_twice_then_needs_the_landing_verb() {
 }
 
 #[test]
+fn nested_workweaves_each_on_a_branch_it_names() {
+    runner::run(scenarios::nested_workweaves()).assert_green();
+}
+
+#[test]
 fn nested_workweaves_sync_both_ways_and_land() {
     runner::run(scenarios::nested_workweaves_without_naming()).assert_fully_decided_green();
 }
@@ -540,6 +545,14 @@ every_scenario!(
     records_reserved_name,
     update_remote_writes_lock,
     detached_create_start,
+    records_bare_open_second_machine,
+    records_raw_push_unrecorded,
+    project_branch_elsewhere,
+    create_diverged_at,
+    workweave_create_dirty_parent,
+    dc19_idempotent_create,
+    dc08_set_mode_own_workspace,
+    detached_review_lib_fix,
     dc15_moved_reports,
     dc16_destroys_name_repos,
     dc18_partial_delete_status,
@@ -601,6 +614,47 @@ fn every_refusal_step_names_its_state_and_every_claim_has_an_exit() {
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
+#[test]
+fn a_second_machine_opens_a_published_branch_bare_from_its_record() {
+    runner::run(scenarios::records_bare_open_second_machine()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_pushed_branch_opens_only_with_a_spelling_which_the_next_push_publishes() {
+    runner::run(scenarios::records_raw_push_unrecorded()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_project_branch_checked_out_elsewhere_is_not_taken_by_switch_or_open_and_can_be_looked_at_detached(
+) {
+    runner::run(scenarios::project_branch_elsewhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_create_at_a_diverged_branch_refuses_naming_at_and_at_starts_at_the_local_branch() {
+    runner::run(scenarios::create_diverged_at()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_create_leaves_the_parents_uncommitted_manifest_where_it_is_and_says_so() {
+    runner::run(scenarios::workweave_create_dirty_parent()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_same_create_twice_returns_the_workweave_and_a_different_spelling_refuses() {
+    runner::run(scenarios::dc19_idempotent_create()).assert_fully_decided_green();
+}
+
+#[test]
+fn set_mode_in_the_primary_leaves_the_workweave_on_that_branch_untouched() {
+    runner::run(scenarios::dc08_set_mode_own_workspace()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_detached_review_workspace_keeps_an_unrelated_lib_commit_on_a_branch_then_returns_to_its_pin() {
+    runner::run(scenarios::detached_review_lib_fix()).assert_fully_decided_green();
+}
+
 macro_rules! pending_on {
     ($($name:ident => $verb:ident),* $(,)?) => {
         $(
@@ -624,7 +678,6 @@ pending_on!(
     shared_member_declared_dev => Land,
     shared_member_pinned_behind => Land,
     main_change_into_stable => Land,
-    nested_workweaves => WeaveBranch,
     cherry_pick_onto_stable => CherryPick,
 );
 

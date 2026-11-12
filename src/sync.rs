@@ -231,7 +231,7 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// A workspace named on the command line: `rwv sync <source>`, `rwv sync-to
-/// <target>` and `rwv workweave create --from <source>` all name one.
+/// <target>` both name one.
 /// [`crate::cli::operand::SourceArg`] is argv's spelling of it, and its
 /// `Path` arm arrives here already located, absolute.
 ///
@@ -1859,7 +1859,9 @@ fn judge_store_checkouts(
     }
     let recorded = recorded_workweaves(primary_root)?;
     for checkout in live {
-        report.add(judge_checkout(vcs, repo_path, checkout, store, &recorded));
+        report.add(judge_checkout(
+            vcs, repo_path, checkout, store, &recorded, None,
+        ));
     }
     Ok(())
 }
@@ -1873,9 +1875,10 @@ pub(crate) fn judge_checkout(
     checkout: &Path,
     store: &Path,
     recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
+    opening: Option<(&'static str, &str)>,
 ) -> crate::diagnosis::Judged {
     let at = CanonicalPath::of(checkout);
-    match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
+    let judging = match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
         Some((workweave, dir)) => State::CheckoutInAnotherWorkspace
             .of(repo)
             .subject(workweave.flat())
@@ -1888,6 +1891,10 @@ pub(crate) fn judge_checkout(
             .listing([checkout.display()])
             .checkout(store)
             .bind("<worktree>", checkout.display()),
+    };
+    match opening {
+        Some((verb, branch)) => judging.by_verb(verb).bind("<W>", branch),
+        None => judging,
     }
     .judge(vcs)
 }

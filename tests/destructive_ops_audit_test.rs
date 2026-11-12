@@ -152,15 +152,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "workweave.rs",
         pattern: "remove_dir_all",
-        count: 4,
+        count: 3,
         callers: &[],
         justification: "(1) CreateRollbackGuard::drop: removes the \
             partially-built workweave of a failed create. \
             (2) CreateRollbackGuard::rollback_and_collect_failures: same \
             intent as (1) but for explicit bail! paths so cleanup failures \
             can be appended to the returned error; defuses Drop to prevent \
-            double-rollback. (3) create --replace-existing raw replace: \
-            behind the dirty-scan refusal. (4) delete_workweave: behind the \
+            double-rollback. (3) delete_workweave: behind the \
             dirty refusal unless --discard-uncommitted, and behind the \
             detached-commits refusal unless the caller holds a \
             DiscardUnlandedConsent — the token minted only from \
@@ -263,7 +262,7 @@ const ALLOWLIST: &[Allowed] = &[
         count: 2,
         callers: &[
             ("remove_worktree", 3),
-            ("prune_orphan_worktrees_for", 3),
+            ("prune_orphan_worktrees_for", 2),
             ("prune_stale_worktree_registration", 3),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
@@ -297,8 +296,6 @@ const ALLOWLIST: &[Allowed] = &[
             `worktree_path.exists()` guard inside \
             prune_orphan_worktrees_for is false for every pair and only \
             `worktree prune` (admin entries for absent dirs) actually runs. \
-            (5) create --replace-existing's orphan prune: behind that \
-            branch's at_risk dirty-walk refusal. \
             The second site is prune_stale_worktree_registration, WITHOUT \
             `--force`, and only after it has read the registration as \
             unlocked and found nothing at its path, so git drops the \

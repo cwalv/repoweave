@@ -686,6 +686,12 @@ pub enum BranchAction {
         /// Record it as `declared`: its members follow the branches its own `rwv.toml` entries declare
         #[arg(long)]
         declared: bool,
+        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        #[arg(long, value_name = "M=B[@REV]")]
+        set_branch: Vec<String>,
+        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        #[arg(long, value_name = "M=B[@REV]")]
+        set_new_branch: Vec<String>,
         /// Start the branch at this revision
         #[arg(long, value_name = "REV")]
         at: Option<String>,
@@ -865,42 +871,59 @@ pub enum MemberAction {
 
 #[derive(Subcommand)]
 pub enum WorkweaveAction {
-    /// Create a new workweave
+    /// Create a workweave, or open or detach one, from the workspace the verb runs in. That workspace is provenance only: it does not switch, and its uncommitted files stay where they are, reported
+    ///
+    /// With no branch flag the workweave holds a feature under the minted
+    /// name `<project>--<ww>`, onto the branch the workspace has checked out,
+    /// never published. `--new-branch <W>` creates `W` as `branch create`
+    /// does; `--branch <W>` opens `W` by its record, a branch another
+    /// workspace has checked out refused; `--detach <rev>` makes a detached
+    /// workspace at any revision and writes no record. Re-running an
+    /// identical spelling on a clean workweave returns it, reported; any
+    /// difference is refused and changes nothing.
     Create {
         /// Workweave name
         name: String,
-        /// Destroy an existing workweave at this path before recreating.
-        ///
-        /// Without this flag, re-invoking `create` against an existing
-        /// workweave preserves non-git state in place (the idempotent
-        /// path). Use `--replace-existing` for explicit rebuild scenarios.
-        /// Refuses if the existing workweave has uncommitted or unmerged
-        /// work — destroy that explicitly with `workweave delete
-        /// --discard-uncommitted --discard-unlanded`.
+        /// Create this weave branch for the workweave, as `branch create` creates one
+        #[arg(
+            long,
+            value_name = "W",
+            conflicts_with_all = ["branch", "detach"]
+        )]
+        new_branch: Option<String>,
+        /// Open this weave branch by its record. A branch with no record needs `--target` or `--declared`; a branch checked out in another workspace is refused
+        #[arg(long, value_name = "W", conflicts_with = "detach")]
+        branch: Option<String>,
+        /// Make a detached workspace at this revision: every repo sits at the pins of its lock, a branch another workspace has checked out included, and no record is written
+        #[arg(
+            long,
+            value_name = "REV",
+            conflicts_with_all = ["target", "declared", "at", "set_branch", "set_new_branch"]
+        )]
+        detach: Option<String>,
+        /// Record the branch as a feature that lands into `<T>`, which must itself have a record
+        #[arg(long, value_name = "T", conflicts_with = "declared")]
+        target: Option<String>,
+        /// Record the branch as `declared`: its members follow the branches its own `rwv.toml` entries declare
         #[arg(long)]
-        replace_existing: bool,
-        /// Workspace to fork the new workweave from: `primary`, a bare
-        /// workweave name of this project, or a path (absolute, or relative to
-        /// the invocation directory), read as `rwv sync <SOURCE>` reads it. A
-        /// directory with a bare name is written `./<dir>`. Omit to fork from
-        /// CWD's active workspace (the workweave when invoked from inside one,
-        /// otherwise primary).
-        ///
-        /// Forking from an existing workweave is how you DUPLICATE one — for
-        /// a scratch variant, an experiment, or a throwaway baseline. Do not
-        /// copy a workweave with `cp`: the result aliases the original's git
-        /// state rather than duplicating it.
-        #[arg(long)]
-        from: Option<SourceArg>,
-        /// Allow creation even when the source project directory has
-        /// uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock`
-        /// are moved into the new workweave's project worktree: copied there,
-        /// then discarded from the source once the workweave exists. Other
-        /// uncommitted files stay in the source. Without this flag, `create`
-        /// refuses and names the dirty files so you can commit, stash, or opt
-        /// in explicitly.
-        #[arg(long)]
-        capture_dirty: bool,
+        declared: bool,
+        /// Declare an existing branch for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        #[arg(
+            long,
+            value_name = "M=B[@REV]",
+            conflicts_with_all = ["branch", "detach"]
+        )]
+        set_branch: Vec<String>,
+        /// Create a branch and declare it for a member, in the branch's first commit: `<member>=<branch>[@<rev>]`; repeat per member
+        #[arg(
+            long,
+            value_name = "M=B[@REV]",
+            conflicts_with_all = ["branch", "detach"]
+        )]
+        set_new_branch: Vec<String>,
+        /// Start the branch at this revision
+        #[arg(long, value_name = "REV", conflicts_with_all = ["branch", "detach"])]
+        at: Option<String>,
         /// The exact path to place the workweave at.
         ///
         /// Recorded in the registry and used as given; there is no default.
