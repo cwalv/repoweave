@@ -111,7 +111,7 @@ src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	unparseable-project here	-	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
-src/feature_sync.rs	(untokened:environment-passthrough)	-	5
+src/feature_sync.rs	(untokened:environment-passthrough)	-	6
 src/feature_sync.rs	(untokened:owed)	-	1
 src/feature_sync.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/feature_sync.rs	checkout in another workspace	-	1
