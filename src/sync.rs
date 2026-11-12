@@ -9601,9 +9601,9 @@ fn refuse_moved_carried(
                 .join(", ");
             eprintln!("  {named}: '{branch}' is checked out at {at}, so abort cannot move it");
             lines.push(format!(
-                "  {named}: free the checkout at {at} of '{branch}' (switch it to another \
-                 branch, or detach it), as this shows:\n\t{}\nthen rerun:\n\trwv abort",
-                vcs.hint(crate::vcs::VcsAction::Status)
+                "  {named}: free the checkout at {at} of '{branch}' by detaching it:\n\t{}\n\
+                 then rerun:\n\trwv abort",
+                vcs.hint(crate::vcs::VcsAction::Detach)
                     .replace("<checkout>", &at)
             ));
         }

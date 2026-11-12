@@ -16059,7 +16059,7 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
 pub enum CarriedBlocked {
     /// `w2` checked out in a worktree outside the op's workspaces.
     CheckedOut,
-    /// `w2` renamed away.
+    /// `w2` deleted.
     Gone,
 }
 
@@ -16082,16 +16082,15 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
                 &["worktree", "add", "-q", "../../../../w2-held", "w2"],
             ),
             "is checked out at",
-            Step::git(
-                &ww("w1"),
-                Repo::App,
-                &["-C", "../../../../w2-held", "switch", "-q", "--detach"],
-            ),
+            Step::rwv_printed_holding(&ww("w1"), "git -C ", "switch --detach")
+                .expect(Exit::Succeeds),
         ),
         CarriedBlocked::Gone => (
-            Step::git(&ww("w1"), Repo::App, &["branch", "-m", "w2", "w2-away"]),
+            Step::git(&ww("w1"), Repo::App, &["branch", "-q", "-D", "w2"])
+                .may_strand(&[Repo::App])
+                .may_leave_unresolved(&[Repo::App]),
             "put 'w2' back where this operation carried it",
-            Step::git(&ww("w1"), Repo::App, &["branch", "-m", "w2-away", "w2"]),
+            Step::rwv_printed_holding(&ww("w1"), "git -C ", "branch w2 ").expect(Exit::Succeeds),
         ),
     };
     steps.extend([
