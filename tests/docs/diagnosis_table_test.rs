@@ -26,6 +26,7 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<project>", "proj"),
         ("<ww>", "seat"),
         ("<m>", "github/o/lib"),
+        ("<changed>", "github/o/lib"),
         ("<repo>", "github/o/lib"),
         ("<b>", "main"),
         ("<W>", "feat"),

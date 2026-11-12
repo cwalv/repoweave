@@ -1831,22 +1831,24 @@ fn workweave_corpus() -> Vec<(&'static str, Value)> {
 }
 
 fn left_behind() -> Vec<LeftBehindOutput> {
-    vec![LeftBehindOutput {
-        path: "local/remotes/lib".to_owned(),
-        was: "main".to_owned(),
-        now: "dev".to_owned(),
-        pin_of: repoweave::op_state::PinOf::Target,
-        commits: vec![LeftCommitOutput {
-            sha: repoweave::vcs::CommitId::parse(&sha('d')).expect("a full commit id"),
-            subject: "fix".to_owned(),
-        }],
-        choices: vec![ChoiceOutput {
-            id: Some("C15".to_owned()),
-            phrase: "copy these commits onto `dev`".to_owned(),
-            at: None,
-            run: vec!["git -C /ws/local/remotes/lib cherry-pick dddddddddddd".to_owned()],
-        }],
-    }]
+    [false, true]
+        .map(|feature_pin| LeftBehindOutput {
+            path: "local/remotes/lib".to_owned(),
+            was: "main".to_owned(),
+            now: "dev".to_owned(),
+            feature_pin,
+            commits: vec![LeftCommitOutput {
+                sha: repoweave::vcs::CommitId::parse(&sha('d')).expect("a full commit id"),
+                subject: "fix".to_owned(),
+            }],
+            choices: vec![ChoiceOutput {
+                id: Some("C15".to_owned()),
+                phrase: "copy these commits onto `dev`".to_owned(),
+                at: None,
+                run: vec!["git -C /ws/local/remotes/lib cherry-pick dddddddddddd".to_owned()],
+            }],
+        })
+        .into()
 }
 
 fn landing_reports() -> Vec<LandingReportOutput> {

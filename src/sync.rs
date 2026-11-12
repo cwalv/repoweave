@@ -681,9 +681,9 @@ pub struct LeftBehindOutput {
     pub was: String,
     /// The receiving branch the landing declares.
     pub now: String,
-    /// The side whose pin reaches the commits listed: the target's, or this
-    /// feature's where the merge keeps the target's declared branch.
-    pub pin_of: op_state::PinOf,
+    /// Whether the commits listed are those this feature's pin reaches, the
+    /// landing keeping the target's declared branch; else the target's pin's.
+    pub feature_pin: bool,
     /// The commits that side's pin reaches that `now` lacks, newest first.
     pub commits: Vec<LeftCommitOutput>,
     /// The copy that ports them onto `now`, in the order the text prints it.
@@ -2478,9 +2478,10 @@ fn left_behind_text(left: &op_state::LeftBehind) -> String {
         left.repo,
         left.was,
         left.now,
-        match left.pin_of {
-            op_state::PinOf::Target => "the target's",
-            op_state::PinOf::Feature => "this feature's",
+        if left.feature_pin {
+            "this feature's"
+        } else {
+            "the target's"
         },
         left.now
     );
@@ -2503,7 +2504,7 @@ impl LeftBehindOutput {
             path: left.repo.to_string(),
             was: left.was.clone(),
             now: left.now.clone(),
-            pin_of: left.pin_of,
+            feature_pin: left.feature_pin,
             commits: left
                 .commits
                 .iter()

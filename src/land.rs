@@ -11,7 +11,7 @@ use crate::lineage::{Lineage, PinHistory};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
-use crate::op_state::{CreatedRef, LeftBehind, Moves, PinOf};
+use crate::op_state::{CreatedRef, LeftBehind, Moves};
 use crate::records::{BranchName, Mode, Record, Store};
 use crate::refusal::RefusalKind;
 use crate::vcs::{
@@ -1244,16 +1244,16 @@ fn judge_carried_pin(
                     .map(|e| e.branch.local_counterpart().as_str().to_owned())
                     .unwrap_or_default()
             };
-            let (was, pin_of) = match kept {
-                Parent::First => (declared(&sides.theirs), PinOf::Target),
-                Parent::Second => (declared(&sides.ours), PinOf::Feature),
+            let (was, feature_pin) = match kept {
+                Parent::First => (declared(&sides.theirs), false),
+                Parent::Second => (declared(&sides.ours), true),
             };
             plan.left_behind.push(LeftBehind {
                 repo: RepoKey::Member(path.clone()),
                 vcs_type: entry.vcs_type,
                 was,
                 now: receiving.as_str().to_owned(),
-                pin_of,
+                feature_pin,
                 commits,
                 checkout: landing.target_workspace.join(path.as_path()),
             });
@@ -1386,7 +1386,7 @@ fn judge_member(
                     vcs_type: entry.vcs_type,
                     was: their_entry.branch.local_counterpart().as_str().to_owned(),
                     now: receiving.as_str().to_owned(),
-                    pin_of: PinOf::Target,
+                    feature_pin: false,
                     commits,
                     checkout: landing.target_workspace.join(path.as_path()),
                 });
