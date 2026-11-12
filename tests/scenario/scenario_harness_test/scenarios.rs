@@ -6560,6 +6560,7 @@ pub fn landing_creates_a_receiving_branch_that_exists_nowhere() -> Scenario {
             Step::commit(&ww("w"), Repo::Lib, "w-lib"),
             Step::drop_lock_entry(&a(), Repo::Proj, Repo::Docs),
             Step::git(&a(), Repo::Proj, &["commit", "-qam", "docs unpinned"]),
+            Step::commit(&a(), Repo::Docs, "main-docs"),
             Step::commit(&ww("w"), Repo::Docs, "w-docs"),
             Step::rwv(&ww("w"), &["land", "--allow-member-change", LIB])
                 .expect(Exit::Succeeds)
@@ -6578,8 +6579,10 @@ pub fn landing_creates_a_receiving_branch_that_exists_nowhere() -> Scenario {
                 .claim(Claim::PinContains {
                     site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
                     member: Repo::Docs,
-                    mark: "w-docs",
+                    mark: "main-docs",
                 }),
+            Step::git(&a(), Repo::Docs, &["show", "main:w-docs.txt"])
+                .claim(Claim::OutputContains("w-docs")),
         ],
     )
 }
