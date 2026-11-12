@@ -587,6 +587,7 @@ every_scenario!(
     merge_upstream_off_lineage,
     sync_from_another_branch_always_merges,
     sync_writes_no_record,
+    waiver_own_lock,
 );
 
 /// The `pub fn` constructors of `scenarios.rs`, read from its source, less
@@ -2686,6 +2687,11 @@ fn sync_from_a_branch_other_than_the_target_writes_a_merge_commit() {
 #[test]
 fn sync_reads_the_record_and_never_writes_it() {
     runner::run(scenarios::sync_writes_no_record()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_reset_to_target_in_syncs_own_lock_commit_waives_the_merge_it_abandons() {
+    runner::run(scenarios::waiver_own_lock()).assert_fully_decided_green();
 }
 
 #[test]

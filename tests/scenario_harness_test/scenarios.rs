@@ -4828,3 +4828,58 @@ pub fn sync_writes_no_record() -> Scenario {
     ]);
     scenario("sync writes no record", steps)
 }
+
+/// waiver-own-lock: a raw merge into `feat-w` keeps its own lock and leaves
+/// `w2`'s `app` commit unjoined, which `push` refuses; `sync
+/// --reset-to-target` then re-pins `app` backward by name in sync's own lock
+/// commit, to `main`'s pin, which lacks that commit, and the push passes
+/// listing the merge it waived and the verb that waived it.
+pub fn waiver_own_lock() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "waiver-own-lock",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat-w",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            create("w2"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "proj--w2"]),
+            publishes_records(Step::rwv(&ww("w"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-w")
+                .expect(Exit::refuses(Repo::App, State::PinUnmerged))
+                .claim(Claim::OutputLacks("pin waived"))
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "feat-w",
+                }),
+            Step::rwv(&ww("w"), &["sync", "--reset-to-target", &app])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "w-app",
+                    marked: None,
+                }),
+            publishes_records(Step::rwv(&ww("w"), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "feat-w")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app: pin waived"))
+                .claim(Claim::OutputContains("by `rwv sync`")),
+        ],
+    )
+}
