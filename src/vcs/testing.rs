@@ -287,13 +287,33 @@ impl Vcs for FakeVcs {
             .then_some(self as &dyn WorkspacePopulation)
     }
 
+    /// Deletes only at the proof's tip, as git's `update-ref -d <ref> <old>`
+    /// does: a branch that moved since the proof stays.
     fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError> {
         self.enter(VcsCall::DeleteBranch)?;
-        self.branches
-            .lock()
-            .unwrap()
-            .remove(&Self::key(proof.store(), proof.branch()));
-        Ok(())
+        let key = Self::key(proof.store(), proof.branch());
+        let mut branches = self.branches.lock().unwrap();
+        let expected = proof.tip().id().as_str();
+        match branches.get(&key) {
+            Some(tip) if tip.id().as_str() != expected => Err(VcsError::CommandFailed {
+                args: vec![
+                    "update-ref".to_owned(),
+                    "-d".to_owned(),
+                    format!("refs/heads/{}", proof.branch()),
+                    expected.to_owned(),
+                ],
+                repo: proof.store().to_path_buf(),
+                stderr: format!(
+                    "cannot lock ref 'refs/heads/{}': is at {} but expected {expected}",
+                    proof.branch(),
+                    tip.id().as_str()
+                ),
+            }),
+            _ => {
+                branches.remove(&key);
+                Ok(())
+            }
+        }
     }
 
     fn list_branch_names_with_prefix(

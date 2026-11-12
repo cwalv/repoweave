@@ -5083,6 +5083,33 @@ mod tests {
     }
 
     #[test]
+    fn a_lineage_branch_that_moves_after_its_proof_is_kept() {
+        let (_tmp, _primary, project, store) = fake_weave();
+        let ephemeral = minted(&project);
+        let raw = ephemeral.to_raw();
+
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('a'));
+        fake.declare_ancestor(&fake_rev('a'), &fake_rev('b'));
+        let (moved_store, moved_raw) = (store.clone(), raw.clone());
+        fake.before_next(VcsCall::DeleteBranch, move |fake| {
+            fake.put_branch(&moved_store, &moved_raw, fake_rev('c'));
+        });
+
+        retire_lineage_branch(
+            &fake,
+            &store,
+            &ephemeral,
+            "github/org/repo",
+            &[fake_rev('b')],
+            Releaser::Remove,
+        );
+
+        assert!(fake.calls().contains(&VcsCall::DeleteBranch));
+        assert_eq!(fake.branch_tip(&store, &raw), Some(fake_rev('c')));
+    }
+
+    #[test]
     fn a_lineage_branch_the_baselines_do_not_reach_is_kept() {
         let (_tmp, _primary, project, store) = fake_weave();
         let ephemeral = minted(&project);
