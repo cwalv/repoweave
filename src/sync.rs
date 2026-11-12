@@ -8217,7 +8217,7 @@ fn abort_op(
     }
 
     if let op_state::OwnerReading::Whole(record) = &reading {
-        restore_in_place(record, &op_project_name, abandon, &mut tally);
+        restore_in_place(record, &op_project_name, &stores, abandon, &mut tally);
         let ref_moves = record
             .take_in
             .as_ref()
@@ -8602,6 +8602,7 @@ fn restore_abort_workspace(
 fn restore_in_place(
     record: &op_state::OwnerRecord,
     project: &ProjectName,
+    stores: &MemberStores,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
@@ -8625,11 +8626,23 @@ fn restore_in_place(
             }
             let dir = workspace.join(path.as_path());
             let vcs = crate::vcs::probe_vcs();
-            if !vcs.is_repo(&dir) {
-                continue;
-            }
             let named = RepoOperand::of(repo_key, project);
             let label = format!("[{}] {named}", workspace.display());
+            if !vcs.is_repo(&dir) {
+                if let Some(wrote) = take_in.wrote_in_target.get(repo_key) {
+                    restore_in_place_as_ref(
+                        vcs.as_ref(),
+                        stores,
+                        path,
+                        receiving,
+                        wrote,
+                        &key,
+                        &label,
+                        tally,
+                    );
+                }
+                continue;
+            }
             if !take_in.moved_in_target.contains(repo_key) {
                 if let Some(saved) = vcs.resolve_savepoint(&dir, &key) {
                     let source = vcs
@@ -8676,6 +8689,56 @@ fn restore_in_place(
         tally.any_foreign |= before.0;
         tally.any_failure |= before.1;
     }
+}
+
+/// Put back as a ref a branch a landing fast-forwarded in place in a
+/// workspace that has since gone, through any checkout left of its store.
+#[allow(clippy::too_many_arguments)]
+fn restore_in_place_as_ref(
+    vcs: &dyn Vcs,
+    stores: &MemberStores,
+    path: &RepoPath,
+    receiving: &op_state::Receiving,
+    wrote: &CommitId,
+    key: &SavepointKey,
+    label: &str,
+    tally: &mut AbortTally,
+) {
+    let Some(store) = stores.dir(vcs, path) else {
+        eprintln!("  {label}: no checkout is left to reach its branches from");
+        tally.any_failure = true;
+        return;
+    };
+    let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
+    match vcs.resolve_local_branch_tip(&store, &branch) {
+        Ok(Some(now)) if now.id() == &receiving.tip => tally.noise.untouched += 1,
+        Ok(Some(now)) if now.id() == wrote => {
+            if let Err(e) = vcs.restore_branch_ref(&store, &branch, wrote, &receiving.tip) {
+                eprintln!("  {label}: '{branch}' could not be restored: {e:#}");
+                tally.any_failure = true;
+                return;
+            }
+            outln!(
+                "  {label}: its checkout is gone; '{branch}' restored to {} as a ref",
+                receiving.tip.short()
+            );
+        }
+        Ok(now) => {
+            eprintln!(
+                "  {label}: '{branch}' is {}, not at {}, where this landing left it",
+                now.map_or_else(|| "gone".to_owned(), |n| format!("at {}", n.id().short())),
+                wrote.short()
+            );
+            tally.any_foreign = true;
+            return;
+        }
+        Err(e) => {
+            eprintln!("  {label}: '{branch}' could not be read: {e:#}");
+            tally.any_failure = true;
+            return;
+        }
+    }
+    vcs.drop_savepoint(&store, key);
 }
 
 /// Keep `saved`, a savepoint's tip abort is about to drop, as a backup when

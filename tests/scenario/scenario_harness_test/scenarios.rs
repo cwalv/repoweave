@@ -9026,7 +9026,8 @@ pub fn land_into_a_receiving_branch_checked_out_in_a_third_workspace() -> Scenar
 
 /// A landing fast-forwarded `lib` in place in workweave `w3` and stopped in
 /// its retire, having released `w3`; `w3` is then deleted. Abort no longer
-/// needs to lease `w3`: it says the workspace is gone and restores the rest.
+/// needs to lease `w3`: it says the workspace is gone and puts `lib`'s
+/// `main` back as a ref.
 pub fn abort_at_retire_after_the_in_place_workspace_went() -> Scenario {
     scenario(
         "abort at retire after the in-place workspace went",
@@ -9045,6 +9046,8 @@ pub fn abort_at_retire_after_the_in_place_workspace_went() -> Scenario {
                 .may_rewind(&[Repo::Lib, Repo::Proj])
                 .may_restore(&[Repo::Lib, Repo::Proj])
                 .claim(Claim::OutputContains("gone, so nothing there is put back")),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-lib")),
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("in progress")),
