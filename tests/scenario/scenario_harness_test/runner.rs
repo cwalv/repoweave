@@ -421,6 +421,12 @@ pub enum Claim {
         mark: &'static str,
         marked: Option<&'static str>,
     },
+    /// No backup in machine A's primary clone of `repo` reaches the commit
+    /// `mark` names.
+    NoBackup {
+        repo: Repo,
+        mark: &'static str,
+    },
     /// What the step printed judges `repo` in `state`, as a refusal's or a
     /// report's line does.
     Judged(Repo, State),
@@ -2088,6 +2094,28 @@ impl Run<'_> {
                     Err(format!("{place:?} still exists"))
                 } else {
                     Ok(())
+                }
+            }
+            Claim::NoBackup { repo, mark } => {
+                let sha = self.mark(mark)?;
+                let dir = sb.checkout(&Place::Primary(Machine::A), *repo);
+                let holders = sb.git_ok(
+                    &dir,
+                    &[
+                        "for-each-ref",
+                        "--contains",
+                        sha,
+                        "--format=%(refname)",
+                        "refs/rwv/backup/",
+                    ],
+                );
+                if holders.trim().is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "backups in {} still reach {mark} ({sha}): {holders:?}",
+                        dir.display()
+                    ))
                 }
             }
             Claim::BackedUp { repo, mark, marked } => {

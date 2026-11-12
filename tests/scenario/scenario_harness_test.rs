@@ -651,6 +651,17 @@ macro_rules! every_scenario {
 
 every_scenario!(
     solo_workweave,
+    history_unset_fast_forward,
+    history_unset_moved,
+    history_contradicted,
+    history_linear_landing,
+    history_ff_only,
+    history_merge,
+    history_range_with_merge,
+    history_sync_from_declared,
+    history_member_override_lands,
+    rebased_backup_lifetime,
+    history_published_rebase,
     abort_deletes_a_created_receiving_branch,
     abort_after_the_target_aligned(
         scenarios::ReceivingCase::Followed,
@@ -4137,4 +4148,59 @@ fn land_into_a_workspace_presenting_another_project_scenario() {
 fn land_names_a_member_composing_cannot_materialize_scenario() {
     runner::run(scenarios::land_names_a_member_composing_cannot_materialize())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn history_unset_fast_forward_is_green() {
+    runner::run(scenarios::history_unset_fast_forward()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_unset_moved_is_green() {
+    runner::run(scenarios::history_unset_moved()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_contradicted_is_green() {
+    runner::run(scenarios::history_contradicted()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_linear_landing_is_green() {
+    runner::run(scenarios::history_linear_landing()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_ff_only_is_green() {
+    runner::run(scenarios::history_ff_only()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_merge_is_green() {
+    runner::run(scenarios::history_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_range_with_merge_is_green() {
+    runner::run(scenarios::history_range_with_merge()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_sync_from_declared_is_green() {
+    runner::run(scenarios::history_sync_from_declared()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_member_override_lands_is_green() {
+    runner::run(scenarios::history_member_override_lands()).assert_fully_decided_green();
+}
+
+#[test]
+fn rebased_backup_lifetime_is_green() {
+    runner::run(scenarios::rebased_backup_lifetime()).assert_fully_decided_green();
+}
+
+#[test]
+fn history_published_rebase_is_green() {
+    runner::run(scenarios::history_published_rebase()).assert_fully_decided_green();
 }

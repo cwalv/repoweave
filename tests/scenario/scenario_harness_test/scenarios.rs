@@ -9513,3 +9513,476 @@ pub fn cherry_pick_killed_after_each_move() -> Scenario {
         steps,
     }
 }
+
+/// A seat `w` with work on `app`, and `main` moved on `app` since it was cut,
+/// each locked: a landing needs more than a fast-forward.
+fn seat_behind_a_moved_main() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// `history-unset-fast-forward`: a target recording no setting takes a
+/// landing that only fast-forwards, reading no setting.
+pub fn history_unset_fast_forward() -> Scenario {
+    scenario(
+        "history: unset, a landing that fast-forwards",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history unset"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
+        ],
+    )
+}
+
+/// `history-unset-moved`: a target recording no setting that moved refuses
+/// the landing, naming `set-history` in a workspace on the target and
+/// `--history`; `--history` lands once and records nothing.
+pub fn history_unset_moved() -> Scenario {
+    let mut steps = seat_behind_a_moved_main();
+    steps.extend([
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses(Repo::App, State::HistoryUnset))
+            .claim(Claim::Judged(Repo::Proj, State::HistoryUnset))
+            .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+            .claim(Claim::OutputContains("rerun with --history <h>"))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "main-app",
+            }),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("history")),
+    ]);
+    scenario("history: unset, a target that moved", steps)
+}
+
+/// `history-contradicted`: a `linear` target refuses `land --history merge`,
+/// naming `set-history` and the rerun without `--history`.
+pub fn history_contradicted() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.push(
+        Step::rwv(&ww("w"), &["land", "--history", "merge"])
+            .expect(Exit::refuses(Repo::App, State::HistoryContradicted))
+            .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+            .claim(Claim::OutputContains("rerun without --history"))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::LocalStateUnchanged(a())),
+    );
+    scenario("history: a one-run value against a recorded one", steps)
+}
+
+/// `history-linear-landing`: a `linear` target that moved; `land --retire`
+/// rebases the source after `rebased` backups, fast-forwards `main`, lands
+/// the work by ancestry, and retire deletes the seat's branches.
+pub fn history_linear_landing() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.extend([
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: rebased; the tip it left",
+            ))
+            .claim(Claim::WorkweaveGone(ww("w")))
+            .claim(Claim::OutputLacks("left:"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "main-app",
+            })
+            .claim(Claim::NoBackup {
+                repo: Repo::App,
+                mark: "w-app",
+            }),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "-1", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("w-app")),
+        Step::git(&a(), Repo::App, &["rev-parse", "--verify", "-q", "proj--w"])
+            .expect(Exit::Code(1)),
+    ]);
+    scenario("history: a linear landing", steps)
+}
+
+/// `history-ff-only`: an `ff-only` target that moved refuses the landing,
+/// naming `rwv sync` (C36); `sync` rebases; `land` then fast-forwards.
+pub fn history_ff_only() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "ff-only"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.extend([
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses(Repo::App, State::HistoryNotFastForward))
+            .claim(Claim::OutputContains("take the target's new work in first"))
+            .claim(Claim::OutputContains("rwv sync"))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("local/remotes/app: rebased onto")),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("rebased"))
+            .claim(Claim::OutputLacks("merged"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main^1",
+                mark: "main-app",
+            }),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "-1", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("w-app")),
+    ]);
+    scenario("history: ff-only", steps)
+}
+
+/// `history-merge`: a `merge` target that moved; the landing's merge commit
+/// has `main` as first parent and the seat's work as second, and the seat's
+/// branch is not rewritten.
+pub fn history_merge() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.extend([Step::rwv(&ww("w"), &["land"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLacks("rebased"))
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "main^1",
+            mark: "main-app",
+        })
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::App,
+            rev: "main^2",
+            mark: "w-app",
+        })]);
+    scenario("history: merge", steps)
+}
+
+/// `history-range-with-merge`: a `linear` target, a seat whose `lib` range
+/// holds a raw merge; the landing integrates `lib` by a merge commit, first
+/// parent `main`, reports it `merged`, and flattens nothing.
+pub fn history_range_with_merge() -> Scenario {
+    scenario(
+        "history: a range holding a merge lands by merge",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "-c", "side"]),
+            Step::commit(&ww("w"), Repo::Lib, "side-lib"),
+            Step::git(&ww("w"), Repo::Lib, &["switch", "proj--w"]),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["merge", "--no-ff", "-m", "raw-merge", "side"],
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: merged: the commits a rebase would replay hold the merge",
+                ))
+                .claim(Claim::OutputLacks("local/remotes/lib: rebased"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^1",
+                    mark: "main-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^2^2",
+                    mark: "side-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^2^1",
+                    mark: "w-lib",
+                }),
+        ],
+    )
+}
+
+/// `history-sync-from-declared`: a declared workspace on a `linear` `main`
+/// takes `stable` in with `sync --from stable`: a merge, `main` never
+/// rebased.
+pub fn history_sync_from_declared() -> Scenario {
+    scenario(
+        "history: sync --from in a declared workspace merges",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Proj, "stable-notes"),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Proj, "main-notes"),
+            Step::rwv(&a(), &["sync", "--from", "stable"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("rebased"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main^1",
+                    mark: "main-notes",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Proj,
+                    rev: "main",
+                    mark: "stable-notes",
+                }),
+        ],
+    )
+}
+
+/// `history-member-override`: top-level `linear`, `lib` overridden to
+/// `merge`; one landing rebases `app` and merges `lib`.
+pub fn history_member_override_lands() -> Scenario {
+    scenario(
+        "history: a member's override governs its landing",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", LIB])
+                .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: rebased; the tip it left",
+                ))
+                .claim(Claim::OutputLacks("local/remotes/lib: rebased"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^1",
+                    mark: "main-lib",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "main^2",
+                    mark: "w-lib",
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "-1", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("w-app")),
+        ],
+    )
+}
+
+/// `rebased-backup-lifetime`: a `linear` landing of an unpublished seat keeps
+/// its `rebased` backup while the op is stopped, `abort` restores the seat's
+/// branch, and the landing run to completion drops the backup. A `linear`
+/// `sync` of a published feature keeps its backup until the republish
+/// replaces the push branch, then drops it.
+pub fn rebased_backup_lifetime() -> Scenario {
+    let mut steps =
+        vec![Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds)];
+    steps.extend(seat_behind_a_moved_main());
+    steps.extend([
+        Step::rwv_paused(&ww("w"), &["land"], "advance-target", "landing"),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::App, &["status", "--short"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "w-app",
+                marked: Some("rebased"),
+            }),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .claim(Claim::Contains {
+                at: ww("w"),
+                repo: Repo::App,
+                rev: "proj--w",
+                mark: "w-app",
+            }),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["log", "--format=%s", "-1", "proj--w"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("w-app")),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::NoBackup {
+                repo: Repo::App,
+                mark: "w-app",
+            }),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "p",
+                "--new-branch",
+                "feat-p",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("p"), Repo::App, "p-app"),
+        Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("p"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "feat-p")
+            .pushes(Remote::origin(Repo::Proj), "feat-p")
+            .expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app-2"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "p-app",
+                marked: Some("rebased"),
+            }),
+        Step::rwv(&ww("p"), &["push"])
+            .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+            .claim(Claim::OutputContains(
+                "rwv push --overwrite local/remotes/app",
+            )),
+        Step::rwv(
+            &ww("p"),
+            &[
+                "push",
+                "--overwrite",
+                "local/remotes/app",
+                "--overwrite",
+                "projects/proj",
+            ],
+        )
+        .overwrites(Remote::origin(Repo::App), "feat-p")
+        .overwrites(Remote::origin(Repo::Proj), "feat-p")
+        .expect(Exit::Succeeds)
+        .may_strand(&[Repo::App, Repo::Proj])
+        .claim(Claim::OutputContains("the republish replaced it"))
+        .claim(Claim::NoBackup {
+            repo: Repo::App,
+            mark: "p-app",
+        }),
+    ]);
+    scenario("rebased backup lifetime", steps)
+}
+
+/// `history-published-rebase`: a `linear` `sync` of a published feature, then
+/// `push`: the rebasing machine is offered the republish recovery, leased to
+/// the tip its `rebased` backup holds; another machine holding unpushed work
+/// on that branch sees only the ordinary choices for a diverged branch.
+pub fn history_published_rebase() -> Scenario {
+    let b_seat = Place::ww(Machine::B, "pb");
+    scenario(
+        "history: republishing a rebased published feature",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "p",
+                    "--new-branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("p"), Repo::App, "p-app"),
+            Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("p"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-p")
+                .pushes(Remote::origin(Repo::Proj), "feat-p")
+                .expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::rwv(
+                &b(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "pb",
+                    "--branch",
+                    "feat-p",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&b_seat, Repo::App, "b-app"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["sync"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("p"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputContains(
+                    "rwv push --overwrite local/remotes/app",
+                )),
+            Step::rwv(
+                &ww("p"),
+                &[
+                    "push",
+                    "--overwrite",
+                    "local/remotes/app",
+                    "--overwrite",
+                    "projects/proj",
+                ],
+            )
+            .overwrites(Remote::origin(Repo::App), "feat-p")
+            .overwrites(Remote::origin(Repo::Proj), "feat-p")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj]),
+            Step::rwv(&b_seat, &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&b_seat, &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b_seat, &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged))
+                .claim(Claim::OutputLacks("--overwrite"))
+                .claim(Claim::OutputContains("--merge-upstream")),
+        ],
+    )
+}

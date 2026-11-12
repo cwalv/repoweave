@@ -1328,7 +1328,7 @@ fn judge_overwrites(
     let replaced_project = plan
         .project
         .as_ref()
-        .filter(|p| push_project && p.push_branch && matches!(p.replace, Replace::FastForwardOnly))
+        .filter(|p| push_project && p.push_branch)
         .map(|p| BranchRef::Remote {
             remote: p.target.clone(),
             name: pushed.raw.clone(),
