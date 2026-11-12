@@ -1478,6 +1478,20 @@ pub fn read_owner_header_of_any_schema(workspace_dir: &Path) -> Option<OwnerHead
     serde_json::from_str::<OwnerHeader>(&json).ok()
 }
 
+/// Whether `workspace_dir` records the op `id`: `Some(false)` when it holds
+/// no record or one of another op, `None` when its record names no op this
+/// rwv reads, so whose it is cannot be told.
+pub fn records_op(workspace_dir: &Path, id: &OpId) -> Option<bool> {
+    let path = OwnerRecord::path_in(workspace_dir);
+    match path.read_to_string() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+        Err(_) => None,
+        Ok(json) => serde_json::from_str::<OwnerHeader>(&json)
+            .ok()
+            .map(|header| header.id == *id),
+    }
+}
+
 /// Record `new_phase` as the phase in progress in the owner record at
 /// `workspace_dir`.
 ///
@@ -1840,6 +1854,12 @@ pub struct AcquiredOp {
 }
 
 impl AcquiredOp {
+    /// The acquisition of `touched` whose files the caller has written, by
+    /// [`acquire_op`] and [`acquire_lease`] in turn.
+    pub fn of(touched: TouchedWorkspaces) -> Self {
+        Self { touched }
+    }
+
     /// The owner workspace this acquisition writes into.
     pub fn owner_workspace(&self) -> &Path {
         self.touched.owner()
@@ -1893,16 +1913,68 @@ impl TouchedWorkspaces {
         &self.owner
     }
 
-    /// Remove every op-state file this op wrote.
+    /// Remove every op-state file this op wrote. A lease that points at
+    /// another owner by now belongs to another op, and stays.
     ///
     /// Leases go first so an interruption part-way leaves an owner record with
     /// no leases — a valid resume target — rather than a lease pointing at a
     /// record that is already gone.
     pub fn clear(&self) {
         for ws in &self.leases {
-            clear_lease(ws);
+            clear_lease_owned_by(ws, &self.owner);
         }
         clear_owner(&self.owner);
+    }
+}
+
+/// Remove the lease in `workspace_dir` if it points at `owner`.
+pub fn clear_lease_owned_by(workspace_dir: &Path, owner: &Path) {
+    if read_lease(workspace_dir)
+        .ok()
+        .flatten()
+        .is_some_and(|lease| lease.owner == CanonicalPath::of(owner))
+    {
+        clear_lease(workspace_dir);
+    }
+}
+
+/// Lease `workspace_dir` to the op `record` is the owner record of, which
+/// `owner_workspace_dir` holds: done when the lease is this op's already,
+/// refused with the standard in-flight refusal when another op's state is
+/// there.
+pub fn acquire_lease(
+    workspace_dir: &Path,
+    owner_workspace_dir: &Path,
+    id: &OpId,
+) -> anyhow::Result<()> {
+    if read_lease(workspace_dir)?.is_some_and(|lease| lease.id == *id) {
+        return Ok(());
+    }
+    if let Some(err) = in_flight_refusal_for(workspace_dir)? {
+        return Err(err);
+    }
+    let lease = LeaseRecord {
+        id: id.clone(),
+        owner: CanonicalPath::of(owner_workspace_dir),
+        created_at: Some(utc_now_rfc3339()),
+    };
+    let json = serde_json::to_string_pretty(&lease).context("failed to serialize lease record")?;
+    let path = LeaseRecord::path_in(workspace_dir);
+    match path.create(json.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(CreateNewError::AlreadyExists) => Err(in_flight_refusal_for(workspace_dir)?
+            .unwrap_or_else(|| {
+                crate::refusal::refusal(
+                    RefusalKind::OpAcquisitionRaced,
+                    format!(
+                        "raced with a concurrent op at {}; retry",
+                        workspace_dir.display()
+                    ),
+                )
+            })),
+        Err(CreateNewError::Io(e)) => {
+            Err(anyhow::Error::new(e).context(format!("failed to acquire lease at {path}")))
+        }
     }
 }
 

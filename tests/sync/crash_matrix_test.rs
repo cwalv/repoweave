@@ -1900,10 +1900,10 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
 /// passed but the workweave-delete has not yet committed. In practice this
 /// is the same record state as `E(retire)` (record=retire, ww still exists)
 /// — the kill-window is genuinely narrow here. The acceptance is the same:
-/// `--continue` completes the delete; `abort` ends the op and restores
-/// nothing: the landing already released the target.
+/// `--continue` completes the delete; `abort` restores the workweave (no-op
+/// because still present) and target.
 #[test]
-fn cell_j_retire_sync_to_owner_abort_keeps_the_landing() {
+fn cell_j_retire_sync_to_owner_abort_restores_target() {
     let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
@@ -1913,7 +1913,6 @@ fn cell_j_retire_sync_to_owner_abort_keeps_the_landing() {
 
     // Simulate a completed advance: bump ww's server and ff primary to match.
     let ww_server_post = advance_one(&ww.server_dir, "advance.txt", "advanced\n", "advance");
-    let landed = ww_server_post.clone();
     common::git_in(
         &primary.server_dir,
         &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
@@ -1948,17 +1947,22 @@ fn cell_j_retire_sync_to_owner_abort_keeps_the_landing() {
 
     run_abort_ok(&ww.root, "J(retire)/land/owner/abort");
 
+    // Both sides restored to pre-op.
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        landed,
-        "abort from retire leaves ww's server where the landing put it"
+        ww_server_pre,
+        "abort from retire must restore ww's server"
     );
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        landed,
-        "abort from retire leaves primary's server where the landing put it"
+        primary_server_pre,
+        "abort from retire must restore primary's server"
     );
-    assert_ne!(ww_server_pre, landed);
+    assert_eq!(
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
+        primary_project_pre,
+        "abort from retire must restore primary's project"
+    );
     assert!(
         !ww.root.join(".rwv-op").exists(),
         "owner record cleared after abort"

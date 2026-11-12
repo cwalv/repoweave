@@ -915,14 +915,18 @@ fn retire_refuses_when_workweave_has_uncommitted_changes_after_convergence() {
     );
 }
 
-/// Test: abort from phase=retire ends the landing and restores nothing.
+/// Test: abort from phase=retire restores both source and target.
 ///
-/// A record at `retire` has moved the target and released it, so another
-/// landing may have built on it: abort clears the record and the lease the
-/// op still left, drops the savepoints, and leaves both workspaces where the
-/// landing put them.
+/// Setup: ww is ahead of primary (divergence before any land). We plant
+/// a phase=retire record with pre-op savepoints on both sides. Then call
+/// `rwv abort` and verify both workspaces are restored to their pre-op state.
+///
+/// The pre-op state is: ww's server at sha_before_advance (original shared
+/// tip); primary's server also at that tip (savepoint captures pre-op).
+/// The "post-advance" state injected here simulates what advance-target
+/// would have written to primary (ff'd to ww's tip).
 #[test]
-fn retire_abort_ends_the_landing_and_restores_nothing() {
+fn retire_abort_restores_source_and_target() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha) = make_retire_workspaces(tmp.path());
 
@@ -1002,19 +1006,18 @@ fn retire_abort_ends_the_landing_and_restores_nothing() {
         "target lease must be cleared by abort"
     );
 
+    // Source (ww) server must be restored to its pre-op tip.
+    let ww_server_post = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
-        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        ww_server_advanced,
-        "abort at retire leaves the source where the landing put it"
+        ww_server_post, ww_server_pre,
+        "abort must restore ww's server to the pre-op savepoint tip"
     );
+
+    // Target (primary) server must be restored to its pre-op tip.
+    let primary_server_post = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
-        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        primary_server_advanced,
-        "abort at retire leaves the target where the landing put it"
-    );
-    assert!(
-        common::git_in(&ww.server_dir, &["for-each-ref", "refs/rwv/pre-op/"]).is_empty(),
-        "abort at retire drops the op's savepoints"
+        primary_server_post, primary_server_pre,
+        "abort must restore primary's server to the pre-op savepoint tip"
     );
 }
 

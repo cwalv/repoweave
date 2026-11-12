@@ -9592,16 +9592,36 @@ pub fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scen
     )
 }
 
+/// Where a landing that moved its target's workspace is stopped: once its
+/// last fast-forward is made, still holding the target, or in its retire,
+/// once it released the target, which `rwv abort` takes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandedStop {
+    Landed,
+    Retire,
+}
+
+impl LandedStop {
+    pub const ALL: [LandedStop; 2] = [LandedStop::Landed, LandedStop::Retire];
+
+    pub fn point(self) -> &'static str {
+        match self {
+            LandedStop::Landed => "landed",
+            LandedStop::Retire => "retire",
+        }
+    }
+}
+
 /// A landing fast-forwarded `app` in the target's workspace, then was
 /// killed; someone edits `app` there before `rwv abort`, run from the
 /// source, resets it: the edits are kept as a backup first.
-pub fn abort_keeps_edits_made_in_the_target_after_the_stop() -> Scenario {
+pub fn abort_keeps_edits_made_in_the_target_after_the_stop(stop: LandedStop) -> Scenario {
     scenario(
         "abort keeps edits made in the target after the stop",
         vec![
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv_paused(&ww("w"), &["land", "--retire"], "landed", "landing"),
+            Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
             Step::kill("landing"),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLine("w-app")),
@@ -9633,11 +9653,11 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop() -> Scenario {
 /// killed; someone starts a merge there on the landing's tip. Abort never
 /// cancels an operation in the target: it refuses, keeping the op; once
 /// that merge is given up, the printed rerun restores everything.
-pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() -> Scenario {
+pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop) -> Scenario {
     let mut steps = vec![
         create("w"),
         Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::rwv_paused(&ww("w"), &["land", "--retire"], "landed", "landing"),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], stop.point(), "landing"),
         Step::kill("landing"),
     ];
     steps.extend(own_merge_at_the_savepoint(&a(), Repo::App));
@@ -10082,7 +10102,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() -> Sce
 /// ref, and the landing was killed; someone edits a file `lib-next` holds
 /// and `main` lacks. Abort cannot switch the checkout back to `main` over
 /// that edit: it refuses, leaving the checkout where it is.
-fn abort_refused_over_colliding_edits() -> Vec<Step> {
+fn abort_refused_over_colliding_edits(stop: LandedStop) -> Vec<Step> {
     vec![
         create("w"),
         Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
@@ -10111,7 +10131,7 @@ fn abort_refused_over_colliding_edits() -> Vec<Step> {
                 "--allow-member-change",
                 LIB,
             ],
-            "landed",
+            stop.point(),
             "landing",
         ),
         Step::kill("landing"),
@@ -10141,8 +10161,8 @@ fn abort_refused_over_colliding_edits() -> Vec<Step> {
 /// The edits keep abort from switching the checkout back
 /// ([`abort_refused_over_colliding_edits`]); the printed command sets them
 /// aside, and the rerun restores everything.
-pub fn abort_refuses_a_switch_back_over_colliding_edits() -> Scenario {
-    let mut steps = abort_refused_over_colliding_edits();
+pub fn abort_refuses_a_switch_back_over_colliding_edits(stop: LandedStop) -> Scenario {
+    let mut steps = abort_refused_over_colliding_edits(stop);
     steps.extend([
         Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &["abort"])
@@ -10179,8 +10199,8 @@ pub fn abort_refuses_a_switch_back_over_colliding_edits() -> Scenario {
 /// The edits keep abort from switching the checkout back
 /// ([`abort_refused_over_colliding_edits`]); the printed
 /// `--abandon-foreign-tip` keeps them as a backup, then restores.
-pub fn abort_abandons_colliding_edits_keeping_them() -> Scenario {
-    let mut steps = abort_refused_over_colliding_edits();
+pub fn abort_abandons_colliding_edits_keeping_them(stop: LandedStop) -> Scenario {
+    let mut steps = abort_refused_over_colliding_edits(stop);
     steps.extend([
         Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
             .expect(Exit::Succeeds)
@@ -10431,11 +10451,10 @@ pub fn abort_after_the_target_aligned(case: ReceivingCase, from: AbortFrom) -> S
     )
 }
 
-/// A landing stopped in its retire has moved the target and released it, so
-/// another landing may already build on it: `rwv abort` from the target's
-/// workspace finds no operation, and from the source ends the operation and
-/// restores nothing on either side. The landing stands, the source stays as it
-/// left it, and `land --retire` run again retires the workweave.
+/// A landing stopped in its retire has moved the target and released it.
+/// `rwv abort`, typed in the target's workspace, finds the landing by the
+/// record that names that workspace, takes the claim and the lease back, and
+/// restores both sides; the landing run again lands and retires.
 pub fn abort_after_the_landing_released_its_target() -> Scenario {
     let landed = |at: Place| Claim::Contains {
         at,
@@ -10451,14 +10470,13 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
             Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
             Step::kill("landing"),
             Step::rwv(&a(), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded))
-                .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("nothing is restored"))
-                .claim(Claim::LocalStateUnchanged(ww("w")))
-                .claim(Claim::LocalStateUnchanged(a()))
-                .claim(landed(a())),
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("[source] ")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-app")),
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("in progress")),
@@ -10466,6 +10484,179 @@ pub fn abort_after_the_landing_released_its_target() -> Scenario {
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w")))
                 .claim(landed(a())),
+        ],
+    )
+}
+
+/// A landing stopped in its retire released its target, and a second
+/// landing then built on it. `rwv abort` of the first takes the claim and
+/// the lease back and finds the target at a tip it did not write: a foreign
+/// tip, refused with the target left as the second landing put it.
+pub fn abort_after_another_landing_built_on_the_target() -> Scenario {
+    scenario(
+        "abort after another landing built on the target",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: foreign-tip violation",
+                ))
+                .claim(Claim::OutputContains("--abandon-foreign-tip")),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main"])
+                .claim(Claim::OutputLine("w2-app")),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Defect(Defect::ForeignTipHasNoChoiceThatLeavesIt))
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main"])
+                .claim(Claim::OutputLine("w2-app")),
+        ],
+    )
+}
+
+/// `lost-race-abort` met by a second landing: a landing as refs stopped on a
+/// lost race after moving `app`'s `main` still holds its claim on `main`, so
+/// a second landing into `main` refuses on the claim, naming the stopped
+/// landing's exits, rather than building on what the first moved. The
+/// printed abort ends the first; the second then lands.
+pub fn a_landing_meets_a_landing_stopped_as_refs() -> Scenario {
+    let mut steps = vec![create("w1"), create("w3")];
+    steps.extend(main_checked_out_nowhere());
+    steps.extend(meets_a_stopped_landing(StoppedLanding::AsRefs));
+    scenario("a landing meets a landing stopped as refs", steps)
+}
+
+/// The same with `main` checked out in the primary: the stopped landing's
+/// claim, not its lease, is what the second landing meets.
+pub fn a_landing_meets_a_stopped_landing_in_a_checkout() -> Scenario {
+    let mut steps = vec![create("w1"), create("w3")];
+    steps.extend(meets_a_stopped_landing(StoppedLanding::InCheckout));
+    scenario("a landing meets a stopped landing in a checkout", steps)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StoppedLanding {
+    AsRefs,
+    InCheckout,
+}
+
+fn meets_a_stopped_landing(how: StoppedLanding) -> Vec<Step> {
+    let raced = match how {
+        StoppedLanding::AsRefs => {
+            Step::hand_commit(&a(), Repo::Lib, "main", &[("raced.txt", "raced\n")])
+        }
+        StoppedLanding::InCheckout => Step::commit(&a(), Repo::Lib, "hand commit"),
+    };
+    let mut steps = vec![
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w1"), Repo::Lib, "w1-lib"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear"],
+            "advance-target",
+            "landing",
+        ),
+        raced,
+        Step::release("landing").expect(Exit::refuses(Repo::Lib, State::TargetMovedMidOperation)),
+        Step::commit(&ww("w3"), Repo::App, "w3-app"),
+        Step::commit(&ww("w3"), Repo::Lib, "w3-lib"),
+        Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::LocalStateUnchanged(ww("w3")))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&ww("w1"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+    ];
+    if how == StoppedLanding::InCheckout {
+        steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    }
+    steps.push(
+        Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w3"))),
+    );
+    if how == StoppedLanding::AsRefs {
+        steps.push(
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w3-app"))
+                .claim(Claim::OutputLacks("w1-app")),
+        );
+    }
+    steps
+}
+
+/// A landing killed once it claimed its target, before it recorded its
+/// plan: `rwv abort` ends it and releases the claim, so the next landing
+/// into the target lands at once.
+pub fn a_landing_killed_before_its_plan_releases_its_claim_on_abort() -> Scenario {
+    scenario(
+        "a landing killed before its plan releases its claim on abort",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "claimed",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::rwv(&ww("w1"), &["abort"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::rwv(&ww("w1"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w1"))),
+        ],
+    )
+}
+
+/// A landing with no retire releases the target's workspace and its claim
+/// before it cleans up, lease first: a second landing that runs while the
+/// first is held between the two lands, rather than meeting the first one's
+/// lease.
+pub fn a_landing_ending_has_released_its_target() -> Scenario {
+    scenario(
+        "a landing ending has released its target",
+        vec![
+            create("w1"),
+            create("w2"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::commit(&ww("w2"), Repo::Lib, "w2-lib"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear"],
+                "ending",
+                "landing",
+            ),
+            Step::rwv(&ww("w2"), &["land", "--history", "linear", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::release("landing").expect(Exit::Succeeds),
         ],
     )
 }

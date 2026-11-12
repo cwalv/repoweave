@@ -760,17 +760,26 @@ every_scenario!(
     update_remote_abort_over_a_ref_moved_since,
     update_remote_reset_killed_after_the_move(false),
     update_remote_reset_killed_after_the_move(true),
-    abort_keeps_edits_made_in_the_target_after_the_stop,
-    abort_refuses_a_merge_in_a_target_repo_the_landing_moved,
+    abort_keeps_edits_made_in_the_target_after_the_stop(scenarios::LandedStop::Landed),
+    abort_keeps_edits_made_in_the_target_after_the_stop(scenarios::LandedStop::Retire),
+    abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
+    abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it,
-    abort_refuses_a_switch_back_over_colliding_edits,
+    abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
+    abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Retire),
     abort_restores_a_target_fast_forward_killed_after_the_move,
     a_continued_landing_racing_a_commit_on_a_repo_it_moved,
     vcs_continue_mid_rebase_then_an_own_commit,
-    abort_abandons_colliding_edits_keeping_them,
+    abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Landed),
+    abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Retire),
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
+    abort_after_another_landing_built_on_the_target,
+    a_landing_meets_a_landing_stopped_as_refs,
+    a_landing_meets_a_stopped_landing_in_a_checkout,
+    a_landing_killed_before_its_plan_releases_its_claim_on_abort,
+    a_landing_ending_has_released_its_target,
     landing_as_refs,
     landing_as_refs_unpinned,
     lost_race_abort,
@@ -2584,8 +2593,9 @@ holding_rwv! {
     /// A landing killed after it fast-forwarded the target's checkout: edits
     /// made there before `rwv abort` resets it are kept as a backup first.
     fn abort_keeps_edits_made_in_the_target_after_the_stop() {
-        runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop())
-            .assert_fully_decided_green();
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_keeps_edits_made_in_the_target_after_the_stop(stop)).assert_fully_decided_green();
+        }
     }
 
     /// A receiving branch the landing moved as a ref, deleted before `rwv
@@ -2606,21 +2616,24 @@ holding_rwv! {
     /// Edits in the target that keep abort from switching a checkout back
     /// are refused with the choice that sets them aside.
     fn abort_refuses_a_switch_back_over_colliding_edits() {
-        runner::run(scenarios::abort_refuses_a_switch_back_over_colliding_edits())
-            .assert_fully_decided_green();
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_refuses_a_switch_back_over_colliding_edits(stop)).assert_fully_decided_green();
+        }
     }
 
     /// The printed abandon keeps the colliding edits as a backup first.
     fn abort_abandons_colliding_edits_keeping_them() {
-        runner::run(scenarios::abort_abandons_colliding_edits_keeping_them())
-            .assert_fully_decided_green();
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_abandons_colliding_edits_keeping_them(stop)).assert_fully_decided_green();
+        }
     }
 
     /// A merge someone started in the target's workspace on a tip the
     /// landing wrote is never canceled by `rwv abort`.
     fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() {
-        runner::run(scenarios::abort_refuses_a_merge_in_a_target_repo_the_landing_moved())
-            .assert_fully_decided_green();
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop)).assert_fully_decided_green();
+        }
     }
 }
 
@@ -2709,11 +2722,40 @@ holding_rwv! {
 }
 
 holding_rwv! {
-    /// A landing stopped in its retire has released its target: abort from
-    /// the target finds no operation, abort from the source restores nothing,
-    /// and the landing run again retires the workweave.
-    fn abort_after_the_landing_released_its_target_keeps_the_landing() {
+    /// A landing stopped in its retire has released its target: abort, typed
+    /// in the target's workspace, takes it back and restores both sides, and
+    /// the landing run again retires the workweave.
+    fn abort_after_the_landing_released_its_target_restores_it() {
         runner::run(scenarios::abort_after_the_landing_released_its_target())
+            .assert_fully_decided_green();
+    }
+
+    /// A ref another landing built on after the first released it is a
+    /// foreign tip to the first's abort.
+    fn abort_after_another_landing_built_on_the_target_refuses_it_as_foreign() {
+        runner::run(scenarios::abort_after_another_landing_built_on_the_target()).assert_green();
+    }
+
+    /// A landing stopped on a lost race still holds its claim: a second
+    /// landing into the target refuses on it, as refs or in a checkout, and
+    /// lands once the printed abort ended the first.
+    fn a_landing_meets_a_stopped_landing_on_its_claim() {
+        runner::run(scenarios::a_landing_meets_a_landing_stopped_as_refs())
+            .assert_fully_decided_green();
+        runner::run(scenarios::a_landing_meets_a_stopped_landing_in_a_checkout())
+            .assert_fully_decided_green();
+    }
+
+    /// A landing killed before it recorded its plan leaves no claim once
+    /// aborted.
+    fn a_landing_killed_before_its_plan_releases_its_claim_on_abort() {
+        runner::run(scenarios::a_landing_killed_before_its_plan_releases_its_claim_on_abort())
+            .assert_fully_decided_green();
+    }
+
+    /// A landing without retire releases its target's lease before its claim.
+    fn a_landing_ending_has_released_its_target() {
+        runner::run(scenarios::a_landing_ending_has_released_its_target())
             .assert_fully_decided_green();
     }
 }

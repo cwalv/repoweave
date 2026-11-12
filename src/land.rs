@@ -23,14 +23,23 @@ use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// A landing of the checked-out feature into its target, as resolved before
-/// the op begins.
+/// A landing as resolved before it claims its target: what it lands and
+/// where, from records no landing changes. [`read_target`] reads the rest
+/// under the claim.
+#[derive(Debug)]
+pub struct Request {
+    pub project: ProjectName,
+    pub feature: BranchName,
+    pub target: BranchName,
+    target_mode: Mode,
+    judged: Report,
+    allow_member_change: Vec<RepoOperand>,
+}
+
+/// A landing of the checked-out feature into its target, as read under its
+/// claim on the target, before the op composes.
 #[derive(Debug)]
 pub struct Landing {
-    /// The op the landing runs as.
-    pub op_id: crate::op_state::OpId,
-    /// The landing's claim on `T`, taken before `T`'s tips were read.
-    pub claim: Option<crate::landing_claim::LandingClaim>,
     pub project: ProjectName,
     /// The checked-out feature, `W`.
     pub feature: BranchName,
@@ -135,7 +144,7 @@ pub fn resolve(
     target_flag: Option<&str>,
     allow_member_change: Vec<RepoOperand>,
     retire: bool,
-) -> anyhow::Result<Landing> {
+) -> anyhow::Result<Request> {
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
@@ -232,7 +241,6 @@ pub fn resolve(
             );
         }
     }
-    let target_ref = RawRefName::new(target.as_str());
     if target_flag.is_none() {
         if let Some(gone) = judge_unrelated_target(vcs, &project, &dir, &feature, &target)? {
             judged.add(gone);
@@ -246,9 +254,37 @@ pub fn resolve(
         }
     }
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-    let op_id = crate::op_state::OpId::new_now();
-    let claim =
-        crate::landing_claim::LandingClaim::take(vcs, &dir, &project, target.as_str(), &op_id)?;
+    Ok(Request {
+        project,
+        feature,
+        target,
+        target_mode: target_record.mode(),
+        judged,
+        allow_member_change,
+    })
+}
+
+/// Read what the landing `request` lands onto: the newer of `T` and its
+/// upstream, and the workspace that has `T` checked out. Read only under the
+/// landing's claim on `T`, since another landing into `T` moves both.
+pub fn read_target(
+    ctx: &WorkspaceContext,
+    request: Request,
+    retire: bool,
+) -> anyhow::Result<Landing> {
+    let Request {
+        project,
+        feature,
+        target,
+        target_mode,
+        mut judged,
+        allow_member_change,
+    } = request;
+    let dir = project_dir(ctx.active_path(), &project);
+    let vcs = project_vcs();
+    let vcs = vcs.as_ref();
+    let label = project_rel_path(&project);
+    let target_ref = RawRefName::new(target.as_str());
     let url_remote = vcs.project_url_remote(&dir).ok().flatten();
     use crate::push_branch::NewerOfBranchAndUpstream as Newer;
     let target_tip = match crate::push_branch::newer_of_branch_and_upstream(
@@ -309,8 +345,6 @@ pub fn resolve(
         }
     };
     Ok(Landing {
-        op_id,
-        claim: Some(claim),
         project,
         feature,
         target,
@@ -321,7 +355,7 @@ pub fn resolve(
         primary: ctx.primary_path().to_path_buf(),
         target_workspace,
         target_tip,
-        target_mode: target_record.mode(),
+        target_mode,
         judged,
         allow_member_change,
     })

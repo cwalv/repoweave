@@ -175,6 +175,29 @@ impl StatePath {
         std::fs::remove_file(self.located())
     }
 
+    /// Remove the file only if it holds `expected`. It is first renamed to a
+    /// sibling spelled with `aside`, which no other caller spells, so nothing
+    /// written in between the compare and the removal is removed; a file
+    /// found holding anything else is linked back where it was. `false` when
+    /// nothing was removed.
+    pub(crate) fn remove_if_holds(&self, expected: &[u8], aside: &str) -> std::io::Result<bool> {
+        let located = self.located();
+        let moved = self.dir.join(format!("{}.{aside}", self.file.file_name()));
+        match std::fs::rename(&located, &moved) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        }
+        let held = std::fs::read(&moved)?;
+        if held != expected {
+            std::fs::hard_link(&moved, &located)?;
+            std::fs::remove_file(&moved)?;
+            return Ok(false);
+        }
+        std::fs::remove_file(&moved)?;
+        Ok(true)
+    }
+
     pub fn wire(&self) -> WirePath {
         WirePath::of(&self.located())
     }

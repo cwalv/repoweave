@@ -281,6 +281,10 @@ pub enum Defect {
     /// `rwv.toml`, conflict markers and all, so it cannot settle the
     /// conflicted entry and stage the file as the conflict stop says it does.
     SettersCannotReadAConflictedManifest,
+    /// A ref another landing built on after this operation moved it is a
+    /// foreign tip to `rwv abort`, whose one printed choice moves it back
+    /// below that landing; no choice ends the operation leaving it as it is.
+    ForeignTipHasNoChoiceThatLeavesIt,
 }
 
 impl Defect {
@@ -292,6 +296,10 @@ impl Defect {
             }
             Defect::HistoryPinNoRefKeeps => {
                 "a pin of the target's history no ref keeps refuses every clone lacking it"
+            }
+            Defect::ForeignTipHasNoChoiceThatLeavesIt => {
+                "a foreign tip another landing built on has no choice that ends the operation \
+                 leaving it as it is"
             }
         }
     }

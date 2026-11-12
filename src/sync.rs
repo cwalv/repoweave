@@ -2948,7 +2948,7 @@ impl OpContext<'_> {
 #[derive(Debug)]
 pub enum SyncRequest {
     Fresh {
-        landing: Box<crate::land::Landing>,
+        landing: Box<crate::land::Request>,
         /// How a repo whose target records no `history` lands, for this run.
         history: Option<crate::manifest::History>,
         /// Remove the workweave after a successful landing (`--retire`).
@@ -3075,7 +3075,8 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             None => {
                 let stranded = stranded_checkouts(ctx)?;
-                release_landing_claim(ctx)?;
+                release_target(ctx)?;
+                crate::test_pause::point("ending");
                 cleanup(ctx)?;
                 ctx.handler.record_complete();
                 announce_completion(ctx);
@@ -3093,18 +3094,27 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// Once the target's workspace took the last fast-forward and the record
 /// says so, the landing neither moves nor holds it: its lease there goes,
 /// then its claim on the target, so a landing waiting on the claim never
-/// meets a lease whose op `--retire` is about to remove.
+/// meets a lease of an op that is ending. Run as the record enters retire, or
+/// as an op with no retire ends, before its cleanup.
 fn release_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     if let Some(dest) = ctx.dest_workspace_dir.as_deref().filter(|dest| {
         crate::path_spelling::CanonicalPath::of(dest)
             != crate::path_spelling::CanonicalPath::of(&ctx.owner_workspace_dir)
     }) {
-        op_state::clear_lease(dest);
+        op_state::clear_lease_owned_by(dest, &ctx.owner_workspace_dir);
     }
     for workspace in ctx.take_in.in_place_workspaces() {
         clear_lease_of(&workspace, &ctx.op_id);
     }
-    release_landing_claim(ctx)
+    let held = ctx
+        .landing_claim
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    match held {
+        Some(claim) => claim.release(),
+        None => Ok(()),
+    }
 }
 
 /// Clear the lease in `workspace` where it is `op`'s.
@@ -3115,18 +3125,6 @@ fn clear_lease_of(workspace: &Path, op: &OpId) {
         .is_some_and(|lease| &lease.id == op)
     {
         op_state::clear_lease(workspace);
-    }
-}
-
-fn release_landing_claim(ctx: &OpContext<'_>) -> anyhow::Result<()> {
-    let held = ctx
-        .landing_claim
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    match held {
-        Some(claim) => claim.release(),
-        None => Ok(()),
     }
 }
 
@@ -3759,7 +3757,7 @@ fn target_side_name(
 
 /// A [`SyncRequest::Fresh`] as [`guard_and_mark`] consumes it.
 struct FreshOp {
-    landing: crate::land::Landing,
+    landing: crate::land::Request,
     history: Option<crate::manifest::History>,
     retire: bool,
     jobs: usize,
@@ -3774,52 +3772,109 @@ fn guard_and_mark<'a>(
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
     let FreshOp {
-        mut landing,
+        landing: request,
         history,
         retire,
         jobs,
     } = op;
-    let landing_claim = std::sync::Mutex::new(landing.claim.take());
 
     let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
-    let dest_workspace_dir = landing.target_workspace.clone();
-
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
-    let dest_project_dir = dest_workspace_dir
-        .as_deref()
-        .map(|dir| project_dir(dir, &cwd_project_name));
-    let source_workspace_name = target_side_name(
-        dest_workspace_dir.as_deref(),
-        &cwd_project_name,
-        landing.target.as_str(),
-    )?;
-
     refuse_symlinked_members(&cwd_workspace_dir, &cwd_project_name)?;
-    if let Some(dest) = &dest_workspace_dir {
-        refuse_symlinked_members(dest, &cwd_project_name)?;
-    }
 
-    // The touched-workspace set is claimed atomically before any
-    // precondition runs, so two landings judging the same workspaces never
-    // both pass; a refusal below releases the claim and leaves no trace.
-    let op_id = landing.op_id.clone();
+    // The op's record is written before its claim on the target is taken, and
+    // removed only after the claim is released, so a claim whose record is
+    // gone is provably dead. The claim is taken before the target's tips and
+    // checkout are read and before the target's workspace is leased: a second
+    // landing into the target waits on the claim rather than meeting the
+    // first one's lease.
+    let op_id = OpId::new_now();
     let owner_workspace_dir = cwd_workspace_dir.clone();
-    let initial_record = OwnerRecord::new_land(
+    let mut initial_record = OwnerRecord::new_land(
         &op_id,
         history,
         cwd_project_name.clone(),
         &cwd_workspace_dir,
-        dest_workspace_dir.as_deref(),
+        None,
         retire,
     );
+    let owner_only =
+        op_state::TouchedWorkspaces::of(initial_record.verb, &owner_workspace_dir, None);
+    let owned = op_state::acquire_op(&owner_only, &initial_record)?;
+    let claim = match crate::landing_claim::LandingClaim::take(
+        project_vcs().as_ref(),
+        &cwd_project_dir,
+        &cwd_project_name,
+        request.target.as_str(),
+        &op_id,
+        &owner_workspace_dir,
+    ) {
+        Ok(claim) => claim,
+        Err(e) => {
+            op_state::release_acquired(&owned);
+            return Err(e);
+        }
+    };
+    let abandon_start = |claim: crate::landing_claim::LandingClaim,
+                         acquired: &op_state::AcquiredOp,
+                         e: anyhow::Error| {
+        if let Err(released) = claim.release() {
+            eprintln!("warning: {released:#}");
+        }
+        op_state::release_acquired(acquired);
+        e
+    };
+    crate::test_pause::point("claimed");
+    let landing = match crate::land::read_target(cwd_ctx, request, retire) {
+        Ok(landing) => landing,
+        Err(e) => return Err(abandon_start(claim, &owned, e)),
+    };
+    let dest_workspace_dir = landing.target_workspace.clone();
+    let dest_project_dir = dest_workspace_dir
+        .as_deref()
+        .map(|dir| project_dir(dir, &cwd_project_name));
+    let source_workspace_name = match target_side_name(
+        dest_workspace_dir.as_deref(),
+        &cwd_project_name,
+        landing.target.as_str(),
+    ) {
+        Ok(name) => name,
+        Err(e) => return Err(abandon_start(claim, &owned, e)),
+    };
     let touched = op_state::TouchedWorkspaces::of(
         initial_record.verb,
         &owner_workspace_dir,
         dest_workspace_dir.as_deref(),
     );
-    let mut acquired = op_state::acquire_op(&touched, &initial_record)?;
+    let acquired = (|| -> anyhow::Result<op_state::AcquiredOp> {
+        if let Some(dest) = &dest_workspace_dir {
+            refuse_symlinked_members(dest, &cwd_project_name)?;
+            initial_record.target = Some(crate::path_spelling::CanonicalPath::of(dest));
+            op_state::write_owner(&owner_workspace_dir, &initial_record)
+                .context("failed to record the workspace the landing moves")?;
+            op_state::acquire_lease(dest, &owner_workspace_dir, &op_id)?;
+        }
+        Ok(op_state::AcquiredOp::of(touched.clone()))
+    })();
+    let mut acquired = match acquired {
+        Ok(acquired) => acquired,
+        Err(e) => return Err(abandon_start(claim, &owned, e)),
+    };
+    let landing_claim = std::sync::Mutex::new(Some(claim));
+    let release_start = |acquired: &op_state::AcquiredOp| {
+        let held = landing_claim
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(claim) = held {
+            if let Err(released) = claim.release() {
+                eprintln!("warning: {released:#}");
+            }
+        }
+        op_state::release_acquired(acquired);
+    };
 
     let project_vcs = project_vcs();
     let mut drifted = Vec::new();
@@ -3852,7 +3907,7 @@ fn guard_and_mark<'a>(
     } = match precondition_result {
         Ok(v) => v,
         Err(e) => {
-            op_state::release_acquired(&acquired);
+            release_start(&acquired);
             return Err(e);
         }
     };
@@ -3868,7 +3923,7 @@ fn guard_and_mark<'a>(
         out
     };
     if let Err(e) = op_state::acquire_more_leases(&mut acquired, &in_place, &initial_record) {
-        op_state::release_acquired(&acquired);
+        release_start(&acquired);
         return Err(e);
     }
 
@@ -3958,7 +4013,7 @@ fn guard_and_mark<'a>(
         for (vcs, dir, id) in &member_anchors {
             delete_savepoint(vcs.as_ref(), dir, id);
         }
-        op_state::release_acquired(&acquired);
+        release_start(&acquired);
         return Err(e.context("the landing could not file its savepoints, so it did not start"));
     }
 
@@ -3986,7 +4041,7 @@ fn guard_and_mark<'a>(
                 for (vcs, dir, id) in &member_anchors {
                     delete_savepoint(vcs.as_ref(), dir, id);
                 }
-                op_state::release_acquired(&acquired);
+                release_start(&acquired);
                 let behind = op_start_relock_lines(
                     &cwd_lock_behind,
                     None,
@@ -4217,6 +4272,7 @@ fn load_continuing_context<'a>(
                 &cwd_project_name,
                 target,
                 &op_id,
+                &owner_workspace_dir,
             )?)
         }
     };
@@ -7506,6 +7562,31 @@ fn regenerate_lock_phase3(
 // rwv abort
 // ---------------------------------------------------------------------------
 
+/// The landing that moved `workspace` as its target and released it at its
+/// retire, which therefore leases it no longer: its record names `workspace`
+/// as its target, in the primary or a workweave the primary records.
+fn landing_released_into(
+    ctx: &WorkspaceContext,
+    workspace: &CanonicalPath,
+) -> anyhow::Result<Option<(op_state::OwnerReading, CanonicalPath)>> {
+    let primary = CanonicalPath::of(ctx.primary_path());
+    let owners = std::iter::once(primary).chain(
+        recorded_workweaves(ctx.primary_path())?
+            .into_iter()
+            .map(|(_, root)| root),
+    );
+    for owner in owners.filter(|owner| owner != workspace) {
+        let Ok(Some(reading)) = op_state::read_owner_for_abort(owner.as_path()) else {
+            continue;
+        };
+        let header = reading.header();
+        if header.verb == OpVerb::Land && header.target.as_ref() == Some(workspace) {
+            return Ok(Some((reading, owner)));
+        }
+    }
+    Ok(None)
+}
+
 /// Which of an op's workspaces a restore is running in, decided by the
 /// workspace's identity in the owner record and never by which of the two
 /// `rwv abort` was invoked from.
@@ -7591,9 +7672,11 @@ pub fn run_abort(
     // resolve_for_abort follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
     // the same record.
-    let Some((reading, owner_workspace)) =
-        op_state::resolve_for_abort(ctx.active_root().as_path())?
-    else {
+    let found = match op_state::resolve_for_abort(ctx.active_root().as_path())? {
+        Some(found) => Some(found),
+        None => landing_released_into(ctx, ctx.active_root())?,
+    };
+    let Some((reading, owner_workspace)) = found else {
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
     let header = reading.header();
@@ -7659,10 +7742,8 @@ pub fn run_abort(
     if let Some(other) = &other_workspace {
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }
-    if let op_state::OwnerReading::Whole(record) = &reading {
-        if record.verb == OpVerb::Land && record.phase == op_state::OpPhase::Retire {
-            return end_released_landing(ctx, record, &owner_workspace, &cwd_project_dir);
-        }
+    if header.verb == OpVerb::Land {
+        retake_target(&reading, &owner_workspace, &cwd_project_dir)?;
     }
 
     if let op_state::OwnerReading::Whole(_) = &reading {
@@ -7866,23 +7947,24 @@ pub fn run_abort(
                 .collect(),
             };
             restore_landing_refs(record, &members, &stores, abandon, &mut tally);
-            if let Some(op_state::SyncFrom::Target(target) | op_state::SyncFrom::From(target)) =
-                record.take_in.as_ref().and_then(|t| t.sync_from.as_ref())
-            {
-                if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
-                    project_vcs().as_ref(),
-                    &cwd_project_dir,
-                    &op_project_name,
-                    target,
-                    &op_id,
-                ) {
-                    eprintln!("  {e:#}");
-                    tally.any_failure = true;
-                }
-            }
         }
     }
 
+    if tally.clean() {
+        for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
+            op_state::clear_lease_owned_by(dir, owner_workspace.as_path());
+        }
+        if header.verb == OpVerb::Land {
+            if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
+                project_vcs().as_ref(),
+                &cwd_project_dir,
+                &op_id,
+            ) {
+                eprintln!("  {e:#}");
+                tally.any_failure = true;
+            }
+        }
+    }
     if let (Some(dir), true) = (&other_ws_dir, tally.clean()) {
         op_state::clear_all_at(dir);
     }
@@ -8286,71 +8368,69 @@ impl MemberStores {
     }
 }
 
-/// `rwv abort` of a landing stopped in its retire: the landing finished
-/// moving the target and released it, so another landing may already have
-/// read the target or built on it and another operation may hold its
-/// workspace. Nothing is restored on either side: the op ends, its savepoints
-/// go, and the source keeps the state the landing left it in.
-fn end_released_landing(
-    ctx: &WorkspaceContext,
-    record: &op_state::OwnerRecord,
+/// Before `rwv abort` restores anything a landing moved, it holds what the
+/// landing held while it moved it: the claim on the target and the lease on
+/// the target's workspace. A landing stopped before its retire still holds
+/// both; one in its retire released them, and takes them back here, waiting
+/// on the claim as a landing does and refusing while another operation holds
+/// either. A record that does not parse past its header names no target
+/// branch, so only the lease is taken back for it.
+fn retake_target(
+    reading: &op_state::OwnerReading,
     owner_workspace: &CanonicalPath,
     project_dir_here: &Path,
 ) -> anyhow::Result<()> {
-    let mut members = OpMembers::default();
-    members.take_record(record);
-    if let Ok(project) = Project::from_dir_skip_lock(project_dir_here, record.project.clone()) {
-        members.take_manifest(&project.manifest);
-    }
-    let stores = MemberStores {
-        workspaces: vec![
-            owner_workspace.as_path().to_path_buf(),
-            ctx.primary_path().to_path_buf(),
-        ],
+    let header = reading.header();
+    let target = match reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .as_ref()
+            .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
+            .map(|receiving| receiving.branch.clone()),
+        op_state::OwnerReading::HeaderOnly { .. } => None,
     };
-    let keys = record.savepoint_keys();
-    for (path, vcs_type) in &members.0 {
-        let vcs = OpMembers::vcs(*vcs_type);
-        if let Some(dir) = stores.dir(vcs.as_ref(), path) {
-            for key in &keys {
-                delete_savepoint(vcs.as_ref(), &dir, key);
-            }
-        }
-    }
-    let project_vcs = project_vcs();
-    if let Some(dir) = stores
-        .workspaces
-        .iter()
-        .map(|ws| project_dir(ws, &record.project))
-        .find(|dir| project_vcs.is_repo(dir))
-    {
-        for key in &keys {
-            delete_savepoint(project_vcs.as_ref(), &dir, key);
-        }
-    }
-    let target = record
-        .take_in
-        .as_ref()
-        .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
-        .map_or_else(|| "the target".to_owned(), |r| format!("'{}'", r.branch));
-    if let Some(target) = &record.target {
-        clear_lease_of(target.as_path(), &record.id);
-    }
-    for workspace in record
-        .take_in
-        .iter()
-        .flat_map(op_state::TakeInRecord::in_place_workspaces)
-    {
-        clear_lease_of(&workspace, &record.id);
-    }
-    op_state::TouchedWorkspaces::of(record.verb, owner_workspace.as_path(), None).clear();
-    outln!(
-        "abort: op {} had landed into {target} and released it before its retire, so nothing \
-         is restored: the landing stands, and this workspace is as the landing left it. \
-         `rwv land --retire` here retires it.",
-        record.id
+    let released = matches!(
+        reading,
+        op_state::OwnerReading::Whole(record) if record.phase == op_state::OpPhase::Retire
     );
-    Ok(())
+    let claim = match &target {
+        Some(target) => Some(crate::landing_claim::LandingClaim::take(
+            project_vcs().as_ref(),
+            project_dir_here,
+            &header.project,
+            target,
+            &header.id,
+            owner_workspace.as_path(),
+        )?),
+        None => None,
+    };
+    let in_place = match reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .iter()
+            .flat_map(op_state::TakeInRecord::in_place_workspaces)
+            .collect(),
+        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
+    };
+    let leasing: Vec<PathBuf> = header
+        .target
+        .iter()
+        .map(|target| target.as_path().to_path_buf())
+        .chain(in_place)
+        .filter(|leased| CanonicalPath::of(leased) != *owner_workspace)
+        .collect();
+    let leased = leasing.iter().try_for_each(|leased| {
+        op_state::acquire_lease(leased, owner_workspace.as_path(), &header.id)
+    });
+    if let (Err(_), true) = (&leased, released) {
+        for taken in &leasing {
+            op_state::clear_lease_owned_by(taken, owner_workspace.as_path());
+        }
+        if let Some(claim) = claim {
+            claim.release()?;
+        }
+    }
+    leased
 }
 
 /// Put back each branch a landing moved or created as a ref, once every

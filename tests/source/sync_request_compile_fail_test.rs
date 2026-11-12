@@ -12,9 +12,9 @@ fn the_harness_can_build_both_requests_without_consent() {
     let (compiled, stderr) = compile(
         r#"
         use repoweave::op_state::ResolvedOwner;
-        use repoweave::land::Landing;
+        use repoweave::land::Request;
         use repoweave::sync::SyncRequest;
-        pub fn fresh(landing: Box<Landing>) -> SyncRequest {
+        pub fn fresh(landing: Box<Request>) -> SyncRequest {
             SyncRequest::Fresh {
                 landing,
                 history: None,
