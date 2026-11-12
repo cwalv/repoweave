@@ -84,7 +84,7 @@ src/deletion.rs	name no-such-branch	-	1
 src/deletion.rs	protected declared	-	1
 src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
-src/diagnosis.rs	edits dirty	tests/lock_test.rs	1
+src/diagnosis.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/diagnosis.rs	edits mid-operation	-	1
 src/diagnosis.rs	unparseable-project here	-	1
 src/explain.rs	ambiguous-explain-token	-	1
@@ -109,20 +109,20 @@ src/integrations/static_files.rs	(untokened:integration-channel)	-	1
 src/integrations/uv_workspace.rs	(untokened:integration-channel)	-	4
 src/lock.rs	(untokened:environment-passthrough)	-	4
 src/lock.rs	(untokened:tally)	-	1
-src/lock.rs	edits dirty	tests/lock_test.rs	3
-src/lock.rs	pin backwards	-	1
+src/lock.rs	edits dirty	tests/lock_by_name_test.rs	2
+src/lock.rs	pin backwards	tests/doc_claims_lock_test.rs	1
 src/lock.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/lock_commit.rs	(untokened:owed)	-	1
-src/lock_commit.rs	edits dirty	tests/lock_test.rs	1
+src/lock_commit.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/log.rs	name no-such-branch	-	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
 src/manifest_commit.rs	(untokened:owed)	-	1
-src/member_branch.rs	(untokened:owed)	-	4
-src/member_branch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
+src/member_branch.rs	(untokened:owed)	-	2
+src/member_branch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	5
 src/member_branch.rs	name a revision	-	2
 src/member_branch.rs	name exists	-	1
 src/member_branch.rs	name feature	-	1
-src/member_branch.rs	name no-such-branch	-	3
+src/member_branch.rs	name no-such-branch	-	2
 src/member_branch.rs	name reserved	-	1
 src/member_branch.rs	pin none	-	2
 src/member_branch.rs	pin not on declared branch	-	1
@@ -133,7 +133,7 @@ src/member_pin.rs	alignment detached with unpushed commits	-	1
 src/member_pin.rs	name no-such-branch	-	1
 src/member_pin.rs	pin not on declared branch	-	1
 src/member_pin.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
-src/member_settings.rs	edits dirty	tests/lock_test.rs	1
+src/member_settings.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/member_settings.rs	repo-not-in-manifest	tests/role_verb_test.rs	2
 src/member_url.rs	(untokened:owed)	-	1
 src/member_url.rs	push-branch diverged	tests/push_test.rs	1
@@ -212,7 +212,7 @@ src/sync.rs	checkout in another workspace	-	1
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dangling-parent	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/backup_verb_test.rs	5
-src/sync.rs	edits dirty	tests/lock_test.rs	1
+src/sync.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	5
 src/sync.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
@@ -252,8 +252,7 @@ src/workweave.rs	(untokened:hook-input)	-	4
 src/workweave.rs	(untokened:owed)	-	1
 src/workweave.rs	(untokened:tally)	-	2
 src/workweave.rs	alignment detached with unpushed commits	-	1
-src/workweave.rs	dirty-project-dir	-	1
-src/workweave.rs	edits dirty	tests/lock_test.rs	1
+src/workweave.rs	edits dirty	tests/lock_by_name_test.rs	1
 src/workweave.rs	health-floor-too-low	-	1
 src/workweave.rs	missing-canonical-clone	-	1
 src/workweave.rs	name exists	-	1
@@ -261,12 +260,10 @@ src/workweave.rs	name taken	-	1
 src/workweave.rs	no-active-project	tests/project_and_source_spelling_test.rs	1
 src/workweave.rs	no-such-workweave	-	1
 src/workweave.rs	registry-path-disagreement	-	1
-src/workweave.rs	replace-target-holds-work	-	2
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	tests/workweave_topology_parent_test.rs	5
 src/workweave.rs	standalone-in-workweave	-	3
-src/workweave.rs	target-dir-occupied	-	2
-src/workweave.rs	unreadable-status	-	1
+src/workweave.rs	target-dir-occupied	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	3
 src/workweave_index.rs	legacy-workweave-index old path	-	1

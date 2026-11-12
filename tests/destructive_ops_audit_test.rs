@@ -543,17 +543,6 @@ const ALLOWLIST: &[Allowed] = &[
             and working tree are never opened for writing.",
     },
     Allowed {
-        file: "git/path_commit.rs",
-        pattern: "remove_file",
-        count: 1,
-        callers: &[],
-        justification: "commit_paths_through_private_index: removes the \
-            temporary index file it named under the checkout's private git \
-            directory for this process, after the commit is made. The real \
-            index is touched only to move a named path's entry from the old \
-            commit's version to the new one, and the working tree never.",
-    },
-    Allowed {
         file: "activate.rs",
         pattern: "symlink::remove(",
         count: 4,
