@@ -875,6 +875,8 @@ every_scenario!(
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitOnceStaged),
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::Abort),
+    abort_from_a_manifest_marker_stop(scenarios::ManifestStopHistory::Merge),
+    abort_from_a_manifest_marker_stop(scenarios::ManifestStopHistory::Linear),
     sync_continue_merges_a_range_the_stop_gave_a_merge,
     landing_names_every_field,
     history_unset_fast_forward,
@@ -6136,6 +6138,22 @@ fn abort_after_a_landing_merge_stops_scenario() {
 fn landing_merge_continued_writes_one_project_merge_scenario() {
     runner::run(scenarios::landing_merge_continued_writes_one_project_merge())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_from_an_rwv_toml_marker_stop_under_merge_history() {
+    runner::run(scenarios::abort_from_a_manifest_marker_stop(
+        scenarios::ManifestStopHistory::Merge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_from_an_rwv_toml_marker_stop_under_linear_history() {
+    runner::run(scenarios::abort_from_a_manifest_marker_stop(
+        scenarios::ManifestStopHistory::Linear,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

@@ -16661,6 +16661,78 @@ pub fn abort_after_a_sync_merge_stops() -> Scenario {
     scenario("abort after a sync's merge stops", steps)
 }
 
+/// How the sync that stops on an `rwv.toml` text conflict takes `main` in.
+#[derive(Debug, Clone, Copy)]
+pub enum ManifestStopHistory {
+    Merge,
+    Linear,
+}
+
+/// `main` and the workweave set `[workweave]`'s `copy` differently, so the
+/// sync stops with `rwv.toml` between conflict markers. A setter is refused
+/// while the operation is in flight, and `rwv abort` reads the project's
+/// members from the checked-out commit and puts the workweave back on its own
+/// commit.
+pub fn abort_from_a_manifest_marker_stop(history: ManifestStopHistory) -> Scenario {
+    let (name, flag, in_flight) = match history {
+        ManifestStopHistory::Merge => (
+            "abort from an rwv.toml marker stop under merge history",
+            "merge",
+            "MERGE_HEAD",
+        ),
+        ManifestStopHistory::Linear => (
+            "abort from an rwv.toml marker stop under linear history",
+            "linear",
+            "REBASE_HEAD",
+        ),
+    };
+    let copy = |at: &Place, file: &str| {
+        Step::hand_edit(
+            at,
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            &format!(
+                "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
+                 [\"{file}\"]\n"
+            ),
+        )
+    };
+    scenario(
+        name,
+        vec![
+            create("w"),
+            copy(&a(), "main.txt"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            copy(&ww("w"), "notes.txt"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", flag])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("<<<<<<<"))
+                .claim(Claim::OutputContains("copy = [\"main.txt\"]"))
+                .claim(Claim::OutputContains("copy = [\"notes.txt\"]")),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["rev-parse", "-q", "--verify", in_flight],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("<<<<<<<")),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("copy = [\"notes.txt\"]"))
+                .claim(Claim::OutputLacks("main.txt")),
+        ],
+    )
+}
+
 /// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of
 /// the project repo both sides added differently.
 #[derive(Debug, Clone, Copy)]
