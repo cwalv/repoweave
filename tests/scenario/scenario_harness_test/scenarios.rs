@@ -18578,6 +18578,28 @@ pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_b
     )
 }
 
+/// `stack-carried`, killed after the carry moved `w2` and before the sync
+/// reported it: the printed `rwv sync --continue` finds the moves made and
+/// still says what was carried and where the old tip is kept.
+pub fn a_sync_resumed_after_its_carry_moved_reports_the_carry() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["sync"], "carry-moved", "carrying"),
+        Step::kill("carrying"),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::OutputContains(
+                "the tip it left kept in the rebased backup w2/rebased-",
+            )),
+    ]);
+    scenario(
+        "stack: a sync resumed after its carry moved reports the carry",
+        steps,
+    )
+}
+
 /// `stack-carried`, with a signer that fails under `commit.gpgSign`: `w1`'s
 /// rebase stops with no conflict in the checkout, and the sync says it
 /// failed rather than that it stopped on a conflict; the printed `rwv abort`

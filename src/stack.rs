@@ -798,6 +798,35 @@ impl Carrier<'_> {
         Ok(tip)
     }
 
+    fn moved_before(
+        &self,
+        record: &crate::op_state::TakeInRecord,
+        carrying: &Carrying,
+        to: &CommitId,
+    ) -> Option<Carried> {
+        record.ref_moves.iter().find(|m| {
+            m.repo == carrying.repo
+                && m.branch == carrying.branch
+                && m.from == carrying.from
+                && &m.to == to
+        })?;
+        let kept = format!("{}/rebased-{}", carrying.branch, carrying.from.short());
+        let backup = record
+            .rebased_backups
+            .iter()
+            .find(|b| b.repo == carrying.repo && b.name.starts_with(&kept))?
+            .name
+            .clone();
+        Some(Carried {
+            repo: carrying.repo.clone(),
+            label: self.repos.label(&carrying.repo),
+            branch: carrying.branch.clone(),
+            was: carrying.from.clone(),
+            now: to.clone(),
+            backup,
+        })
+    }
+
     /// Move each dependent's branch to what its carry composed, a `rebased`
     /// backup kept and the move journaled first; one already there, or built
     /// on since, is left. Where any other moved since the carry read it,
@@ -806,6 +835,7 @@ impl Carrier<'_> {
         crate::test_pause::point("carry-move");
         let record = take_in(self.workspace)?;
         let mut moving = Vec::new();
+        let mut carried = Vec::new();
         let mut raced = Vec::new();
         let mut opened = Stack::default();
         for carrying in &record.carries {
@@ -819,7 +849,11 @@ impl Carrier<'_> {
                 .resolve_local_branch_tip(&dir, &branch)?
                 .map(|n| n.id().clone());
             match &now {
-                Some(now) if now == to || vcs.is_ancestor(&dir, &rev(to), &rev(now))? => {}
+                Some(now) if now == to || vcs.is_ancestor(&dir, &rev(to), &rev(now))? => {
+                    if let Some(done) = self.moved_before(&record, carrying, to) {
+                        carried.push(done);
+                    }
+                }
                 Some(now) if now == &carrying.from => {
                     let checkouts = vcs.checkouts_of_branch(&dir, &branch)?;
                     let carry = carries
@@ -882,7 +916,6 @@ impl Carrier<'_> {
             );
             report.into_result()?;
         }
-        let mut carried = Vec::new();
         for (carrying, to) in moving {
             let dir = self.repos.dir(&carrying.repo);
             let vcs = self.repos.vcs(&carrying.repo);
@@ -921,6 +954,7 @@ impl Carrier<'_> {
                 backup,
             });
         }
+        crate::test_pause::point("carry-moved");
         Ok(carried)
     }
 }
