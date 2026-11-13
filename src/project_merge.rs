@@ -377,8 +377,10 @@ pub(crate) fn merge_branch_as_refs(
 /// The refusal that stops an operation on a conflict: what conflicted where,
 /// the backend's hint up to staging, each conflicted entry's setter, and the
 /// two ways out.
+/// `resume` is spelled to run against `workspace`, which owns the operation.
 pub(crate) fn conflict_stop(
     verb: &str,
+    workspace: &Path,
     resume: &str,
     conflicted: &Conflicted,
     vcs: &dyn Vcs,
@@ -396,7 +398,8 @@ pub(crate) fn conflict_stop(
         text.push('\n');
     }
     text.push_str(&format!(
-        "then run `{resume}`, or `rwv abort` to put everything back as it was"
+        "then run `{resume}`, or `{}` to put everything back as it was",
+        crate::op_state::abort_command_at(workspace)
     ));
     crate::refusal::refusal(RefusalKind::OpParked, text)
 }
@@ -677,9 +680,15 @@ impl ProjectMerge<'_> {
         repo: &str,
     ) -> anyhow::Result<Merged> {
         let stop = |paths: Vec<String>| {
-            let setters = crate::manifest_conflict::stop_lines(vcs, dir, &self.resume);
+            let setters = crate::manifest_conflict::stop_lines(
+                vcs,
+                dir,
+                self.ctx.active_path(),
+                &self.resume,
+            );
             conflict_stop(
                 self.verb,
+                self.ctx.active_path(),
                 &self.resume,
                 &Conflicted {
                     repo: repo.to_owned(),
@@ -776,10 +785,16 @@ impl ProjectMerge<'_> {
                 Err(MemberStop::Conflict(conflicted)) => {
                     return Err(conflict_stop(
                         self.verb,
+                        self.ctx.active_path(),
                         &self.resume,
                         &conflicted,
                         vcs_for(entry.vcs_type).as_ref(),
-                        &crate::manifest_conflict::stop_lines(vcs, dir, &self.resume),
+                        &crate::manifest_conflict::stop_lines(
+                            vcs,
+                            dir,
+                            self.ctx.active_path(),
+                            &self.resume,
+                        ),
                     ));
                 }
                 Err(MemberStop::Refused(error)) => return Err(error),

@@ -1653,9 +1653,11 @@ impl Phase {
 fn manifest_repo_failure_message(
     vcs: &dyn Vcs,
     verb: OpVerb,
+    owner: &Path,
     live_conflict: Option<ConflictOp>,
 ) -> String {
-    let resume = op_state::resume_command(verb);
+    let resume = op_state::resume_command_at(verb, owner);
+    let abort = op_state::abort_command_at(owner);
     match live_conflict {
         Some(op) => {
             let hint = vcs.conflict_resolution_hint(op);
@@ -1668,7 +1670,7 @@ fn manifest_repo_failure_message(
                  then resume (repos already composed are left as they are):\n\
                    {resume}\n\
                  \n\
-                 If you'd rather roll everything back: `rwv abort`."
+                 If you'd rather roll everything back: `{abort}`."
             )
         }
         None => format!(
@@ -1678,7 +1680,7 @@ fn manifest_repo_failure_message(
              composed are left as they are):\n\
                {resume}\n\
              \n\
-             If you'd rather roll everything back: `rwv abort`."
+             If you'd rather roll everything back: `{abort}`."
         ),
     }
 }
@@ -1699,9 +1701,11 @@ fn phase1_or_phase3_failure_message(
     phase: Phase,
     cwd_project_dir: &Path,
     verb: OpVerb,
+    owner: &Path,
     live_conflict: Option<ConflictOp>,
 ) -> String {
-    let resume = op_state::resume_command(verb);
+    let resume = op_state::resume_command_at(verb, owner);
+    let abort = op_state::abort_command_at(owner);
     let phase_label = phase.label();
     let repo_display = cwd_project_dir.display();
     match live_conflict {
@@ -1716,14 +1720,14 @@ fn phase1_or_phase3_failure_message(
                  then resume (repos already composed are left as they are):\n\
                    {resume}\n\
                  \n\
-                 If you'd rather roll everything back: `rwv abort`."
+                 If you'd rather roll everything back: `{abort}`."
             )
         }
         None => format!(
             "sync failed in {phase_label} (see error above).\n\
              \n\
              Fix the underlying issue, then: {resume}\n\
-             If you'd rather roll everything back: `rwv abort`."
+             If you'd rather roll everything back: `{abort}`."
         ),
     }
 }
@@ -1743,6 +1747,7 @@ fn phase1_or_phase3_failure_message(
 /// VCS hint still carries its own `git … --continue` — rwv has no native
 /// resume for those ops; the operator finishes them in git, then `{resume}`
 /// picks the op back up.
+#[allow(clippy::too_many_arguments)]
 fn per_conflict_bail_message(
     vcs: &dyn Vcs,
     repo: &Path,
@@ -1750,10 +1755,12 @@ fn per_conflict_bail_message(
     op_label: &str,
     detail: &str,
     verb: OpVerb,
+    owner: &Path,
     entries: &[String],
 ) -> String {
     let hint = vcs.conflict_resolution_hint(op);
-    let resume = op_state::resume_command(verb);
+    let resume = op_state::resume_command_at(verb, owner);
+    let abort = op_state::abort_command_at(owner);
     let repo_display = repo.display();
     let entries: String = entries.iter().map(|line| format!("{line}\n")).collect();
     format!(
@@ -1766,7 +1773,7 @@ fn per_conflict_bail_message(
          then resume (repos already composed are left as they are):\n\
            {resume}\n\
          \n\
-         If you'd rather roll everything back: `rwv abort`."
+         If you'd rather roll everything back: `{abort}`."
     )
 }
 
@@ -5705,6 +5712,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &cwd_project_tip,
         project_how,
         ctx.verb,
+        &ctx.cwd_workspace_dir,
+        &ctx.owner_workspace_dir,
     );
 
     if let Err(e) = phase1_outcome {
@@ -5725,6 +5734,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 Phase::One,
                 &ctx.cwd_project_dir,
                 ctx.verb,
+                &ctx.owner_workspace_dir,
                 live_conflict,
             )
         );
@@ -6071,8 +6081,14 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             RefusalKind::OpParked,
             "{}",
             match live_conflict {
-                Some((vcs, op)) => manifest_repo_failure_message(vcs, ctx.verb, Some(op)),
-                None => manifest_repo_failure_message(ctx.project_vcs.as_ref(), ctx.verb, None),
+                Some((vcs, op)) =>
+                    manifest_repo_failure_message(vcs, ctx.verb, &ctx.owner_workspace_dir, Some(op)),
+                None => manifest_repo_failure_message(
+                    ctx.project_vcs.as_ref(),
+                    ctx.verb,
+                    &ctx.owner_workspace_dir,
+                    None,
+                ),
             }
         );
     }
@@ -6517,6 +6533,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 Phase::Three,
                 &ctx.cwd_project_dir,
                 ctx.verb,
+                &ctx.owner_workspace_dir,
                 None,
             )
         );
@@ -8218,6 +8235,7 @@ fn composed_conflict(op: ConflictOp) -> ConflictOp {
 /// Phase 3 writes carries the relock. A conflict leaves the project repo
 /// stopped in it for the operator to resolve and stage, then
 /// `rwv <verb> --continue`, or `rwv abort`.
+#[allow(clippy::too_many_arguments)]
 fn apply_project_strategy(
     vcs: &dyn Vcs,
     cwd_project_dir: &Path,
@@ -8225,6 +8243,8 @@ fn apply_project_strategy(
     cwd_tip: &ResolvedRevisionId,
     how: Integration,
     verb: OpVerb,
+    cwd_workspace: &Path,
+    owner: &Path,
 ) -> anyhow::Result<()> {
     let conflict = |repo: &Path, op: ConflictOp| -> anyhow::Error {
         let detail = match op {
@@ -8243,7 +8263,13 @@ fn apply_project_strategy(
                 },
                 &detail,
                 verb,
-                &crate::manifest_conflict::stop_lines(vcs, repo, &op_state::resume_command(verb)),
+                owner,
+                &crate::manifest_conflict::stop_lines(
+                    vcs,
+                    repo,
+                    cwd_workspace,
+                    &op_state::resume_command_at(verb, owner),
+                ),
             ),
         )
     };
@@ -13990,6 +14016,7 @@ mod tests {
         let msg = manifest_repo_failure_message(
             git_vcs().as_ref(),
             OpVerb::Land,
+            Path::new("/ws"),
             Some(ConflictOp::Rebase),
         );
         assert!(
@@ -14013,7 +14040,8 @@ mod tests {
     // message points straight at the verb-derived resume.
     #[test]
     fn manifest_repo_failure_message_no_conflict_omits_vcs_hint() {
-        let msg = manifest_repo_failure_message(git_vcs().as_ref(), OpVerb::Sync, None);
+        let msg =
+            manifest_repo_failure_message(git_vcs().as_ref(), OpVerb::Sync, Path::new("/ws"), None);
         assert!(
             !msg.contains("git rebase --continue")
                 && !msg.contains("git merge --continue")
@@ -14036,6 +14064,7 @@ mod tests {
             Phase::One,
             cwd,
             OpVerb::Land,
+            Path::new("/ws"),
             Some(ConflictOp::Rebase),
         );
         assert!(
@@ -14071,6 +14100,7 @@ mod tests {
             Phase::One,
             cwd,
             OpVerb::Sync,
+            Path::new("/ws"),
             None,
         );
         assert!(
@@ -14095,6 +14125,7 @@ mod tests {
             Phase::Three,
             cwd,
             OpVerb::Land,
+            Path::new("/ws"),
             None,
         );
         assert!(
@@ -14131,6 +14162,7 @@ mod tests {
             "cherry-pick (rebase replay)",
             "commit deadbeef on paths: foo.txt",
             OpVerb::Sync,
+            Path::new("/ws"),
             &[],
         );
         assert!(
@@ -14167,6 +14199,7 @@ mod tests {
             "merge",
             "paths: bar.txt",
             OpVerb::Land,
+            Path::new("/ws"),
             &[],
         );
         assert!(
@@ -14201,6 +14234,7 @@ mod tests {
             "rebase (project repo)",
             detail,
             OpVerb::Sync,
+            Path::new("/ws"),
             &[],
         );
         assert!(

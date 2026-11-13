@@ -615,6 +615,28 @@ pub fn is_workspace_root(dir: &Path) -> bool {
     dir.join(PROJECTS_DIR).is_dir()
 }
 
+static TYPED_FROM: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Record the directory the operator typed this invocation in, before `-C`
+/// or `-w` moved it.
+pub(crate) fn record_typed_from(dir: &Path) {
+    let _ = TYPED_FROM.set(dir.to_path_buf());
+}
+
+/// `rwv <args>` as a line for the operator to run against `workspace`:
+/// carrying `-C <workspace>` where the invocation was typed outside it.
+pub(crate) fn rwv_line(workspace: &Path, args: &str) -> String {
+    let typed_in = TYPED_FROM
+        .get()
+        .map(|dir| dir.ancestors().find(|dir| is_workspace_root(dir)));
+    match typed_in {
+        Some(root) if root != Some(workspace) => {
+            format!("rwv -C {} {args}", workspace.display())
+        }
+        _ => format!("rwv {args}"),
+    }
+}
+
 /// Returns `true` when the $HOME ceiling should block the walk from `current`
 /// to `parent`.
 ///

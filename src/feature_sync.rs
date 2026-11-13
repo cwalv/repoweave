@@ -1629,7 +1629,7 @@ fn act(
                 ctx: sync.ctx,
                 project: &sync.project,
                 verb: "sync",
-                resume: crate::op_state::resume_command(OpVerb::Sync),
+                resume: crate::op_state::resume_command_at(OpVerb::Sync, sync.ctx.active_path()),
                 jobs: sync.jobs,
                 opts: crate::activate::ActivateOptions::default(),
                 message: format!("Merge {} into {}", sync.source_name(), sync.branch),
@@ -1749,12 +1749,10 @@ fn conflict_refusal(
     op: ConflictOp,
 ) -> anyhow::Error {
     let paths = vcs.unmerged_paths(dir).unwrap_or_default();
+    let workspace = sync.ctx.active_path();
+    let resume = crate::op_state::resume_command_at(OpVerb::Sync, workspace);
     let entries = if dir == sync.dir {
-        crate::manifest_conflict::stop_lines(
-            vcs,
-            dir,
-            &crate::op_state::resume_command(OpVerb::Sync),
-        )
+        crate::manifest_conflict::stop_lines(vcs, dir, workspace, &resume)
     } else {
         Vec::new()
     };
@@ -1762,7 +1760,7 @@ fn conflict_refusal(
         RefusalKind::OpParked,
         format!(
             "rwv sync: the {} of {repo} onto {} stopped on a conflict ({}) at {}.\n{}\n{}then run \
-             `{}`, or `rwv abort` to put everything back as it was",
+             `{resume}`, or `{}` to put everything back as it was",
             match op {
                 ConflictOp::Rebase => "rebase",
                 _ => "merge",
@@ -1775,7 +1773,7 @@ fn conflict_refusal(
                 .iter()
                 .map(|line| format!("{line}\n"))
                 .collect::<String>(),
-            crate::op_state::resume_command(OpVerb::Sync),
+            crate::op_state::abort_command_at(workspace),
         ),
     )
 }
@@ -1794,10 +1792,11 @@ fn rebase_refusal(
         RefusalKind::OpParked,
         format!(
             "rwv sync: the rebase of {repo} onto {} failed at {}: {error:#}\nfix the cause, then \
-             run `{}`, or `rwv abort` to put everything back as it was",
+             run `{}`, or `{}` to put everything back as it was",
             sync.source_name(),
             dir.display(),
-            crate::op_state::resume_command(OpVerb::Sync),
+            crate::op_state::resume_command_at(OpVerb::Sync, sync.ctx.active_path()),
+            crate::op_state::abort_command_at(sync.ctx.active_path()),
         ),
     )
 }
@@ -1915,7 +1914,8 @@ fn take_member(
             }
             Err(MemberStop::Conflict(conflicted)) => Err(crate::project_merge::conflict_stop(
                 "sync",
-                &crate::op_state::resume_command(OpVerb::Sync),
+                sync.ctx.active_path(),
+                &crate::op_state::resume_command_at(OpVerb::Sync, sync.ctx.active_path()),
                 &conflicted,
                 vcs,
                 &[],

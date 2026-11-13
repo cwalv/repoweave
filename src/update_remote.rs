@@ -1772,7 +1772,8 @@ fn settle_diverged(
             Err(MemberStop::Conflict(conflicted)) => {
                 return Err(conflict_stop(
                     "update --remote",
-                    &crate::op_state::resume_command(OpVerb::UpdateRemote),
+                    workspace,
+                    &crate::op_state::resume_command_at(OpVerb::UpdateRemote, workspace),
                     &conflicted,
                     item.vcs.as_ref(),
                     &[],
@@ -1824,7 +1825,8 @@ fn settle_diverged(
             Err(MemberStop::Conflict(conflicted)) => {
                 return Err(conflict_stop(
                     "update --remote",
-                    &crate::op_state::resume_command(OpVerb::UpdateRemote),
+                    workspace,
+                    &crate::op_state::resume_command_at(OpVerb::UpdateRemote, workspace),
                     &conflicted,
                     item.vcs.as_ref(),
                     &[],

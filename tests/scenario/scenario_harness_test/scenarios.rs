@@ -18482,6 +18482,10 @@ pub enum ManifestSettle {
     /// `lib`'s `history` changed differently here and upstream, settled at
     /// the stop of `pull --merge-upstream`.
     Pull,
+    /// The sync typed in the primary with `-w`: each line the stop prints
+    /// for the operator to run, run there as printed, acts on the
+    /// workweave.
+    TypedElsewhere,
     /// `docs` added on both sides with different roles: the whole member is
     /// in conflict, and its role's setter settles it.
     BothAdded,
@@ -19158,6 +19162,27 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("history = \"merge\"")),
             ];
             "a pull's merge stop lists the rwv.toml entries in conflict"
+        }
+        S::TypedElsewhere => {
+            steps.extend([
+                set_history(&a(), "merge", LIB),
+                set_history(&ww("w"), "linear", LIB),
+                Step::rwv(&a(), &["-w", "proj--w", "sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("keep yours: rwv -C "))
+                    .claim(Claim::OutputContains("then run `rwv -C "))
+                    .claim(Claim::OutputContains("or `rwv -C ")),
+                Step::rwv_printed_after(&a(), "keep yours: ", "--repo local/remotes/lib")
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("no entry left in conflict"))
+                    .claim(Claim::LocalStateUnchanged(a())),
+                Step::rwv_printed_after(&a(), "then run ", "--continue").expect(Exit::Succeeds),
+                head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
+                Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("history = \"merge\"")),
+            ]);
+            "a stop reached with -w prints lines that act on its workspace from where it was typed"
         }
         S::BothAdded => {
             steps = vec![

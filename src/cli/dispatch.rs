@@ -922,6 +922,7 @@ pub fn run() -> anyhow::Result<()> {
     // Step 1: workspace origin — cwd or -C path.
     let cwd = InvocationDir::resolved(&acquire_origin_dir()?)
         .context("failed to resolve the current directory")?;
+    crate::workspace::record_typed_from(cwd.as_path());
     let cwd_overridden = cli.cwd_override.is_some();
     let workspace_origin = match cli.cwd_override {
         None => cwd,

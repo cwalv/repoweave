@@ -380,7 +380,7 @@ pub(crate) fn settle_at_stop(
     let Some(settled) = settle(vcs, &dir, setting)? else {
         return Ok(false);
     };
-    let resume = recorded.map(crate::op_state::resume_command);
+    let resume = recorded.map(|verb| crate::op_state::resume_command_at(verb, ctx.active_path()));
     eprintln!(
         "rwv {verb}: settled rwv.toml entry {} on both sides",
         settled.entry
@@ -399,6 +399,7 @@ pub(crate) fn settle_at_stop(
         for line in reading_lines(
             vcs,
             &dir,
+            ctx.active_path(),
             &Reading::Entries(settled.left),
             resume.as_deref(),
         ) {
@@ -434,14 +435,15 @@ pub(crate) fn continue_at_stop(
     if header.verb == crate::op_state::OpVerb::CherryPick {
         return Ok(());
     }
-    let resume = crate::op_state::resume_command(header.verb);
+    let resume = crate::op_state::resume_command_at(header.verb, ctx.active_path());
     let reading = match vcs.conflict_sides(&dir, Manifest::FILE_NAME)? {
         Some(recorded) => match read(&recorded) {
             Ok(sides) if header.verb == typed && sides.conflicts().is_empty() => {
                 let kept = write_merged(vcs, &dir, &sides)?;
                 eprintln!(
-                    "{resume}: no rwv.toml entry was in conflict, only lines were; wrote and \
-                     staged the merge of both sides"
+                    "{}: no rwv.toml entry was in conflict, only lines were; wrote and \
+                     staged the merge of both sides",
+                    crate::op_state::resume_command(typed)
                 );
                 for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
                     eprintln!("{line}");
@@ -464,12 +466,13 @@ pub(crate) fn continue_at_stop(
         crate::workspace::project_rel_path(project),
         dir.display()
     );
-    for line in reading_lines(vcs, &dir, &reading, Some(&resume)) {
+    for line in reading_lines(vcs, &dir, ctx.active_path(), &reading, Some(&resume)) {
         text.push_str(&line);
         text.push('\n');
     }
     text.push_str(&format!(
-        "then run `{resume}`, or `rwv abort` to put everything back as it was"
+        "then run `{resume}`, or `{}` to put everything back as it was",
+        crate::op_state::abort_command_at(ctx.active_path())
     ));
     Err(crate::refusal::refusal(
         crate::refusal::RefusalKind::OpParked,
@@ -490,9 +493,10 @@ fn entry_name(path: &[String]) -> String {
 /// The lines a stop prints for a conflicted `rwv.toml` in `dir`: each
 /// entry in conflict, both sides' values, and the setter that keeps each;
 /// where no verb settles it, the hand edit and the staging that do.
-pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path, resume: &str) -> Vec<String> {
+/// `workspace` holds `dir`, and `resume` is spelled to run there.
+pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path, workspace: &Path, resume: &str) -> Vec<String> {
     match reading(vcs, dir) {
-        Ok(Some(reading)) => reading_lines(vcs, dir, &reading, Some(resume)),
+        Ok(Some(reading)) => reading_lines(vcs, dir, workspace, &reading, Some(resume)),
         _ => Vec::new(),
     }
 }
@@ -502,6 +506,7 @@ pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path, resume: &str) -> Vec<String>
 pub(crate) fn reading_lines(
     vcs: &dyn Vcs,
     dir: &Path,
+    workspace: &Path,
     reading: &Reading,
     resume: Option<&str>,
 ) -> Vec<String> {
@@ -536,7 +541,7 @@ pub(crate) fn reading_lines(
                     heading = Some(entry);
                     lines.extend(conflict_heading(conflict, replaying));
                 }
-                lines.extend(conflict_lines(conflict, replaying, by_hand));
+                lines.extend(conflict_lines(conflict, replaying, workspace, by_hand));
             }
             lines
         }
@@ -590,14 +595,19 @@ fn conflict_heading(conflict: &EntryConflict, replaying: bool) -> Vec<String> {
     }
 }
 
-fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> Vec<String> {
+fn conflict_lines(
+    conflict: &EntryConflict,
+    replaying: bool,
+    workspace: &Path,
+    by_hand: &str,
+) -> Vec<String> {
     let member = member_of(&conflict.path);
     match (
         conflict.path.as_slice(),
         yours_and_incoming(conflict, replaying),
     ) {
         ([.., field], [yours, incoming]) if conflict.path.len() == 3 => {
-            field_lines(member, field, yours, incoming, by_hand)
+            field_lines(member, field, yours, incoming, workspace, by_hand)
         }
         (_, [Some(toml::Value::Table(yours)), Some(toml::Value::Table(incoming))]) => {
             let mut keys: Vec<&String> = yours.keys().chain(incoming.keys()).collect();
@@ -606,7 +616,14 @@ fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> V
             keys.into_iter()
                 .filter(|key| yours.get(*key) != incoming.get(*key))
                 .flat_map(|key| {
-                    field_lines(member, key, yours.get(key), incoming.get(key), by_hand)
+                    field_lines(
+                        member,
+                        key,
+                        yours.get(key),
+                        incoming.get(key),
+                        workspace,
+                        by_hand,
+                    )
                 })
                 .collect()
         }
@@ -617,10 +634,11 @@ fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> V
                 .zip(sides)
                 .map(|(side, value)| {
                     let setter = match (member, value) {
-                        (Some(member), None) => Some(format!("rwv member remove {member}")),
+                        (Some(member), None) => Some(format!("member remove {member}")),
                         (None, value) if top_history => Some(history_setter(value, None)),
                         _ => None,
                     };
+                    let setter = setter.map(|args| crate::workspace::rwv_line(workspace, &args));
                     format!("  keep {side}: {}", setter.as_deref().unwrap_or(by_hand))
                 })
                 .collect()
@@ -633,6 +651,7 @@ fn field_lines(
     field: &str,
     yours: Option<&toml::Value>,
     incoming: Option<&toml::Value>,
+    workspace: &Path,
     by_hand: &str,
 ) -> Vec<String> {
     let mut lines = vec![format!(
@@ -643,7 +662,8 @@ fn field_lines(
     match member {
         Some(member) => {
             for (side, value) in [("yours", yours), ("incoming", incoming)] {
-                let setter = field_setter(member, field, value);
+                let setter = field_setter(member, field, value)
+                    .map(|args| crate::workspace::rwv_line(workspace, &args));
                 lines.push(format!(
                     "    keep {side}: {}",
                     setter.as_deref().unwrap_or(by_hand)
@@ -666,8 +686,8 @@ fn shown(value: Option<&toml::Value>) -> String {
 fn history_setter(value: Option<&toml::Value>, member: Option<&str>) -> String {
     let repo = member.map_or(String::new(), |member| format!(" --repo {member}"));
     match value.and_then(toml::Value::as_str) {
-        Some(history) => format!("rwv branch set-history {history}{repo}"),
-        None => format!("rwv branch set-history --unset{repo}"),
+        Some(history) => format!("branch set-history {history}{repo}"),
+        None => format!("branch set-history --unset{repo}"),
     }
 }
 
@@ -677,9 +697,7 @@ fn field_setter(member: &str, field: &str, value: Option<&toml::Value>) -> Optio
     }
     if field == "recurse-submodules" {
         let recurse = value.and_then(toml::Value::as_bool).unwrap_or(true);
-        return Some(format!(
-            "rwv member set-recurse-submodules {member} {recurse}"
-        ));
+        return Some(format!("member set-recurse-submodules {member} {recurse}"));
     }
     let verb = match field {
         "branch" => "set-branch",
@@ -687,7 +705,7 @@ fn field_setter(member: &str, field: &str, value: Option<&toml::Value>) -> Optio
         "role" => "set-role",
         _ => return None,
     };
-    Some(format!("rwv member {verb} {member} {}", value?.as_str()?))
+    Some(format!("member {verb} {member} {}", value?.as_str()?))
 }
 
 #[cfg(test)]

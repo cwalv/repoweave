@@ -658,7 +658,7 @@ fn merge_project(
             ctx,
             project,
             verb: "pull",
-            resume: crate::op_state::resume_command(OpVerb::Pull),
+            resume: crate::op_state::resume_command_at(OpVerb::Pull, ctx.active_path()),
             jobs: how.jobs,
             opts: how.activation,
             message: format!("Merge the upstream of {attached} into {attached}"),
