@@ -664,12 +664,25 @@ fn checked_out_elsewhere(m: &Member<'_>, branch: &RawRefName) -> anyhow::Result<
 /// The line for a project repo whose HEAD is on no branch and whose
 /// workspace was not made detached: the commits it holds that no branch
 /// reaches, listed, with the choice that keeps them where it holds any, else
-/// the one that returns the project repo to a branch.
+/// the one that returns the project repo to a branch. One a merge of its
+/// edits left set back is judged as that.
 pub fn project_detached(
     project_dir: &Path,
     project: &ProjectName,
 ) -> anyhow::Result<crate::diagnosis::Judging> {
     let vcs = project_vcs();
+    if let Ok(Some(back)) = vcs.set_back_from(project_dir) {
+        return Ok(crate::diagnosis::set_back(
+            vcs.as_ref(),
+            crate::workspace::project_rel_path(project),
+            project_dir,
+            &back,
+            None,
+            None,
+        )
+        .project_repo()
+        .checkout(project_dir));
+    }
     let head = vcs.head_revision(project_dir)?;
     let held = vcs.stray_commits(project_dir, &head, None, None)?;
     let choice = if held.is_empty() {

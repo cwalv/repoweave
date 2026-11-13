@@ -2733,6 +2733,43 @@ fn pull_update_remote_and_cherry_pick_hold_a_moved_and_edited_project_manifest()
     }
 }
 
+/// A project repo a merge of its edits left set back is named `set back`
+/// alone by `rwv status`, `rwv cherry-pick` and `rwv switch`: no judgment
+/// calls it detached or offers committing its manifest beside that line.
+#[test]
+fn a_set_back_project_repo_is_named_set_back_alone() {
+    let f = fixture();
+    f.move_project_manifest();
+    let project = f.ww_project();
+    let manifest = project.join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("# mine\n{text}")).unwrap();
+    drop(held_at(&f, &f.ww, &MERGE, "drift-merge-set-back"));
+    assert!(!on_branch(&project));
+    let head = common::git_in(&project, &["rev-parse", "HEAD"]);
+
+    for verb in [
+        &["status"][..],
+        &["cherry-pick", "HEAD"],
+        &["switch", "ww/project"],
+        &["doctor"],
+    ] {
+        let out = common::cli::run(verb, &f.ww);
+
+        let said = common::cli::describe(&out);
+        assert!(
+            said.contains("projects/app: edits set back"),
+            "{verb:?}:\n{said}"
+        );
+        assert!(
+            !said.contains("project detached") && !said.contains("project-detached"),
+            "{verb:?}:\n{said}"
+        );
+        assert!(!said.contains("uncommitted"), "{verb:?}:\n{said}");
+        assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), head);
+    }
+}
+
 /// Every verb that commits in the project repo settles its drift first: run
 /// over a project branch moved under the workweave, none commits the move's
 /// reverse or leaves it standing beside its commit, whether it proceeds or

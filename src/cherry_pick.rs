@@ -460,6 +460,7 @@ fn fresh(
     let vcs = here.vcs.as_ref();
     let dir = &here.dir;
     let label = here.label();
+    crate::diagnosis::settle_project_drift(&here.project, dir)?;
     let Some(branch) = crate::branch::checked_out(vcs, dir)? else {
         return Err(State::AlignmentProjectDetached
             .of(&label)
@@ -622,7 +623,6 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     let dir = &here.dir;
     let label = here.label();
     let mut report = Report::default();
-    crate::diagnosis::settle_project_drift(&here.project, dir)?;
 
     let Ok(resolved) = vcs.resolve_revision(dir, &args.rev) else {
         return Err(State::NameNoSuchBranch

@@ -4776,6 +4776,9 @@ fn scan_workspace_alignment(
     };
     if aligner.standing == crate::alignment::ProjectStanding::Detached {
         let vcs = crate::vcs::project_vcs();
+        if matches!(vcs.set_back_from(&project_dir), Ok(Some(_))) {
+            return;
+        }
         let listed = vcs
             .head_revision(&project_dir)
             .ok()

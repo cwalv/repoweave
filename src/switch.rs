@@ -177,7 +177,7 @@ impl ProjectMove<'_> {
             dirty,
             None,
         ));
-        if !files.is_empty() {
+        if !files.is_empty() && !matches!(vcs.set_back_from(self.dir), Ok(Some(_))) {
             let choice = if self.detached {
                 ChoiceId::C30
             } else {
