@@ -7814,12 +7814,18 @@ impl EditedDriftMerge {
         }
         let mut shown = Vec::new();
         if let Some(stash) = set_aside {
-            said.push_str(&format!(
-                "; these files' edits were set aside as {}, so each holds {}'s content: {}",
-                stash.short(),
-                moved_to.short(),
-                took_incoming.join(", ")
-            ));
+            match took_incoming.is_empty() {
+                true => said.push_str(&format!(
+                    "; the edits an earlier set-aside kept are in {}",
+                    stash.short()
+                )),
+                false => said.push_str(&format!(
+                    "; these files' edits were set aside as {}, so each holds {}'s content: {}",
+                    stash.short(),
+                    moved_to.short(),
+                    took_incoming.join(", ")
+                )),
+            }
             shown.push((
                 "\nthe set-aside edits merge back onto the checkout with:",
                 spelled(crate::vcs::VcsAction::TakeBackSetAside, ""),
@@ -7917,7 +7923,14 @@ pub fn carry_set_back(
         crate::vcs::EditResolution::Merge => vcs.backup_edits(repo)?,
         crate::vcs::EditResolution::SetAside => None,
     };
-    carry(vcs, repo, back, resolution, &edits, kept)
+    let earlier = vcs.set_aside_from(repo, &back.at)?;
+    let mut carried = carry(vcs, repo, back, resolution, &edits, kept)?;
+    if let EditedDriftMerge::Carried { set_aside, .. } = &mut carried {
+        if set_aside.is_none() {
+            *set_aside = earlier;
+        }
+    }
+    Ok(carried)
 }
 
 fn carry(

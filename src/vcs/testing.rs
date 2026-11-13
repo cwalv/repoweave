@@ -1270,6 +1270,10 @@ impl Vcs for FakeVcs {
         unsupported("set_edits_aside")
     }
 
+    fn set_aside_from(&self, _repo: &Path, _at: &CommitId) -> Result<Option<CommitId>, VcsError> {
+        Ok(None)
+    }
+
     fn staged_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
         unsupported("staged_against_head")
     }

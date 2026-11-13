@@ -4150,6 +4150,10 @@ pub trait Vcs: Send + Sync {
         paths: &[String],
     ) -> Result<Refusable<CommitId>, VcsError>;
 
+    /// The newest record [`Vcs::set_edits_aside`] made in `repo` of edits
+    /// against `at`, still kept.
+    fn set_aside_from(&self, repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError>;
+
     /// The paths whose index entry differs from HEAD's, an entry only
     /// intended for adding included.
     fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError>;

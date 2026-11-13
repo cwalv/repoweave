@@ -161,6 +161,33 @@ pub(super) fn set_edits_aside(
         })
 }
 
+pub(super) fn set_aside_from(repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError> {
+    let listing = git(
+        [
+            "log",
+            "-g",
+            "--no-show-signature",
+            "--format=%H %P %gs",
+            "refs/stash",
+        ],
+        repo,
+    )?;
+    if !listing.status.success() {
+        return Ok(None);
+    }
+    for record in String::from_utf8_lossy(&listing.stdout).lines() {
+        let mut fields = record.splitn(3, ' ');
+        let (Some(kept), Some(base)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let subject = record.splitn(2, ' ').nth(1).unwrap_or_default();
+        if base == at.as_str() && subject.ends_with(SET_ASIDE) {
+            return Ok(CommitId::parse(kept).ok());
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn staged_against_head(repo: &Path) -> Result<Vec<String>, VcsError> {
     Ok(fields(&succeeded(
         [

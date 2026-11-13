@@ -812,6 +812,7 @@ impl State {
                     Form::UnstageThenMerge,
                     Form::ReplaceThenMerge,
                     Form::RemoveLockThenMerge,
+                    Form::TakeBackSetAside,
                 ],
                 verb_offers: &[],
             },
@@ -2004,6 +2005,7 @@ pub enum ChoiceId {
     CompareSkipped,
     UnstageThenMerge,
     RemoveLockThenMerge,
+    TakeBackSetAside,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2318,6 +2320,12 @@ impl ChoiceId {
                 keeps_work: "the backup taken before the merge holds each staged version; \
                              unstaging writes only the index",
             },
+            Self::TakeBackSetAside => &ChoiceRow {
+                id: None,
+                phrase: "merge back the edits a set-aside kept, named in the subject, once the \
+                         checkout stands on its branch",
+                keeps_work: "the set-aside record stays until you drop it",
+            },
             Self::RemoveLockThenMerge => &ChoiceRow {
                 id: None,
                 phrase: "once no VCS process is running in the checkout, remove the index lock \
@@ -2550,6 +2558,7 @@ pub enum Form {
     CompareSkipped,
     UnstageThenMerge,
     RemoveLockThenMerge,
+    TakeBackSetAside,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2577,7 +2586,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 109] = [
+    pub const ALL: [Form; 110] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2687,6 +2696,7 @@ impl Form {
         Self::CompareSkipped,
         Self::UnstageThenMerge,
         Self::RemoveLockThenMerge,
+        Self::TakeBackSetAside,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3273,6 +3283,12 @@ impl Form {
                     Rwv("rwv doctor --fix --merge-edited-drift"),
                 ],
                 at: W::CheckoutsWorkspace,
+                shipped: true,
+            },
+            Self::TakeBackSetAside => &FormRow {
+                choice: C::TakeBackSetAside,
+                steps: &[Vcs(A::TakeBackSetAside)],
+                at: W::Checkout,
                 shipped: true,
             },
             Self::RemoveLockThenMerge => &FormRow {
@@ -4482,21 +4498,41 @@ pub fn set_back(
     }
     edits.sort();
     let staged = vcs.staged_against_head(dir).unwrap_or_default();
+    let kept = vcs.set_aside_from(dir, &back.at).ok().flatten();
+    if let Some(kept) = &kept {
+        subject.push_str(&format!(
+            "; edits set aside here are kept as {}",
+            kept.short()
+        ));
+    }
     let judging = State::EditsSetBack
         .of(repo)
         .subject(subject)
-        .listing(&edits);
+        .listing(&edits)
+        .bind(
+            "<stash>",
+            kept.as_ref()
+                .map(crate::vcs::CommitId::as_str)
+                .unwrap_or_default(),
+        );
+    let forms = |first: &[Form]| -> Vec<Form> {
+        first
+            .iter()
+            .copied()
+            .chain(kept.as_ref().map(|_| Form::TakeBackSetAside))
+            .collect()
+    };
     if lock.is_some() {
-        return judging.only_forms(&[Form::RemoveLockThenMerge]);
+        return judging.only_forms(&forms(&[Form::RemoveLockThenMerge]));
     }
     if !staged.is_empty() {
         return judging
             .bind_list("<paths>", &staged)
-            .only_forms(&[Form::UnstageThenMerge]);
+            .only_forms(&forms(&[Form::UnstageThenMerge]));
     }
     match refused {
-        Some(_) => judging.only_forms(&[Form::ReplaceThenMerge]),
-        None => judging.only_forms(&[Form::MergeEditedDrift, Form::SetEditsAside]),
+        Some(_) => judging.only_forms(&forms(&[Form::ReplaceThenMerge])),
+        None => judging.only_forms(&forms(&[Form::MergeEditedDrift, Form::SetEditsAside])),
     }
 }
 

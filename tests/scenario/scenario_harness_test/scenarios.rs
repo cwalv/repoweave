@@ -8603,6 +8603,9 @@ pub enum MergeKilledAt {
     MergeSetBack,
     /// The set-aside, at the same point.
     SetAsideSetBack,
+    /// The set-aside, once git has stashed the edits and before the
+    /// checkout: the stash is the edits' only holder.
+    SetAsideStashed,
 }
 
 /// The merge or set-aside is killed once it has pointed the checkout at the
@@ -8611,15 +8614,18 @@ pub enum MergeKilledAt {
 /// the printed merge carries them onto the branch: the conflicted file holds
 /// one set of markers, and its `theirs` side is the edit.
 pub fn moved_and_edited_interrupted(at_point: MergeKilledAt) -> Scenario {
+    if at_point == MergeKilledAt::SetAsideStashed {
+        return set_aside_killed_once_stashed();
+    }
     let me = ww("me");
     let flag = match at_point {
         MergeKilledAt::MergeSetBack => "--merge-edited-drift",
-        MergeKilledAt::SetAsideSetBack => "--set-aside-edited-drift",
+        _ => "--set-aside-edited-drift",
     };
     scenario(
         match at_point {
             MergeKilledAt::MergeSetBack => "moved and edited, merge killed once set back",
-            MergeKilledAt::SetAsideSetBack => "moved and edited, set-aside killed once set back",
+            _ => "moved and edited, set-aside killed once set back",
         },
         vec![
             create("me"),
@@ -8696,6 +8702,59 @@ pub fn moved_and_edited_interrupted(at_point: MergeKilledAt) -> Scenario {
                 Repo::Lib,
                 &["grep", "-q", "s2", "main", "--", "stale.txt"],
             ),
+        ],
+    )
+}
+
+/// The set-aside killed once git stashed the edits and before the checkout:
+/// every verb names the checkout `set back` with the stash's take-back line,
+/// the flag run again finishes the checkout and prints that line, and that
+/// line, run as printed, merges the edit back onto the moved tip.
+fn set_aside_killed_once_stashed() -> Scenario {
+    let me = ww("me");
+    scenario(
+        "moved and edited, set-aside killed once stashed",
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\nfour\nfive\n"),
+                    ("stale.txt", "s\n"),
+                ],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\nfour\nFIVE\n"),
+                    ("stale.txt", "s2\n"),
+                ],
+            ),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&me, Repo::Lib, "edited.txt", "one", "ONE"),
+            Step::rwv_paused(
+                &me,
+                &["doctor", "--fix", "--set-aside-edited-drift"],
+                "drift-merge-carry",
+                "setting aside",
+            ),
+            Step::kill("setting aside"),
+            Step::rwv(&me, &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsSetBack))
+                .claim(Claim::OutputContains("stash apply"))
+                .claim(Claim::OutputLacks("commit")),
+            Step::rwv_printed(&me, "rwv doctor --fix --set-aside-edited-drift")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("an earlier set-aside kept")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "s2", "--", "stale.txt"]),
+            Step::rwv_printed_holding(&me, "git -C", "stash apply").expect(Exit::Succeeds),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "ONE", "--", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "FIVE", "--", "edited.txt"]),
         ],
     )
 }

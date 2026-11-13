@@ -4038,6 +4038,10 @@ impl Vcs for GitVcs {
         carry_edits::set_edits_aside(repo, paths)
     }
 
+    fn set_aside_from(&self, repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError> {
+        carry_edits::set_aside_from(repo, at)
+    }
+
     fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
         carry_edits::staged_against_head(repo)
     }

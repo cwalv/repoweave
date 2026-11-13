@@ -1303,6 +1303,7 @@ every_scenario!(
     plain_drift_changed_before_a_verb_refreshes,
     moved_and_edited_interrupted(scenarios::MergeKilledAt::MergeSetBack),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::SetAsideSetBack),
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::SetAsideStashed),
     drift_staged_return_after_a_hand_refresh,
     drift_staged_return_with_an_edit_is_kept,
     cross_repo_pr,
@@ -5678,6 +5679,14 @@ fn the_edited_drift_flags_leave_another_workspaces_checkout_and_print_its_line()
 fn a_merge_killed_once_set_back_is_named_set_back_and_the_flag_finishes_it() {
     runner::run(scenarios::moved_and_edited_interrupted(
         scenarios::MergeKilledAt::MergeSetBack,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_set_aside_killed_once_stashed_names_the_stash_and_the_flag_finishes_it() {
+    runner::run(scenarios::moved_and_edited_interrupted(
+        scenarios::MergeKilledAt::SetAsideStashed,
     ))
     .assert_fully_decided_green();
 }
