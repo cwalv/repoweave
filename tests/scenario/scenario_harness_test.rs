@@ -1282,6 +1282,9 @@ every_scenario!(
     moved_and_edited(scenarios::MovedAndEditedEnd::TwoEdits),
     moved_and_edited_doctor,
     moved_and_edited_second_reading,
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::Journaled),
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::Refreshed),
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::Written),
     drift_staged_return_after_a_hand_refresh,
     drift_staged_return_with_an_edit_is_kept,
     cross_repo_pr,
@@ -5514,6 +5517,30 @@ fn a_file_moved_and_edited_twice_is_refused_by_the_merge_naming_stash() {
 #[test]
 fn plain_doctor_fix_writes_nothing_beside_a_file_moved_and_edited_and_refreshes_other_seats() {
     runner::run(scenarios::moved_and_edited_doctor()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_killed_once_journaled_is_named_interrupted_and_merged_afresh() {
+    runner::run(scenarios::moved_and_edited_interrupted(
+        scenarios::MergeKilledAt::Journaled,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_killed_once_refreshed_is_named_interrupted_and_merged_afresh() {
+    runner::run(scenarios::moved_and_edited_interrupted(
+        scenarios::MergeKilledAt::Refreshed,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_killed_once_written_is_merged_afresh_never_on_marker_text() {
+    runner::run(scenarios::moved_and_edited_interrupted(
+        scenarios::MergeKilledAt::Written,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

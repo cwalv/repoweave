@@ -8077,6 +8077,105 @@ pub fn moved_and_edited_doctor() -> Scenario {
     )
 }
 
+/// Where `moved_and_edited_interrupted` stops the merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeKilledAt {
+    /// Once the journal is written, before any file is.
+    Journaled,
+    /// Once the move's other files are refreshed.
+    Refreshed,
+    /// Once every merged file is written, before their index entries are.
+    Written,
+}
+
+/// `--merge-edited-drift` is killed part way through its writes. Every verb
+/// judging the checkout then names it `merge interrupted`, naming the
+/// backup, and the printed merge puts each file back before merging afresh:
+/// the conflicted file holds one set of markers, and its `ours` side is the
+/// edit, never marker text.
+pub fn moved_and_edited_interrupted(at_point: MergeKilledAt) -> Scenario {
+    let me = ww("me");
+    let point = match at_point {
+        MergeKilledAt::Journaled => "drift-merge-journaled",
+        MergeKilledAt::Refreshed => "drift-merge-refreshed",
+        MergeKilledAt::Written => "drift-merge-written",
+    };
+    scenario(
+        match at_point {
+            MergeKilledAt::Journaled => "moved and edited, merge killed once journaled",
+            MergeKilledAt::Refreshed => "moved and edited, merge killed once refreshed",
+            MergeKilledAt::Written => "moved and edited, merge killed once written",
+        },
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\n"),
+                    ("other.txt", "one\ntwo\nthree\n"),
+                    ("stale.txt", "s\n"),
+                ],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nTHREE\n"),
+                    ("other.txt", "one\ntwo\nTHREE\n"),
+                    ("stale.txt", "s2\n"),
+                ],
+            ),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&me, Repo::Lib, "edited.txt", "three", "mine"),
+            Step::hand_edit(&me, Repo::Lib, "other.txt", "one", "ONE"),
+            Step::rwv_paused(
+                &me,
+                &["doctor", "--fix", "--merge-edited-drift"],
+                point,
+                "merging",
+            ),
+            Step::kill("merging"),
+            Step::rwv(&me, &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMergeInterrupted))
+                .claim(Claim::OutputContains("backup "))
+                .claim(Claim::OutputContains(
+                    "rwv doctor --fix --merge-edited-drift",
+                ))
+                .claim(Claim::OutputLacks("commit")),
+            Step::rwv(&me, &["doctor", "--fix"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMergeInterrupted)),
+            Step::rwv_printed(&me, "rwv doctor --fix --merge-edited-drift")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("is put back"))
+                .claim(Claim::OutputContains("left conflicted")),
+            Step::git(
+                &me,
+                Repo::Lib,
+                &["grep", "-c", "<<<<<<<", "--", "edited.txt"],
+            )
+            .claim(Claim::OutputContains("edited.txt:1")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "ONE", "--", "other.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "THREE", "--", "other.txt"]),
+            Step::git(&me, Repo::Lib, &["checkout", "--ours", "--", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-c", "", "--", "edited.txt"])
+                .claim(Claim::OutputContains("edited.txt:3")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "mine", "--", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["add", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["commit", "-q", "-a", "-m", "mine"]),
+            Step::rwv(&me, &["land"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["grep", "-q", "s2", "main", "--", "stale.txt"],
+            ),
+        ],
+    )
+}
+
 /// A file read stale by `--merge-edited-drift`'s first reading is edited
 /// before its second: nothing is merged, refreshed or backed up, and running
 /// it again merges.

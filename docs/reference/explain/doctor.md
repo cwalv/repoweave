@@ -53,6 +53,30 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
 - `--abandon-lost-pins` (refused without `--fix`) widens `--fix` by exactly one arm: a workweave
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
+- `--merge-edited-drift` widens `--fix` for a checkout whose branch moved
+  under it and that holds files both that move and an edit here changed
+  (`edits` `moved and edited`). Without it `--fix` writes nothing to such a
+  checkout and refuses, naming it. With it, every merge is computed first;
+  then the checkout's working copy and index are kept as a backup (`rwv
+  backup list`), the move's other files are refreshed, and each such file's
+  edit is merged onto the moved tip against the tip the checkout was at,
+  each written only while it still stands as it was read. A file the merge
+  does not resolve, or one the moved tip's attributes declare unmergeable
+  (`-merge`, `binary`), is left conflicted, holding both versions, and
+  refused as `edits` `unresolved` until it is resolved and marked resolved.
+  A file the moved tip declares derived takes the moved tip's content, and
+  the report names it apart, the edit set aside in the backup. Nothing is
+  written through a symbolic link: a file replaced by a link is left
+  conflicted with the link in place, and a file below a link, or below
+  anything else standing where its directory should, refuses the merge. A
+  file holding two versions of the edit, one staged and another in the
+  working copy, a submodule, and a file naming a merge driver of its own are
+  merged by no rule here: the flag refuses, and setting the edits aside is
+  the choice. A write that fails puts back everything written, naming the
+  backup; a run stopped part way leaves the checkout `edits` `merge
+  interrupted`, and the flag run again first puts each file back as it
+  stood, then merges afresh. Where no checkout holds such a file, the flag
+  refuses (`inapplicable-flag`).
 
 **`--fix` deletes no branch.** Branches are deleted by the deletion rule, run
 by `rwv branch delete`, `rwv workweave delete` and `rwv land --retire`;

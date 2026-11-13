@@ -245,13 +245,21 @@ A file the move changed that you edited too is neither. rwv does not
 refresh that checkout at all, because a partial refresh would erase what
 shows the move: it lists such files as `moved and edited`. `rwv doctor --fix
 --merge-edited-drift` merges each such edit onto the moved tip, against the
-tip the checkout was at, once the working copy and index are kept as a
-backup, refreshing the move's other files in the same run; a file the merge
-cannot resolve is left conflicted, both versions in it, for you to resolve
-and mark resolved. Setting the edits aside instead keeps everything,
-including the old tip's content at every path the move changed, so taking
-them back brings that content back too; commit nothing from there until
-the edits are on the moved tip.
+tip the checkout was at. It computes every merge before it writes anything,
+keeps the working copy and index as a backup, refreshes the move's other
+files in the same run, and writes each merged file only while it still
+stands as it was read. A file the merge cannot resolve is left conflicted,
+both versions in it, for you to resolve and mark resolved; so is one the
+moved tip's attributes declare unmergeable. A file the moved tip declares
+derived takes that tip's content, and your edit to it stays in the backup.
+The merge writes nothing through a symbolic link, at a file or at any
+directory above it. A write that fails puts every file back as it stood; a
+run stopped part way leaves the checkout `merge interrupted`, which every
+verb names, and running the merge again puts each file back before merging
+afresh, so your edit, never a half-merged file, is what it merges. Setting
+the edits aside instead keeps everything, including the old tip's content
+at every path the move changed, so taking them back brings that content
+back too; commit nothing from there until the edits are on the moved tip.
 
 ## The shared invariant
 

@@ -3980,20 +3980,21 @@ impl Vcs for GitVcs {
     fn merge_into_working_copy(
         &self,
         repo: &Path,
-        base: &CommitId,
-        incoming: &CommitId,
-        paths: &[String],
-        derived: DerivedContentPolicy,
-        before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+        request: &crate::vcs::WorkingCopyMergeRequest<'_>,
+        before_write: &mut dyn FnMut() -> Result<crate::vcs::BeforeWrite, VcsError>,
     ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
-        working_copy_merge::merge_into_working_copy(
-            repo,
-            base,
-            incoming,
-            paths,
-            derived,
-            before_write,
-        )
+        working_copy_merge::merge_into_working_copy(repo, request, before_write)
+    }
+
+    fn interrupted_merge(
+        &self,
+        repo: &Path,
+    ) -> Result<Option<crate::vcs::InterruptedMerge>, VcsError> {
+        working_copy_merge::interrupted(repo)
+    }
+
+    fn put_back_interrupted_merge(&self, repo: &Path) -> Result<(), VcsError> {
+        working_copy_merge::put_back(repo)
     }
 
     fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {

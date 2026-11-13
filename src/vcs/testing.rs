@@ -1241,13 +1241,21 @@ impl Vcs for FakeVcs {
     fn merge_into_working_copy(
         &self,
         _repo: &Path,
-        _base: &CommitId,
-        _incoming: &CommitId,
-        _paths: &[String],
-        _derived: crate::vcs::DerivedContentPolicy,
-        _before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+        _request: &crate::vcs::WorkingCopyMergeRequest<'_>,
+        _before_write: &mut dyn FnMut() -> Result<crate::vcs::BeforeWrite, VcsError>,
     ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
         unsupported("merge_into_working_copy")
+    }
+
+    fn interrupted_merge(
+        &self,
+        _repo: &Path,
+    ) -> Result<Option<crate::vcs::InterruptedMerge>, VcsError> {
+        Ok(None)
+    }
+
+    fn put_back_interrupted_merge(&self, _repo: &Path) -> Result<(), VcsError> {
+        Ok(())
     }
 
     fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {

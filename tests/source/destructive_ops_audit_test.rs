@@ -520,15 +520,31 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git/working_copy_merge.rs",
-        pattern: "remove_file",
+        pattern: "symlink::remove(",
         count: 1,
         callers: &[],
-        justification: "merge_into_working_copy: removes a working file only \
-            where the repo declares the path derived and the incoming tip \
-            removed it, the merge taking the incoming side. Reached only \
-            through check::merge_edited_drift, whose before_write keeps the \
-            checkout's working copy and index as a backup first, and only once \
-            the file still holds what was read when the merge was computed.",
+        justification: "remove_entry: removes the file or link standing at a \
+            path itself, never what a link names, once every leading \
+            directory is checked to be a directory: where the merge takes the \
+            incoming tip's removal of a declared derived file the working copy \
+            held as a regular file, after the checkout is kept as a backup and \
+            the path re-read unchanged; and where a put-back returns a path to \
+            what the journal holds.",
+    },
+    Allowed {
+        file: "git/working_copy_merge.rs",
+        pattern: "remove_file",
+        count: 4,
+        callers: &[],
+        justification: "(1) ScratchIndex::drop: the scratch index this \
+            process wrote under the checkout's private git directory to read \
+            the incoming tip's attributes. (2) write_file: the file it wrote \
+            beside the path, this process's name in it, where the rename over \
+            the path failed. (3) put_back and (4) merge_into_working_copy: the \
+            journal in the checkout's private git directory, once every path \
+            it names is put back or every write is made. No working file is \
+            removed here: remove_entry goes through symlink::remove, never \
+            through a link, and only after the journal holds what stood.",
     },
     Allowed {
         file: "git/backup.rs",

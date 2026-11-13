@@ -2488,18 +2488,83 @@ pub enum RefreshWrite {
 /// What [`Vcs::merge_into_working_copy`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkingCopyMerge {
+    /// `clean` merged and stand as edits; `took_incoming` took the incoming
+    /// side's content as `derived` resolves them, the working copy's going
+    /// only to the caller's backup; `conflicted` are left marked conflicted.
     Merged {
         clean: Vec<String>,
+        took_incoming: Vec<String>,
         conflicted: Vec<String>,
     },
     /// Nothing was written: these paths each hold two versions of an edit,
     /// one recorded and another in the working copy.
     TwoEdits(Vec<String>),
-    /// Nothing was written: a path changed while the merge was computed, or
-    /// the VCS could not write. `vcs_said` is for the operator only.
-    Declined { vcs_said: String },
+    /// Nothing was written, or everything written was put back.
+    Declined(MergeDeclined),
     /// Nothing was written: the caller's `before_write` stopped it.
     Stopped,
+}
+
+/// Why [`Vcs::merge_into_working_copy`] left the checkout as it stood.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeDeclined {
+    /// The index holds unresolved conflicts.
+    Unresolved,
+    /// An earlier merge's writes were interrupted and are not yet put back.
+    Interrupted,
+    /// This path's entry or working copy changed after it was read.
+    Changed(String),
+    /// Something other than a directory, a symbolic link among them, stands
+    /// where a leading directory of each of these paths would; nothing is
+    /// written through one.
+    BehindLink(Vec<String>),
+    /// These paths are submodules, whose checkouts no merge here writes.
+    Submodule(Vec<String>),
+    /// The VCS does not compare these paths with what it records, so a
+    /// backup of the working copy would not keep them.
+    Uncompared(Vec<String>),
+    /// This path names a merge driver of its own, which is not run here.
+    Driver { path: String, driver: String },
+    /// The refresh of the move's other paths was declined; the VCS's account.
+    RefreshDeclined(String),
+    /// A write failed and everything written was put back; the account of
+    /// the failure.
+    WriteFailed(String),
+}
+
+/// What [`Vcs::merge_into_working_copy`] merges and refreshes in one
+/// checkout.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkingCopyMergeRequest<'a> {
+    /// The tip the checkout was at.
+    pub base: &'a CommitId,
+    /// The tip its branch moved to.
+    pub incoming: &'a CommitId,
+    /// The paths both the move and an edit changed, merged.
+    pub paths: &'a [String],
+    /// The paths whose index entry and file take `incoming`'s.
+    pub stale_files: &'a [String],
+    /// The paths whose index entry alone takes `incoming`'s.
+    pub stale_index_entries: &'a [String],
+    pub derived: DerivedContentPolicy,
+}
+
+/// What the caller's hook answers once every check has passed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BeforeWrite {
+    Stop,
+    /// Write; `backup` names the backup the caller kept, if any.
+    Write {
+        backup: Option<String>,
+    },
+}
+
+/// A merge whose writes were interrupted: the backup taken before them and
+/// the paths it may have written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterruptedMerge {
+    pub backup: Option<String>,
+    pub paths: Vec<String>,
 }
 
 /// One path of a checkout whose index entry or file differs from `HEAD`, or
@@ -4077,28 +4142,41 @@ pub trait Vcs: Send + Sync {
         scope: RefreshScope,
     ) -> Result<RefreshWrite, VcsError>;
 
-    /// Three-way merge each of `paths`: its content at `base`, the working
-    /// copy's, and its content at `incoming`, writing the result to the
-    /// working copy. A path that merges cleanly is recorded as `incoming`
-    /// holds it, the merge standing as an uncommitted edit; one that does not
-    /// is marked conflicted as the VCS marks a conflicted merge. A path
-    /// `derived` resolves takes the side it names, `incoming` being the side
+    /// Three-way merge each of `request.paths`: its content at `base`, the
+    /// working copy's, and its content at `incoming`, writing the result to
+    /// the working copy, after refreshing `request`'s stale paths from `base`
+    /// to `incoming` as [`Vcs::refresh_paths_if_left`] does. A path that
+    /// merges cleanly is recorded as `incoming` holds it, the merge standing
+    /// as an uncommitted edit; one that does not is marked conflicted as the
+    /// VCS marks a conflicted merge, and so is one whose merge attributes
+    /// declare it unmergeable. A path `derived` resolves, as `incoming`
+    /// declares it, takes the side it names, `incoming` being the side
     /// brought in. Each path's recorded entry must hold `base`'s content or
     /// the working copy's; where one holds neither the answer is
-    /// [`WorkingCopyMerge::TwoEdits`], and where any path's entry or working
-    /// copy changes while the merge is computed, [`WorkingCopyMerge::Declined`];
-    /// either way nothing is written. `before_write` runs once every check
-    /// has passed and before anything is written; where it answers `false`,
-    /// nothing is, and the answer is [`WorkingCopyMerge::Stopped`].
+    /// [`WorkingCopyMerge::TwoEdits`]. Every merge is computed before
+    /// `before_write` runs, once every check has passed; where it answers
+    /// [`BeforeWrite::Stop`], nothing is written. Nothing is written or
+    /// removed through a symbolic link. A path whose entry or working copy
+    /// changes before its write, a declined refresh, or a failed write puts
+    /// back everything written and answers [`WorkingCopyMerge::Declined`];
+    /// where the put-back itself fails, or the process ends part way, the
+    /// checkout reads as interrupted ([`Vcs::interrupted_merge`]) until
+    /// [`Vcs::put_back_interrupted_merge`] runs.
     fn merge_into_working_copy(
         &self,
         repo: &Path,
-        base: &CommitId,
-        incoming: &CommitId,
-        paths: &[String],
-        derived: DerivedContentPolicy,
-        before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+        request: &WorkingCopyMergeRequest<'_>,
+        before_write: &mut dyn FnMut() -> Result<BeforeWrite, VcsError>,
     ) -> Result<WorkingCopyMerge, VcsError>;
+
+    /// The merge into `repo`'s working copy whose writes were interrupted
+    /// and not put back, if any.
+    fn interrupted_merge(&self, repo: &Path) -> Result<Option<InterruptedMerge>, VcsError>;
+
+    /// Put back every path an interrupted merge into `repo`'s working copy
+    /// may have written, index entries included, as it stood before the
+    /// first write; nothing where no merge was interrupted.
+    fn put_back_interrupted_merge(&self, repo: &Path) -> Result<(), VcsError>;
 
     /// Record in the checkout's own history that it stands at `head`, so
     /// [`Vcs::left_behind_at`] answers `None` until the branch next moves

@@ -5319,8 +5319,7 @@ fn settle_drift(
             );
             report.add(
                 elsewhere(
-                    State::EditsMovedAndEdited
-                        .of(&at.repo)
+                    crate::diagnosis::moved_and_edited(&at.repo)
                         .subject(format!(
                             "its branch moved from {} to {} outside this checkout",
                             moved_from.unwrap_or_default(),

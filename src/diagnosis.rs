@@ -520,6 +520,7 @@ pub enum State {
     EditsDriftLeftInPlace,
     EditsMovedAndEdited,
     EditsUnresolved,
+    EditsMergeInterrupted,
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
@@ -621,11 +622,12 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 88] = [
+    pub const ALL: [State; 89] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
         Self::EditsUnresolved,
+        Self::EditsMergeInterrupted,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
@@ -766,7 +768,11 @@ impl State {
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
                              workspace; `rwv doctor --fix` and `rwv sync` name it and write \
                              nothing to that checkout",
-                offers: &[Form::MergeEditedDrift, Form::SetEditsAside],
+                offers: &[
+                    Form::MergeEditedDrift,
+                    Form::SetEditsAside,
+                    Form::ReplaceThenMerge,
+                ],
                 verb_offers: &[],
             },
             Self::EditsUnresolved => &StateRow {
@@ -778,6 +784,20 @@ impl State {
                         and no commit is possible until each is resolved and marked resolved",
                 refused_by: "every verb that refuses a `dirty` checkout, in its place",
                 offers: &[Form::ResolveConflicts],
+                verb_offers: &[],
+            },
+            Self::EditsMergeInterrupted => &StateRow {
+                axis: Axis::Edits,
+                name: "merge interrupted",
+                means: "a merge of edits onto a branch's moved tip stopped part way through its \
+                        writes, so each listed file may hold the merge, the edit, or the moved \
+                        tip's content; the backup named was taken before the first write and \
+                        holds every edit. Running the merge again first puts each listed file \
+                        and its index entry back as they stood before the interrupted run, then \
+                        merges afresh",
+                refused_by: "every verb that judges a checkout's edits, `rwv doctor --fix` \
+                             included",
+                offers: &[Form::MergeEditedDrift],
                 verb_offers: &[],
             },
             Self::EditsMidOperation => &StateRow {
@@ -1962,6 +1982,7 @@ pub enum ChoiceId {
     MergeEditedDrift,
     SetEditsAside,
     ResolveConflicts,
+    ReplaceThenMerge,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2238,6 +2259,13 @@ impl ChoiceId {
                 phrase: "resolve each conflicted file, then mark it resolved",
                 keeps_work: "nothing is written but what you write",
             },
+            Self::ReplaceThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "put a directory holding each listed file in place of what stands \
+                         above it, then merge each edit onto the moved tip",
+                keeps_work: "the working copy and index are kept as a backup before the \
+                             merge writes anything",
+            },
             Self::LandAgain => &ChoiceRow {
                 id: None,
                 phrase: "land again once nothing else is changing the checkout: the landing \
@@ -2446,6 +2474,7 @@ pub enum Form {
     MergeEditedDrift,
     SetEditsAside,
     ResolveConflicts,
+    ReplaceThenMerge,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2473,7 +2502,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 102] = [
+    pub const ALL: [Form; 103] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2576,6 +2605,7 @@ impl Form {
         Self::MergeEditedDrift,
         Self::SetEditsAside,
         Self::ResolveConflicts,
+        Self::ReplaceThenMerge,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3135,6 +3165,12 @@ impl Form {
                 choice: C::ResolveConflicts,
                 steps: &[Vcs(A::MarkResolved)],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::ReplaceThenMerge => &FormRow {
+                choice: C::ReplaceThenMerge,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::Here,
                 shipped: true,
             },
             Self::DriftLandAgain => &FormRow {
@@ -4024,19 +4060,56 @@ pub fn judge_edits(
 ) -> Option<Judged> {
     let mut judging = match vcs.mid_operation(dir) {
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
-        None if dirty.is_empty() => return None,
-        None => match vcs.unmerged_paths(dir) {
-            Ok(conflicted) if !conflicted.is_empty() => State::EditsUnresolved
-                .of(repo)
-                .bind_list("<paths>", &conflicted)
-                .listing(conflicted),
-            _ => State::EditsDirty.of(repo).listing(dirty),
+        None => match vcs.interrupted_merge(dir) {
+            Ok(Some(merge)) => interrupted_merge(repo, &merge),
+            _ if dirty.is_empty() => return None,
+            _ => match vcs.unmerged_paths(dir) {
+                Ok(conflicted) if !conflicted.is_empty() => unresolved(repo, conflicted),
+                _ => State::EditsDirty.of(repo).listing(dirty),
+            },
         },
     };
     if let Some(workspace) = elsewhere {
         judging = judging.elsewhere(workspace);
     }
     Some(judging.checkout(dir).judge(vcs))
+}
+
+fn unresolved(repo: impl fmt::Display, conflicted: Vec<String>) -> Judging {
+    State::EditsUnresolved
+        .of(repo)
+        .bind_list("<paths>", &conflicted)
+        .listing(conflicted)
+}
+
+/// `dir`'s conflicted files, judged `unresolved` whatever else it holds.
+pub fn judge_unresolved(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    elsewhere: Option<&Path>,
+) -> Judged {
+    let mut judging = unresolved(repo, vcs.unmerged_paths(dir).unwrap_or_default());
+    if let Some(workspace) = elsewhere {
+        judging = judging.elsewhere(workspace);
+    }
+    judging.checkout(dir).judge(vcs)
+}
+
+/// A checkout holding files both its branch's move and an edit changed,
+/// listed, whose merge is not refused by what stands above them.
+pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
+    State::EditsMovedAndEdited
+        .of(repo)
+        .without(&[ChoiceId::ReplaceThenMerge])
+}
+
+/// A checkout whose merge of edits onto a moved tip was interrupted, judged.
+pub fn interrupted_merge(repo: impl fmt::Display, merge: &crate::vcs::InterruptedMerge) -> Judging {
+    State::EditsMergeInterrupted
+        .of(repo)
+        .subject(crate::check::backup_named(merge.backup.as_deref()))
+        .listing(&merge.paths)
 }
 
 /// The error a [`Report`] refuses with.
