@@ -329,8 +329,9 @@ in that state records your edits alone.
 Neither flag acts while a listed file is one git does not compare with
 what it records: an ignored file, or one marked assume-unchanged or
 skip-worktree. No backup would keep it, so such a checkout is refused with
-the command that clears each mark, or tracks the ignored file, as its
-choices. Each flag acts only on checkouts of the workspace it runs in. For
+the command that clears each mark as its choice, and an ignored file where the
+move puts one of its own is to be moved out of the way first, on the first run
+as on a rerun. Each flag acts only on checkouts of the workspace it runs in. For
 another workspace's checkout it prints that workspace's `rwv -C` line.
 
 ## The shared invariant

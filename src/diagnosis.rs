@@ -778,7 +778,6 @@ impl State {
                     Form::MergeEditedDrift,
                     Form::SetEditsAside,
                     Form::ReplaceThenMerge,
-                    Form::TrackIgnored,
                     Form::CompareMarked,
                     Form::CompareSkipped,
                 ],
@@ -2006,7 +2005,6 @@ pub enum ChoiceId {
     SetEditsAside,
     ResolveConflicts,
     ReplaceThenMerge,
-    TrackIgnored,
     CompareMarked,
     CompareSkipped,
     UnstageThenMerge,
@@ -2294,12 +2292,6 @@ impl ChoiceId {
                 phrase: "resolve each conflicted file, then mark it resolved",
                 keeps_work: "nothing is written but what you write",
             },
-            Self::TrackIgnored => &ChoiceRow {
-                id: None,
-                phrase: "have the VCS track each listed ignored file, so a backup keeps it, then \
-                         merge or set aside again",
-                keeps_work: "nothing is written but the index entry naming the file",
-            },
             Self::CompareMarked => &ChoiceRow {
                 id: None,
                 phrase: "clear the assume-unchanged mark on each file listed in the command, so \
@@ -2318,8 +2310,8 @@ impl ChoiceId {
                 id: None,
                 phrase: "move out of the way what stands where the moved tip puts each listed \
                          path: a link or file where its directory goes, a directory or an \
-                         untracked file where its file goes; then merge each edit onto the \
-                         moved tip",
+                         untracked file, ignored or not, where its file goes; then merge each \
+                         edit onto the moved tip",
                 keeps_work: "the working copy and index are kept as a backup before the \
                              merge writes anything",
             },
@@ -2590,7 +2582,6 @@ pub enum Form {
     SetEditsAside,
     ResolveConflicts,
     ReplaceThenMerge,
-    TrackIgnored,
     CompareMarked,
     CompareSkipped,
     UnstageThenMerge,
@@ -2627,7 +2618,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 114] = [
+    pub const ALL: [Form; 113] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2732,7 +2723,6 @@ impl Form {
         Self::SetEditsAside,
         Self::ResolveConflicts,
         Self::ReplaceThenMerge,
-        Self::TrackIgnored,
         Self::CompareMarked,
         Self::CompareSkipped,
         Self::UnstageThenMerge,
@@ -3300,12 +3290,6 @@ impl Form {
             Self::ResolveConflicts => &FormRow {
                 choice: C::ResolveConflicts,
                 steps: &[Vcs(A::MarkResolved)],
-                at: W::Checkout,
-                shipped: true,
-            },
-            Self::TrackIgnored => &FormRow {
-                choice: C::TrackIgnored,
-                steps: &[Vcs(A::TrackIgnored)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4496,7 +4480,6 @@ pub fn judge_unresolved(
 pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
     State::EditsMovedAndEdited.of(repo).without(&[
         ChoiceId::ReplaceThenMerge,
-        ChoiceId::TrackIgnored,
         ChoiceId::CompareMarked,
         ChoiceId::CompareSkipped,
     ])
@@ -4533,14 +4516,19 @@ pub fn held(
     if uncompared.is_empty() {
         return judging.without(&[
             ChoiceId::ReplaceThenMerge,
-            ChoiceId::TrackIgnored,
             ChoiceId::CompareMarked,
             ChoiceId::CompareSkipped,
         ]);
     }
     let mut forms = Vec::new();
+    let mut judging = judging;
     if !uncompared.ignored.is_empty() {
-        forms.push(Form::TrackIgnored);
+        judging = judging.subject(format!(
+            "{}; ignored files no backup keeps stand where the moved tip puts its own: {}",
+            reading.moved(),
+            uncompared.ignored.join(", ")
+        ));
+        forms.push(Form::ReplaceThenMerge);
     }
     if !uncompared.assumed.is_empty() {
         forms.push(Form::CompareMarked);
@@ -4549,7 +4537,6 @@ pub fn held(
         forms.push(Form::CompareSkipped);
     }
     judging
-        .bind_list("<ignored>", &uncompared.ignored)
         .bind_list("<assumed>", &uncompared.assumed)
         .bind_list("<skipped>", &uncompared.skipped)
         .only_forms(&forms)

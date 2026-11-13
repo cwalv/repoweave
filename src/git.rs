@@ -3240,7 +3240,6 @@ impl Vcs for GitVcs {
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
             VcsAction::Unstage => "git -C <checkout> restore --staged -- <paths>",
             VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <stash>",
-            VcsAction::TrackIgnored => "git -C <checkout> add -f -- <ignored>",
             VcsAction::CompareMarked => {
                 "git -C <checkout> update-index --no-assume-unchanged -- <assumed>"
             }

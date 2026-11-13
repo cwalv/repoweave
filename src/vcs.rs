@@ -423,7 +423,6 @@ pub enum VcsAction {
     ShowStagedFromBackup,
     Unstage,
     TakeBackSetAside,
-    TrackIgnored,
     CompareMarked,
     CompareOutside,
     RemoveWorktree,
@@ -446,7 +445,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 30] = [
+    pub const ALL: [VcsAction; 29] = [
         Self::Commit,
         Self::Stash,
         Self::StashUntracked,
@@ -457,7 +456,6 @@ impl VcsAction {
         Self::ShowStagedFromBackup,
         Self::Unstage,
         Self::TakeBackSetAside,
-        Self::TrackIgnored,
         Self::CompareMarked,
         Self::CompareOutside,
         Self::RemoveWorktree,

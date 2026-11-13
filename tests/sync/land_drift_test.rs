@@ -1047,12 +1047,13 @@ fn an_untracked_file_where_the_move_puts_a_directory_is_kept_in_the_target() {
 
 /// An ignored file stands where the move adds a file: git's merge treats an
 /// ignored file as expendable, so only reading it first keeps it. It holds
-/// the checkout as a file both moved and edited.
+/// the checkout as a file both moved and edited, offered moving it out of
+/// the way.
 fn ignored_file_where_the_move_adds_one(side: Side) {
     landing_and_fix_keep(
         side,
         State::EditsMovedAndEdited,
-        true,
+        false,
         &["build.log"],
         |checkout| {
             let exclude = common::git_in(
@@ -3024,6 +3025,55 @@ fn a_rerun_from_set_back_holds_over_an_ignored_file_the_branch_now_adds() {
 
     let said = common::cli::describe(&out);
     assert!(on_branch(&f.ww_lib), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("x.log")).as_deref(),
+        Some("theirs log\n")
+    );
+    assert_eq!(read(&f.scratch.join("x.log")).as_deref(), Some("my log\n"));
+}
+
+/// An edit beside an ignored file of the operator's where the move adds
+/// one: the first run offers the choice the rerun does, moving the file out
+/// of the way, and run as printed it finishes, both copies kept.
+#[test]
+fn an_ignored_file_where_the_move_adds_one_is_moved_aside_then_merged() {
+    let f = fixture();
+    commit_file(&f.ww_lib, "u.txt", "a\nm\nm\nm\nb\n", "u");
+    let exclude = PathBuf::from(common::git_in(
+        &f.ww_lib,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ))
+    .join("info/exclude");
+    std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    std::fs::write(&exclude, "x.log\n").unwrap();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("u.txt"), "a2\nm\nm\nm\nb\n").unwrap();
+        std::fs::write(elsewhere.join("x.log"), "theirs log\n").unwrap();
+        common::git_in(elsewhere, &["add", "-f", "x.log"]);
+    });
+    std::fs::write(f.ww_lib.join("u.txt"), "a\nm\nm\nm\nb2\n").unwrap();
+    std::fs::write(f.ww_lib.join("x.log"), "my log\n").unwrap();
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert!(stderr.contains("move out of the way"), "{stderr}");
+    assert!(!stderr.contains("add -f"), "{stderr}");
+    assert!(
+        listing_under(&stderr, "edits moved and edited").contains(&"x.log".to_owned()),
+        "{stderr}"
+    );
+    std::fs::create_dir_all(&f.scratch).unwrap();
+    std::fs::rename(f.ww_lib.join("x.log"), f.scratch.join("x.log")).unwrap();
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("merged onto"), "{said}");
+    assert!(on_branch(&f.ww_lib), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("u.txt")).as_deref(),
+        Some("a2\nm\nm\nm\nb2\n")
+    );
     assert_eq!(
         read(&f.ww_lib.join("x.log")).as_deref(),
         Some("theirs log\n")
