@@ -169,12 +169,14 @@ pub enum Action {
         project: Repo,
         member: Repo,
     },
-    /// Removes `member`'s table from the project's `rwv.toml` at `at`, as an
-    /// operator settling a conflict by hand would.
+    /// Rewrites the project's `rwv.toml` at `at` with its member tables in
+    /// `order` and no `[repositories]` header, as a hand edit would leave it.
     ReorderManifest {
         at: Place,
         order: Vec<Repo>,
     },
+    /// Removes `member`'s table from the project's `rwv.toml` at `at`, as an
+    /// operator settling a conflict by hand would.
     DropManifestEntry {
         at: Place,
         project: Repo,

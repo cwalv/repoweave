@@ -493,13 +493,13 @@ fn placement_disagreement_compares_with_the_url_on_the_default_branch() {
 }
 
 fn declare_by_hand(w: &PushWorkspace, repo: &str, branch: &str) {
-    let mut manifest: toml::Value = toml::from_str(&manifest_text(w)).unwrap();
-    manifest["repositories"][repo]["branch"] = toml::Value::String(branch.to_owned());
-    std::fs::write(
-        project(w).join("rwv.toml"),
-        toml::to_string(&manifest).unwrap(),
-    )
-    .unwrap();
+    let text = manifest_text(w);
+    let header = format!("[repositories.\"{repo}\"]");
+    let table = text.find(&header).unwrap();
+    let line = table + text[table..].find("branch = ").unwrap();
+    let end = line + text[line..].find('\n').unwrap();
+    let edited = format!("{}branch = \"{branch}\"{}", &text[..line], &text[end..]);
+    std::fs::write(project(w).join("rwv.toml"), edited).unwrap();
 }
 
 fn head_of(dir: &Path) -> String {
