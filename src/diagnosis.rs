@@ -2634,7 +2634,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 113] = [
+    pub const ALL: [Form; 115] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -3424,7 +3424,7 @@ impl Form {
             },
             Self::ResumeWithManifest => &FormRow {
                 choice: C::ResumeWithManifest,
-                steps: &[Step::ResumeRecorded],
+                steps: &[Step::Recorded("<resume>")],
                 at: W::Here,
                 shipped: true,
             },
