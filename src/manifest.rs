@@ -3860,7 +3860,7 @@ role = "owned"
     }
 
     // ========================================================================
-    // Manifest::write — durable publish
+    // Manifest::edit_file — durable publish
     // ========================================================================
 
     /// Atomicity, pinned by the mechanism rather than by hoping: an overwrite
