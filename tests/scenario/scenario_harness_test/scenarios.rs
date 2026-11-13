@@ -18464,6 +18464,9 @@ pub enum ManifestSettle {
     /// `lib`'s role changed differently on both sides and its
     /// `recurse-submodules` only on `main`: the role alone is in conflict.
     MemberFields(ManifestStopHistory),
+    /// `docs` added on both sides with different roles: the whole member is
+    /// in conflict, and its role's setter settles it.
+    BothAdded,
     /// `lib`'s url changed on one side and its role on the other, beside
     /// `app`'s `history` in conflict: `lib` is not.
     CleanFieldBeside,
@@ -18914,6 +18917,33 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("# laid out by hand")),
             ]);
             "settling the last rwv.toml entry writes the file whole, as an ordinary setter does"
+        }
+        S::BothAdded => {
+            steps = vec![
+                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                create("w"),
+                Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-role", DOCS, "fork"]).expect(Exit::Succeeds),
+                Step::hand_commit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "proj--w",
+                    &[("NOTES.txt", "w note\n")],
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--hard"]),
+                Step::rwv(&ww("w"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains(
+                        "rwv.toml entry local/remotes/docs is in conflict:",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "keep yours: rwv member set-role local/remotes/docs owned",
+                    )),
+                settles(&["member", "set-role", DOCS, "owned"], None),
+                continues(),
+                head_manifest().claim(Claim::OutputLacks("fork")),
+            ];
+            "a member both sides added differently is settled by the setter of the field they differ in"
         }
         S::CleanFieldBeside => {
             steps.extend([

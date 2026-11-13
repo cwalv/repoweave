@@ -71,8 +71,7 @@ impl Setting {
     }
 
     fn touches(&self, conflict: &EntryConflict) -> bool {
-        let path = self.path();
-        path.starts_with(&conflict.path) || conflict.path.starts_with(&path)
+        self.path().starts_with(&conflict.path)
     }
 
     fn apply(&self, manifest: &mut Manifest) {
