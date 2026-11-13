@@ -320,6 +320,7 @@ The others follow.
 | `dependent checked out elsewhere` | C35: land `<dep>` into its target first (a landed one: retire it) | `rwv land` | the dependent's workspace, on its machine | a landing only fast-forwards |
 | `dependent checked out elsewhere` | C35: land `<dep>` into its target first (a landed one: retire it) | `rwv land --retire` | the dependent's workspace, on its machine | a landing only fast-forwards |
 | `dependent checked out elsewhere` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `dependent checked out elsewhere` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
 | `dependent on another machine` | C35: land `<dep>` into its target first (a landed one: retire it) | `rwv land` | the dependent's workspace, on its machine | a landing only fast-forwards |
 | `dependent on another machine` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `dependent moved mid-operation` | carry each dependent again from where it now stands, its new commits with it | `rwv sync --continue` | here | the dependents are judged again before any moves; a replay that conflicts stops as the first did |

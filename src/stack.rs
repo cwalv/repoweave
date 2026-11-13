@@ -276,15 +276,18 @@ fn workweave_of(checkout: &Path, project: &ProjectName) -> Option<String> {
 }
 
 /// One `target` dependents state per dependent `stack` cannot carry, each
-/// with its own choices; `t` is the target the rebind names. A landing into
-/// a dependent the running operation holds a claim on cannot run, so it is
-/// not offered for a dependent of one of the `claimed` branches.
+/// with its own choices; `t` is the target the rebind names. `held` is
+/// `None` where no operation of this workspace stands, and else the branches
+/// it holds the landing claim on: a landing into one of those cannot run, and
+/// nothing that moves or deletes one can either, so a dependent held leaves
+/// only the abort that puts the operation back; the abort is offered only
+/// where an operation stands.
 pub(crate) fn judge(
     stack: &Stack,
     repos: &Repos<'_>,
     t: &str,
     verb: &'static str,
-    claimed: &[&str],
+    held: Option<&[&str]>,
     report: &mut Report,
 ) {
     let project_dir = repos.dir(&RepoKey::Project);
@@ -307,8 +310,16 @@ pub(crate) fn judge(
             .bind("<project>", repos.project)
             .checkout(&project_dir)
             .by_verb(verb);
-        if claimed.contains(&uncarried.parent.as_str()) {
-            judging = judging.without(&[crate::diagnosis::ChoiceId::C35]);
+        use crate::diagnosis::ChoiceId as Choice;
+        match held {
+            None => judging = judging.without(&[Choice::LostRace]),
+            Some(claimed) => {
+                if claimed.contains(&dependent) {
+                    judging = judging.without(&[Choice::C35, Choice::C16, Choice::C12]);
+                } else if claimed.contains(&uncarried.parent.as_str()) {
+                    judging = judging.without(&[Choice::C35]);
+                }
+            }
         }
         judging = match &uncarried.why {
             Why::LacksTip(lacking) => judging.listing(lacking.iter().map(|repo| {
@@ -565,7 +576,7 @@ impl Carrier<'_> {
             .iter()
             .map(|carrying| carrying.branch.as_str())
             .collect();
-        judge(&stack, &self.repos, self.t, verb, &claimed, &mut report);
+        judge(&stack, &self.repos, self.t, verb, Some(&claimed), &mut report);
         report.into_result()?;
         refuse_in_the_way(&stack, &self.repos, verb)?;
         let project_dir = self.repos.dir(&RepoKey::Project);
@@ -656,7 +667,7 @@ impl Carrier<'_> {
             }
         }
         Ok(Carries {
-            carried: self.move_carried(verb)?,
+            carried: self.move_carried(verb, &stack.carried)?,
             landed: stack.landed,
         })
     }
@@ -754,11 +765,12 @@ impl Carrier<'_> {
     /// backup kept and the move journaled first; one already there, or built
     /// on since, is left. Where any other moved since the carry read it,
     /// nothing moves.
-    fn move_carried(&self, verb: &'static str) -> anyhow::Result<Vec<Carried>> {
+    fn move_carried(&self, verb: &'static str, carries: &[Carry]) -> anyhow::Result<Vec<Carried>> {
         crate::test_pause::point("carry-move");
         let record = take_in(self.workspace)?;
         let mut moving = Vec::new();
         let mut raced = Vec::new();
+        let mut opened = Stack::default();
         for carrying in &record.carries {
             let Some(to) = &carrying.composed else {
                 continue;
@@ -771,7 +783,32 @@ impl Carrier<'_> {
                 .map(|n| n.id().clone());
             match &now {
                 Some(now) if now == to || vcs.is_ancestor(&dir, &rev(to), &rev(now))? => {}
-                Some(now) if now == &carrying.from => moving.push((carrying, to)),
+                Some(now) if now == &carrying.from => {
+                    let checkouts = vcs.checkouts_of_branch(&dir, &branch)?;
+                    let carry = carries
+                        .iter()
+                        .find(|c| c.dependent.as_str() == carrying.branch);
+                    match carry {
+                        Some(carry) if !checkouts.is_empty() => {
+                            if let Some(listed) = opened
+                                .uncarried
+                                .iter_mut()
+                                .find(|u| u.dependent.as_str() == carrying.branch)
+                            {
+                                if let Why::CheckedOut(at) = &mut listed.why {
+                                    at.extend(checkouts);
+                                }
+                            } else {
+                                opened.uncarried.push(Uncarried {
+                                    dependent: carry.dependent.clone(),
+                                    parent: carry.parent.clone(),
+                                    why: Why::CheckedOut(checkouts),
+                                });
+                            }
+                        }
+                        _ => moving.push((carrying, to)),
+                    }
+                }
                 _ => raced.push(format!(
                     "'{}' in {} is {}, not at {}, where the carry read it",
                     carrying.branch,
@@ -781,6 +818,12 @@ impl Carrier<'_> {
                     carrying.from.short()
                 )),
             }
+        }
+        if !opened.uncarried.is_empty() {
+            let claimed: Vec<&str> = record.carries.iter().map(|c| c.branch.as_str()).collect();
+            let mut report = Report::default();
+            judge(&opened, &self.repos, self.t, verb, Some(&claimed), &mut report);
+            report.into_result()?;
         }
         if !raced.is_empty() {
             let mut report = Report::default();

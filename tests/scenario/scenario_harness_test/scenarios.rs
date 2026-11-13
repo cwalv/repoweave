@@ -17803,6 +17803,51 @@ pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_b
     )
 }
 
+/// `stack-carried`, with `w2` opened in a workweave of its own after its
+/// carry composed and before it moved: the sync moves no dependent and
+/// refuses with the dependent checked out elsewhere, printing no landing
+/// the carry's claim would refuse and deletion of that workweave would also
+/// be refused by; the printed `rwv abort` ends the operation, and the rerun
+/// offers the landing and the delete, which clears it.
+pub fn a_dependent_opened_elsewhere_as_its_carry_moves_it_is_not_moved() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["sync"], "carry-move", "carrying"),
+        Step::rwv(
+            &a(),
+            &["workweave", "create", "--project", "proj", "w2s", "--branch", "w2"],
+        )
+        .expect(Exit::Succeeds),
+        Step::release("carrying")
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::OutputContains("w2 lands into proj--w1"))
+            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::OutputLacks("rwv land"))
+            .claim(Claim::OutputLacks("rwv workweave delete"))
+            .claim(Claim::Lacks {
+                at: ww("w1"),
+                repo: Repo::App,
+                rev: "w2",
+                mark: "main-app",
+            }),
+        Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::OutputContains("rwv land")),
+        Step::rwv_printed(&a(), "rwv workweave delete w2s").expect(Exit::Code(3)),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along")),
+    ]);
+    scenario(
+        "stack: a dependent opened elsewhere as its carry moves it is not moved",
+        steps,
+    )
+}
+
 /// How the refusal of a continued carry, met a dependent checked out
 /// elsewhere, is cleared.
 #[derive(Debug, Clone, Copy)]

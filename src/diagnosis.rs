@@ -1566,6 +1566,7 @@ impl State {
                     Form::C35,
                     Form::C35Retire,
                     Form::C12Feature,
+                    Form::LostRace,
                 ],
                 verb_offers: &[],
             },
