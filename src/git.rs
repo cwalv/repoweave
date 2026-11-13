@@ -190,51 +190,78 @@ fn with_trailers(message: &str, annotations: &[Annotation]) -> String {
 }
 
 /// `message`, bytes in whatever encoding its commit names, recording
-/// `annotations` under `key` in place of each trailer it held under `key`, in
-/// its trailer block where it has one; every other byte is kept as it was.
+/// `annotations` under `key` in place of each trailer it held under `key` in
+/// its trailer block, the key matched without regard to case as git reads
+/// trailers. The annotations close the trailer block, or open one where the
+/// message has none; every other line is kept as it was.
 fn with_trailers_replaced(message: &[u8], key: &str, annotations: &[Annotation]) -> Vec<u8> {
-    let held_under_key = |line: &[u8]| {
-        line.strip_prefix(key.as_bytes())
-            .is_some_and(|rest| rest.starts_with(b":"))
+    let blank = |line: &[u8]| line.iter().all(u8::is_ascii_whitespace);
+    let continues = |line: &[u8]| line.first().is_some_and(|b| *b == b' ' || *b == b'\t');
+    let token = |line: &[u8]| -> Option<Vec<u8>> {
+        let colon = line.iter().position(|b| *b == b':')?;
+        let token = line[..colon].trim_ascii_end();
+        (!token.is_empty()
+            && token
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'-'))
+        .then(|| token.to_vec())
     };
-    let mut lines: Vec<&[u8]> = message
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !held_under_key(line))
-        .collect();
-    while lines
-        .last()
-        .is_some_and(|line| line.iter().all(u8::is_ascii_whitespace))
-    {
-        lines.pop();
-    }
-    let paragraph_start = lines
+    let lines: Vec<&[u8]> = message.split(|byte| *byte == b'\n').collect();
+    let end = lines
         .iter()
-        .rposition(|line| line.iter().all(u8::is_ascii_whitespace))
-        .map(|at| at + 1);
-    let trailer_block = paragraph_start.is_some_and(|start| {
-        lines[start..].iter().all(|line| {
-            line.windows(2)
-                .position(|pair| pair == b": ")
-                .is_some_and(|at| {
-                    at > 0
-                        && line[..at]
-                            .iter()
-                            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-                })
-        })
-    });
-    let mut text = lines.join(&b'\n');
-    text.push(b'\n');
-    if annotations.is_empty() {
-        return text;
+        .rposition(|line| !blank(line))
+        .map_or(0, |at| at + 1);
+    let block = lines[..end]
+        .iter()
+        .rposition(|line| blank(line))
+        .map(|at| at + 1)
+        .filter(|&start| {
+            lines[start..end]
+                .iter()
+                .enumerate()
+                .all(|(at, line)| token(line).is_some() || (at > 0 && continues(line)))
+        });
+    let mut kept: Vec<Vec<u8>> = Vec::new();
+    let mut dropping = false;
+    for (at, line) in lines[..end].iter().enumerate() {
+        if block.is_some_and(|start| at >= start) {
+            if dropping && continues(line) {
+                continue;
+            }
+            dropping = token(line).is_some_and(|held| held.eq_ignore_ascii_case(key.as_bytes()));
+            if dropping {
+                continue;
+            }
+        }
+        kept.push(line.to_vec());
     }
-    if !trailer_block {
-        text.push(b'\n');
+    let crlf = lines[..end]
+        .last()
+        .is_some_and(|line| line.ends_with(b"\r"));
+    let ending = |mut line: Vec<u8>| {
+        if crlf {
+            line.push(b'\r');
+        }
+        line
+    };
+    match block {
+        Some(start) if kept.len() == start && annotations.is_empty() => {
+            while kept.last().is_some_and(|line| blank(line)) {
+                kept.pop();
+            }
+        }
+        None if !annotations.is_empty() && !kept.is_empty() => kept.push(ending(Vec::new())),
+        _ => {}
     }
-    for annotation in annotations {
-        text.extend_from_slice(format!("{}: {}\n", annotation.key, annotation.value).as_bytes());
+    kept.extend(annotations.iter().map(|annotation| {
+        ending(format!("{}: {}", annotation.key, annotation.value).into_bytes())
+    }));
+    let mut rest: Vec<Vec<u8>> = lines[end..].iter().map(|line| line.to_vec()).collect();
+    if rest.is_empty() && !annotations.is_empty() {
+        rest.push(Vec::new());
     }
-    text
+    kept.extend(rest);
+    kept.join(&b'\n')
 }
 
 fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {

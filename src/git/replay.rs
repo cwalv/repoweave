@@ -625,4 +625,74 @@ mod tests {
             None
         );
     }
+
+    fn replaced(message: &str, values: &[&str]) -> String {
+        let annotations: Vec<crate::vcs::Annotation> = values
+            .iter()
+            .map(|value| crate::vcs::Annotation {
+                key: "Rwv-Repin",
+                value: (*value).to_owned(),
+            })
+            .collect();
+        String::from_utf8(super::super::with_trailers_replaced(
+            message.as_bytes(),
+            "Rwv-Repin",
+            &annotations,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_replaced_record_closes_the_trailer_block_it_was_in() {
+        assert_eq!(
+            replaced(
+                "lock\n\nbody\n\nRwv-Repin: old\nCo-Authored-By: x\n",
+                &["new"]
+            ),
+            "lock\n\nbody\n\nCo-Authored-By: x\nRwv-Repin: new\n"
+        );
+    }
+
+    #[test]
+    fn a_record_opens_a_trailer_block_where_the_message_has_none() {
+        assert_eq!(
+            replaced("lock\n\nbody\n", &["new"]),
+            "lock\n\nbody\n\nRwv-Repin: new\n"
+        );
+    }
+
+    #[test]
+    fn a_prose_line_starting_with_the_key_outside_the_trailer_block_is_kept() {
+        assert_eq!(
+            replaced(
+                "lock\n\nRwv-Repin: is how this is written up\nmore prose\n\nRwv-Repin: old\n",
+                &["new"]
+            ),
+            "lock\n\nRwv-Repin: is how this is written up\nmore prose\n\nRwv-Repin: new\n"
+        );
+    }
+
+    #[test]
+    fn a_record_under_the_key_in_another_case_is_replaced_as_git_reads_it() {
+        assert_eq!(
+            replaced("lock\n\nrwv-repin: old\n", &["new"]),
+            "lock\n\nRwv-Repin: new\n"
+        );
+    }
+
+    #[test]
+    fn a_record_dropped_with_nothing_in_its_place_takes_its_emptied_block_with_it() {
+        assert_eq!(
+            replaced("lock\n\nbody\n\nRwv-Repin: old\n", &[]),
+            "lock\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn crlf_lines_keep_their_endings_and_the_new_record_takes_them() {
+        assert_eq!(
+            replaced("lock\r\n\r\nbody\r\n", &["new"]),
+            "lock\r\n\r\nbody\r\n\r\nRwv-Repin: new\r\n"
+        );
+    }
 }
