@@ -18461,9 +18461,12 @@ pub enum ManifestSettle {
     /// `app`'s and `lib`'s `history`, both changed differently on both
     /// sides, settled one at a time by `branch set-history`.
     TwoEntries(ManifestStopHistory),
-    /// `lib`'s role changed on one side and its `recurse-submodules` on the
-    /// other: one entry, settled by both setters.
+    /// `lib`'s role changed differently on both sides and its
+    /// `recurse-submodules` only on `main`: the role alone is in conflict.
     MemberFields(ManifestStopHistory),
+    /// `lib`'s url changed on one side and its role on the other, beside
+    /// `app`'s `history` in conflict: `lib` is not.
+    CleanFieldBeside,
     /// The top-level `history`, settled by `branch set-history`.
     TopLevelHistory(ManifestStopHistory),
     /// `docs` changed on one side and removed on the other, settled by
@@ -18494,8 +18497,8 @@ pub enum ManifestSettle {
     /// `app`'s role changed only on `main`, merged by git outside the
     /// markers, beside `lib`'s `history` in conflict.
     CleanBeside,
-    /// `lib`'s branch moved to a new branch on one side and its url on the
-    /// other: one entry, settled by `member set-branch` and `member set-url`.
+    /// `lib`'s branch moved to a new branch differently on both sides and its
+    /// url only on `main`: the branch alone is in conflict.
     BranchAndUrl(ManifestStopHistory),
     /// Every entry settled and `rwv.toml` staged, then `rwv abort`.
     AbortSettled(ManifestStopHistory),
@@ -18638,32 +18641,29 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             steps.extend([
                 Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "false"])
                     .expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-role", LIB, "dependency"]).expect(Exit::Succeeds),
                 Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
                 stop(history)
                     .claim(Claim::OutputContains(
-                        "rwv member set-role local/remotes/lib fork",
+                        "keep yours: rwv member set-role local/remotes/lib fork",
                     ))
                     .claim(Claim::OutputContains(
-                        "rwv member set-recurse-submodules local/remotes/lib false",
+                        "keep incoming: rwv member set-role local/remotes/lib dependency",
                     ))
-                    .claim(Claim::OutputContains(
-                        "rwv member set-recurse-submodules local/remotes/lib true",
-                    )),
-                settles(
-                    &["member", "set-role", LIB, "fork"],
-                    Some("set-recurse-submodules"),
-                ),
-                in_flight(history),
-                parked().claim(Claim::OutputContains("set-recurse-submodules")),
-                settles(&["member", "set-recurse-submodules", LIB, "false"], None),
+                    .claim(Claim::OutputLacks("set-recurse-submodules")),
+                settles(&["member", "set-role", LIB, "fork"], None),
                 continues_after(history),
                 head_manifest()
                     .claim(Claim::OutputContains("role = \"fork\""))
                     .claim(Claim::OutputContains("recurse-submodules = false")),
             ]);
             match history {
-                H::Merge => "a member's fields are settled by their setters at a merge stop",
-                H::Linear => "a member's fields are settled by their setters at a linear stop",
+                H::Merge => {
+                    "keeping yours of the one field both sides changed keeps the field only incoming changed, at a merge stop"
+                }
+                H::Linear => {
+                    "keeping yours of the one field both sides changed keeps the field only incoming changed, at a linear stop"
+                }
             }
         }
         S::TopLevelHistory(history) => {
@@ -18915,6 +18915,31 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             ]);
             "settling the last rwv.toml entry writes the file whole, as an ordinary setter does"
         }
+        S::CleanFieldBeside => {
+            steps.extend([
+                Step::rwv(&a(), &["member", "set-url", LIB, "url:fork:lib"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+                set_history(&a(), "merge", APP),
+                set_history(&ww("w"), "linear", APP),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains("--repo local/remotes/app"))
+                    .claim(Claim::OutputLacks("local/remotes/lib")),
+                settles(&["branch", "set-history", "merge", "--repo", APP], None),
+                Step::git(
+                    &ww("w"),
+                    Repo::Proj,
+                    &["status", "--porcelain", "--", "rwv.toml"],
+                )
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("UU")),
+                continues(),
+                head_manifest()
+                    .claim(Claim::OutputContains("role = \"fork\""))
+                    .claim(Claim::OutputContains("fork/lib.git"))
+                    .claim(Claim::OutputContains("history = \"merge\"")),
+            ]);
+            "a member's fields each changed on one side are no conflict beside an entry that is"
+        }
         S::CleanBeside => {
             steps.extend([
                 Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
@@ -18939,22 +18964,17 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
         S::BranchAndUrl(history) => {
             steps.extend([
                 Step::rwv(&a(), &["member", "set-url", LIB, "url:fork:lib"]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-branch", LIB, "lib-main", "--new"])
+                    .expect(Exit::Succeeds),
                 Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
                     .expect(Exit::Succeeds),
                 stop(history)
                     .claim(Claim::OutputContains(
-                        "rwv member set-branch local/remotes/lib lib-w",
+                        "keep yours: rwv member set-branch local/remotes/lib lib-w",
                     ))
                     .claim(Claim::OutputContains(
-                        "rwv member set-url local/remotes/lib",
-                    )),
-                Step::rwv(&ww("w"), &["member", "set-url", LIB, "url:fork:lib"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("still has entries in conflict"))
-                    .claim(Claim::OutputContains("set-branch")),
-                in_flight(history),
-                parked()
-                    .claim(Claim::OutputContains("set-branch"))
+                        "keep incoming: rwv member set-branch local/remotes/lib lib-main",
+                    ))
                     .claim(Claim::OutputLacks("set-url")),
                 settles(&["member", "set-branch", LIB, "lib-w"], None),
                 continues_after(history),
@@ -18964,10 +18984,10 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             ]);
             match history {
                 H::Merge => {
-                    "a member's branch and url are settled by their setters at a merge stop"
+                    "a member's branch is settled by its setter and its url changed on one side kept, at a merge stop"
                 }
                 H::Linear => {
-                    "a member's branch and url are settled by their setters at a linear stop"
+                    "a member's branch is settled by its setter and its url changed on one side kept, at a linear stop"
                 }
             }
         }

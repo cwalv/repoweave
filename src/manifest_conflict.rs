@@ -1,7 +1,8 @@
 //! An `rwv.toml` a merge or a replay left conflicted, read from the sides
-//! the VCS recorded for it. A member's whole table is one entry, an
-//! integration's table is one, and every other top-level key is one; an
-//! entry the two sides changed, added or removed differently is in conflict.
+//! the VCS recorded for it. Each field of a member every side holds is one
+//! entry; a member some side lacks, an integration's table and every other
+//! top-level key are each one, whole. An entry the two sides changed, added
+//! or removed differently is in conflict.
 //! An entry's setter, run there, settles it on both sides and stages
 //! nothing else; the file is staged once no entry is left in conflict.
 
@@ -48,18 +49,30 @@ pub(crate) enum Setting {
 }
 
 impl Setting {
-    fn entry(&self) -> Vec<String> {
-        match self {
-            Self::Branch(member, _)
-            | Self::Url(member, _)
-            | Self::Role(member, _)
-            | Self::RecurseSubmodules(member, _)
-            | Self::Remove(member)
-            | Self::History(Some(member), _) => {
-                vec!["repositories".to_owned(), member.as_str().to_owned()]
+    /// The key path this setting writes: a member's field, a member's whole
+    /// table for its removal, or the top-level `history`.
+    fn path(&self) -> Vec<String> {
+        let (member, field) = match self {
+            Self::History(None, _) => return vec!["history".to_owned()],
+            Self::Remove(member) => {
+                return vec!["repositories".to_owned(), member.as_str().to_owned()];
             }
-            Self::History(None, _) => vec!["history".to_owned()],
-        }
+            Self::Branch(member, _) => (member, "branch"),
+            Self::Url(member, _) => (member, "url"),
+            Self::Role(member, _) => (member, "role"),
+            Self::RecurseSubmodules(member, _) => (member, "recurse-submodules"),
+            Self::History(Some(member), _) => (member, "history"),
+        };
+        vec![
+            "repositories".to_owned(),
+            member.as_str().to_owned(),
+            field.to_owned(),
+        ]
+    }
+
+    fn touches(&self, conflict: &EntryConflict) -> bool {
+        let path = self.path();
+        path.starts_with(&conflict.path) || conflict.path.starts_with(&path)
     }
 
     fn apply(&self, manifest: &mut Manifest) {
@@ -191,9 +204,35 @@ fn entries(base: &toml::Table, ours: &toml::Table, theirs: &toml::Table) -> Vec<
             .collect();
         subs.sort();
         subs.dedup();
-        paths.extend(subs.into_iter().map(|sub| vec![key.clone(), sub.clone()]));
+        for sub in subs {
+            let entry = vec![key.clone(), sub.clone()];
+            match member_fields(&sides, &entry) {
+                Some(fields) => paths.extend(fields.into_iter().map(|field| {
+                    let mut path = entry.clone();
+                    path.push(field.clone());
+                    path
+                })),
+                None => paths.push(entry),
+            }
+        }
     }
     paths
+}
+
+/// The fields of the member at `entry`, where every side holds that member;
+/// `None` for any other entry, which is judged whole.
+fn member_fields<'a>(sides: &[&'a toml::Table; 3], entry: &[String]) -> Option<Vec<&'a String>> {
+    if entry.first().map(String::as_str) != Some("repositories") {
+        return None;
+    }
+    let tables = sides
+        .iter()
+        .map(|side| at(side, entry).and_then(toml::Value::as_table))
+        .collect::<Option<Vec<_>>>()?;
+    let mut fields: Vec<&String> = tables.iter().flat_map(|table| table.keys()).collect();
+    fields.sort();
+    fields.dedup();
+    Some(fields)
 }
 
 fn at<'a>(table: &'a toml::Table, path: &[String]) -> Option<&'a toml::Value> {
@@ -254,8 +293,7 @@ pub(crate) fn settle(
     let Ok(mut sides) = read(&recorded) else {
         return Ok(None);
     };
-    let entry = setting.entry();
-    if !sides.conflicts().iter().any(|c| c.path == entry) {
+    if !sides.conflicts().iter().any(|c| setting.touches(c)) {
         return Ok(None);
     }
     setting.apply(&mut sides.ours);
@@ -280,7 +318,7 @@ pub(crate) fn settle(
         )?;
     }
     Ok(Some(Settled {
-        entry: entry_name(&entry),
+        entry: entry_name(&setting.path()),
         left,
         kept,
     }))
@@ -397,6 +435,7 @@ pub(crate) fn refuse_continue_while_conflicted(
 fn entry_name(path: &[String]) -> String {
     match path {
         [table, member] if table == "repositories" => member.clone(),
+        [table, member, field] if table == "repositories" => format!("{member} {field}"),
         [table, name] => format!("[{table}.{name}]"),
         [key] => key.clone(),
         _ => path.join("."),
@@ -432,10 +471,19 @@ pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec
         Reading::Entries(conflicts) if conflicts.is_empty() => vec![format!(
             "rwv.toml: no entry is in conflict, only lines are; {by_hand}"
         )],
-        Reading::Entries(conflicts) => conflicts
-            .iter()
-            .flat_map(|conflict| conflict_lines(conflict, replaying, by_hand))
-            .collect(),
+        Reading::Entries(conflicts) => {
+            let mut lines = Vec::new();
+            let mut heading: Option<&[String]> = None;
+            for conflict in conflicts {
+                let entry = &conflict.path[..conflict.path.len().min(2)];
+                if heading != Some(entry) {
+                    heading = Some(entry);
+                    lines.extend(conflict_heading(conflict, replaying));
+                }
+                lines.extend(conflict_lines(conflict, replaying, by_hand));
+            }
+            lines
+        }
     };
     if lines.iter().any(|line| line.contains(" yours")) {
         lines.push(format!(
@@ -455,70 +503,98 @@ pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec
     lines
 }
 
-/// `replaying`: the checkout is replaying its branch's commits, so the side
-/// the VCS records as its own is the one taken in, and the other is the
-/// branch's own.
-fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> Vec<String> {
-    let name = entry_name(&conflict.path);
-    let member = match conflict.path.as_slice() {
-        [table, member] if table == "repositories" => Some(member.as_str()),
-        _ => None,
-    };
-    let (yours, incoming) = if replaying {
-        (&conflict.theirs, &conflict.ours)
+/// Which recorded side is the operator's own: during a replay the side the
+/// VCS records as the checkout's is the one being taken in.
+fn yours_and_incoming(conflict: &EntryConflict, replaying: bool) -> [Option<&toml::Value>; 2] {
+    if replaying {
+        [conflict.theirs.as_ref(), conflict.ours.as_ref()]
     } else {
-        (&conflict.ours, &conflict.theirs)
-    };
-    let mut lines = Vec::new();
-    match (yours, incoming) {
-        (Some(toml::Value::Table(yours)), Some(toml::Value::Table(incoming))) => {
-            lines.push(format!("rwv.toml entry {name} is in conflict:"));
+        [conflict.ours.as_ref(), conflict.theirs.as_ref()]
+    }
+}
+
+fn member_of(path: &[String]) -> Option<&str> {
+    match path {
+        [table, member, ..] if table == "repositories" => Some(member),
+        _ => None,
+    }
+}
+
+fn conflict_heading(conflict: &EntryConflict, replaying: bool) -> Vec<String> {
+    let name = entry_name(&conflict.path[..conflict.path.len().min(2)]);
+    match (conflict.path.len(), yours_and_incoming(conflict, replaying)) {
+        (3, _) | (_, [Some(toml::Value::Table(_)), Some(toml::Value::Table(_))]) => {
+            vec![format!("rwv.toml entry {name} is in conflict:")]
+        }
+        (_, [yours, incoming]) => vec![format!(
+            "rwv.toml entry {name} is in conflict: {} in yours, {} incoming",
+            shown(yours),
+            shown(incoming)
+        )],
+    }
+}
+
+fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> Vec<String> {
+    let member = member_of(&conflict.path);
+    match (
+        conflict.path.as_slice(),
+        yours_and_incoming(conflict, replaying),
+    ) {
+        ([.., field], [yours, incoming]) if conflict.path.len() == 3 => {
+            field_lines(member, field, yours, incoming, by_hand)
+        }
+        (_, [Some(toml::Value::Table(yours)), Some(toml::Value::Table(incoming))]) => {
             let mut keys: Vec<&String> = yours.keys().chain(incoming.keys()).collect();
             keys.sort();
             keys.dedup();
-            for key in keys {
-                let (y, i) = (yours.get(key), incoming.get(key));
-                if y == i {
-                    continue;
-                }
-                lines.push(format!(
-                    "  {key}: {} in yours, {} incoming",
-                    shown(y),
-                    shown(i)
-                ));
-                match &member {
-                    Some(member) => {
-                        for (side, value) in [("yours", y), ("incoming", i)] {
-                            let setter = field_setter(member, key, value);
-                            lines.push(format!(
-                                "    keep {side}: {}",
-                                setter.as_deref().unwrap_or(by_hand)
-                            ));
-                        }
-                    }
-                    None => lines.push(format!("    {by_hand}")),
-                }
-            }
+            keys.into_iter()
+                .filter(|key| yours.get(*key) != incoming.get(*key))
+                .flat_map(|key| {
+                    field_lines(member, key, yours.get(key), incoming.get(key), by_hand)
+                })
+                .collect()
         }
-        (yours, incoming) => {
-            lines.push(format!(
-                "rwv.toml entry {name} is in conflict: {} in yours, {} incoming",
-                shown(yours.as_ref()),
-                shown(incoming.as_ref())
-            ));
+        (_, sides) => {
             let top_history = conflict.path == ["history"];
+            ["yours", "incoming"]
+                .into_iter()
+                .zip(sides)
+                .map(|(side, value)| {
+                    let setter = match (member, value) {
+                        (Some(member), None) => Some(format!("rwv member remove {member}")),
+                        (None, value) if top_history => Some(history_setter(value, None)),
+                        _ => None,
+                    };
+                    format!("  keep {side}: {}", setter.as_deref().unwrap_or(by_hand))
+                })
+                .collect()
+        }
+    }
+}
+
+fn field_lines(
+    member: Option<&str>,
+    field: &str,
+    yours: Option<&toml::Value>,
+    incoming: Option<&toml::Value>,
+    by_hand: &str,
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "  {field}: {} in yours, {} incoming",
+        shown(yours),
+        shown(incoming)
+    )];
+    match member {
+        Some(member) => {
             for (side, value) in [("yours", yours), ("incoming", incoming)] {
-                let setter = match (&member, value) {
-                    (Some(member), None) => Some(format!("rwv member remove {member}")),
-                    (None, value) if top_history => Some(history_setter(value.as_ref(), None)),
-                    _ => None,
-                };
+                let setter = field_setter(member, field, value);
                 lines.push(format!(
-                    "  keep {side}: {}",
+                    "    keep {side}: {}",
                     setter.as_deref().unwrap_or(by_hand)
                 ));
             }
         }
+        None => lines.push(format!("    {by_hand}")),
     }
     lines
 }
@@ -586,10 +662,36 @@ mod tests {
     }
 
     #[test]
-    fn different_fields_of_one_member_conflict_as_the_whole_member() {
+    fn different_fields_of_one_member_do_not_conflict_and_merge_both() {
         let base = member("lib", "main");
         let ours = base.replace("role = \"owned\"", "role = \"fork\"");
         let theirs = member("lib", "dev");
+        let sides = sides(&base, &ours, &theirs);
+        assert!(paths(&sides).is_empty());
+        let merged = sides.merged().unwrap();
+        let lib = merged
+            .get_entry(&RepoPath::new("local/lib").unwrap())
+            .unwrap();
+        assert_eq!(lib.role, Role::Fork);
+        assert_eq!(lib.branch.local_counterpart().as_str(), "dev");
+    }
+
+    #[test]
+    fn one_field_both_sides_changed_differently_conflicts_alone() {
+        let base = member("lib", "main");
+        let ours = member("lib", "x").replace("role = \"owned\"", "role = \"fork\"");
+        let theirs = member("lib", "y");
+        assert_eq!(paths(&sides(&base, &ours, &theirs)), ["local/lib branch"]);
+    }
+
+    #[test]
+    fn a_member_both_sides_added_differently_conflicts_whole() {
+        let base = member("a", "main");
+        let ours = format!("{base}{}", member("lib", "x"));
+        let theirs = format!(
+            "{base}{}",
+            member("lib", "x").replace("role = \"owned\"", "role = \"fork\"")
+        );
         assert_eq!(paths(&sides(&base, &ours, &theirs)), ["local/lib"]);
     }
 
@@ -645,7 +747,7 @@ mod tests {
         let setting = Setting::Branch(a, branch);
         setting.apply(&mut sides.ours);
         setting.apply(&mut sides.theirs);
-        assert_eq!(paths(&sides), ["local/b"]);
+        assert_eq!(paths(&sides), ["local/b branch"]);
     }
 
     #[test]

@@ -956,6 +956,7 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::OrdinarySetterLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::SettledLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CleanFieldBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::BranchAndUrl(
         scenarios::ManifestStopHistory::Merge
     )),
@@ -6800,6 +6801,14 @@ fn manifest_stop_settled_drops_a_comment_as_a_setter_does() {
 fn manifest_stop_settled_beside_a_clean_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::CleanBeside,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_fields_each_changed_on_one_side_are_no_conflict() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::CleanFieldBeside,
     ))
     .assert_fully_decided_green();
 }
