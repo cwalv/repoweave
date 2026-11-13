@@ -892,6 +892,7 @@ every_scenario!(
     abort_stops_at_the_first_write_that_fails,
     leave_target_gives_up_the_target_only_after_the_source_is_restored,
     abort_refuses_while_the_target_cannot_be_read,
+    abort_of_a_landing_over_a_cancel_the_vcs_refuses,
     abort_after_the_target_aligned(
         scenarios::ReceivingCase::Followed,
         scenarios::AbortFrom::Source
@@ -3079,6 +3080,12 @@ holding_rwv! {
 #[test]
 fn an_abort_stops_at_the_first_write_that_fails() {
     runner::run(scenarios::abort_stops_at_the_first_write_that_fails())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() {
+    runner::run(scenarios::abort_of_a_landing_over_a_cancel_the_vcs_refuses())
         .assert_fully_decided_green();
 }
 

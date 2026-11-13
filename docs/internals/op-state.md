@@ -120,7 +120,16 @@ operation, the checkout's branch and HEAD against its savepoint, the
 uncommitted edits a move would discard, who holds the branch it switches
 back to), each branch moved as a ref (`Vcs::plan_ref_restore`, held as the
 plan leaves the checkouts), each branch moved in place in a workspace since
-gone, each created branch it deletes, and each ref an update moved. The plan
+gone, each created branch it deletes (judged against the branches as the
+restore leaves them: one no other branch would then reach blocks), and each
+ref an update moved. What the plan cannot read (a checkout, a branch
+savepoint, the other workspace's project) is a blocked step naming what
+could not be read. A cancel the VCS would refuse (a path the stopped
+operation staged and the working tree changed since) blocks too. The plan
+only reads, with one exception: predicting a switch back refreshes the
+index's stat data first (`update-index --refresh`), as `git status` does,
+so that files written by reflink do not read as edits; a held or unwritable
+index lock is reported as a step that could not be read. The plan
 is the restore: the restore executes those steps and decides nothing the plan
 did not. Any blocked step, or a landing's target judged moved as a unit,
 refuses the whole abort with one report naming each obstacle and the one
@@ -130,16 +139,19 @@ claim and lease, judged again, and only then executed. The target's
 project-branch write runs first: a later write that loses a race leaves the
 target's lock behind its members, every commit on a branch, never a lock
 pinning commits the restored members left. `--leave-target` is accepted
-exactly where the plan does not restore the target, and writes nothing until
-the source's plan is unblocked.
+exactly where the plan does not restore the target, writes nothing until
+the source's plan is unblocked, and gives up the target (its savepoints, the
+lease and the claim) only once every source step executed as planned. Each
+closing command a refusal prints names every repo the invocation already
+named on `--abandon-foreign-tip`, so run as printed it ends the operation.
 
 The residual against raw git: each planned write checks, immediately before
 it writes, the state the plan judged (HEAD, attachment, the operation in
 progress, a branch's tip, its holders) and a branch moves by compare-and-swap,
 so a raw git change in between makes that one write refuse, never overwrite;
-the writes already made stay, and a rerun of `rwv abort` completes the rest.
-Git refusing to cancel an operation the plan cancels (`CancelRefused`) is
-known only when it refuses, and has the same aftermath.
+execution stops at that step, the writes already made stay, and a rerun of
+`rwv abort` completes the rest. Git refusing a cancel for any cause the plan
+does not read has the same aftermath.
 
 A savepoint at the key's own name, with nothing below it, was filed
 by an earlier release; only `rwv doctor --fix` reads one. Savepoints live

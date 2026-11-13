@@ -5587,6 +5587,16 @@ impl GitVcs {
                 }
                 keep_edits_to = Some(lands_at.clone());
             }
+            if let Some(why) = Self::cancel_refuses(repo, stopped)? {
+                if foreign_tip_policy == ForeignTipPolicy::Refuse {
+                    return Ok(CheckoutRestorePlan::Blocked(
+                        VerifiedRestoreOutcome::CancelRefused { stopped, why },
+                    ));
+                }
+                if !attribution.edits_here {
+                    return Ok(edits_elsewhere());
+                }
+            }
             let on_after = match stopped {
                 ConflictOp::Rebase => Self::rebasing(repo)?.or(held.on),
                 _ => held.on,
@@ -5738,6 +5748,36 @@ impl GitVcs {
     /// (an unresolved index, a tracked edit or an untracked file `to`
     /// differs at), or an ignored file sits where `to` has a path, which a
     /// switch overwrites without refusing.
+    /// Why the VCS's own cancel of `stopped` would refuse, where it would: a
+    /// path the operation staged and the working tree has changed since.
+    fn cancel_refuses(repo: &Path, stopped: ConflictOp) -> Result<Option<String>, VcsError> {
+        if stopped == ConflictOp::Rebase {
+            return Ok(None);
+        }
+        let status = Self::run(
+            vec!["status", "--porcelain=v1", "-z", "--untracked-files=no"],
+            repo,
+        )?;
+        let mut entries = status.split('\0').filter(|e| !e.is_empty());
+        while let Some(entry) = entries.next() {
+            let (Some(staged), Some(worked), Some(path)) =
+                (entry.chars().next(), entry.chars().nth(1), entry.get(3..))
+            else {
+                continue;
+            };
+            if matches!(staged, 'R' | 'C') {
+                entries.next();
+            }
+            if matches!(staged, 'M' | 'A' | 'R' | 'C') && matches!(worked, 'M' | 'D') {
+                return Ok(Some(format!(
+                    "'{path}' is staged by the {stopped} and changed since, so it is not uptodate \
+                     for the cancel"
+                )));
+            }
+        }
+        Ok(None)
+    }
+
     fn edits_block_switch(repo: &Path, to: &CommitId) -> Result<bool, VcsError> {
         git_command()
             .args(["update-index", "-q", "--refresh"])

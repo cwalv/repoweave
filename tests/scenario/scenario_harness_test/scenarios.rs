@@ -3659,8 +3659,10 @@ pub fn pull_abort_over_a_cancel_the_vcs_refuses() -> Scenario {
             Step::rwv(&b(), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
                 .claim(Claim::OutputContains("could not be canceled"))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains("not uptodate"))
-                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip")),
+                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip"))
+                .claim(Claim::LocalStateUnchanged(b())),
             Step::git(
                 &b(),
                 Repo::App,
@@ -15671,6 +15673,61 @@ pub fn landing_merge_continued_writes_one_project_merge() -> Scenario {
             .claim(Claim::OutputContains("Merge ")),
     ]);
     scenario("a landing merge continued writes one project merge", steps)
+}
+
+/// A landing stopped in its own merge in `app`, the merge having also
+/// brought in `main-clean.txt` cleanly; the operator edits that file and
+/// does not stage it, so the VCS's own cancel of the merge would refuse.
+/// `rwv abort` sees that before anything moves and refuses whole; the
+/// printed `--abandon-foreign-tip` keeps the edit as a backup and ends the
+/// landing.
+pub fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+        Step::commit(&a(), Repo::App, "main-clean"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+    ];
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::App,
+            "main-clean.txt",
+            "main-clean",
+            "edited mid-merge",
+        ),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains("could not be canceled"))
+            .claim(Claim::OutputLacks("abort stopped there"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "its uncommitted edits are kept as backup",
+            ))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(&ww("w"), Repo::App, &["log", "-1", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("readme-w")),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    scenario("abort of a landing over a cancel the VCS refuses", steps)
 }
 
 /// [`landing_merge_stopped`], then `rwv abort`: every merge in flight is
