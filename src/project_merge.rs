@@ -954,9 +954,8 @@ impl Produced {
                  text; a staged rwv.toml that parses is committed in the merge"
             }
             Self::Replay => {
-                "the replay finished and the replayed tip's rwv.toml, as the two sides merged it \
-                 as text, does not parse; a staged rwv.toml that parses is recorded as a commit \
-                 after that tip"
+                "the replay finished and the replayed tip's rwv.toml does not parse; a staged \
+                 rwv.toml that parses becomes part of that commit"
             }
         }
     }
@@ -987,9 +986,9 @@ pub(crate) fn unparseable_result(
 }
 
 /// Settle the `rwv.toml` the replay of the project repo at `dir` left at its
-/// tip. Where it does not parse, a staged `rwv.toml` that does is committed
-/// after the tip and journaled as the project's tip in `workspace`; without
-/// one the operation stops on [`unparseable_result`].
+/// tip. Where it does not parse, a staged `rwv.toml` that does becomes part
+/// of the replayed tip; without one the operation stops on
+/// [`unparseable_result`].
 pub(crate) fn settle_replayed_manifest(
     vcs: &dyn Vcs,
     repo: impl std::fmt::Display,
@@ -1004,31 +1003,110 @@ pub(crate) fn settle_replayed_manifest(
     let Err(at_head_error) = Manifest::from_toml_str(&at_head) else {
         return Ok(());
     };
-    let staged = vcs.staged_file(dir, Manifest::FILE_NAME)?;
-    let parsed = match staged.as_deref() {
-        Some(text) if text != at_head => Manifest::from_toml_str(text).map(|_| ()),
-        _ => Err(at_head_error),
-    };
-    if let Err(error) = parsed {
-        return Err(unparseable_result(
+    let stop = |error: &anyhow::Error| {
+        unparseable_result(
             vcs,
-            repo,
+            &repo,
             dir,
             (&op_state::resume_command(verb), Produced::Replay),
-            &error,
+            error,
+        )
+    };
+    let fix = match vcs
+        .staged_file(dir, Manifest::FILE_NAME)?
+        .filter(|staged| *staged != at_head)
+    {
+        None => return Err(stop(&at_head_error)),
+        Some(fix) => match Manifest::from_toml_str(&fix) {
+            Ok(_) => fix,
+            Err(error) => return Err(stop(&error)),
+        },
+    };
+    amend_replayed_tip(vcs, dir, workspace, head.id(), fix)
+}
+
+/// Make `fix`, the staged `rwv.toml`, part of `tip`, the commit the
+/// project's replay journaled in `workspace` wrote last. The replay's record
+/// names the amended commit before the branch moves to it, so the operation
+/// owns the branch at either tip.
+fn amend_replayed_tip(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    workspace: &Path,
+    tip: &CommitId,
+    fix: String,
+) -> anyhow::Result<()> {
+    let rebase = op_state::read_owner(workspace)?
+        .and_then(|owner| owner.take_in)
+        .and_then(|take_in| {
+            take_in
+                .rebases
+                .into_iter()
+                .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
+        })
+        .ok_or_else(|| {
+            crate::untokened!(
+                InternalInvariant,
+                "{}: its tip {} is no replay this operation journaled",
+                dir.display(),
+                tip.short()
+            )
+        })?;
+    let replayed = vcs
+        .replayed(dir, &rebase.base, &rebase.from, &rebase.onto, tip)?
+        .filter(|replayed| replayed.written.last() == Some(tip))
+        .ok_or_else(|| {
+            crate::untokened!(
+                InternalInvariant,
+                "{}: no record of its replay describes its tip {}",
+                dir.display(),
+                tip.short()
+            )
+        })?;
+    let crate::vcs::HeadAttachment::Attached(on) = vcs.head_attachment(dir)? else {
+        return Err(crate::untokened!(
+            EnvironmentPassthrough,
+            "{}: left its branch '{}' after its replay",
+            dir.display(),
+            rebase.branch
         ));
-    }
-    crate::repin::commit(
-        vcs,
+    };
+    let parent = vcs.parents(dir, tip)?.into_iter().next().ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "{}: the replayed tip {} has no parent",
+            dir.display(),
+            tip.short()
+        )
+    })?;
+    let amended = vcs.copy_replayed(
         dir,
-        &[Manifest::FILE_NAME],
-        "Make rwv.toml parse after the replay",
+        tip,
+        &parent,
+        &[crate::vcs::FileChange {
+            path: Manifest::FILE_NAME.to_owned(),
+            content: Some(fix.into_bytes()),
+        }],
         None,
-        &crate::repin::Naming::Unnamed,
     )?;
-    op_state::journal_tip(
-        workspace,
-        crate::manifest::RepoKey::Project,
-        vcs.head_revision(dir)?.id(),
-    )
+    let became = |commit: &CommitId| {
+        if commit == tip {
+            amended.clone()
+        } else {
+            commit.clone()
+        }
+    };
+    let replayed = crate::vcs::Replayed {
+        images: replayed
+            .images
+            .iter()
+            .map(|(was, image)| (was.clone(), image.as_ref().map(became)))
+            .collect(),
+        written: replayed.written.iter().map(became).collect(),
+    };
+    vcs.record_replayed(dir, &rebase.from, &rebase.onto, &replayed)?;
+    crate::test_pause::point("replayed-manifest-recorded");
+    vcs.take_amended(&on, tip, &amended)?;
+    crate::test_pause::point("replayed-manifest-amended");
+    Ok(())
 }

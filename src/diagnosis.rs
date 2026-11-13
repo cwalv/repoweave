@@ -548,6 +548,7 @@ pub enum State {
     UnparseableProjectMalformed,
     UnparseableProjectAt,
     UnparseableProjectMidOperation,
+    UnparseableProjectCommit,
     LegacyWorkweaveIndexOldPath,
     MissingLockMergeDriverAttributeAbsent,
     MissingLockMergeDriverAttributeLegacy,
@@ -618,7 +619,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 85] = [
+    pub const ALL: [State; 86] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -665,6 +666,7 @@ impl State {
         Self::UnparseableProjectMalformed,
         Self::UnparseableProjectAt,
         Self::UnparseableProjectMidOperation,
+        Self::UnparseableProjectCommit,
         Self::LegacyWorkweaveIndexOldPath,
         Self::MissingLockMergeDriverAttributeAbsent,
         Self::MissingLockMergeDriverAttributeLegacy,
@@ -1165,8 +1167,8 @@ impl State {
                         Under merge history the merge is in progress and the merged file is \
                         staged in the working tree; continuing commits the staged file in the \
                         merge. Under linear history the replay finished and the replayed tip \
-                        holds the file; continuing records the staged file as a commit after \
-                        that tip",
+                        holds the file; continuing makes the staged file part of that \
+                        commit, which the replay wrote and nothing has published",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
                              `--continue` while the staged `rwv.toml` does not parse; `rwv \
@@ -1176,6 +1178,18 @@ impl State {
                     Form::ResumeWithManifest,
                     Form::AbortOperation,
                 ],
+                verb_offers: &[],
+            },
+            Self::UnparseableProjectCommit => &StateRow {
+                axis: Axis::UnparseableProject,
+                name: "commit",
+                means: "the `rwv.toml` of a commit the verb copies from, or of the commit it is \
+                        compared with, does not parse, listed with the commit and the parser's \
+                        error. The verb cannot tell which members the commit changes, so it \
+                        copies nothing; a commit is never rewritten, so nothing makes its \
+                        `rwv.toml` parse",
+                refused_by: "`rwv cherry-pick`",
+                offers: &[],
                 verb_offers: &[],
             },
             Self::LegacyWorkweaveIndexOldPath => &StateRow {
@@ -2164,9 +2178,8 @@ impl ChoiceId {
             Self::ResumeWithManifest => &ChoiceRow {
                 id: None,
                 phrase: "let the operation go on with the staged rwv.toml",
-                keeps_work: "a merge commits it in the merge; a replay records it in a commit \
-                             after the replayed tip; it stops again while the staged file does \
-                             not parse",
+                keeps_work: "a merge commits it in the merge; a replay makes it part of the \
+                             replayed tip; it stops again while the staged file does not parse",
             },
             Self::LandAgain => &ChoiceRow {
                 id: None,
@@ -4290,6 +4303,7 @@ mod tests {
                 State::PinWaived,
                 State::PublishRecordsRejected,
                 State::UnparseableProjectMalformed,
+                State::UnparseableProjectCommit,
                 State::AlignmentAligned
             ],
             "a state that offers nothing is a decision the table records, not an omission"

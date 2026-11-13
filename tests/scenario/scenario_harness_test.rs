@@ -817,6 +817,11 @@ every_scenario!(
         scenarios::TakingIn::LandLinear,
         scenarios::ReplayedManifest::BrokenByTheBranch
     ),
+    an_amend_killed_part_way(
+        scenarios::TakingIn::LandLinear,
+        "replayed-manifest-recorded",
+        scenarios::AfterTheKill::Abort
+    ),
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
@@ -6506,6 +6511,27 @@ fn a_replay_in_flight_is_not_judged_on_its_rwv_toml() {
                 taking_in, replayed,
             ))
             .assert_fully_decided_green();
+        }
+    }
+}
+
+holding_rwv! {
+    /// A `--continue` killed while it makes a staged `rwv.toml` part of the
+    /// replayed tip, before and after the branch moves: run again it
+    /// finishes, and `rwv abort` puts everything back without
+    /// `--abandon-foreign-tip`.
+    fn an_amend_killed_part_way_is_left_by_continue_or_abort() {
+        use scenarios::{AfterTheKill, TakingIn};
+        for (taking_in, point) in [
+            (TakingIn::SyncLinear, "replayed-manifest-recorded"),
+            (TakingIn::SyncLinear, "replayed-manifest-amended"),
+            (TakingIn::LandLinear, "replayed-manifest-recorded"),
+            (TakingIn::LandLinear, "replayed-manifest-amended"),
+        ] {
+            for after in [AfterTheKill::Continue, AfterTheKill::Abort] {
+                runner::run(scenarios::an_amend_killed_part_way(taking_in, point, after))
+                    .assert_fully_decided_green();
+            }
         }
     }
 }

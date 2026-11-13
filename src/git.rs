@@ -3213,6 +3213,28 @@ impl Vcs for GitVcs {
         Self::reset_keeping_to(on, from, to)
     }
 
+    fn take_amended(
+        &self,
+        on: &AttachedRef,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<(), VcsError> {
+        self.verify_attachment(on)?;
+        let branch = local_branch(&on.to_string());
+        Self::run(
+            [
+                "update-ref",
+                "-m",
+                "rwv: amend",
+                branch.as_str(),
+                to.as_str(),
+                from.as_str(),
+            ],
+            on.repo(),
+        )
+        .map(|_| ())
+    }
+
     fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError> {
         // Caller contract: `repo` must be mid-rebase. Enforce it here — the
         // call site already inspects `mid_op` to route between a fresh

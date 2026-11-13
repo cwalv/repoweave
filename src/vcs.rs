@@ -3540,6 +3540,20 @@ pub trait Vcs: Send + Sync {
         to: &CommitId,
     ) -> Result<(), VcsError>;
 
+    /// Move the branch `on` witnesses from `from`, a commit a replay wrote,
+    /// to `to`, a copy of it whose tree differs from it only in paths the
+    /// checkout's index already holds as `to` does: the index and the
+    /// working files are left as they are, as an amend of `from` with what
+    /// is staged leaves them. Refuses a branch not at `from`.
+    ///
+    /// For git: `git update-ref <branch> <to> <from>`.
+    fn take_amended(
+        &self,
+        on: &AttachedRef,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<(), VcsError>;
+
     /// Resume an in-flight rebase in `repo` after the operator has resolved
     /// (and staged) the conflicting paths that stopped the previous
     /// [`rebase`] or [`rebase_continue`] call, resolving declared derived

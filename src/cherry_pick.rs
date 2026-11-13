@@ -148,16 +148,32 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
     ResolvedRevisionId::from(commit.clone())
 }
 
-/// `commit`'s `rwv.toml`; `None` where it has none. One that does not parse
-/// is an error, never read as declaring nothing.
-fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> anyhow::Result<Option<Manifest>> {
+/// `commit`'s `rwv.toml` in the project repo `label` at `dir`; `None` where
+/// it has none. One that does not parse is refused, never read as declaring
+/// nothing.
+fn manifest_at(
+    vcs: &dyn Vcs,
+    label: &str,
+    dir: &Path,
+    commit: &CommitId,
+) -> anyhow::Result<Option<Manifest>> {
     let Ok(text) = vcs.read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
     else {
         return Ok(None);
     };
     Manifest::from_other_commit(&text)
         .map(Some)
-        .with_context(|| format!("the rwv.toml of {} does not parse", commit.short()))
+        .map_err(|error| {
+            let error = format!("{error:#}");
+            State::UnparseableProjectCommit
+                .of(label)
+                .project_repo()
+                .subject(commit.short())
+                .listing(error.lines())
+                .checkout(dir)
+                .judge(vcs)
+                .refused()
+        })
 }
 
 fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
@@ -592,9 +608,9 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     let parent = judge_mainline(here, args, &commit, &parents)?;
 
     let empty = Manifest::from_toml_str("[repositories]\n")?;
-    let theirs = manifest_at(vcs, dir, &commit)?.unwrap_or_else(|| empty.clone());
+    let theirs = manifest_at(vcs, &label, dir, &commit)?.unwrap_or_else(|| empty.clone());
     let base = match &parent {
-        Some(p) => manifest_at(vcs, dir, p)?,
+        Some(p) => manifest_at(vcs, &label, dir, p)?,
         None => None,
     }
     .unwrap_or_else(|| empty.clone());
@@ -1535,7 +1551,7 @@ fn act(
     reported: &mut CherryPickJsonOutput,
 ) -> anyhow::Result<()> {
     let pre_head = record.head.clone();
-    let ours = manifest_at(here.vcs.as_ref(), &here.dir, &pre_head)?
+    let ours = manifest_at(here.vcs.as_ref(), &here.label(), &here.dir, &pre_head)?
         .context("the project had no rwv.toml when the port began")?;
     if resumed {
         recheck(here, &ours, &mut record)?;
@@ -1786,9 +1802,9 @@ fn commit_project(
         None => parents.first().cloned(),
     };
     let empty = Manifest::from_toml_str("[repositories]\n")?;
-    let theirs = manifest_at(vcs, dir, &commit)?.unwrap_or_else(|| empty.clone());
+    let theirs = manifest_at(vcs, &label, dir, &commit)?.unwrap_or_else(|| empty.clone());
     let base = match &parent {
-        Some(p) => manifest_at(vcs, dir, p)?,
+        Some(p) => manifest_at(vcs, &label, dir, p)?,
         None => None,
     }
     .unwrap_or_else(|| empty.clone());

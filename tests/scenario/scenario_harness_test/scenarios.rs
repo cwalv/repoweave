@@ -21164,20 +21164,31 @@ fn stops_unparseable(step: Step, says: &'static str) -> Step {
     })
 }
 
-/// Each side adds a `[workweave]` table to `rwv.toml` by hand, and the
-/// workweave takes `a`'s in by `taking_in`: git merges the two as text
-/// without a conflict into a file that does not parse, and the operation
-/// stops on it with `main` unmoved. Left by `left_by`: a staged fix that
-/// parses finishes it, the fix a commit after the replayed tip under linear
-/// history and in the merge under merge history, with `main` moving only to a
-/// tip whose `rwv.toml` parses; or the printed `rwv abort` puts the workweave
-/// back with no merge in flight and nothing staged.
+/// Each side adds a `[workweave]` table to `rwv.toml` by hand, the
+/// workweave's in one commit, and the workweave takes `a`'s in by
+/// `taking_in`: git merges the two as text without a conflict into a file
+/// that does not parse, and the operation stops on it with `main` unmoved.
+/// Left by `left_by`: a staged fix that parses finishes it, the fix part of
+/// the replayed commit under linear history and in the merge under merge
+/// history, so no commit the operation leaves holds an `rwv.toml` that does
+/// not parse and `rwv cherry-pick` copies the landed commit; or the printed
+/// `rwv abort` puts the workweave back with no merge in flight and nothing
+/// staged.
 pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scenario {
-    let mut steps = vec![create("w")];
+    let mut steps = vec![create("p"), create("w")];
     steps.extend(adds_a_copies(&a()));
     steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
-    steps.extend(adds_w_copies(&ww("w")));
-    steps.push(Step::commit(&ww("w"), Repo::Proj, "w-proj"));
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            ABOVE_DOCS,
+            "\n[workweave]\ncopy = [\"w.txt\"]\n\n[repositories.\"local/remotes/docs\"]",
+        ),
+        Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+        Step::commit(&ww("w"), Repo::Proj, "w-proj"),
+    ]);
     steps.push(stops_unparseable(
         Step::rwv(&ww("w"), &taking_in.args()),
         taking_in.says(),
@@ -21205,6 +21216,11 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
             steps.push(Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds));
             let finished = Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
                 .expect(Exit::Succeeds)
+                .may_strand(if taking_in.linear() {
+                    &[Repo::Proj]
+                } else {
+                    &[]
+                })
                 .claim(Claim::Contains {
                     at: ww("w"),
                     repo: Repo::Proj,
@@ -21226,22 +21242,32 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
                     .claim(Claim::OutputLacks("rwv.toml")),
             );
             if taking_in.linear() {
-                steps.push(
-                    Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-3"]).claim(
-                        Claim::OutputContains("Make rwv.toml parse after the replay"),
-                    ),
-                );
+                steps.extend([
+                    Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-1"])
+                        .claim(Claim::OutputLine("w-proj")),
+                    Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-2"])
+                        .claim(Claim::OutputContains("a-proj")),
+                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD~1:rwv.toml"])
+                        .claim(Claim::OutputLacks("w.txt")),
+                ]);
             }
             if taking_in.lands() {
-                steps.push(
+                steps.extend([
                     Step::git(&a(), Repo::Proj, &["log", "--format=%s", "-5", "main"])
                         .claim(Claim::OutputContains("w-proj")),
-                );
-                steps.push(
                     Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
                         .claim(Claim::OutputContains(A_COPIES))
                         .claim(Claim::OutputLacks("w.txt")),
-                );
+                ]);
+            }
+            if taking_in.lands() && taking_in.linear() {
+                steps.extend([
+                    Step::rwv(&ww("p"), &["cherry-pick", "main"]).expect(Exit::Succeeds),
+                    Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:w-proj.txt"])
+                        .expect(Exit::Succeeds),
+                    Step::rwv(&a(), &["switch", "--detach", "main"]).expect(Exit::Succeeds),
+                    Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+                ]);
             }
         }
         LeftBy::Abort => steps.extend(aborted_to_the_workweaves_own(&ww("w"), &[])),
@@ -21486,9 +21512,16 @@ pub fn abort_ignores_a_half_finished_manifest_fix() -> Scenario {
 
 /// A workweave branch whose middle commit holds an `rwv.toml` that does not
 /// parse, and whose tip fixes it, is replayed onto a target that moved and
-/// lands under linear history: only the result is read.
+/// lands under linear history: only the result is read. The landed commit
+/// that breaks the file stays as it is, and `rwv cherry-pick` of it, or of
+/// the commit that fixes it, refuses naming the commit whose `rwv.toml`
+/// does not parse, and moves nothing.
 pub fn an_unparseable_intermediate_manifest_is_replayed() -> Scenario {
-    let mut steps = vec![create("w"), Step::commit(&a(), Repo::Proj, "a-proj")];
+    let mut steps = vec![
+        create("p"),
+        create("w"),
+        Step::commit(&a(), Repo::Proj, "a-proj"),
+    ];
     steps.extend([
         Step::hand_edit(
             &ww("w"),
@@ -21512,6 +21545,14 @@ pub fn an_unparseable_intermediate_manifest_is_replayed() -> Scenario {
         Step::git(&a(), Repo::Proj, &["log", "--format=%s", "-6", "main"])
             .claim(Claim::OutputInOrder(&["fix rwv.toml", "break rwv.toml"])),
     ]);
+    for picked in ["main~1", "main"] {
+        steps.push(
+            Step::rwv(&ww("p"), &["cherry-pick", picked])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectCommit))
+                .claim(Claim::OutputContains("[[["))
+                .claim(Claim::LocalStateUnchanged(ww("p"))),
+        );
+    }
     scenario("an unparseable intermediate rwv.toml is replayed", steps)
 }
 
@@ -21626,4 +21667,74 @@ pub fn a_replay_in_flight_is_not_judged_on_its_rwv_toml(
         );
     }
     scenario("a replay in flight is not judged on its rwv.toml", steps)
+}
+
+/// What is run after a `--continue` killed while it makes a staged
+/// `rwv.toml` part of the replayed tip.
+#[derive(Clone, Copy)]
+pub enum AfterTheKill {
+    Continue,
+    Abort,
+}
+
+/// [`unparseable_merged_manifest`] under linear history, its staged fix's
+/// `--continue` killed at `point`, before or after the branch moves to the
+/// amended tip: the printed `--continue` run again finishes, with no
+/// `rwv.toml` that does not parse left on the branch, and `rwv abort` puts
+/// the workweave back with no `--abandon-foreign-tip`.
+pub fn an_amend_killed_part_way(
+    taking_in: TakingIn,
+    point: &'static str,
+    after: AfterTheKill,
+) -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(adds_a_copies(&a()));
+    steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            ABOVE_DOCS,
+            "\n[workweave]\ncopy = [\"w.txt\"]\n\n[repositories.\"local/remotes/docs\"]",
+        ),
+        Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+        Step::commit(&ww("w"), Repo::Proj, "w-proj"),
+        stops_unparseable(Step::rwv(&ww("w"), &taking_in.args()), taking_in.says()),
+        Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", W_COPIES, ""),
+        Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("w"),
+            &[taking_in.args()[0], "--continue"],
+            point,
+            "amending",
+        ),
+        Step::kill("amending"),
+    ]);
+    match after {
+        AfterTheKill::Continue => {
+            steps.extend([
+                Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj]),
+                Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-1"])
+                    .claim(Claim::OutputLine("w-proj")),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .claim(Claim::OutputContains(A_COPIES))
+                    .claim(Claim::OutputLacks("w.txt")),
+            ]);
+            if taking_in.lands() {
+                steps.push(
+                    Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                        .claim(Claim::OutputLacks("w.txt")),
+                );
+            }
+        }
+        AfterTheKill::Abort => steps.extend(aborted_from(
+            Step::rwv(&ww("w"), &["abort"]).may_strand(&[Repo::Proj]),
+            &ww("w"),
+            &[],
+        )),
+    }
+    scenario("an amend killed part way", steps)
 }
