@@ -125,6 +125,11 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "a landing claim's owner workspace is not here to read",
     ),
     (
+        "claim-unopenable",
+        &["doctor", "refusal"],
+        "a landing claim or its takeover guard cannot be read at all",
+    ),
+    (
         "claim-unreadable",
         &["doctor", "refusal"],
         "a landing claim or its takeover guard holds what this rwv does not read",

@@ -1443,6 +1443,10 @@ mod doctor_json {
             file: String,
             content: String,
         },
+        ClaimUnopenable {
+            file: String,
+            error: String,
+        },
         OrphanedSavepoint {
             path: String,
             absolute_path: String,
@@ -2513,6 +2517,49 @@ fn an_unreadable_claim_is_reported_and_released_only_by_its_named_flag() {
     assert!(
         released.contains("claim-unreadable") && released.contains("lost its claim"),
         "the release names what it released and what that gave up: {released}"
+    );
+}
+
+/// A landing claim rwv cannot read at all is reported as such, and no flag
+/// releases it.
+#[test]
+fn a_claim_that_cannot_be_read_is_reported_and_never_released() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let claim = project_dir
+        .join(".git")
+        .join("rwv-landings")
+        .join("0")
+        .join(".rwv-landing.lock");
+    std::fs::create_dir_all(&claim).unwrap();
+
+    let doctor = |args: &[&str]| {
+        let out = rwv_cmd()
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("failed to spawn rwv doctor");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let json = doctor(&["doctor", "--json"]);
+    assert!(json.contains("\"claim-unopenable\""), "{json}");
+    assert!(!json.contains("\"claim-unreadable\""), "{json}");
+
+    let released = doctor(&["doctor", "--fix", "--release-unreadable-claims"]);
+    assert!(claim.is_dir(), "nothing releases it: {released}");
+    assert!(
+        released.contains("claim-unopenable") && !released.contains("[fixed] core: claim"),
+        "{released}"
     );
 }
 

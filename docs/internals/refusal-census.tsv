@@ -165,8 +165,9 @@ src/land.rs	target mode changed	-	1
 src/land.rs	target no target	tests/sync/land_drift_test.rs	1
 src/land.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	2
 src/landing_claim.rs	claim-owner-unreachable	-	1
-src/landing_claim.rs	claim-unreadable	-	1
-src/landing_claim.rs	state-claim-held	-	3
+src/landing_claim.rs	claim-unopenable	-	1
+src/landing_claim.rs	claim-unreadable	-	2
+src/landing_claim.rs	state-claim-held	-	2
 src/lock.rs	(untokened:environment-passthrough)	-	5
 src/lock.rs	(untokened:tally)	-	1
 src/lock.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2

@@ -265,6 +265,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         },
         CheckViolation::ClaimOwnerUnreachable { .. } => "claim-owner-unreachable".into(),
         CheckViolation::ClaimUnreadable { .. } => "claim-unreadable".into(),
+        CheckViolation::ClaimUnopenable { .. } => "claim-unopenable".into(),
         CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
             OrphanedSavepointKind::Redundant => "orphaned-savepoint/redundant".into(),
             OrphanedSavepointKind::Live => "orphaned-savepoint/live".into(),
@@ -778,6 +779,10 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::ClaimUnreadable {
             file: path("/store/rwv-landings/0/.rwv-landing.lock"),
             seen: b"{\"format\": 2}".to_vec(),
+        },
+        CheckViolation::ClaimUnopenable {
+            file: path("/store/rwv-landings/0/.rwv-landing.lock"),
+            error: "Permission denied (os error 13)".into(),
         },
         CheckViolation::OrphanedSavepoint {
             workweave: Some(workweave()),

@@ -1264,7 +1264,8 @@ no longer records its operation is taken over by the next landing; one whose
 workspace is not here to read is refused as
 [`claim-owner-unreachable`](doctor-findings.md#claim-owner-unreachable), and
 one that holds what this rwv does not read as
-[`claim-unreadable`](doctor-findings.md#claim-unreadable).
+[`claim-unreadable`](doctor-findings.md#claim-unreadable), and one it cannot
+read at all as [`claim-unopenable`](doctor-findings.md#claim-unopenable).
 
 ### `surfacing-path-occupied`
 

@@ -105,6 +105,12 @@ enum Standing {
     Unreachable(Holder),
     /// The file names no op this rwv reads.
     Unread(String),
+    /// The file, the claim or a takeover guard beside it, cannot be read at
+    /// all: whose it is cannot be told, so nothing here releases it.
+    Unopenable {
+        file: std::path::PathBuf,
+        why: String,
+    },
 }
 
 fn standing(seen: &[u8]) -> Standing {
@@ -196,14 +202,9 @@ fn refuse_claimed_in(
 ) -> anyhow::Result<()> {
     for claim in claim_dirs(dir)? {
         let path = StateFile::LandingClaim.in_dir(&claim);
-        let seen = match path.read() {
-            Ok(seen) => seen,
+        let read = match path.read() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                return Err(
-                    anyhow::Error::new(e).context(format!("failed to read the claim {path}"))
-                )
-            }
+            read => read,
         };
         let spelled = claim
             .file_name()
@@ -215,7 +216,14 @@ fn refuse_claimed_in(
                         format!("{}\n{branch}", project.as_str()).as_bytes(),
                     ))
         });
-        let holder = match standing(&seen) {
+        let judged = match read {
+            Ok(seen) => standing(&seen),
+            Err(e) => Standing::Unopenable {
+                file: path.reported(),
+                why: format!("{e:#}"),
+            },
+        };
+        let holder = match judged {
             Standing::Dead(_) => continue,
             Standing::Live(holder) | Standing::Unreachable(holder) => {
                 if Some(&holder.op) == own {
@@ -226,11 +234,20 @@ fn refuse_claimed_in(
             Standing::Unread(text) => match on_target {
                 None => continue,
                 Some((_, branch)) => crate::refuse!(
-                    RefusalKind::StateClaimHeld,
+                    RefusalKind::ClaimUnreadable,
                     "a landing into '{branch}' holds it, and {path} names it in a form this rwv \
-                     does not read ({text}): an rwv of another release took it. End that landing \
-                     with the release that started it, resuming or aborting it, then rerun."
+                     does not read ({text}): an rwv of another release took it, or the file is \
+                     corrupt. End that landing with the release that started it, resuming or \
+                     aborting it, then rerun. If no such landing stands, `rwv doctor --fix \
+                     --release-unreadable-claims` run here releases the claim; a live landing \
+                     of another release would lose it."
                 ),
+            },
+            Standing::Unopenable { file, why } => match on_target {
+                None => continue,
+                Some((_, branch)) => {
+                    return Err(unopenable_refusal(&format!("'{branch}'"), &file, &why))
+                }
             },
         };
         let recorded = crate::op_state::read_owner(holder.owner.as_path())
@@ -360,7 +377,38 @@ pub fn unreadable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreadableClaim>
     }
 }
 
-fn unreadable_in(dir: &Path) -> Vec<UnreadableClaim> {
+/// A claim, or a takeover guard beside one, that this rwv cannot read at
+/// all, as `rwv doctor` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnopenableClaim {
+    pub file: std::path::PathBuf,
+    pub error: String,
+}
+
+/// Every claim and takeover guard in the store of `repo_dir` that this rwv
+/// cannot read.
+pub fn unopenable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnopenableClaim> {
+    match claims_dir(vcs, repo_dir) {
+        Ok(dir) => unopenable_in(&dir),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn unopenable_in(dir: &Path) -> Vec<UnopenableClaim> {
+    claim_files_in(dir)
+        .into_iter()
+        .filter_map(|file| match std::fs::read(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Some(UnopenableClaim {
+                error: format!("{e:#}"),
+                file,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every claim file and takeover guard under the claims directory `dir`.
+fn claim_files_in(dir: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -371,6 +419,12 @@ fn unreadable_in(dir: &Path) -> Vec<UnreadableClaim> {
             let claim = StateFile::LandingClaim.in_dir(&entry.path()).reported();
             std::iter::once(claim).chain(takeover_guards(&entry.path()))
         })
+        .collect()
+}
+
+fn unreadable_in(dir: &Path) -> Vec<UnreadableClaim> {
+    claim_files_in(dir)
+        .into_iter()
         .filter_map(|file| {
             let seen = std::fs::read(&file).ok()?;
             Holder::parse(&seen)
@@ -437,12 +491,21 @@ fn take_within(
             Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
             Err(CreateNewError::AlreadyExists) => {}
         }
-        let seen = match path.read() {
-            Ok(seen) => seen,
+        let (seen, judged) = match path.read() {
+            Ok(seen) => {
+                let judged = standing(&seen);
+                (seen, judged)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => format!("{e:#}").into_bytes(),
+            Err(e) => (
+                format!("{e:#}").into_bytes(),
+                Standing::Unopenable {
+                    file: path.reported(),
+                    why: format!("{e:#}"),
+                },
+            ),
         };
-        let blocking = match standing(&seen) {
+        let blocking = match judged {
             Standing::Live(holder) if holder.op == *op => {
                 return Ok(LandingClaim {
                     path,
@@ -474,7 +537,7 @@ fn take_within(
                     .read()
                     .ok()
             }
-            Standing::Unreachable(_) | Standing::Unread(_) => None,
+            Standing::Unreachable(_) | Standing::Unread(_) | Standing::Unopenable { .. } => None,
         };
         let now = (seen, progress);
         if last_seen.as_ref() != Some(&now) {
@@ -515,6 +578,9 @@ fn take_within(
                      landing stands, `rwv doctor --fix --release-unreadable-claims` run here \
                      releases the claim; a live landing of another release would lose it."
                 ),
+                Standing::Unopenable { file, why } => {
+                    return Err(unopenable_refusal(&format!("'{target}'"), &file, &why))
+                }
             }
         }
         crate::test_pause::point("landing-claim-held");
@@ -543,7 +609,28 @@ fn waiting_on(blocking: &Standing) -> String {
             "an operation of another rwv release holds it ({text}). The wait ends when that \
              operation ends."
         ),
+        Standing::Unopenable { file, why } => format!(
+            "{} cannot be read ({why}). The wait ends when it goes or becomes readable.",
+            file.display()
+        ),
     }
+}
+
+/// The refusal for a claim or guard this rwv cannot read at all. No release is
+/// offered: a claim rwv cannot read may be a live landing's, and its bytes
+/// cannot be compared before a removal.
+fn unopenable_refusal(moving: &str, file: &Path, why: &str) -> anyhow::Error {
+    crate::refusal::refusal(
+        RefusalKind::ClaimUnopenable,
+        format!(
+            "a landing may hold {moving}, but {file} cannot be read ({why}), so whose it is \
+             cannot be told and rwv releases nothing it cannot read. If it is a file this user \
+             may not read, a landing run as another user holds it: end that landing as that \
+             user, or make the file readable to this one. If what stands there is not a file, \
+             rwv did not put it there: remove it. Then rerun.",
+            file = file.display()
+        ),
+    )
 }
 
 fn resume_of(holder: &Holder) -> String {
@@ -588,7 +675,12 @@ fn remove_dead(
         let held = match std::fs::read(&guard) {
             Ok(held) => held,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Ok(Some(Standing::Unread(format!("{e:#}")))),
+            Err(e) => {
+                return Ok(Some(Standing::Unopenable {
+                    file: guard,
+                    why: format!("{e:#}"),
+                }))
+            }
         };
         match standing(&held) {
             Standing::Live(holder) if holder.op == mine.op => break,
@@ -839,6 +931,90 @@ mod tests {
         assert!(!refused(check(&app, "main", None)));
         assert!(!refused(check(&RepoKey::Project, "main", Some(&op(1)))));
         assert!(!refused(check(&app, "trunk", Some(&op(1)))));
+    }
+
+    /// A claim no rwv can read at all: something that is not a file at its
+    /// name, since a mode bit does not stop a test run as root.
+    fn unopenable_claim(tmp: &Path, target: &str) -> (std::path::PathBuf, StatePath) {
+        let (dir, path) = claims_on(tmp, target);
+        std::fs::create_dir_all(path.reported()).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn a_claim_that_cannot_be_read_is_refused_by_name_never_offered_a_release() {
+        let tmp = crate::tempdir().unwrap();
+        let (dir, path) = unopenable_claim(tmp.path(), "main");
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(2));
+
+        let refused = take_within(path.clone(), "main", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::ClaimUnopenable)
+        );
+        let text = format!("{refused:#}");
+        assert!(text.contains(&path.to_string()), "{text}");
+        assert!(!text.contains("--release-unreadable-claims"), "{text}");
+
+        assert_eq!(unreadable_in(&dir), Vec::new());
+        let reported = unopenable_in(&dir);
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert_eq!(reported[0].file, path.reported());
+    }
+
+    #[test]
+    fn a_takeover_guard_that_cannot_be_read_is_refused_by_name() {
+        let tmp = crate::tempdir().unwrap();
+        let (path, _, dead) = dead_claim(tmp.path());
+        let guard = path
+            .dir()
+            .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
+        std::fs::create_dir_all(&guard).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(3));
+
+        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::ClaimUnopenable)
+        );
+        assert!(format!("{refused:#}").contains(&guard.display().to_string()));
+        let reported = unopenable_in(&tmp.path().join("claims"));
+        assert_eq!(
+            reported.iter().map(|c| &c.file).collect::<Vec<_>>(),
+            vec![&guard]
+        );
+    }
+
+    #[test]
+    fn a_move_of_a_branch_an_unreadable_claim_may_name_is_refused_as_the_landing_is() {
+        let tmp = crate::tempdir().unwrap();
+        let p = ProjectName::new("p").unwrap();
+        let main = [(RepoKey::Project, "main".to_owned())];
+
+        let (dir, path) = claims_on(tmp.path(), "main");
+        std::fs::create_dir_all(path.dir()).unwrap();
+        std::fs::write(path.reported(), b"garbage").unwrap();
+        let refused = refuse_claimed_in(&dir, &p, &main, None).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::ClaimUnreadable)
+        );
+        assert!(format!("{refused:#}").contains("--release-unreadable-claims"));
+        std::fs::remove_file(path.reported()).unwrap();
+
+        std::fs::create_dir_all(path.reported()).unwrap();
+        let refused = refuse_claimed_in(&dir, &p, &main, None).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::ClaimUnopenable)
+        );
+        assert!(
+            refuse_claimed_in(&dir, &p, &[(RepoKey::Project, "other".to_owned())], None).is_ok()
+        );
     }
 
     #[test]

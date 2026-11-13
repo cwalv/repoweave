@@ -492,6 +492,16 @@ pub enum CheckViolation {
         seen: Vec<u8>,
     },
 
+    /// A landing claim, or a takeover guard beside one, that this rwv cannot
+    /// read at all: a file this user may not read, or something that is not a
+    /// file. Whose it is cannot be told and its bytes cannot be compared, so
+    /// nothing in rwv releases it.
+    ClaimUnopenable {
+        file: PathBuf,
+        /// Rendered read error.
+        error: String,
+    },
+
     /// Two recorded sibling identities that differ only by ASCII case fold.
     ///
     /// A portability lint over the record, not an identity equivalence:
@@ -695,6 +705,7 @@ impl CheckViolation {
             | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::ClaimUnreadable { .. } => Consented("--release-unreadable-claims"),
+            CheckViolation::ClaimUnopenable { .. } => ReportOnly,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -804,6 +815,7 @@ impl CheckViolation {
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::ClaimUnreadable { .. }
+            | CheckViolation::ClaimUnopenable { .. }
             | CheckViolation::OrphanedSavepoint { .. }
             | CheckViolation::UnrecognizedSavepointRef { .. }
             | CheckViolation::ConfusableSiblings { .. }
@@ -881,6 +893,7 @@ impl CheckViolation {
             CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
             CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
             CheckViolation::ClaimUnreadable { .. } => ViolationKind::ClaimUnreadable,
+            CheckViolation::ClaimUnopenable { .. } => ViolationKind::ClaimUnopenable,
             CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
             CheckViolation::UnrecognizedSavepointRef { .. } => {
                 ViolationKind::UnrecognizedSavepointRef
@@ -935,6 +948,7 @@ pub enum ViolationKind {
     DeadOpLease,
     ClaimOwnerUnreachable,
     ClaimUnreadable,
+    ClaimUnopenable,
     OrphanedSavepoint,
     UnrecognizedSavepointRef,
     ConfusableSiblings,
@@ -946,7 +960,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -982,6 +996,7 @@ impl ViolationKind {
         Self::DeadOpLease,
         Self::ClaimOwnerUnreachable,
         Self::ClaimUnreadable,
+        Self::ClaimUnopenable,
         Self::OrphanedSavepoint,
         Self::UnrecognizedSavepointRef,
         Self::ConfusableSiblings,
@@ -2226,6 +2241,12 @@ pub enum ViolationOutput {
         /// What it holds, as text, invalid UTF-8 replaced.
         content: String,
     },
+    ClaimUnopenable {
+        /// Absolute path to the claim or takeover guard.
+        file: WirePath,
+        /// Rendered read error.
+        error: String,
+    },
     OrphanedSavepoint {
         path: String,
         absolute_path: WirePath,
@@ -2696,6 +2717,10 @@ impl ViolationOutput {
             CheckViolation::ClaimUnreadable { file, seen } => Self::ClaimUnreadable {
                 file: WirePath::of(&file),
                 content: unreadable_claim_text(&seen),
+            },
+            CheckViolation::ClaimUnopenable { file, error } => Self::ClaimUnopenable {
+                file: WirePath::of(&file),
+                error,
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -5722,6 +5747,14 @@ pub fn scan_state_hygiene(
                             seen: claim.seen,
                         }),
                 );
+                violations.extend(
+                    crate::landing_claim::unopenable_claims(vcs, &repo.abs)
+                        .into_iter()
+                        .map(|claim| CheckViolation::ClaimUnopenable {
+                            file: claim.file,
+                            error: claim.error,
+                        }),
+                );
             }
         }
 
@@ -7012,6 +7045,15 @@ impl CheckViolation {
                  release would lose its claim.",
                 file.display(),
                 unreadable_claim_text(&seen)
+            ),
+            CheckViolation::ClaimUnopenable { file, error } => format!(
+                "{}: claim-unopenable — it cannot be read ({error}), so whose it is cannot be \
+                 told and rwv releases nothing it cannot read; a landing into its target waits \
+                 on it and refuses. If it is a file this user may not read, a landing run as \
+                 another user holds it: end that landing as that user, or make the file \
+                 readable to this one. If what stands there is not a file, rwv did not put it \
+                 there: remove it.",
+                file.display()
             ),
             CheckViolation::OrphanedSavepoint {
                 workweave,

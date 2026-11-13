@@ -118,6 +118,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
 | [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
+| [`claim-unopenable`](#claim-unopenable) | Warning | Report-only |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
 
@@ -1587,6 +1588,20 @@ guard this run reports here, and the next landing into the target runs. It
 gives up the claim a live landing of another release would hold, which is the
 consent the flag stands for. A file that holds something else by the time the
 release reaches it, readable again or not, is left for the next report.
+
+### `claim-unopenable`
+
+**Warning. Report-only.** A target's landing claim, or a takeover guard beside
+one, cannot be read at all: a file this user may not read, or something at its
+path that is not a file. The finding names the path and the error. Whose claim
+it is cannot be told, and its contents cannot be compared before a removal, so
+nothing in rwv releases it: a landing into the target waits on it and then
+refuses with this kind.
+
+**What to do:** if it is a file this user may not read, a landing run as
+another user holds it: end that landing as that user, or make the file
+readable to this one, and `rwv doctor` then reports what it holds. If what
+stands there is not a file, rwv did not put it there: remove it.
 
 ---
 

@@ -2206,6 +2206,34 @@
         {
           "type": "object",
           "required": [
+            "error",
+            "file",
+            "kind"
+          ],
+          "properties": {
+            "error": {
+              "description": "Rendered read error.",
+              "type": "string"
+            },
+            "file": {
+              "description": "Absolute path to the claim or takeover guard.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-unopenable"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "absolute_path",
             "kind",
             "op_id",

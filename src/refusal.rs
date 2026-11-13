@@ -101,6 +101,8 @@ pub enum RefusalKind {
     /// A landing claim, or a takeover guard beside one, holds bytes this rwv
     /// cannot read: a newer release's, or corrupt.
     ClaimUnreadable,
+    /// A landing claim, or a takeover guard beside one, cannot be read at all.
+    ClaimUnopenable,
     /// The filesystem makes neither a hard link nor a no-replace rename, so
     /// rwv's records and claims cannot be published on it exclusively.
     FilesystemWithoutExclusivePublish,
