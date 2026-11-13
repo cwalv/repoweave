@@ -147,7 +147,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
     ) {
         Ok(committed) => committed,
         Err(refused) => {
-            let refused = anyhow::Error::from(refused).context("failed to commit the change");
+            let refused = refused.context("failed to commit the change");
             return Err(match vcs.unstage_paths(dir, &refs) {
                 Ok(()) => refused,
                 Err(e) => refused.context(format!(

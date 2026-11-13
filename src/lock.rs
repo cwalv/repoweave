@@ -266,7 +266,7 @@ fn stage_and_commit(
     ) {
         Ok(committed) => Ok(committed),
         Err(refused) => {
-            let refused = anyhow::Error::from(refused).context("failed to commit the lock");
+            let refused = refused.context("failed to commit the lock");
             Err(match vcs.unstage_paths(project_dir, paths) {
                 Ok(()) => refused,
                 Err(e) => refused.context(format!(
