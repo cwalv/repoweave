@@ -2946,7 +2946,7 @@ impl OpContext<'_> {
                 &[],
             )?;
             let mut report = Report::default();
-            crate::stack::judge(&stack, &repos, &target, "land", &mut report);
+            crate::stack::judge(&stack, &repos, &target, "land", &[], &mut report);
             report.into_result()?;
         }
         if let Some(merge) = merged {

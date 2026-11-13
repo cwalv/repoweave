@@ -276,12 +276,15 @@ fn workweave_of(checkout: &Path, project: &ProjectName) -> Option<String> {
 }
 
 /// One `target` dependents state per dependent `stack` cannot carry, each
-/// with its own choices; `t` is the target the rebind names.
+/// with its own choices; `t` is the target the rebind names. A landing into
+/// a dependent the running operation holds a claim on cannot run, so it is
+/// not offered for a dependent of one of the `claimed` branches.
 pub(crate) fn judge(
     stack: &Stack,
     repos: &Repos<'_>,
     t: &str,
     verb: &'static str,
+    claimed: &[&str],
     report: &mut Report,
 ) {
     let project_dir = repos.dir(&RepoKey::Project);
@@ -304,6 +307,9 @@ pub(crate) fn judge(
             .bind("<project>", repos.project)
             .checkout(&project_dir)
             .by_verb(verb);
+        if claimed.contains(&uncarried.parent.as_str()) {
+            judging = judging.without(&[crate::diagnosis::ChoiceId::C35]);
+        }
         judging = match &uncarried.why {
             Why::LacksTip(lacking) => judging.listing(lacking.iter().map(|repo| {
                 format!(
@@ -511,7 +517,12 @@ impl Carrier<'_> {
             OpVerb::Land => "land",
             _ => "sync",
         };
-        judge(&stack, &self.repos, self.t, verb, &mut report);
+        let claimed: Vec<&str> = record
+            .carries
+            .iter()
+            .map(|carrying| carrying.branch.as_str())
+            .collect();
+        judge(&stack, &self.repos, self.t, verb, &claimed, &mut report);
         report.into_result()?;
         let project_dir = self.repos.dir(&RepoKey::Project);
         let project_vcs = self.repos.vcs(&RepoKey::Project);

@@ -17663,6 +17663,89 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry(ends: StoppedCarryE
     )
 }
 
+/// How the refusal of a continued carry, met a dependent checked out
+/// elsewhere, is cleared.
+#[derive(Debug, Clone, Copy)]
+pub enum ContinuedCarryMeets {
+    /// C16: the dependent's workweave deleted, then the carry continued.
+    WorkweaveDelete,
+    /// C12: the dependent rebound onto `main`, then the carry continued.
+    Rebind,
+    /// `rwv abort`.
+    Abort,
+}
+
+/// `stack-carry-conflict` stopped on `w2`, resolved by hand, and `w3`
+/// recorded onto `w2` and checked out in a workweave of its own: the carry
+/// holds the landing claim on `w2`, so the refusal of `rwv sync --continue`
+/// prints no landing, which the claim would refuse; each choice it does
+/// print, and `rwv abort`, runs as printed to the end of the operation.
+pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
+    ends: ContinuedCarryMeets,
+) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "carrying 'w2' along in local/remotes/app",
+            )),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        create("w3"),
+        dependent_of(&ww("w3"), "w3", "w2"),
+        Step::commit(&ww("w3"), Repo::Lib, "w3-lib"),
+        Step::rwv(&ww("w3"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
+            .claim(Claim::OutputContains("w3 lands into w2"))
+            .claim(Claim::OutputLacks("rwv land"))
+            .claim(Claim::OutputContains("rwv workweave delete w3"))
+            .claim(Claim::OutputContains(
+                "rwv branch set-mode w3 feature --target main",
+            )),
+    ];
+    match ends {
+        ContinuedCarryMeets::WorkweaveDelete => steps.extend([
+            Step::rwv_printed(&a(), "rwv workweave delete w3").expect(Exit::Code(3)),
+            Step::rwv(&ww("w1"), &["sync", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("carried 'w2' along")),
+        ]),
+        ContinuedCarryMeets::Rebind => steps.extend([
+            Step::rwv_printed(&ww("w1"), "rwv branch set-mode w3 ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["sync", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("carried 'w2' along")),
+        ]),
+        ContinuedCarryMeets::Abort => steps.push(
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputLacks("foreign")),
+        ),
+    }
+    scenario(
+        "stack: a continued carry meets a dependent checked out elsewhere",
+        steps,
+    )
+}
+
 /// `stack-carried` under an operator's `rebase.updateRefs`, with `w2`
 /// holding no `app` commit of its own, so it sits at `w1`'s tip there: the
 /// sync's rebase of `w1` leaves `w2` where it is, and the carry moves it.

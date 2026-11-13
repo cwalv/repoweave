@@ -818,6 +818,11 @@ every_scenario!(
     stack_carry_stopped_under_update_refs,
     a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Abort),
     a_landing_into_a_dependent_waits_on_its_stopped_carry(scenarios::StoppedCarryEnds::Continue),
+    a_stopped_carry_continued_meets_a_dependent_checked_out(
+        scenarios::ContinuedCarryMeets::WorkweaveDelete
+    ),
+    a_stopped_carry_continued_meets_a_dependent_checked_out(scenarios::ContinuedCarryMeets::Rebind),
+    a_stopped_carry_continued_meets_a_dependent_checked_out(scenarios::ContinuedCarryMeets::Abort),
     a_landing_killed_after_its_carry_continues,
     a_landing_resumed_after_its_target_moved_past_a_carry,
     a_carry_left_by_a_quit_is_unrecorded,
@@ -5561,6 +5566,15 @@ fn a_project_carry_follows_its_member_recomposed_across_a_stop_is_green() {
 #[test]
 fn a_carry_left_by_a_quit_refuses_its_continue_as_unrecorded() {
     runner::run(scenarios::a_carry_left_by_a_quit_is_unrecorded()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_stopped_carry_continued_meets_a_dependent_checked_out_and_each_choice_ends_it() {
+    use scenarios::ContinuedCarryMeets::*;
+    for ends in [WorkweaveDelete, Rebind, Abort] {
+        runner::run(scenarios::a_stopped_carry_continued_meets_a_dependent_checked_out(ends))
+            .assert_fully_decided_green();
+    }
 }
 
 #[test]

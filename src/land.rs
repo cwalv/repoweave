@@ -884,7 +884,7 @@ pub fn judge(
             manifest: &sides.ours,
         };
         let stack = crate::stack::walk(&repos, &landing.feature, &plan.rewritten, &[])?;
-        crate::stack::judge(&stack, &repos, landing.target.as_str(), "land", report);
+        crate::stack::judge(&stack, &repos, landing.target.as_str(), "land", &[], report);
     }
     match inapplicable {
         Some(refused) => Err(refused),

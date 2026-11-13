@@ -1787,6 +1787,7 @@ impl State {
             verb: None,
             only: None,
             only_forms: None,
+            without: Vec::new(),
             bindings: BTreeMap::new(),
             places: BTreeMap::new(),
         }
@@ -3137,6 +3138,7 @@ pub struct Judging {
     verb: Option<&'static str>,
     only: Option<Vec<ChoiceId>>,
     only_forms: Option<Vec<Form>>,
+    without: Vec<ChoiceId>,
     bindings: BTreeMap<&'static str, String>,
     places: BTreeMap<&'static str, PathBuf>,
 }
@@ -3173,6 +3175,13 @@ impl Judging {
     /// offer; this narrows it where the judging knows which of them hold.
     pub fn only(mut self, choices: &[ChoiceId]) -> Self {
         self.only = Some(choices.to_vec());
+        self
+    }
+
+    /// Leave out the forms of these choices, where the judging knows they
+    /// cannot run: the state's row says what it can offer.
+    pub fn without(mut self, choices: &[ChoiceId]) -> Self {
+        self.without.extend_from_slice(choices);
         self
     }
 
@@ -3292,6 +3301,7 @@ impl Judging {
                     .as_ref()
                     .is_none_or(|only| only.contains(&form.row().choice))
             })
+            .filter(|form| !self.without.contains(&form.row().choice))
             .filter(|form| {
                 self.only_forms
                     .as_ref()
