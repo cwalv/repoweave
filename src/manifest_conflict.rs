@@ -117,6 +117,7 @@ struct Sides {
     base: Option<Manifest>,
     ours: Manifest,
     theirs: Manifest,
+    ours_text: String,
 }
 
 fn read(sides: &ConflictSides) -> Result<Sides, (&'static str, String)> {
@@ -134,11 +135,12 @@ fn read(sides: &ConflictSides) -> Result<Sides, (&'static str, String)> {
             .transpose()?,
         ours: parse("ours", &sides.ours)?,
         theirs: parse("theirs", &sides.theirs)?,
+        ours_text: sides.ours.clone().unwrap_or_default(),
     })
 }
 
 fn table(manifest: &Manifest) -> anyhow::Result<toml::Table> {
-    toml::Table::try_from(manifest).context("failed to read a side of rwv.toml as a table")
+    manifest.declared()
 }
 
 impl Sides {
@@ -308,7 +310,7 @@ pub(crate) fn settle(
     } else {
         let kept = vcs.backup_edits(dir)?;
         let text = |manifest: &Manifest| {
-            toml::to_string(manifest).context("failed to serialize a side of rwv.toml")
+            toml::to_string(&manifest.declared()?).context("failed to serialize a side of rwv.toml")
         };
         vcs.rewrite_conflict(
             dir,
@@ -337,7 +339,9 @@ fn write_merged(
 ) -> anyhow::Result<Option<crate::vcs::BackupWitness>> {
     let merged = sides.merged()?;
     let kept = vcs.backup_edits(dir)?;
-    merged.write(&dir.join(Manifest::FILE_NAME))?;
+    let (text, _) = Manifest::edit_text(&sides.ours_text, |m| *m = merged)?;
+    crate::durable_file::replace(&dir.join(Manifest::FILE_NAME), text.as_bytes())
+        .context("failed to write rwv.toml")?;
     vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
     Ok(kept)
 }
