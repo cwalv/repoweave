@@ -3019,7 +3019,7 @@ impl Form {
             },
             Self::ResumeOperation => &FormRow {
                 choice: C::ResumeOperation,
-                steps: &[Rwv("rwv <resume>")],
+                steps: &[Rwv("rwv <resume> --continue")],
                 at: W::Here,
                 shipped: true,
             },

@@ -78,7 +78,8 @@ fn judge(
     match resume {
         Some(resume) => {
             without.push(ChoiceId::C32);
-            judging = judging.bind_list("<resume>", resume.split_whitespace().skip(1));
+            let words: Vec<&str> = resume.split_whitespace().collect();
+            judging = judging.bind_list("<resume>", &words[1..words.len() - 1]);
         }
         None => without.extend([ChoiceId::ResumeOperation, ChoiceId::AbortOperation]),
     }
