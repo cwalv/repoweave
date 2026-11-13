@@ -240,7 +240,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 4,
+        count: 5,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -259,8 +259,9 @@ const ALLOWLIST: &[Allowed] = &[
             wrote under the git directory, named for this process, once the \
             commit through it is made or refused; the repo's own index and \
             working files are never it. refresh_paths_if_left: removes the \
-            scratch index it built the merge's target tree in, named for this \
-            process under the checkout's private git directory.",
+            scratch index it built the merge's target tree in, and the copy of \
+            the checkout's index its file write ran through, each named for \
+            this process under the checkout's private git directory.",
     },
     Allowed {
         file: "git.rs",
@@ -446,7 +447,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 12,
+        count: 11,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -479,16 +480,13 @@ const ALLOWLIST: &[Allowed] = &[
             (8) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
             refresh read, by a compare-and-swap whose old and new values are \
             both that commit, so it moves no ref; a branch moved since makes \
-            it fail rather than move back or record the newer tip. (9) \
-            Vcs::mark_refreshing: the same compare-and-swap at HEAD, whose \
-            reflog message names the tip a refresh starts from; it moves no \
-            ref.",
+            it fail rather than move back or record the newer tip.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"read-tree\", \"-m\"",
         count: 1,
-        callers: &[("refresh_paths_if_left", 4)],
+        callers: &[("refresh_paths_if_left", 3)],
         justification: "refresh_paths_if_left, the one write of a drift \
             refresh: a two-way merge from the moved-from tip to that tip's \
             tree with the stale paths taken from HEAD, so in an index that \
@@ -501,12 +499,11 @@ const ALLOWLIST: &[Allowed] = &[
             (an ignored file or directory where HEAD adds a path, a tracked \
             file deleted from disk) is checked immediately before the spawn. \
             Reached through the backend's Vcs method of the same name, whose \
-            callers are all in check::refresh_drift: the files scope and the \
-            index-only scope, each passing only paths two readings of \
-            check::read_drift agree are stale, and the put-back of the files \
-            scope with the two tips swapped when the index-only scope is \
-            declined after it, which git refuses unless each path still holds \
-            what the first write put there.",
+            callers are all in check::refresh_drift: the files scope, run \
+            through a copy of the checkout's index so the checkout's own index \
+            is untouched, then the index-only scope over every stale path, \
+            each passing only paths two readings of check::read_drift agree \
+            are stale.",
     },
     Allowed {
         file: "git/carry_edits.rs",

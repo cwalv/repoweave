@@ -1323,12 +1323,15 @@ fn refresh_paths_if_left(
         ctx: format!("failed to spawn git {args:?}"),
         source: e,
     })?;
-    if output.status.success() {
-        return Ok(RefreshWrite::Written);
+    if !output.status.success() {
+        return Ok(RefreshWrite::Declined {
+            vcs_said: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
     }
-    Ok(RefreshWrite::Declined {
-        vcs_said: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
+    if scope == RefreshScope::IndexOnly {
+        refresh_stat_data(repo);
+    }
+    Ok(RefreshWrite::Written)
 }
 
 /// The merge target [`tree_with_paths_from`] builds, with which of the
