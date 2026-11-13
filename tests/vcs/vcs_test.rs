@@ -1271,6 +1271,39 @@ fn a_rebase_moves_no_branch_but_head_s_under_the_operator_s_update_refs() {
 }
 
 #[test]
+fn a_rebase_over_uncommitted_edits_is_refused_under_the_operator_s_auto_stash() {
+    let (dir, c1) = diverged_repo();
+    let p = dir.path();
+    common::git_in(p, &["config", "rebase.autoStash", "true"]);
+    fs::write(p.join("feat.txt"), "edited\n").unwrap();
+    let feat = common::git_in(p, &["rev-parse", "feat"]);
+    let main_tip = resolved(&common::git_in(p, &["rev-parse", "main"]));
+    let rebased = git_vcs().rebase(p, &main_tip, &c1, DerivedContentPolicy::keep_target_side());
+    assert!(rebased.is_err());
+    assert_eq!(common::git_in(p, &["rev-parse", "feat"]), feat);
+    assert_eq!(fs::read_to_string(p.join("feat.txt")).unwrap(), "edited\n");
+}
+
+#[test]
+fn a_rebase_flattens_a_merge_in_its_range_under_the_operator_s_rebase_merges() {
+    let (dir, c1) = diverged_repo();
+    let p = dir.path();
+    common::git_in(p, &["config", "rebase.rebaseMerges", "true"]);
+    common::git_in(p, &["checkout", "-q", "-b", "side", &c1.to_string()]);
+    commit_file(p, "side.txt", "side\n", "side: advance", None);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    common::git_in(p, &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+    let main_tip = resolved(&common::git_in(p, &["rev-parse", "main"]));
+    git_vcs()
+        .rebase(p, &main_tip, &c1, DerivedContentPolicy::keep_target_side())
+        .unwrap();
+    assert_eq!(
+        common::git_in(p, &["rev-list", "--merges", "main..HEAD"]),
+        ""
+    );
+}
+
+#[test]
 fn a_rebase_maps_what_it_recorded_where_two_commits_share_authorship_and_the_first_is_dropped() {
     let dir = init_repo();
     let p = dir.path();
