@@ -127,6 +127,36 @@ fn a_tip_the_op_wrote_is_reset_to_the_savepoint() {
     assert_eq!(&head(p.path()), saved.id());
 }
 
+#[test]
+fn a_replay_finished_by_hand_on_a_branch_is_kept_before_the_reset() {
+    let p = repo();
+    let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    let by_hand = commit(p.path(), "resolved by hand");
+    let attribution = Attribution {
+        converged: Some(&by_hand),
+        finished_by_hand: Some(&by_hand),
+        ..Attribution::default()
+    };
+    let plan = GitVcs
+        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .unwrap();
+    assert_eq!(named(&plan), "RestoredFinishedByHand", "{plan:?}");
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert!(
+        matches!(&outcome, VerifiedRestoreOutcome::Kept { kept, .. }
+            if matches!(kept.as_slice(), [KeptWork::FinishedByHand(_)])),
+        "{outcome:?}"
+    );
+    assert_eq!(&head(p.path()), saved.id());
+    assert!(!git(
+        p.path(),
+        &["log", "--all", "--format=%H", "-Sresolved by hand"]
+    )
+    .is_empty());
+}
+
 /// A merge stopped on a conflict: `side` and `main` both change `f`.
 fn stopped_merging(p: &Path) -> CommitId {
     git(p, &["switch", "-q", "-c", "side"]);
