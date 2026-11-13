@@ -3764,3 +3764,42 @@ fn an_untracked_added_file_after_a_hand_refresh_is_tracked_again() {
     assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
 }
+
+/// Edits held for want of a reflog entry, stashed as printed and taken back:
+/// where git writes an entry for that, the next verb judges them as any
+/// edits, with the commit choice back; where the setting stops git writing
+/// one, the hold names the setting, and turning it on is the exit.
+#[test]
+fn the_printed_stash_and_its_pop_end_the_hold_unless_the_setting_forbids_an_entry() {
+    for how in NO_ENTRY {
+        let f = fixture_without_entry(how);
+        std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
+        let out = common::cli::run(&["lock"], &f.ww);
+        let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+        let off = matches!(how, NoEntry::NeverLogged);
+        assert_eq!(
+            stderr.contains("core.logAllRefUpdates"),
+            off,
+            "{how:?}:\n{stderr}"
+        );
+        assert!(stderr.contains("git stash pop"), "{how:?}:\n{stderr}");
+        run_every_choice(&stderr, &f.ww);
+        common::git_in(&f.ww_lib, &["stash", "pop", "-q"]);
+
+        let out = common::cli::run(&["lock"], &f.ww);
+
+        if off {
+            let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+            assert!(stderr.contains("core.logAllRefUpdates"), "{stderr}");
+            let enable = "core.logAllRefUpdates";
+            common::git_in(&f.ww_lib, &["config", enable, "true"]);
+            common::git_in(&f.ww_lib, &["stash", "push", "-q"]);
+            common::git_in(&f.ww_lib, &["stash", "pop", "-q"]);
+            let out = common::cli::run(&["lock"], &f.ww);
+            common::cli::refused(&out, State::EditsDirty);
+        } else {
+            let stderr = common::cli::refused(&out, State::EditsDirty);
+            assert!(stderr.contains(" commit"), "{how:?}:\n{stderr}");
+        }
+    }
+}

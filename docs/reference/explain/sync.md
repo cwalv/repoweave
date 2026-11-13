@@ -1981,6 +1981,7 @@ Schema:
           "type": "object",
           "required": [
             "kind",
+            "recording_off",
             "repo"
           ],
           "properties": {
@@ -1989,6 +1990,9 @@ Schema:
               "enum": [
                 "checkout-unrecorded"
               ]
+            },
+            "recording_off": {
+              "type": "boolean"
             },
             "repo": {
               "$ref": "#/definitions/WirePath"

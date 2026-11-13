@@ -797,7 +797,7 @@ pub enum VcsError {
     UntrackedCollision { repo: PathBuf, paths: Vec<String> },
     /// The checkout holds no record of where it last stood, so a move of its
     /// branch cannot be told from edits.
-    CheckoutUnrecorded { repo: PathBuf },
+    CheckoutUnrecorded { repo: PathBuf, recording_off: bool },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -903,6 +903,7 @@ pub enum VcsErrorOutput {
     },
     CheckoutUnrecorded {
         repo: crate::path_spelling::WirePath,
+        recording_off: bool,
     },
     Io {
         ctx: String,
@@ -954,8 +955,12 @@ impl From<&VcsError> for VcsErrorOutput {
                 repo: crate::path_spelling::WirePath::of(repo),
                 paths: paths.clone(),
             },
-            VcsError::CheckoutUnrecorded { repo } => Self::CheckoutUnrecorded {
+            VcsError::CheckoutUnrecorded {
+                repo,
+                recording_off,
+            } => Self::CheckoutUnrecorded {
                 repo: crate::path_spelling::WirePath::of(repo),
+                recording_off: *recording_off,
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -1011,10 +1016,25 @@ impl fmt::Display for VcsError {
                 repo.display(),
                 paths.join(", ")
             ),
-            Self::CheckoutUnrecorded { repo } => write!(
+            Self::CheckoutUnrecorded {
+                repo,
+                recording_off: false,
+            } => write!(
                 f,
                 "the reflog of {} holds no entry for this checkout, so rwv cannot tell drift \
-                 from edits",
+                 from edits; where `git diff` shows every difference is yours, `git stash pop` \
+                 after the stash records where it stands and ends this",
+                repo.display()
+            ),
+            Self::CheckoutUnrecorded {
+                repo,
+                recording_off: true,
+            } => write!(
+                f,
+                "the reflog of {} holds no entry for this checkout because \
+                 core.logAllRefUpdates is false, so rwv cannot tell drift from edits and git \
+                 never records one; `git config core.logAllRefUpdates true` lets git record it, \
+                 after which `git stash pop` following the stash ends this",
                 repo.display()
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
@@ -3075,6 +3095,15 @@ impl ContentIdentity {
     }
 }
 
+/// Why a checkout holds no record of where it stood.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unrecorded {
+    /// The VCS recorded where the checkout stood and no longer holds it.
+    Expired,
+    /// The VCS is configured never to record it.
+    RecordingOff,
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
@@ -4121,9 +4150,9 @@ pub trait Vcs: Send + Sync {
     /// nothing about whether the branch moved.
     ///
     /// For git: the worktree's `HEAD` reflog has no entry, as after git's
-    /// expiry of an idle checkout's log, a hand expiry, or
-    /// `core.logAllRefUpdates=false`.
-    fn checkout_unrecorded(&self, repo: &Path) -> Result<bool, VcsError>;
+    /// expiry of an idle checkout's log or a hand expiry, or because
+    /// `core.logAllRefUpdates=false` has kept one from ever being written.
+    fn checkout_unrecorded(&self, repo: &Path) -> Result<Option<Unrecorded>, VcsError>;
 
     /// Each path whose index entry or file differs from `HEAD`, with what
     /// each holds measured against `HEAD` and against `left` — where the

@@ -56,11 +56,15 @@ no entry: git expired it from an idle checkout, it was expired by hand, or
 
 **What it means.** Without that record rwv cannot tell the branch having moved
 under the checkout from edits made in it, since both leave files that differ from
-HEAD. It judges neither.
+HEAD. It judges neither. `recording_off` is `true` when
+`core.logAllRefUpdates` is `false`, which is why git never wrote one.
 
 **Exits.** `git stash push` sets every difference aside without recording any of
-it. Differences that are only the branch's move are taken back with the recipe on
-[Shared-refs drift](../explanation/joints/shared-refs-drift.md).
+it. Where `git diff` shows the differences are all yours, `git stash pop`
+afterwards makes git write an entry at the current tip and the next verb judges
+them as edits. With `recording_off`, `git config core.logAllRefUpdates true`
+first. Differences that are only the branch's move are taken back with the
+recipe on [Shared-refs drift](../explanation/joints/shared-refs-drift.md).
 
 ### `command-failed`
 

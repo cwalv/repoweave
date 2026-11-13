@@ -1382,7 +1382,10 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
             repo: repo.clone(),
             paths: vec!["src/main.rs".to_owned()],
         },
-        VcsErrorOutput::CheckoutUnrecorded { repo: repo.clone() },
+        VcsErrorOutput::CheckoutUnrecorded {
+            repo: repo.clone(),
+            recording_off: false,
+        },
         VcsErrorOutput::Io {
             ctx: "read HEAD".to_owned(),
             message: "permission denied".to_owned(),

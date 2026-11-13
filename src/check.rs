@@ -7391,11 +7391,13 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
         && standings
             .iter()
             .any(|standing| (standing.index, standing.file) != (Holds::Head, Holds::Head))
-        && vcs.checkout_unrecorded(repo)?
     {
-        return Err(VcsError::CheckoutUnrecorded {
-            repo: repo.to_path_buf(),
-        });
+        if let Some(why) = vcs.checkout_unrecorded(repo)? {
+            return Err(VcsError::CheckoutUnrecorded {
+                repo: repo.to_path_buf(),
+                recording_off: why == crate::vcs::Unrecorded::RecordingOff,
+            });
+        }
     }
     let partial_take = standings
         .iter()

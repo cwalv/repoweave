@@ -551,7 +551,10 @@ fn every_vcs_error() -> Vec<VcsError> {
             repo: repo(),
             paths: vec!["f".into()],
         },
-        VcsError::CheckoutUnrecorded { repo: repo() },
+        VcsError::CheckoutUnrecorded {
+            repo: repo(),
+            recording_off: false,
+        },
         VcsError::Io {
             ctx: "spawn".into(),
             source: std::io::Error::other("boom"),

@@ -260,7 +260,11 @@ moved: git expires the log of a checkout left idle past its default 90 days,
 and `git reflog expire` or `core.logAllRefUpdates=false` leaves none. Where
 such a checkout differs from HEAD, every verb refuses it as `edits` `drift left
 in place`, naming that, with `git stash push` as its one choice and no commit.
-A clean one is not held.
+Where `git diff` shows the differences are yours, `git stash pop` afterwards makes
+git write an entry and the next verb judges them as ordinary edits. When
+`core.logAllRefUpdates` is `false` git writes none, the hold says so, and
+`git config core.logAllRefUpdates true` before the stash and pop is the exit.
+A clean checkout is not held.
 
 Where nothing shows that the branch moved under the checkout — the move went
 unrecorded, the checkout already took part of it, it moved backward or

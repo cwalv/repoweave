@@ -16,8 +16,8 @@ use crate::vcs::{
     RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
     RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId,
     SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile,
-    TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    TrackedFileKind, TreeMerges, UnconfirmedRemote, Unrecorded, Upstream, UrlRemote, Vcs,
+    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use crate::vcs::{
     Attribution, CheckoutRestorePlan, Integrates, KeptWork, OwnStep, RefRestorePlan, RestoredFrom,
@@ -774,9 +774,9 @@ fn newest_head_log_entry(repo: &Path) -> Result<Option<CommitId>, VcsError> {
 /// The worktree's own `HEAD` log file is read, since `log -g HEAD` answers an
 /// emptied log with the current commit and then the branch's shared log, which
 /// read as an entry saying the branch did not move.
-fn checkout_unrecorded(repo: &Path) -> Result<bool, VcsError> {
+fn checkout_unrecorded(repo: &Path) -> Result<Option<Unrecorded>, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
-        return Ok(false);
+        return Ok(None);
     };
     let log = GitVcs::run_trimmed(
         [
@@ -787,10 +787,22 @@ fn checkout_unrecorded(repo: &Path) -> Result<bool, VcsError> {
         ],
         repo,
     )?;
-    match std::fs::metadata(log) {
-        Ok(log) => Ok(log.len() == 0),
-        Err(_) => Ok(newest_head_log_entry(repo)?.is_none()),
+    let empty = match std::fs::metadata(log) {
+        Ok(log) => log.len() == 0,
+        Err(_) => newest_head_log_entry(repo)?.is_none(),
+    };
+    if !empty {
+        return Ok(None);
     }
+    let setting = GitVcs::run_trimmed_or_absent(
+        ["config", "--get", "core.logAllRefUpdates"],
+        repo,
+        Absent::ConfigKey,
+    )?;
+    Ok(Some(match setting.as_deref() {
+        Some("false" | "no" | "off" | "0") => Unrecorded::RecordingOff,
+        _ => Unrecorded::Expired,
+    }))
 }
 
 /// Whether the checkout's index lists any path. Only the first byte of the
@@ -4212,7 +4224,7 @@ impl Vcs for GitVcs {
         left_behind_at(repo)
     }
 
-    fn checkout_unrecorded(&self, repo: &Path) -> Result<bool, VcsError> {
+    fn checkout_unrecorded(&self, repo: &Path) -> Result<Option<Unrecorded>, VcsError> {
         checkout_unrecorded(repo)
     }
 
