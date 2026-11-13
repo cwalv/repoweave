@@ -2174,3 +2174,25 @@ fn a_landing_refused_before_its_target_lists_no_drift_as_edits() {
         "{stderr}"
     );
 }
+
+/// A drift reading that fails refuses naming the failure, offering no
+/// commit: nothing in the checkout is judged an edit it may not be.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_drift_reading_that_fails_offers_no_commit() {
+    use std::os::unix::ffi::OsStrExt;
+    let f = fixture();
+    let odd = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+    std::fs::write(f.ww_lib.join(odd), "x\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "-A"]);
+    common::git_in(&f.ww_lib, &["commit", "-q", "-m", "odd name"]);
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
+
+    for verb in [&["lock"][..], &["land"]] {
+        let out = common::cli::run(verb, &f.ww);
+        let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+        assert!(stderr.contains("could not be read"), "{verb:?}:\n{stderr}");
+        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+    }
+}

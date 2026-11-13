@@ -7987,7 +7987,8 @@ pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
             merge()
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("kept as backup"))
-                .claim(Claim::OutputContains("left conflicted")),
+                .claim(Claim::OutputContains("left conflicted"))
+                .claim(Claim::OutputLacks("commit them if they are yours")),
             refreshed(),
             Step::git(
                 &at,
