@@ -828,6 +828,10 @@ every_scenario!(
     a_carry_refuses_a_dependent_member_branch_another_branch_declares,
     a_carry_reports_the_pins_it_re_mapped("sync"),
     a_carry_reports_the_pins_it_re_mapped("land"),
+    a_hand_ordered_manifest_takes_in_a_setter_from_each_side("linear"),
+    a_hand_ordered_manifest_takes_in_a_setter_from_each_side("merge"),
+    a_hand_ordered_manifest_keeps_a_removal_across_a_setter("linear"),
+    a_hand_ordered_manifest_keeps_a_removal_across_a_setter("merge"),
     a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_branch,
     a_dependent_opened_elsewhere_as_its_carry_moves_it_is_not_moved,
     a_landing_killed_after_its_carry_continues,
@@ -5831,6 +5835,30 @@ fn a_carry_refuses_to_write_over_an_ignored_file() {
 #[test]
 fn a_carry_refuses_a_dependent_member_branch_another_branch_declares() {
     runner::run(scenarios::a_carry_refuses_a_dependent_member_branch_another_branch_declares())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_hand_ordered_manifest_takes_in_a_setter_from_each_side_in_a_linear_sync() {
+    runner::run(scenarios::a_hand_ordered_manifest_takes_in_a_setter_from_each_side("linear"))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_hand_ordered_manifest_takes_in_a_setter_from_each_side_in_a_merge_sync() {
+    runner::run(scenarios::a_hand_ordered_manifest_takes_in_a_setter_from_each_side("merge"))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter_in_a_linear_sync() {
+    runner::run(scenarios::a_hand_ordered_manifest_keeps_a_removal_across_a_setter("linear"))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter_in_a_merge_sync() {
+    runner::run(scenarios::a_hand_ordered_manifest_keeps_a_removal_across_a_setter("merge"))
         .assert_fully_decided_green();
 }
 

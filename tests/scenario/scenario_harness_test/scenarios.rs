@@ -20667,3 +20667,58 @@ pub fn push_dry_run_on_an_unreachable_remote_is_unconfirmed_not_would_push() -> 
         steps,
     )
 }
+
+/// `proj`'s committed `rwv.toml` holding its member tables as lib, app, docs:
+/// an order a hand edit leaves and no serializer writes.
+fn hand_ordered_manifest() -> Vec<Step> {
+    vec![
+        Step::reorder_manifest(&a(), &[Repo::Lib, Repo::App, Repo::Docs]),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "hand: reorder"]),
+    ]
+}
+
+/// On a hand-ordered `rwv.toml`, a setter on each side changes a different
+/// member. Each side's commit is only its own line, so the sync takes both in
+/// as one manifest that lists every member once.
+pub fn a_hand_ordered_manifest_takes_in_a_setter_from_each_side(history: &'static str) -> Scenario {
+    let mut steps = hand_ordered_manifest();
+    steps.extend([
+        create("w"),
+        Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["member", "set-role", DOCS, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--history", history])
+            .expect(Exit::Succeeds)
+            .claim(Claim::ManifestLists {
+                at: ww("w"),
+                rev: "HEAD",
+                members: &[Repo::App, Repo::Lib, Repo::Docs],
+            }),
+    ]);
+    scenario(
+        "a hand-ordered manifest takes in a setter from each side",
+        steps,
+    )
+}
+
+/// On a hand-ordered `rwv.toml`, the workweave removes a member and the
+/// primary sets another's role. The sync takes the role in and the removal
+/// stays.
+pub fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter(history: &'static str) -> Scenario {
+    let mut steps = hand_ordered_manifest();
+    steps.extend([
+        create("w"),
+        Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["member", "remove", LIB]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--history", history])
+            .expect(Exit::Succeeds)
+            .claim(Claim::ManifestLists {
+                at: ww("w"),
+                rev: "HEAD",
+                members: &[Repo::App, Repo::Docs],
+            }),
+    ]);
+    scenario(
+        "a hand-ordered manifest keeps a removal across a setter",
+        steps,
+    )
+}

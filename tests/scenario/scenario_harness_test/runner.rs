@@ -171,6 +171,10 @@ pub enum Action {
     },
     /// Removes `member`'s table from the project's `rwv.toml` at `at`, as an
     /// operator settling a conflict by hand would.
+    ReorderManifest {
+        at: Place,
+        order: Vec<Repo>,
+    },
     DropManifestEntry {
         at: Place,
         project: Repo,
@@ -538,6 +542,13 @@ pub enum Claim {
     DirStands(Machine, &'static str),
     /// Nothing is at `rel` under machine `machine`'s directory.
     DirGone(Machine, &'static str),
+    /// The project's `rwv.toml` at `rev` in the checkout at `at` parses and
+    /// lists exactly `members`.
+    ManifestLists {
+        at: Place,
+        rev: &'static str,
+        members: &'static [Repo],
+    },
 }
 
 /// What is left at a marker's path after a tamper.
@@ -714,6 +725,21 @@ impl Step {
                 at: at.clone(),
                 project,
                 member,
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    /// Moves the member tables of the project's `rwv.toml` at `at` into
+    /// `order`, where the first of them stood, as a hand edit would; leaves the
+    /// change uncommitted.
+    pub fn reorder_manifest(at: &Place, order: &[Repo]) -> Step {
+        let names: Vec<&str> = order.iter().map(|r| r.name()).collect();
+        Step::new(
+            format!("hand-reorder proj's rwv.toml: {}", names.join(", ")),
+            Action::ReorderManifest {
+                at: at.clone(),
+                order: order.to_vec(),
             },
             Expect::succeeds(),
         )
@@ -1406,6 +1432,49 @@ impl Run<'_> {
                 std::fs::write(&path, text).unwrap();
                 (true, String::new())
             }
+            Action::ReorderManifest { at, order } => {
+                let manifest_path = sb.checkout(at, Repo::Proj).join("rwv.toml");
+                let text = std::fs::read_to_string(&manifest_path).unwrap();
+                let mut blocks: Vec<(Option<Repo>, String)> = vec![(None, String::new())];
+                for line in text.split_inclusive('\n') {
+                    if line.starts_with('[') {
+                        let member = order.iter().copied().find(|m| {
+                            line.trim_end() == format!("[repositories.\"{}\"]", m.rel_path())
+                        });
+                        blocks.push((member, String::new()));
+                    }
+                    blocks.last_mut().unwrap().1.push_str(line);
+                }
+                let moved: Vec<String> = order
+                    .iter()
+                    .filter_map(|m| {
+                        blocks
+                            .iter()
+                            .find(|(b, _)| *b == Some(*m))
+                            .map(|(_, t)| t.clone())
+                    })
+                    .collect();
+                if moved.len() != order.len() {
+                    return (
+                        false,
+                        format!("{} lacks a table of {order:?}", manifest_path.display()),
+                    );
+                }
+                let mut out = String::new();
+                let mut placed = false;
+                for (member, block) in &blocks {
+                    match member {
+                        None => out.push_str(block),
+                        Some(_) if !placed => {
+                            placed = true;
+                            moved.iter().for_each(|b| out.push_str(b));
+                        }
+                        Some(_) => {}
+                    }
+                }
+                std::fs::write(&manifest_path, out).unwrap();
+                (true, String::new())
+            }
             Action::DropManifestEntry {
                 at,
                 project,
@@ -2007,6 +2076,29 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("{} is not a directory", dir.display()))
+                }
+            }
+            Claim::ManifestLists { at, rev, members } => {
+                let dir = sb.checkout(at, Repo::Proj);
+                let shown = sb.git(&dir, &["show", &format!("{rev}:rwv.toml")]);
+                if !shown.status.success() {
+                    return Err(format!("{} has no rwv.toml at {rev}", dir.display()));
+                }
+                let text = String::from_utf8_lossy(&shown.stdout).into_owned();
+                let manifest = repoweave::manifest::Manifest::from_toml_str(&text)
+                    .map_err(|e| format!("rwv.toml at {rev} does not parse: {e:#}\n{text}"))?;
+                let listed: std::collections::BTreeSet<String> = manifest
+                    .iter_repo_paths()
+                    .map(ToString::to_string)
+                    .collect();
+                let wanted: std::collections::BTreeSet<String> =
+                    members.iter().map(|m| m.rel_path()).collect();
+                if listed == wanted {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "rwv.toml at {rev} lists {listed:?}, not {wanted:?}\n{text}"
+                    ))
                 }
             }
             Claim::DirGone(machine, rel) => {
