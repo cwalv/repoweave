@@ -12119,6 +12119,101 @@ mod tests {
         }
     }
 
+    fn step_at() -> RepoAt {
+        RepoAt {
+            label: "github/acme/server".to_owned(),
+            named: RepoOperand::Member(RepoPath::new("github/acme/server").unwrap()),
+            dir: PathBuf::from("/nowhere"),
+            vcs: crate::vcs::probe_vcs(),
+            on_target: true,
+        }
+    }
+
+    fn a_tip() -> crate::vcs::CommitId {
+        crate::vcs::CommitId::parse("00000000000000000000000000000000000000a1").unwrap()
+    }
+
+    fn blocked_when_it_would_refuse(blocking: AbortStep, passing: AbortStep) {
+        assert!(AbortPlan {
+            steps: vec![blocking]
+        }
+        .blocked());
+        assert!(!AbortPlan {
+            steps: vec![passing]
+        }
+        .blocked());
+    }
+
+    #[test]
+    fn a_branch_restore_the_judge_blocked_blocks_the_plan() {
+        let saved = || crate::vcs::RefSavepoint {
+            branch: crate::vcs::RawRefName::new("main"),
+            at: a_tip(),
+        };
+        let key = || SavepointKey::Op("1779769917405921588".parse().unwrap());
+        blocked_when_it_would_refuse(
+            AbortStep::Ref {
+                at: step_at(),
+                key: key(),
+                saved: saved(),
+                plan: RefRestorePlan::Blocked {
+                    observed: None,
+                    why: "it is gone".to_owned(),
+                },
+            },
+            AbortStep::Ref {
+                at: step_at(),
+                key: key(),
+                saved: saved(),
+                plan: RefRestorePlan::Untouched,
+            },
+        );
+    }
+
+    #[test]
+    fn an_in_place_branch_the_judge_found_moved_or_held_or_unread_blocks_the_plan() {
+        let step = |plan| AbortStep::InPlaceRef {
+            at: step_at(),
+            key: SavepointKey::Op("1779769917405921588".parse().unwrap()),
+            branch: crate::vcs::RawRefName::new("main"),
+            plan,
+        };
+        let passing = || InPlaceRefPlan::Restore {
+            from: a_tip(),
+            to: a_tip(),
+        };
+        for blocking in [
+            InPlaceRefPlan::Moved {
+                now: None,
+                wrote: a_tip(),
+            },
+            InPlaceRefPlan::Held(vec![PathBuf::from("/nowhere")]),
+            InPlaceRefPlan::Unread("it".to_owned()),
+        ] {
+            blocked_when_it_would_refuse(step(blocking), step(passing()));
+        }
+    }
+
+    #[test]
+    fn a_created_branch_the_judge_would_leave_blocks_the_plan() {
+        let step = |left| AbortStep::UndoCreated {
+            project: ProjectName::new("web-app").unwrap(),
+            created: Vec::new(),
+            wrote: None,
+            dirs: std::collections::BTreeMap::new(),
+            freed: Vec::new(),
+            left,
+        };
+        blocked_when_it_would_refuse(
+            step(vec![(
+                RepoKey::Project,
+                "feature".to_owned(),
+                "a branch reaches it".to_owned(),
+            )]),
+            step(Vec::new()),
+        );
+    }
+
     #[test]
     fn only_a_fast_forward_has_an_entry_tip() {
         let repo = RepoPath::new("github/acme/server").unwrap();

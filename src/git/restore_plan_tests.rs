@@ -461,3 +461,273 @@ fn a_held_index_lock_is_named_by_the_plan_not_read_as_edits() {
     let err = GitVcs::edits_block_switch(p, &to).unwrap_err();
     assert!(format!("{err:#}").contains("index.lock"), "{err:#}");
 }
+
+fn savepoint_survives(p: &Path) -> bool {
+    GitVcs.resolve_savepoint(p, &key()).is_some()
+}
+
+#[test]
+fn a_leave_stopped_plan_whose_merge_was_given_up_leaves_nothing_to_report() {
+    let p = repo();
+    let side = stopped_merging(p.path());
+    merge_conflicting(p.path());
+    let plan = GitVcs
+        .plan_checkout_restore(
+            p.path(),
+            &key(),
+            &Attribution::default(),
+            ForeignTipPolicy::Refuse,
+        )
+        .unwrap();
+    assert_eq!(named(&plan), "LeftStopped");
+    git(p.path(), &["merge", "--abort"]);
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert_eq!(shape(&outcome), "NoSavepoint", "{outcome:?}");
+    assert_eq!(GitVcs.mid_op(p.path()), None);
+    assert_ne!(head(p.path()), side);
+}
+
+#[test]
+fn an_untouched_plan_the_checkout_moved_under_keeps_its_savepoint() {
+    let p = repo();
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    let plan = GitVcs
+        .plan_checkout_restore(
+            p.path(),
+            &key(),
+            &Attribution::default(),
+            ForeignTipPolicy::Refuse,
+        )
+        .unwrap();
+    assert_eq!(named(&plan), "Untouched");
+    let moved = commit(p.path(), "meanwhile");
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
+    assert_eq!(head(p.path()), moved);
+    assert!(savepoint_survives(p.path()));
+}
+
+#[test]
+fn a_cancel_plan_whose_merge_was_given_up_cancels_nothing_and_keeps_its_savepoint() {
+    let p = repo();
+    let side = stopped_merging(p.path());
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    merge_conflicting(p.path());
+    let steps = [OwnStep::Merge { source: side }];
+    let attribution = Attribution {
+        integrates: Integrates::Yes,
+        own_steps: &steps,
+        ..Attribution::default()
+    };
+    let plan = GitVcs
+        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .unwrap();
+    assert_eq!(named(&plan), "Canceled(Untouched)");
+    git(p.path(), &["merge", "--abort"]);
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
+    assert!(savepoint_survives(p.path()));
+}
+
+#[test]
+fn a_switch_back_plan_the_checkout_moved_under_switches_nothing() {
+    let p = repo();
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    git(p.path(), &["switch", "-q", "-c", "other"]);
+    let plan = GitVcs
+        .plan_checkout_restore(
+            p.path(),
+            &key(),
+            &Attribution::default(),
+            ForeignTipPolicy::Refuse,
+        )
+        .unwrap();
+    assert_eq!(named(&plan), "SwitchedBack(Untouched)");
+    git(p.path(), &["switch", "-q", "-c", "third"]);
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
+    assert_eq!(git(p.path(), &["branch", "--show-current"]), "third");
+    assert!(savepoint_survives(p.path()));
+}
+
+fn ref_at_a_tip_the_op_wrote(p: &Path) -> (RefSavepoint, CommitId) {
+    let at = head(p);
+    git(p, &["branch", "topic"]);
+    git(p, &["switch", "-q", "-c", "work"]);
+    let wrote = commit(p, "op");
+    git(p, &["branch", "-qf", "topic", wrote.as_str()]);
+    let saved = RefSavepoint {
+        branch: RawRefName::new("topic"),
+        at,
+    };
+    GitVcs
+        .create_ref_savepoint(p, &key(), &saved.branch, &saved.at)
+        .unwrap();
+    (saved, wrote)
+}
+
+#[test]
+fn a_ref_untouched_plan_the_branch_moved_under_keeps_its_savepoint() {
+    let p = repo();
+    let at = head(p.path());
+    git(p.path(), &["branch", "topic"]);
+    let saved = RefSavepoint {
+        branch: RawRefName::new("topic"),
+        at,
+    };
+    GitVcs
+        .create_ref_savepoint(p.path(), &key(), &saved.branch, &saved.at)
+        .unwrap();
+    let plan = GitVcs
+        .plan_ref_restore(p.path(), &saved, None, ForeignTipPolicy::Refuse, &[])
+        .unwrap();
+    assert!(matches!(plan, RefRestorePlan::Untouched), "{plan:?}");
+    git(p.path(), &["switch", "-q", "topic"]);
+    let moved = commit(p.path(), "meanwhile");
+    git(p.path(), &["switch", "-q", "main"]);
+
+    let outcome = GitVcs
+        .execute_ref_restore(p.path(), &key(), &saved, &plan)
+        .unwrap();
+
+    assert!(
+        matches!(&outcome, crate::vcs::RefRestoreOutcome::Foreign { observed: Some(o), .. } if *o == moved),
+        "{outcome:?}"
+    );
+    assert_eq!(git(p.path(), &["rev-parse", "topic"]), moved.as_str());
+    assert_eq!(GitVcs.ref_savepoints(p.path(), &key()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_ref_restore_plan_the_branch_was_checked_out_under_writes_nothing() {
+    let p = repo();
+    let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
+    let plan = GitVcs
+        .plan_ref_restore(
+            p.path(),
+            &saved,
+            Some(&wrote),
+            ForeignTipPolicy::Refuse,
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(plan, RefRestorePlan::Restore { .. }), "{plan:?}");
+    git(p.path(), &["switch", "-q", "topic"]);
+
+    let outcome = GitVcs
+        .execute_ref_restore(p.path(), &key(), &saved, &plan)
+        .unwrap();
+
+    assert!(
+        matches!(&outcome, crate::vcs::RefRestoreOutcome::Foreign { why, .. } if why.contains("checked out")),
+        "{outcome:?}"
+    );
+    assert_eq!(git(p.path(), &["rev-parse", "topic"]), wrote.as_str());
+    assert_eq!(GitVcs.ref_savepoints(p.path(), &key()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_branch_held_by_a_checkout_the_plan_switches_off_does_not_block_its_restore() {
+    let p = repo();
+    let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
+    git(p.path(), &["switch", "-q", "topic"]);
+    let held = vec![p.path().to_path_buf()];
+    let blocked = GitVcs
+        .plan_ref_restore(
+            p.path(),
+            &saved,
+            Some(&wrote),
+            ForeignTipPolicy::Refuse,
+            &[],
+        )
+        .unwrap();
+    assert!(
+        matches!(blocked, RefRestorePlan::Blocked { .. }),
+        "{blocked:?}"
+    );
+    let freed = GitVcs
+        .plan_ref_restore(
+            p.path(),
+            &saved,
+            Some(&wrote),
+            ForeignTipPolicy::Refuse,
+            &held,
+        )
+        .unwrap();
+    assert!(matches!(freed, RefRestorePlan::Restore { .. }), "{freed:?}");
+}
+
+#[test]
+fn edits_here_that_collide_with_the_switch_back_keep_it_from_running_unless_abandoned() {
+    let p = repo();
+    let base = head(p.path());
+    std::fs::write(p.path().join("f"), "2").unwrap();
+    git(p.path(), &["commit", "-qam", "op"]);
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    git(p.path(), &["switch", "-q", "-c", "other", base.as_str()]);
+    std::fs::write(p.path().join("f"), "mine").unwrap();
+    let attribution = Attribution {
+        intent: Some(&base),
+        edits_here: true,
+        ..Attribution::default()
+    };
+    let refused = GitVcs
+        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .unwrap();
+    assert_eq!(named(&refused), "EditsBlockSwitchBack", "{refused:?}");
+    assert_eq!(git(p.path(), &["branch", "--show-current"]), "other");
+    assert_eq!(std::fs::read_to_string(p.path().join("f")).unwrap(), "mine");
+
+    let abandoned = GitVcs
+        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Abandon)
+        .unwrap();
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &abandoned, true)
+        .unwrap();
+    assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
+    assert!(
+        !git(p.path(), &["log", "--all", "--format=%H", "-Smine"]).is_empty(),
+        "the edit is kept as a backup: {outcome:?}"
+    );
+}
+
+#[test]
+fn an_abandoned_switch_back_from_a_detached_head_keeps_its_commits() {
+    let p = repo();
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    git(p.path(), &["switch", "-q", "--detach"]);
+    let stranded = commit(p.path(), "stranded");
+    let plan = GitVcs
+        .plan_checkout_restore(
+            p.path(),
+            &key(),
+            &Attribution::default(),
+            ForeignTipPolicy::Abandon,
+        )
+        .unwrap();
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .unwrap();
+    assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
+    let reached = git(
+        p.path(),
+        &[
+            "for-each-ref",
+            "--contains",
+            stranded.as_str(),
+            "--format=%(refname)",
+        ],
+    );
+    assert!(
+        !reached.is_empty(),
+        "the commit stays on a ref: {outcome:?}"
+    );
+}
