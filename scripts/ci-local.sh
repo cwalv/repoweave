@@ -161,6 +161,30 @@ header() {
 # /var inside /private/var does. Git Bash's `ln -s` copies rather than links
 # unless MSYS asks for native symlinks and Windows grants the right to make
 # one, so a host that made no link runs without it and says so.
+# The installed targets, one per line, read whole before anything matches
+# them: `rustup ... | grep -q` under pipefail is false whenever grep exits on
+# its match while rustup is still writing, which skips a stage whose target is
+# installed. Fails where rustup is missing or cannot list them.
+installed_targets() {
+    command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null
+}
+
+# Runs a cross-target check and lint for $2, or says why it skipped: the
+# target is not installed, or the installed targets could not be read.
+cross_check() {
+    local stage="$1" target="$2" targets
+    if ! targets="$(installed_targets)"; then
+        printf '%s cross-check skipped: the installed targets could not be read (rustup missing, or `rustup target list --installed` failed)\n' "$stage"
+    elif grep -qx "$target" <<<"$targets"; then
+        header "cargo check --locked --all-targets --features test-pause --target $target"
+        cargo check --locked --all-targets --features test-pause --target "$target"
+        header "cargo clippy --locked --all-targets --target $target -- -D warnings"
+        cargo clippy --locked --all-targets --target "$target" -- -D warnings
+    else
+        printf '%s cross-check skipped: %s not installed — rustup target add %s\n' "$stage" "$target" "$target"
+    fi
+}
+
 with_symlinked_tmpdir() {
     local base gate_tmp status=0
     base="${TMPDIR:-/tmp}"
@@ -184,29 +208,15 @@ if run_stage check; then
     cargo check
 fi
 
+# Host clippy never sees a cfg(windows) or macOS-only item, so clippy.toml's
+# bans reach those only through a run for that target. Linting needs no
+# linker.
 if run_stage windows; then
-    header "cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc"
-    if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx x86_64-pc-windows-msvc; then
-        cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc
-        # Host clippy never sees a cfg(windows) item, so clippy.toml's bans
-        # reach those only through a run for the Windows target. Linting
-        # needs no linker.
-        header "cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
-        cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
-    else
-        printf 'windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc\n'
-    fi
+    cross_check windows x86_64-pc-windows-msvc
 fi
 
 if run_stage apple; then
-    header "cargo check --locked --all-targets --features test-pause --target aarch64-apple-darwin"
-    if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx aarch64-apple-darwin; then
-        cargo check --locked --all-targets --features test-pause --target aarch64-apple-darwin
-        header "cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings"
-        cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
-    else
-        printf 'apple cross-check skipped: aarch64-apple-darwin not installed — rustup target add aarch64-apple-darwin\n'
-    fi
+    cross_check apple aarch64-apple-darwin
 fi
 
 if run_stage test; then

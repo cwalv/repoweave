@@ -115,7 +115,10 @@ known_reds=$(printf '%s\n' "$KNOWN_REDS" | awk '
     END { if (n) flush(); exit bad }
 ')
 
-if ! rustup target list --installed | grep -qx "$TARGET"; then
+# Read whole before matching: under pipefail a grep that exits on its match
+# while rustup is still writing makes the pipeline false.
+installed="$(rustup target list --installed)"
+if ! grep -qx "$TARGET" <<<"$installed"; then
     printf 'windows-wine: %s is not installed — rustup target add %s\n' "$TARGET" "$TARGET" >&2
     exit 1
 fi

@@ -54,12 +54,18 @@ exit 0\n";
 // baked into the stub file, so one stub serves both the installed and
 // missing-target scenarios via CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED.
 const STUB_RUSTUP: &str = "#!/bin/sh\n\
+if [ \"$*\" = \"target list --installed\" ] && [ -n \"${CI_LOCAL_TEST_RUSTUP_LIST_FAILS:-}\" ]; then\n\
+    exit 1\n\
+fi\n\
 if [ \"$*\" = \"target list --installed\" ]; then\n\
     if [ \"${CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
         echo x86_64-pc-windows-msvc\n\
     fi\n\
     if [ \"${CI_LOCAL_TEST_APPLE_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
         echo aarch64-apple-darwin\n\
+    fi\n\
+    if [ -n \"${CI_LOCAL_TEST_RUSTUP_TAIL:-}\" ]; then\n\
+        seq 1 200000 || exit $?\n\
     fi\n\
     exit 0\n\
 fi\n\
@@ -607,6 +613,58 @@ fn apple_stage_skips_loudly_with_the_install_command_when_the_target_is_missing(
         !stdout.contains("STUB_CARGO:"),
         "neither cross-target command should have run:\n{stdout}"
     );
+}
+
+/// A reader that stops at its match must not be what decides whether a
+/// stage runs: the stub writes each installed target and then a long tail, so
+/// a `grep -q` on a pipe exits while rustup is still writing.
+#[test]
+fn a_cross_check_runs_when_its_target_is_listed_before_a_long_tail() {
+    for (stage, target) in [
+        ("windows", "x86_64-pc-windows-msvc"),
+        ("apple", "aarch64-apple-darwin"),
+    ] {
+        let fixture = fixture_repo();
+        let stub = stub_bin_dir();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &[&format!("--stages={stage}")],
+            &[("CI_LOCAL_TEST_RUSTUP_TAIL", "1")],
+        );
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stdout = stdout_of(&out);
+        assert!(
+            stdout.contains(&format!(
+                "STUB_CARGO: check --locked --all-targets --features test-pause --target {target}"
+            )),
+            "the {stage} stage skipped although {target} is installed:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn a_cross_check_that_cannot_read_the_installed_targets_says_so() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows,apple"],
+        &[("CI_LOCAL_TEST_RUSTUP_LIST_FAILS", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    for stage in ["windows", "apple"] {
+        assert!(
+            stdout.contains(&format!(
+                "{stage} cross-check skipped: the installed targets could not be read"
+            )),
+            "{stdout}"
+        );
+    }
+    assert!(!stdout.contains("not installed"), "{stdout}");
+    assert!(!stdout.contains("STUB_CARGO:"), "{stdout}");
 }
 
 const WINE_HEADER: &str = "==> test suite under Wine as x86_64-pc-windows-gnu binaries";
