@@ -11122,6 +11122,7 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
         AbortFrom::Source => steps.extend([
             Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains(
                     "[target] local/remotes/app: holds uncommitted edits",
                 ))
@@ -11173,6 +11174,7 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop
     steps.extend([
         Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains(
                 "[target] local/remotes/app: stopped in a merge begun at",
             ))
@@ -11216,6 +11218,7 @@ pub fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() -> Scenario {
         Step::git(&ww("p"), Repo::App, &["branch", "-D", "proj--p"]),
         Step::rwv(&ww("p"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains(
                 "local/remotes/app: is off 'proj--p', where its savepoint was taken",
             ))
@@ -12210,6 +12213,7 @@ pub fn abort_with_both_sides_foreign() -> Scenario {
                 .claim(Claim::WorkweaveGone(ww("w2"))),
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains(
                     "rwv abort --leave-target --abandon-foreign-tip local/remotes/app",
                 ))
@@ -12218,6 +12222,7 @@ pub fn abort_with_both_sides_foreign() -> Scenario {
                 .claim(Claim::LocalStateUnchanged(ww("w1"))),
             Step::rwv(&ww("w1"), &["abort", "--leave-target"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains(
                     "rwv abort --leave-target --abandon-foreign-tip local/remotes/app",
                 ))
@@ -12270,6 +12275,7 @@ pub fn abort_over_a_target_checkout_switched_off_its_branch(end: SwitchedOffEnd)
         Step::commit(&a(), Repo::App, "hotfix-app"),
         Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains("[target] local/remotes/app"))
             .claim(Claim::OutputContains("rwv abort --leave-target"))
             .claim(Claim::LocalStateUnchanged(a()))
@@ -12376,6 +12382,7 @@ pub fn abort_after_another_landing_built_on_the_target(
             .claim(Claim::WorkweaveGone(ww("w2"))),
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains("where this landing left it"))
             .claim(Claim::OutputContains("rwv abort --leave-target"))
             .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
@@ -12387,6 +12394,7 @@ pub fn abort_after_another_landing_built_on_the_target(
         in_main(&["w3-app"]),
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains("w3-app"))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
@@ -12453,6 +12461,7 @@ pub fn abort_refuses_while_the_target_cannot_be_read() -> Scenario {
             ),
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains("could not be read"))
                 .claim(Claim::OutputContains("rwv abort --leave-target"))
                 .claim(Claim::LocalStateUnchanged(a()))
@@ -12547,6 +12556,7 @@ pub fn abort_stops_at_the_first_write_that_fails() -> Scenario {
                 .claim(Claim::OutputContains("w1-app")),
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains("rwv abort --leave-target"))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::LocalStateUnchanged(ww("w1"))),
@@ -12724,6 +12734,7 @@ pub fn abort_after_an_entered_branch_moved(then: EnteredThen, end: EnteredEnd) -
     steps.push(
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains("rwv abort --leave-target"))
             .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
             .claim(Claim::LocalStateUnchanged(a()))
@@ -14264,6 +14275,7 @@ pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
         step,
         Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains(why))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::LocalStateUnchanged(ww("w")))
@@ -17592,6 +17604,7 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
         Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("more.txt", "more\n")]),
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains(
                 "rwv abort --abandon-foreign-tip local/remotes/app",
             ))
@@ -17704,6 +17717,7 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
         block,
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains(needs))
             .claim(Claim::OutputContains("once each fix above is made, rerun"))
             .claim(Claim::OutputLacks("--abandon-foreign-tip"))
@@ -18163,6 +18177,7 @@ pub fn abort_leaving_the_target_of_a_landing_that_carried_a_dependent() -> Scena
         Step::hand_commit(&a(), Repo::Proj, "main", &[("late.txt", "late\n")]),
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::OutputContains("rwv abort --leave-target"))
             .claim(Claim::LocalStateUnchanged(a()))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
