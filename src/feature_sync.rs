@@ -2190,6 +2190,11 @@ fn take_project(
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
         .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
+    crate::op_state::journal_tip(
+        sync.ctx.active_path(),
+        RepoKey::Project,
+        vcs.head_revision(dir)?.id(),
+    )?;
     say(output, &format!("{label}: rebased onto {}", source.short()));
     Ok(())
 }

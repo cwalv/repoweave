@@ -21194,9 +21194,11 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
         taking_in.says(),
     ));
     match left_by {
-        LeftBy::AbortInTheTarget => {
-            steps.extend(aborted_from(Step::rwv(&a(), &["abort"]), &ww("w"), &[]))
-        }
+        LeftBy::AbortInTheTarget => steps.extend(aborted_from(
+            Step::rwv(&a(), &["abort"]).claim(Claim::OutputLacks("finished by hand")),
+            &ww("w"),
+            &[],
+        )),
         LeftBy::StagedFix => {
             steps.push(stops_unparseable(
                 Step::rwv_printed(&ww("w"), taking_in.resume()),
@@ -21281,8 +21283,13 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
 /// The printed `rwv abort`, run at `at`, putting back the members in `moved`
 /// too: the project repo is back on its own commit, with no merge in flight
 /// and nothing staged, and `a`'s `main` does not hold the workweave's work.
+/// The replay was rwv's alone, so none of it is kept as finished by hand.
 fn aborted_to_the_workweaves_own(at: &Place, moved: &[Repo]) -> Vec<Step> {
-    aborted_from(Step::rwv_printed(at, "rwv abort"), at, moved)
+    aborted_from(
+        Step::rwv_printed(at, "rwv abort").claim(Claim::OutputLacks("finished by hand")),
+        at,
+        moved,
+    )
 }
 
 /// [`aborted_to_the_workweaves_own`] by `abort`, run wherever it runs.
