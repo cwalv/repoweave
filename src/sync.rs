@@ -5712,7 +5712,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &cwd_project_tip,
         project_how,
         ctx.verb,
-        &ctx.cwd_workspace_dir,
         &ctx.owner_workspace_dir,
     );
 
@@ -8243,7 +8242,6 @@ fn apply_project_strategy(
     cwd_tip: &ResolvedRevisionId,
     how: Integration,
     verb: OpVerb,
-    cwd_workspace: &Path,
     owner: &Path,
 ) -> anyhow::Result<()> {
     let conflict = |repo: &Path, op: ConflictOp| -> anyhow::Error {
@@ -8267,13 +8265,13 @@ fn apply_project_strategy(
                 &crate::manifest_conflict::stop_lines(
                     vcs,
                     repo,
-                    cwd_workspace,
                     &op_state::resume_command_at(verb, owner),
                 ),
             ),
         )
     };
     if how == Integration::Merge {
+        op_state::journal_merging(owner, RepoKey::Project, source_tip.id())?;
         return match stage_merge(vcs, cwd_project_dir, source_tip) {
             Ok(_) => Ok(()),
             Err(VcsError::RebaseConflict { repo, op }) => Err(conflict(&repo, op)),

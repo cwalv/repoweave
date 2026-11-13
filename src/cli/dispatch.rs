@@ -430,141 +430,31 @@ fn writes_project(command: Option<&Commands>) -> bool {
     }
 }
 
-fn continues(command: Option<&Commands>) -> Option<crate::op_state::OpVerb> {
+fn continues(
+    command: Option<&Commands>,
+) -> Option<(
+    crate::op_state::OpVerb,
+    Option<crate::manifest_conflict::Side>,
+)> {
     use crate::op_state::OpVerb;
     match command? {
         Commands::Sync {
-            do_continue: true, ..
-        } => Some(OpVerb::Sync),
+            do_continue: true,
+            keep,
+            ..
+        } => Some((OpVerb::Sync, *keep)),
         Commands::Land {
-            do_continue: true, ..
-        } => Some(OpVerb::Land),
-        Commands::CherryPick {
-            do_continue: true, ..
-        } => Some(OpVerb::CherryPick),
+            do_continue: true,
+            keep,
+            ..
+        } => Some((OpVerb::Land, *keep)),
         Commands::Pull {
-            do_continue: true, ..
-        } => Some(OpVerb::Pull),
+            do_continue: true,
+            keep,
+            ..
+        } => Some((OpVerb::Pull, *keep)),
         _ => None,
     }
-}
-
-/// A setter invocation that, at a stop where its entry of `rwv.toml` is in
-/// conflict, settles that entry instead of committing.
-struct EntrySetting {
-    verb: &'static str,
-    project: Option<String>,
-    setting: crate::manifest_conflict::Setting,
-    top_level_of: Option<ProjectName>,
-}
-
-fn entry_setting(command: Option<&Commands>) -> Option<EntrySetting> {
-    use crate::manifest::RepoOperand;
-    use crate::manifest_conflict::Setting;
-    type Make = Box<dyn FnOnce(crate::manifest::RepoPath) -> Option<Setting>>;
-    let (verb, repo, project, make): (&'static str, &String, &Option<String>, Make) = match command?
-    {
-        Commands::Member { action } => match action {
-            MemberAction::SetBranch {
-                repo,
-                branch,
-                new: false,
-                at: None,
-                url: None,
-                project,
-                ..
-            } => {
-                let branch =
-                    crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new(branch.clone()))
-                        .ok()?;
-                (
-                    "member set-branch",
-                    repo,
-                    project,
-                    Box::new(move |repo| Some(Setting::Branch(repo, branch))),
-                )
-            }
-            MemberAction::SetUrl {
-                repo, url, project, ..
-            } => {
-                let url = url.parse().ok()?;
-                (
-                    "member set-url",
-                    repo,
-                    project,
-                    Box::new(move |repo| Some(Setting::Url(repo, url))),
-                )
-            }
-            MemberAction::SetRole {
-                repo,
-                role,
-                project,
-                ..
-            } => {
-                let role = *role;
-                (
-                    "member set-role",
-                    repo,
-                    project,
-                    Box::new(move |repo| Some(Setting::Role(repo, role))),
-                )
-            }
-            MemberAction::SetRecurseSubmodules {
-                repo,
-                recurse,
-                project,
-                ..
-            } => {
-                let recurse = crate::manifest::SubmoduleRecursion::from(*recurse);
-                (
-                    "member set-recurse-submodules",
-                    repo,
-                    project,
-                    Box::new(move |repo| Some(Setting::RecurseSubmodules(repo, recurse))),
-                )
-            }
-            MemberAction::Remove {
-                path,
-                delete: false,
-                project,
-                ..
-            } => (
-                "member remove",
-                path,
-                project,
-                Box::new(|repo| Some(Setting::Remove(repo))),
-            ),
-            _ => return None,
-        },
-        Commands::Branch {
-            action:
-                BranchAction::SetHistory {
-                    history,
-                    repo,
-                    project,
-                    ..
-                },
-        } => {
-            let (member, top_level_of) = match repo {
-                None => (None, None),
-                Some(RepoOperand::Member(member)) => (Some(member.clone()), None),
-                Some(RepoOperand::Project(named)) => (None, Some(named.clone())),
-            };
-            return Some(EntrySetting {
-                verb: crate::set_history::VERB,
-                project: project.clone(),
-                setting: Setting::History(member, *history),
-                top_level_of,
-            });
-        }
-        _ => return None,
-    };
-    Some(EntrySetting {
-        verb,
-        project: project.clone(),
-        setting: make(crate::manifest::RepoPath::new(repo.clone()).ok()?)?,
-        top_level_of: None,
-    })
 }
 
 /// Whether `command` commits the project repo. Each operation's own
@@ -962,22 +852,9 @@ pub fn run() -> anyhow::Result<()> {
         reconcile_policy(cli.command.as_ref(), root)
     })?;
 
-    if let Some(typed) = continues(cli.command.as_ref()) {
+    if let Some((typed, keep)) = continues(cli.command.as_ref()) {
         let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-        crate::manifest_conflict::continue_at_stop(&ctx, typed)?;
-    }
-    if let Some(at_stop) = entry_setting(cli.command.as_ref()) {
-        let project_override = at_stop.project.map(ProjectName::new).transpose()?;
-        let ctx = WorkspaceContext::resolve_invocation(origin_dir, project_override)?;
-        ctx.refuse_cwd_in_inactive_project()?;
-        let names_this_project = at_stop
-            .top_level_of
-            .is_none_or(|named| ctx.active_project() == Some(&named));
-        if names_this_project
-            && crate::manifest_conflict::settle_at_stop(&ctx, at_stop.verb, &at_stop.setting)?
-        {
-            return Ok(());
-        }
+        crate::manifest_conflict::continue_at_stop(&ctx, typed, keep)?;
     }
 
     match cli.command {
@@ -1632,6 +1509,7 @@ pub fn run() -> anyhow::Result<()> {
             }
         },
         Some(Commands::Sync {
+            keep: _,
             from,
             target,
             reset_to_target,
@@ -1677,6 +1555,7 @@ pub fn run() -> anyhow::Result<()> {
             crate::cherry_pick::run_cherry_pick(&ctx, run, OutputMode::from_flag(json))?;
         }
         Some(Commands::Land {
+            keep: _,
             target,
             allow_member_change,
             history,
@@ -1762,6 +1641,7 @@ pub fn run() -> anyhow::Result<()> {
             )?;
         }
         Some(Commands::Pull {
+            keep: _,
             merge_upstream,
             reset_to_upstream,
             do_continue,

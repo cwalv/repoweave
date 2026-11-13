@@ -935,38 +935,6 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::MemberFields(
         scenarios::ManifestStopHistory::Linear
     )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::TopLevelHistory(
-        scenarios::ManifestStopHistory::Merge
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::TopLevelHistory(
-        scenarios::ManifestStopHistory::Linear
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::RemovedAgainstChanged(
-        scenarios::ManifestStopHistory::Merge
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::RemovedAgainstChanged(
-        scenarios::ManifestStopHistory::Linear
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::BesideATextConflict),
-    settle_a_manifest_stop(scenarios::ManifestSettle::ByHand),
-    settle_a_manifest_stop(scenarios::ManifestSettle::StagedUnedited),
-    settle_a_manifest_stop(scenarios::ManifestSettle::Abort),
-    settle_a_manifest_stop(scenarios::ManifestSettle::RawGitMerge),
-    settle_a_manifest_stop(scenarios::ManifestSettle::UnstagedEditKept),
-    settle_a_manifest_stop(scenarios::ManifestSettle::OrdinarySetterLayout),
-    settle_a_manifest_stop(scenarios::ManifestSettle::SettledLayout),
-    settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
-    settle_a_manifest_stop(scenarios::ManifestSettle::CleanFieldBeside),
-    settle_a_manifest_stop(scenarios::ManifestSettle::BothAdded),
-    settle_a_manifest_stop(scenarios::ManifestSettle::TypedElsewhere),
-    settle_a_manifest_stop(scenarios::ManifestSettle::CherryPick),
-    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
-        scenarios::ManifestStopHistory::Merge
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
-        scenarios::ManifestStopHistory::Linear
-    )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::Pull),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnly(
         scenarios::ManifestStopHistory::Merge
     )),
@@ -980,20 +948,42 @@ every_scenario!(
         scenarios::ManifestStopHistory::Linear
     )),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnlyHandEdited),
+    settle_a_manifest_stop(scenarios::ManifestSettle::HandResolvedUnstaged),
+    settle_a_manifest_stop(scenarios::ManifestSettle::KeepWithNothingInConflict),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnlyReplayed),
-    settle_a_manifest_stop(scenarios::ManifestSettle::BranchAndUrl(
+    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
         scenarios::ManifestStopHistory::Merge
     )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::BranchAndUrl(
+    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
         scenarios::ManifestStopHistory::Linear
     )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::AbortSettled(
+    settle_a_manifest_stop(scenarios::ManifestSettle::Pull),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CherryPick),
+    settle_a_manifest_stop(scenarios::ManifestSettle::TypedElsewhere),
+    settle_a_manifest_stop(scenarios::ManifestSettle::TypedElsewhereLand),
+    settle_a_manifest_stop(scenarios::ManifestSettle::BothAdded),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CleanFieldBeside),
+    settle_a_manifest_stop(scenarios::ManifestSettle::TopLevelHistory(
         scenarios::ManifestStopHistory::Merge
     )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::AbortSettled(
+    settle_a_manifest_stop(scenarios::ManifestSettle::TopLevelHistory(
         scenarios::ManifestStopHistory::Linear
     )),
-    settle_a_manifest_stop(scenarios::ManifestSettle::KilledMidRewrite),
+    settle_a_manifest_stop(scenarios::ManifestSettle::RemovedAgainstChanged(
+        scenarios::ManifestStopHistory::Merge
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::RemovedAgainstChanged(
+        scenarios::ManifestStopHistory::Linear
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::WorkweaveKeys),
+    settle_a_manifest_stop(scenarios::ManifestSettle::BesideATextConflict),
+    settle_a_manifest_stop(scenarios::ManifestSettle::ByHand),
+    settle_a_manifest_stop(scenarios::ManifestSettle::StagedUnedited),
+    settle_a_manifest_stop(scenarios::ManifestSettle::RawGitMerge),
+    settle_a_manifest_stop(scenarios::ManifestSettle::SetterRefused),
+    settle_a_manifest_stop(scenarios::ManifestSettle::KeepsLayout),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
+    settle_a_manifest_stop(scenarios::ManifestSettle::ForeignMerge),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -6702,7 +6692,7 @@ fn abort_after_a_sync_merge_stops_scenario() {
 }
 
 #[test]
-fn manifest_stop_settled_two_entries_merge() {
+fn manifest_stop_two_entries_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::TwoEntries(scenarios::ManifestStopHistory::Merge),
     ))
@@ -6710,7 +6700,7 @@ fn manifest_stop_settled_two_entries_merge() {
 }
 
 #[test]
-fn manifest_stop_settled_two_entries_linear() {
+fn manifest_stop_two_entries_linear() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::TwoEntries(scenarios::ManifestStopHistory::Linear),
     ))
@@ -6718,7 +6708,7 @@ fn manifest_stop_settled_two_entries_linear() {
 }
 
 #[test]
-fn manifest_stop_settled_member_fields_merge() {
+fn manifest_stop_member_fields_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::MemberFields(scenarios::ManifestStopHistory::Merge),
     ))
@@ -6726,7 +6716,7 @@ fn manifest_stop_settled_member_fields_merge() {
 }
 
 #[test]
-fn manifest_stop_settled_member_fields_linear() {
+fn manifest_stop_member_fields_linear() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::MemberFields(scenarios::ManifestStopHistory::Linear),
     ))
@@ -6734,119 +6724,7 @@ fn manifest_stop_settled_member_fields_linear() {
 }
 
 #[test]
-fn manifest_stop_settled_top_level_history_merge() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::TopLevelHistory(scenarios::ManifestStopHistory::Merge),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_top_level_history_linear() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::TopLevelHistory(scenarios::ManifestStopHistory::Linear),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_removed_against_changed_merge() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::RemovedAgainstChanged(scenarios::ManifestStopHistory::Merge),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_removed_against_changed_linear() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::RemovedAgainstChanged(scenarios::ManifestStopHistory::Linear),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_beside_a_text_conflict() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::BesideATextConflict,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_by_hand() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::ByHand,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_staged_unedited() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::StagedUnedited,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_abort() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::Abort,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_keeps_an_unstaged_edit() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::UnstagedEditKept,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_ordinary_setter_drops_a_comment() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::OrdinarySetterLayout,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_drops_a_comment_as_a_setter_does() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::SettledLayout,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_settled_beside_a_clean_merge() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::CleanBeside,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_fields_each_changed_on_one_side_are_no_conflict() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::CleanFieldBeside,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_member_both_sides_added_settled_by_its_field_setter() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::BothAdded,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_lines_only_continued_merge() {
+fn manifest_stop_lines_only_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnly(scenarios::ManifestStopHistory::Merge),
     ))
@@ -6854,7 +6732,7 @@ fn manifest_stop_lines_only_continued_merge() {
 }
 
 #[test]
-fn manifest_stop_lines_only_continued_linear() {
+fn manifest_stop_lines_only_linear() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnly(scenarios::ManifestStopHistory::Linear),
     ))
@@ -6862,7 +6740,7 @@ fn manifest_stop_lines_only_continued_linear() {
 }
 
 #[test]
-fn manifest_stop_lines_only_continued_at_a_landing_merge() {
+fn manifest_stop_lines_only_land_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyLand(scenarios::ManifestStopHistory::Merge),
     ))
@@ -6870,7 +6748,7 @@ fn manifest_stop_lines_only_continued_at_a_landing_merge() {
 }
 
 #[test]
-fn manifest_stop_lines_only_continued_at_a_landing_linear() {
+fn manifest_stop_lines_only_land_linear() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyLand(scenarios::ManifestStopHistory::Linear),
     ))
@@ -6878,7 +6756,7 @@ fn manifest_stop_lines_only_continued_at_a_landing_linear() {
 }
 
 #[test]
-fn manifest_stop_lines_only_continued_keeps_an_unstaged_edit() {
+fn manifest_stop_lines_only_hand_edited() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyHandEdited,
     ))
@@ -6886,7 +6764,23 @@ fn manifest_stop_lines_only_continued_keeps_an_unstaged_edit() {
 }
 
 #[test]
-fn manifest_stop_lines_only_at_each_replay_stop() {
+fn manifest_stop_hand_resolved_unstaged() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::HandResolvedUnstaged,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_keep_with_nothing_in_conflict() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::KeepWithNothingInConflict,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_lines_only_replayed() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyReplayed,
     ))
@@ -6894,7 +6788,7 @@ fn manifest_stop_lines_only_at_each_replay_stop() {
 }
 
 #[test]
-fn manifest_stop_at_a_landing_lists_entries_merge() {
+fn manifest_stop_land_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::Land(scenarios::ManifestStopHistory::Merge),
     ))
@@ -6902,7 +6796,7 @@ fn manifest_stop_at_a_landing_lists_entries_merge() {
 }
 
 #[test]
-fn manifest_stop_at_a_landing_lists_entries_linear() {
+fn manifest_stop_land_linear() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::Land(scenarios::ManifestStopHistory::Linear),
     ))
@@ -6910,7 +6804,7 @@ fn manifest_stop_at_a_landing_lists_entries_linear() {
 }
 
 #[test]
-fn manifest_stop_at_a_pull_lists_entries() {
+fn manifest_stop_pull() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::Pull,
     ))
@@ -6918,15 +6812,7 @@ fn manifest_stop_at_a_pull_lists_entries() {
 }
 
 #[test]
-fn manifest_stop_typed_elsewhere_prints_lines_that_reach_it() {
-    runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::TypedElsewhere,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn manifest_stop_at_a_cherry_pick_is_no_settle_route() {
+fn manifest_stop_cherry_pick() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::CherryPick,
     ))
@@ -6934,47 +6820,103 @@ fn manifest_stop_at_a_cherry_pick_is_no_settle_route() {
 }
 
 #[test]
-fn manifest_stop_settled_branch_and_url_merge() {
+fn manifest_stop_typed_elsewhere() {
     runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::BranchAndUrl(scenarios::ManifestStopHistory::Merge),
+        scenarios::ManifestSettle::TypedElsewhere,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn manifest_stop_settled_branch_and_url_linear() {
+fn manifest_stop_typed_elsewhere_land() {
     runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::BranchAndUrl(scenarios::ManifestStopHistory::Linear),
+        scenarios::ManifestSettle::TypedElsewhereLand,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn manifest_stop_abort_after_every_entry_settled_merge() {
+fn manifest_stop_both_added() {
     runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::AbortSettled(scenarios::ManifestStopHistory::Merge),
+        scenarios::ManifestSettle::BothAdded,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn manifest_stop_abort_after_every_entry_settled_linear() {
+fn manifest_stop_clean_field_beside() {
     runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::AbortSettled(scenarios::ManifestStopHistory::Linear),
+        scenarios::ManifestSettle::CleanFieldBeside,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn manifest_stop_setter_killed_mid_rewrite() {
+fn manifest_stop_top_level_history_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
-        scenarios::ManifestSettle::KilledMidRewrite,
+        scenarios::ManifestSettle::TopLevelHistory(scenarios::ManifestStopHistory::Merge),
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn manifest_stop_settled_raw_git_merge() {
+fn manifest_stop_top_level_history_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::TopLevelHistory(scenarios::ManifestStopHistory::Linear),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_removed_against_changed_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::RemovedAgainstChanged(scenarios::ManifestStopHistory::Merge),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_removed_against_changed_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::RemovedAgainstChanged(scenarios::ManifestStopHistory::Linear),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_workweave_keys() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::WorkweaveKeys,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_beside_a_text_conflict() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::BesideATextConflict,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_by_hand() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::ByHand,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_staged_unedited() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::StagedUnedited,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_raw_git_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::RawGitMerge,
     ))
@@ -6982,7 +6924,39 @@ fn manifest_stop_settled_raw_git_merge() {
 }
 
 #[test]
-fn dc04_a_conflicted_entry_is_settled_by_its_setters() {
+fn manifest_stop_setter_refused() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::SetterRefused,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_keeps_layout() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::KeepsLayout,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_clean_beside() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::CleanBeside,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_foreign_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::ForeignMerge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn dc04_a_conflicted_entry_is_settled_by_keeping_a_side() {
     runner::run(scenarios::dc04_conflict_setter()).assert_fully_decided_green();
 }
 

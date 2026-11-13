@@ -867,6 +867,8 @@ impl State {
                              `--continue` and `rwv abort` run",
                 offers: &[
                     Form::MarkResolved,
+                    Form::KeepYours,
+                    Form::KeepIncoming,
                     Form::ResumeOperation,
                     Form::AbortOperation,
                     Form::C32,
@@ -1997,6 +1999,7 @@ pub enum ChoiceId {
     Republish,
     LandAgain,
     MarkResolved,
+    KeepSide,
     ResumeOperation,
     AbortOperation,
     StageParsingManifest,
@@ -2249,6 +2252,14 @@ impl ChoiceId {
                 keeps_work: "stages the working files as they stand; the operation is still \
                              in progress",
             },
+            Self::KeepSide => &ChoiceRow {
+                id: None,
+                phrase: "take one side for every `rwv.toml` entry both sides changed \
+                         differently, and write and stage the merge of both sides",
+                keeps_work: "the checkout's edits are kept in a backup first; a working \
+                             `rwv.toml` that reads as another manifest is refused, not \
+                             replaced",
+            },
             Self::ResumeOperation => &ChoiceRow {
                 id: None,
                 phrase: "let the operation that stopped go on, committing what is staged",
@@ -2472,9 +2483,10 @@ pub enum Step {
     RerunWithout(&'static str),
     /// The continue of an operation of this verb.
     Resume(crate::op_state::OpVerb),
-    /// The continue of the operation the op record names, bound as
-    /// `<resume>`.
-    ResumeRecorded,
+    /// A line of the operation the op record names, built on `<resume>`, its
+    /// continue, or `<abort>`, its abort, each spelled to run against the
+    /// workspace it is recorded in.
+    Recorded(&'static str),
 }
 
 /// One spelling of a choice.
@@ -2575,6 +2587,8 @@ pub enum Form {
     DriftLandAgain,
     DriftResolveThenLand,
     MarkResolved,
+    KeepYours,
+    KeepIncoming,
     ResumeOperation,
     AbortOperation,
     StageParsingManifest,
@@ -2614,7 +2628,7 @@ impl FormRow {
                 | Step::Rerun(_)
                 | Step::RerunWithout(_)
                 | Step::Resume(_)
-                | Step::ResumeRecorded => true,
+                | Step::Recorded(_) => true,
             })
     }
 }
@@ -2716,6 +2730,8 @@ impl Form {
         Self::DriftLandAgain,
         Self::DriftResolveThenLand,
         Self::MarkResolved,
+        Self::KeepYours,
+        Self::KeepIncoming,
         Self::ResumeOperation,
         Self::AbortOperation,
         Self::StageParsingManifest,
@@ -3376,15 +3392,27 @@ impl Form {
                 at: W::Checkout,
                 shipped: true,
             },
+            Self::KeepYours => &FormRow {
+                choice: C::KeepSide,
+                steps: &[Step::Recorded("<resume> --keep yours")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::KeepIncoming => &FormRow {
+                choice: C::KeepSide,
+                steps: &[Step::Recorded("<resume> --keep incoming")],
+                at: W::Here,
+                shipped: true,
+            },
             Self::ResumeOperation => &FormRow {
                 choice: C::ResumeOperation,
-                steps: &[Step::ResumeRecorded],
+                steps: &[Step::Recorded("<resume>")],
                 at: W::Here,
                 shipped: true,
             },
             Self::AbortOperation => &FormRow {
                 choice: C::AbortOperation,
-                steps: &[Rwv("rwv abort")],
+                steps: &[Step::Recorded("<abort>")],
                 at: W::Here,
                 shipped: true,
             },
@@ -3481,7 +3509,7 @@ impl Form {
                 | Step::Rerun(_)
                 | Step::RerunWithout(_)
                 | Step::Resume(_)
-                | Step::ResumeRecorded => Vec::new(),
+                | Step::Recorded(_) => Vec::new(),
             })
             .collect()
     }
@@ -3534,7 +3562,7 @@ impl Form {
                 Step::Rerun(flag) => vec![format!("rerun with {flag}")],
                 Step::RerunWithout(flag) => vec![format!("rerun without {flag}")],
                 Step::Resume(verb) => vec![crate::op_state::resume_command(*verb)],
-                Step::ResumeRecorded => vec!["<resume>".to_owned()],
+                Step::Recorded(line) => vec![(*line).to_owned()],
             })
             .collect()
     }
@@ -5040,9 +5068,15 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
                 flush(&mut actions, &mut parts);
                 parts.push(format!("`{}`", crate::op_state::resume_command(*verb)));
             }
-            Step::ResumeRecorded => {
+            Step::Recorded(line) => {
                 flush(&mut actions, &mut parts);
-                parts.push("the stopped operation's `--continue`".to_owned());
+                parts.push(match line.strip_prefix("<resume>") {
+                    Some(flags) => format!("the stopped operation's `--continue{flags}`"),
+                    None => format!(
+                        "`{}`, against the stopped operation's workspace",
+                        line.replace("<abort>", "rwv abort")
+                    ),
+                });
             }
         }
     }

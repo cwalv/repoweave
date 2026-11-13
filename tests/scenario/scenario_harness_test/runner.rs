@@ -156,13 +156,10 @@ pub enum Action {
     /// The choice line the last rwv step printed that begins `prefix` and
     /// holds `holding`, run at `at` word for word as the terminal shows it:
     /// by rwv, or by git for a VCS action; each placeholder it leaves for
-    /// the operator to choose filled from `fill`. With `labeled`, `prefix`
-    /// is the label the command follows on its line, and a command quoted
-    /// in backticks there is the quoted text.
+    /// the operator to choose filled from `fill`.
     RwvPrinted {
         at: Place,
         exact: bool,
-        labeled: bool,
         prefix: &'static str,
         holding: &'static str,
         fill: &'static [(&'static str, &'static str)],
@@ -812,7 +809,6 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: false,
-                labeled: false,
                 prefix,
                 holding,
                 fill: &[],
@@ -834,7 +830,6 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: false,
-                labeled: false,
                 prefix,
                 holding,
                 fill,
@@ -851,26 +846,8 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: true,
-                labeled: false,
                 prefix: line,
                 holding: "",
-                fill: &[],
-            },
-            Expect::undecided(),
-        )
-    }
-
-    /// [`Step::rwv_printed_holding`] of the command a printed line gives
-    /// after `label`, such as `keep yours: ` or `then run `.
-    pub fn rwv_printed_after(at: &Place, label: &'static str, holding: &'static str) -> Step {
-        Step::new(
-            format!("the command printed after `{label}`, holding `{holding}`"),
-            Action::RwvPrinted {
-                at: at.clone(),
-                exact: false,
-                labeled: true,
-                prefix: label,
-                holding,
                 fill: &[],
             },
             Expect::undecided(),
@@ -1359,7 +1336,6 @@ impl Run<'_> {
             Action::RwvPrinted {
                 at,
                 exact,
-                labeled,
                 prefix,
                 holding,
                 fill,
@@ -1378,13 +1354,6 @@ impl Run<'_> {
                             self.last_rwv_output
                         ),
                     );
-                };
-                let line = match (labeled, line.strip_prefix(*prefix)) {
-                    (true, Some(rest)) => match rest.strip_prefix('`') {
-                        Some(quoted) => quoted.split('`').next().unwrap_or_default(),
-                        None => rest,
-                    },
-                    _ => line,
                 };
                 let line = fill
                     .iter()

@@ -345,14 +345,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 5,
+        count: 4,
         callers: &[],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
             before writing anything, and with its last \
             caller gone the method went with the rest of the old surface. \
-            What remains is five sites, none of which can reposition a \
+            What remains is four sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
             (1) set_detached_head: the branch-model ATTACH/MOVE primitive \
@@ -394,16 +394,7 @@ const ALLOWLIST: &[Allowed] = &[
             nothing moved, a move that would overwrite modified paths; no -f. \
             It takes the Departure proof, which for the project repo's own \
             move keeps a detached HEAD's unreachable commits as a backup \
-            first. (5) rewrite_conflict: `checkout --merge -- <path>` moves no \
-            ref; it rewrites one unmerged path's working file as git's own \
-            merge of the stages the same call has just recorded for it, as \
-            the operator's own `git checkout --merge` does. It is reached \
-            only from a setter settling an entry of a conflicted rwv.toml, \
-            which first keeps the checkout's edits as a backup and prints \
-            how to read rwv.toml from it, so an unstaged hand edit of that \
-            file is replaced only once it is kept; a staged one has taken \
-            the path out of the unmerged state, so the setter never \
-            reaches this.",
+            first.",
     },
     Allowed {
         file: "git.rs",

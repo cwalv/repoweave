@@ -3609,6 +3609,22 @@ pub trait Vcs: Send + Sync {
         derived: DerivedContentPolicy,
     ) -> Result<(), VcsError>;
 
+    /// [`Vcs::rebase`], pausing after each commit that changes `path` once
+    /// it is replayed with no conflict: the replay is then still in flight,
+    /// with nothing unmerged, the commit [`Vcs::rebase_replaying`] names
+    /// replayed as the tip, and changes staged there are taken into it by
+    /// [`Vcs::rebase_continue`].
+    ///
+    /// For git: the planned `pick` of each such commit becomes an `edit`.
+    fn rebase_pausing(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
+        path: &str,
+    ) -> Result<(), VcsError>;
+
     /// Which commit each commit of `from..old` became, where a replay of
     /// `old` onto `onto` by [`Vcs::rebase`] wrote `onto..new`, as that
     /// replay recorded it, or as [`Vcs::record_replayed`] recorded a rewrite
@@ -5418,19 +5434,23 @@ pub trait Vcs: Send + Sync {
         path: &str,
     ) -> Result<Option<ConflictSides>, VcsError>;
 
-    /// Record `sides` as the sides of `path`, conflicted in `checkout`, and
-    /// rewrite its working file as the VCS's own merge of them, markers and
-    /// all; the path stays conflicted.
+    /// Record `sides` as the sides of `path` in `checkout`, leaving it
+    /// unmerged; its working file is left as it stands.
     ///
-    /// For git: `hash-object -w --path=<path>` for each side,
-    /// `update-index --index-info` at stages 1, 2 and 3, then
-    /// `checkout --merge -- <path>`.
-    fn rewrite_conflict(
+    /// For git: `hash-object -w --path=<path>` for each side, then
+    /// `update-index --index-info` at stages 1, 2 and 3.
+    fn record_conflict(
         &self,
         checkout: &Path,
         path: &str,
         sides: &ConflictSides,
     ) -> Result<(), VcsError>;
+
+    /// The commit a replay in flight in `checkout` stopped at, `None` where
+    /// none is.
+    ///
+    /// For git: `REBASE_HEAD`.
+    fn rebase_replaying(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
 
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.

@@ -636,9 +636,23 @@ pub(crate) fn addressed(workspace: &Path, command: &str) -> String {
         .map(|dir| dir.ancestors().find(|dir| is_workspace_root(dir)));
     match (typed_in, command.strip_prefix("rwv ")) {
         (Some(root), Some(args)) if root != Some(workspace) => {
-            format!("rwv -C {} {args}", workspace.display())
+            format!("rwv -C {} {args}", quoted(workspace))
         }
         _ => command.to_owned(),
+    }
+}
+
+/// `path` as one word a shell reads back as `path`.
+pub(crate) fn quoted(path: &Path) -> String {
+    let text = path.display().to_string();
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/\\._-:~+@,=".contains(c);
+    if !text.is_empty() && text.chars().all(plain) {
+        return text;
+    }
+    if cfg!(windows) {
+        format!("\"{text}\"")
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
     }
 }
 
@@ -2535,6 +2549,13 @@ pub use reconcile::{
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_a_shell_would_split_is_quoted_as_one_word() {
+        assert_eq!(quoted(Path::new("/w/proj--w")), "/w/proj--w");
+        assert_eq!(quoted(Path::new("/w/sp ace/it's")), r"'/w/sp ace/it'\''s'");
+    }
     use super::*;
     use crate::path_spelling::resolve;
 

@@ -18455,26 +18455,35 @@ pub fn abort_from_a_manifest_marker_stop(history: ManifestStopHistory) -> Scenar
     )
 }
 
-/// What settles a `sync` stop on a conflicted `rwv.toml`.
+/// What the operator does at a stop where `rwv.toml` is unmerged.
 #[derive(Debug, Clone, Copy)]
 pub enum ManifestSettle {
-    /// `app`'s and `lib`'s `history`, both changed differently on both
-    /// sides, settled one at a time by `branch set-history`.
+    /// `app`'s and `lib`'s `history` both changed differently on both sides:
+    /// the bare continue refuses naming both, and the printed `--keep` line
+    /// takes one side for both; yours under merge, incoming under linear.
     TwoEntries(ManifestStopHistory),
     /// `lib`'s role changed differently on both sides and its
-    /// `recurse-submodules` only on `main`: the role alone is in conflict.
+    /// `recurse-submodules` only on `main`: the role alone is listed, and
+    /// keeping yours keeps the field only incoming changed.
     MemberFields(ManifestStopHistory),
-    /// Each side adds a different member: only lines conflict, and the
-    /// continue of the sync writes and stages the merge of both sides.
+    /// Each side adds a different member: no entry is in conflict, and the
+    /// continue writes and stages the merge of both sides.
     LinesOnly(ManifestStopHistory),
     /// [`ManifestSettle::LinesOnly`] at a landing's stop.
     LinesOnlyLand(ManifestStopHistory),
-    /// [`ManifestSettle::LinesOnly`] with the working `rwv.toml` edited and
-    /// not staged: the continue keeps the edit in a backup it names.
+    /// [`ManifestSettle::LinesOnly`] with the working `rwv.toml` edited,
+    /// markers and all, and not staged: the continue keeps the edit in a
+    /// backup it names.
     LinesOnlyHandEdited,
+    /// [`ManifestSettle::LinesOnly`] resolved by hand into another manifest
+    /// and not staged: the continue refuses naming the staging, and once it
+    /// is staged the hand resolution is what is committed.
+    HandResolvedUnstaged,
+    /// [`ManifestSettle::LinesOnly`] with `--keep yours`, which takes nothing.
+    KeepWithNothingInConflict,
     /// The workweave's first and third commits change `app`'s role and its
-    /// `history`, `main` its `recurse-submodules`: each replay stop has only
-    /// lines in conflict, and neither asks for `recurse-submodules` again.
+    /// `history`, `main` its `recurse-submodules`: each replay stop has no
+    /// entry in conflict, and neither asks for `recurse-submodules` again.
     LinesOnlyReplayed,
     /// `lib`'s `history` changed differently on both sides, settled at a
     /// landing's stop, each stop of a linear landing naming it.
@@ -18482,60 +18491,52 @@ pub enum ManifestSettle {
     /// `lib`'s `history` changed differently here and upstream, settled at
     /// the stop of `pull --merge-upstream`.
     Pull,
-    /// `rwv cherry-pick` of a `main` commit that changes `[workweave]`
-    /// against the workweave's own, an integration's table, and `lib`'s
-    /// `history` against the workweave's: its stop leaves `rwv.toml`
-    /// unmerged, and a setter there refuses rather than settle, since the
-    /// pick ports no entry.
+    /// `rwv cherry-pick` stopped on `NOTES.txt`: a setter there offers no
+    /// `--keep`, and a sync's continue with `--keep` refuses.
     CherryPick,
-    /// The sync typed in the primary with `-w`: each line the stop prints
-    /// for the operator to run, run there as printed, acts on the
-    /// workweave.
+    /// The sync typed in the primary with `-w`: the printed `--keep` line,
+    /// run there as printed, acts on the workweave.
     TypedElsewhere,
+    /// [`ManifestSettle::TypedElsewhere`] for a landing.
+    TypedElsewhereLand,
     /// `docs` added on both sides with different roles: the whole member is
-    /// in conflict, and its role's setter settles it.
+    /// in conflict, and keeping yours keeps yours whole.
     BothAdded,
     /// `lib`'s url changed on one side and its role on the other, beside
     /// `app`'s `history` in conflict: `lib` is not.
     CleanFieldBeside,
-    /// The top-level `history`, settled by `branch set-history`.
+    /// The top-level `history`, settled by keeping incoming.
     TopLevelHistory(ManifestStopHistory),
-    /// `docs` changed on one side and removed on the other, settled by
-    /// `member remove`.
+    /// `docs` removed on `main` and changed in the workweave: keeping yours
+    /// keeps the changed table under merge; keeping incoming removes it
+    /// under linear.
     RemovedAgainstChanged(ManifestStopHistory),
-    /// `lib`'s `history` beside `NOTES.txt` added differently: the setter
-    /// settles `rwv.toml`, and the merge holds until `NOTES.txt` is staged.
+    /// `[workweave]`'s `copy` changed differently on both sides and its
+    /// `link` only in the workweave: `copy` alone is listed.
+    WorkweaveKeys,
+    /// `lib`'s `history` beside `NOTES.txt` added differently: the continue
+    /// writes `rwv.toml`, and the merge holds until `NOTES.txt` is staged.
     BesideATextConflict,
-    /// `[workweave] copy`, which no verb sets: resolved and staged with git.
+    /// `[workweave] copy` resolved by hand and staged with git.
     ByHand,
     /// The unedited, conflicted `rwv.toml` staged: `--continue` concludes
     /// nothing.
     StagedUnedited,
-    /// One of two entries settled, then `rwv abort`.
-    Abort,
-    /// A `git merge` the operator ran, settled by the setter and concluded
-    /// with git.
+    /// A `git merge` the operator ran: rwv's continue says no operation is
+    /// in progress, and a setter refuses with no rwv choice.
     RawGitMerge,
-    /// An edit of the conflicted `rwv.toml` the operator has not staged,
-    /// kept where the setter that rewrites the file names it.
-    UnstagedEditKept,
-    /// A comment kept by hand in `rwv.toml`, which an ordinary setter drops
-    /// as it writes the whole file.
-    OrdinarySetterLayout,
-    /// A comment the workweave's side kept by hand, which settling the last
-    /// entry drops as an ordinary setter would.
-    SettledLayout,
-    /// `app`'s role changed only on `main`, merged by git outside the
-    /// markers, beside `lib`'s `history` in conflict.
+    /// A setter at the stop refuses, naming the `--keep` continues, and the
+    /// one it prints, run as printed, settles the stop.
+    SetterRefused,
+    /// A comment and hand layout in the workweave's `rwv.toml` come through
+    /// the continue's write of the merge.
+    KeepsLayout,
+    /// `app`'s role changed only on `main`, beside `lib`'s `history` in
+    /// conflict: the merge holds it as `main` set it.
     CleanBeside,
-    /// `lib`'s branch moved to a new branch differently on both sides and its
-    /// url only on `main`: the branch alone is in conflict.
-    BranchAndUrl(ManifestStopHistory),
-    /// Every entry settled and `rwv.toml` staged, then `rwv abort`.
-    AbortSettled(ManifestStopHistory),
-    /// The setter killed once it recorded the settled sides and before the
-    /// working file is rewritten from them.
-    KilledMidRewrite,
+    /// The operator aborts the sync's merge with git and starts another of an
+    /// older `main` commit: the continue refuses to write into it.
+    ForeignMerge,
 }
 
 pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
@@ -18545,38 +18546,14 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
         H::Merge => "merge",
         H::Linear => "linear",
     };
-    let in_flight = |history: H| {
-        let head = match history {
-            H::Merge => "MERGE_HEAD",
-            H::Linear => "REBASE_HEAD",
-        };
-        Step::git(&ww("w"), Repo::Proj, &["rev-parse", "-q", "--verify", head])
-            .expect(Exit::Succeeds)
-    };
     let stop = |history: H| {
         Step::rwv(&ww("w"), &["sync", "--history", flag(history)])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-    };
-    let settles = |args: &'static [&'static str], left: Option<&'static str>| {
-        let step = Step::rwv(&ww("w"), args).expect(Exit::Succeeds);
-        match left {
-            Some(entry) => step
-                .claim(Claim::OutputContains("still has entries in conflict"))
-                .claim(Claim::OutputContains(entry)),
-            None => step.claim(Claim::OutputContains("no entry left in conflict")),
-        }
     };
     let replayed = |step: Step, history: H| match history {
         H::Merge => step,
         H::Linear => step.may_strand(&[Repo::Proj]),
     };
-    let continues_after = |history: H| {
-        replayed(
-            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
-            history,
-        )
-    };
-    let continues = || continues_after(H::Merge);
     let parked_after = |history: H| {
         replayed(
             Step::rwv(&ww("w"), &["sync", "--continue"])
@@ -18585,31 +18562,44 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
         )
     };
     let parked = || parked_after(H::Merge);
+    let continues = || Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds);
+    let keeps = |side: &'static str, history: H| {
+        replayed(
+            Step::rwv_printed_holding(&ww("w"), "rwv ", side).expect(Exit::Succeeds),
+            history,
+        )
+    };
     let head_manifest =
         || Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"]).expect(Exit::Succeeds);
     let set_history = |at: &Place, value: &'static str, member: &'static str| {
         Step::rwv(at, &["branch", "set-history", value, "--repo", member]).expect(Exit::Succeeds)
     };
-    let copy = |at: &Place, file: &str| {
+    let workweave_table = |at: &Place, table: &str| {
         Step::hand_edit(
             at,
             Repo::Proj,
             "rwv.toml",
             "[integrations.vscode-workspace]\nenabled = false\n",
-            &format!(
-                "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
-                 [\"{file}\"]\n"
-            ),
+            &format!("[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\n{table}"),
         )
     };
-    let comment = |at: &Place| {
-        Step::hand_edit(
-            at,
-            Repo::Proj,
-            "rwv.toml",
-            "[integrations.vscode-workspace]\nenabled = false\n",
-            "# laid out by hand\n[integrations.vscode-workspace]\nenabled = false\n",
-        )
+    let lines_only = || {
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+        ]
+    };
+    let both_members = || {
+        head_manifest()
+            .claim(Claim::OutputContains(
+                "[repositories.\"local/remotes/docs\"]",
+            ))
+            .claim(Claim::OutputContains(
+                "[repositories.\"local/remotes/lib\"]",
+            ))
     };
     let mut steps = vec![create("w")];
     let name = match how {
@@ -18618,53 +18608,51 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 H::Merge => ("merge", "linear"),
                 H::Linear => ("linear", "merge"),
             };
-            let set_app = match history {
-                H::Merge => &["branch", "set-history", "merge", "--repo", APP],
-                H::Linear => &["branch", "set-history", "linear", "--repo", APP],
-            };
-            let set_lib = match history {
-                H::Merge => &["branch", "set-history", "linear", "--repo", LIB],
-                H::Linear => &["branch", "set-history", "merge", "--repo", LIB],
+            let (side, kept) = match history {
+                H::Merge => ("--keep yours", own),
+                H::Linear => ("--keep incoming", target),
             };
             steps.extend([
                 set_history(&a(), target, APP),
                 set_history(&a(), target, LIB),
                 set_history(&ww("w"), own, APP),
                 set_history(&ww("w"), own, LIB),
-                stop(history).claim(Claim::OutputContains(match history {
-                    H::Merge => "rwv branch set-history merge --repo local/remotes/app",
-                    H::Linear => "rwv branch set-history linear --repo local/remotes/app",
-                })),
+                stop(history)
+                    .claim(Claim::OutputContains(
+                        "rwv.toml entry local/remotes/app is in conflict:",
+                    ))
+                    .claim(Claim::OutputContains("rwv sync --continue --keep yours"))
+                    .claim(Claim::OutputContains("rwv sync --continue --keep incoming")),
+                parked_after(history)
+                    .claim(Claim::OutputContains("local/remotes/app"))
+                    .claim(Claim::OutputContains("rwv sync --continue --keep yours")),
             ]);
-            match history {
-                H::Merge => steps.extend([
-                    settles(set_app, Some("local/remotes/lib")),
-                    in_flight(history),
-                    parked()
-                        .claim(Claim::OutputContains("--repo local/remotes/lib"))
-                        .claim(Claim::OutputLacks("--repo local/remotes/app")),
-                ]),
-                H::Linear => steps.extend([
-                    settles(set_app, None),
-                    in_flight(history),
-                    parked_after(history)
-                        .claim(Claim::OutputContains("--repo local/remotes/lib"))
-                        .claim(Claim::OutputLacks("--repo local/remotes/app")),
-                ]),
+            if let H::Linear = history {
+                steps.push(
+                    replayed(
+                        Step::rwv_printed_holding(&ww("w"), "rwv ", side)
+                            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+                        history,
+                    )
+                    .claim(Claim::OutputContains("local/remotes/lib")),
+                );
             }
             steps.extend([
-                settles(set_lib, None),
-                continues_after(history),
+                keeps(side, history),
                 head_manifest()
-                    .claim(Claim::OutputContains("history = \"merge\""))
-                    .claim(Claim::OutputContains("history = \"linear\"")),
+                    .claim(Claim::OutputContains(match kept {
+                        "merge" => "history = \"merge\"",
+                        _ => "history = \"linear\"",
+                    }))
+                    .claim(Claim::OutputLacks(match kept {
+                        "merge" => "history = \"linear\"",
+                        _ => "history = \"merge\"",
+                    })),
             ]);
             match history {
-                H::Merge => {
-                    "two conflicted rwv.toml entries are settled one at a time at a merge stop"
-                }
+                H::Merge => "keeping yours takes yours for every rwv.toml entry in conflict at a merge stop",
                 H::Linear => {
-                    "two conflicted rwv.toml entries are settled one at a time at a linear stop"
+                    "keeping incoming takes incoming for every rwv.toml entry in conflict at a linear stop"
                 }
             }
         }
@@ -18676,14 +18664,12 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
                 stop(history)
                     .claim(Claim::OutputContains(
-                        "keep yours: rwv member set-role local/remotes/lib fork",
+                        "role: \"fork\" in yours, \"dependency\" incoming",
                     ))
-                    .claim(Claim::OutputContains(
-                        "keep incoming: rwv member set-role local/remotes/lib dependency",
-                    ))
-                    .claim(Claim::OutputLacks("set-recurse-submodules")),
-                settles(&["member", "set-role", LIB, "fork"], None),
-                continues_after(history),
+                    .claim(Claim::OutputLacks("recurse-submodules")),
+                Step::rwv(&ww("w"), &["member", "remove", LIB])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
+                keeps("--keep yours", history),
                 head_manifest()
                     .claim(Claim::OutputContains("role = \"fork\""))
                     .claim(Claim::OutputContains("recurse-submodules = false")),
@@ -18705,62 +18691,86 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             steps.extend([
                 Step::rwv(&a(), &["branch", "set-history", target]).expect(Exit::Succeeds),
                 Step::rwv(&ww("w"), &["branch", "set-history", own]).expect(Exit::Succeeds),
-                stop(history)
-                    .claim(Claim::OutputContains(
-                        "rwv.toml entry history is in conflict",
-                    ))
-                    .claim(Claim::OutputContains(match history {
-                        H::Merge => "keep yours: rwv branch set-history linear",
-                        H::Linear => "keep yours: rwv branch set-history merge",
-                    }))
-                    .claim(Claim::OutputContains(match history {
-                        H::Merge => "keep incoming: rwv branch set-history merge",
-                        H::Linear => "keep incoming: rwv branch set-history linear",
-                    }))
-                    .claim(Claim::OutputLacks("--repo")),
-                Step::rwv(
-                    &ww("w"),
-                    &["branch", "set-history", target, "--repo", "projects/other"],
-                )
-                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
-                Step::rwv(&ww("w"), &["branch", "set-history", target])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("no entry left in conflict"))
-                    .claim(Claim::OutputLine("then run `rwv sync --continue`")),
-                continues_after(history),
+                stop(history).claim(Claim::OutputContains(match history {
+                    H::Merge => {
+                        "rwv.toml entry history is in conflict: \"linear\" in yours, \"merge\" incoming"
+                    }
+                    H::Linear => {
+                        "rwv.toml entry history is in conflict: \"merge\" in yours, \"linear\" incoming"
+                    }
+                })),
+                keeps("--keep incoming", history),
                 head_manifest().claim(Claim::OutputContains(match history {
                     H::Merge => "history = \"merge\"",
                     H::Linear => "history = \"linear\"",
                 })),
             ]);
             match history {
-                H::Merge => "the top-level history is settled by its setter at a merge stop",
-                H::Linear => "the top-level history is settled by its setter at a linear stop",
+                H::Merge => "the top-level history takes incoming at a merge stop",
+                H::Linear => "the top-level history takes incoming at a linear stop",
             }
         }
         S::RemovedAgainstChanged(history) => {
+            let side = match history {
+                H::Merge => "--keep yours",
+                H::Linear => "--keep incoming",
+            };
             steps.extend([
                 Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
                 Step::rwv(&ww("w"), &["member", "set-role", DOCS, "fork"]).expect(Exit::Succeeds),
-                stop(history)
-                    .claim(Claim::OutputContains(
-                        "rwv member remove local/remotes/docs",
-                    ))
-                    .claim(Claim::OutputContains("no verb settles it")),
-                Step::rwv(&ww("w"), &["member", "remove", DOCS, "--delete"])
-                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
-                settles(&["member", "remove", DOCS], None),
-                continues_after(history),
-                head_manifest().claim(Claim::OutputLacks("local/remotes/docs")),
+                stop(history).claim(Claim::OutputContains(
+                    "rwv.toml entry local/remotes/docs is in conflict: set in yours, absent incoming",
+                )),
+                keeps(side, history),
+                match history {
+                    H::Merge => head_manifest().claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/docs\"]",
+                    )),
+                    H::Linear => head_manifest().claim(Claim::OutputLacks("local/remotes/docs")),
+                },
             ]);
             match history {
                 H::Merge => {
-                    "a member removed against changed is settled by its removal at a merge stop"
+                    "a member removed against changed keeps the changed table when yours changed it"
                 }
-                H::Linear => {
-                    "a member removed against changed is settled by its removal at a linear stop"
-                }
+                H::Linear => "a member removed against changed is removed when incoming removed it",
             }
+        }
+        S::WorkweaveKeys => {
+            steps = vec![
+                workweave_table(&a(), "copy = [\"base.txt\"]\n"),
+                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                create("w"),
+            ];
+            let workweave_table = |at: &Place, table: &str| {
+                Step::hand_edit(
+                    at,
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[workweave]\ncopy = [\"base.txt\"]\n",
+                    &format!("[workweave]\n{table}"),
+                )
+            };
+            steps.extend([
+                workweave_table(&a(), "copy = [\"main.txt\"]\n"),
+                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                workweave_table(&ww("w"), "copy = [\"notes.txt\"]\nlink = [\"shared\"]\n"),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains(
+                        "rwv.toml entry [workweave] is in conflict:",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "copy: [\"notes.txt\"] in yours, [\"main.txt\"] incoming",
+                    ))
+                    .claim(Claim::OutputLacks("link:")),
+                keeps("--keep incoming", H::Merge),
+                head_manifest()
+                    .claim(Claim::OutputContains("main.txt"))
+                    .claim(Claim::OutputContains("shared"))
+                    .claim(Claim::OutputLacks("notes.txt")),
+            ]);
+            "a [workweave] key both sides changed is the entry in conflict, the other key merged"
         }
         S::BesideATextConflict => {
             steps.extend([
@@ -18775,19 +18785,17 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 ),
                 Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--hard"]),
                 set_history(&ww("w"), "linear", LIB),
-                stop(H::Merge)
-                    .claim(Claim::OutputContains("NOTES.txt, rwv.toml"))
-                    .claim(Claim::OutputContains("--repo local/remotes/lib")),
-                settles(&["branch", "set-history", "merge", "--repo", LIB], None).claim(
-                    Claim::OutputContains(
-                        "then run `rwv sync --continue` once NOTES.txt is staged",
-                    ),
-                ),
-                in_flight(H::Merge),
-                parked()
-                    .claim(Claim::OutputContains("NOTES.txt"))
-                    .claim(Claim::OutputLacks("set-history")),
-                in_flight(H::Merge),
+                stop(H::Merge).claim(Claim::OutputContains("NOTES.txt, rwv.toml")),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "incoming"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("NOTES.txt")),
+                Step::git(
+                    &ww("w"),
+                    Repo::Proj,
+                    &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                )
+                .expect(Exit::Succeeds),
                 Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "NOTES.txt"])
                     .expect(Exit::Succeeds),
                 Step::git(&ww("w"), Repo::Proj, &["add", "NOTES.txt"]).expect(Exit::Succeeds),
@@ -18796,41 +18804,24 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("main note")),
                 head_manifest().claim(Claim::OutputContains("history = \"merge\"")),
-                Step::git(
-                    &ww("w"),
-                    Repo::Proj,
-                    &["rev-parse", "-q", "--verify", "HEAD^2"],
-                )
-                .expect(Exit::Succeeds),
             ]);
-            "an rwv.toml entry settled beside a text conflict concludes nothing until both are"
+            "rwv.toml written beside a text conflict concludes nothing until both are staged"
         }
         S::ByHand => {
             steps.extend([
-                copy(&a(), "main.txt"),
+                workweave_table(&a(), "copy = [\"main.txt\"]\n"),
                 Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-                copy(&ww("w"), "notes.txt"),
+                workweave_table(&ww("w"), "copy = [\"notes.txt\"]\n"),
                 Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-                stop(H::Merge)
-                    .claim(Claim::OutputContains(
-                        "rwv.toml entry workweave is in conflict",
-                    ))
-                    .claim(Claim::OutputContains("no verb settles it"))
-                    .claim(Claim::OutputContains("add -- rwv.toml")),
+                stop(H::Merge).claim(Claim::OutputContains("add -- rwv.toml")),
                 Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"])
                     .expect(Exit::Succeeds),
                 Step::rwv_printed_holding(&ww("w"), "git -C ", "add -- rwv.toml")
                     .expect(Exit::Succeeds),
                 continues(),
                 head_manifest().claim(Claim::OutputContains("main.txt")),
-                Step::git(
-                    &ww("w"),
-                    Repo::Proj,
-                    &["rev-parse", "-q", "--verify", "HEAD^2"],
-                )
-                .expect(Exit::Succeeds),
             ]);
-            "an rwv.toml entry no verb sets is settled by a staged hand resolution"
+            "an rwv.toml resolved by hand and staged is committed as staged"
         }
         S::StagedUnedited => {
             steps.extend([
@@ -18842,36 +18833,10 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains("does not read as a manifest"))
                     .claim(Claim::OutputContains("add -- rwv.toml"))
                     .claim(Claim::OutputLacks("(yours:")),
-                in_flight(H::Merge),
                 Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
                 head_manifest().claim(Claim::OutputLacks("history = \"merge\"")),
             ]);
             "an unedited conflicted rwv.toml staged concludes nothing"
-        }
-        S::Abort => {
-            steps.extend([
-                set_history(&a(), "merge", APP),
-                set_history(&a(), "merge", LIB),
-                set_history(&ww("w"), "linear", APP),
-                set_history(&ww("w"), "linear", LIB),
-                stop(H::Merge),
-                settles(
-                    &["branch", "set-history", "merge", "--repo", APP],
-                    Some("local/remotes/lib"),
-                ),
-                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
-                Step::git(
-                    &ww("w"),
-                    Repo::Proj,
-                    &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-                )
-                .expect(Exit::Code(1)),
-                Step::git(&ww("w"), Repo::Proj, &["diff", "HEAD", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputLacks("history")),
-                head_manifest().claim(Claim::OutputLacks("history = \"merge\"")),
-            ]);
-            "abort after settling one rwv.toml entry puts rwv.toml back"
         }
         S::RawGitMerge => {
             steps.extend([
@@ -18879,91 +18844,28 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&ww("w"), "linear", LIB),
                 Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main"])
                     .expect(Exit::Code(1)),
-                settles(&["branch", "set-history", "merge", "--repo", LIB], None)
-                    .claim(Claim::OutputContains("no rwv operation is stopped in"))
-                    .claim(Claim::OutputLacks("--continue")),
-                Step::git(&ww("w"), Repo::Proj, &["commit", "--no-edit"]).expect(Exit::Succeeds),
-                head_manifest().claim(Claim::OutputContains("history = \"merge\"")),
-                Step::git(
-                    &ww("w"),
-                    Repo::Proj,
-                    &["rev-parse", "-q", "--verify", "HEAD^2"],
-                )
-                .expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+                    .claim(Claim::OutputLacks("--keep"))
+                    .claim(Claim::OutputLacks("rwv abort")),
             ]);
-            "a git merge the operator ran is settled by the setter and concluded with git"
+            "at a git merge the operator ran, rwv's continue and setters leave it to git"
         }
-        S::UnstagedEditKept => {
+        S::SetterRefused => {
             steps.extend([
-                set_history(&a(), "merge", APP),
                 set_history(&a(), "merge", LIB),
-                set_history(&ww("w"), "linear", APP),
                 set_history(&ww("w"), "linear", LIB),
                 stop(H::Merge),
-                Step::hand_edit(
-                    &ww("w"),
-                    Repo::Proj,
-                    "rwv.toml",
-                    "[integrations.vscode-workspace]\nenabled = false\n",
-                    "[integrations.vscode-workspace]\nenabled = false\n# half-way through\n",
-                ),
-                settles(
-                    &["branch", "set-history", "merge", "--repo", APP],
-                    Some("local/remotes/lib"),
-                )
-                .claim(Claim::OutputContains("kept")),
-                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputLacks("half-way through")),
-                Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("# half-way through"))
-                    .claim(Claim::OutputContains("<<<<<<<")),
-                Step::rwv(&ww("w"), &["backup", "list"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("projects/proj"))
-                    .claim(Claim::OutputContains("rwv backup of uncommitted edits")),
-                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
-                continues(),
-                head_manifest().claim(Claim::OutputLacks("half-way through")),
+                Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+                    .claim(Claim::OutputContains("rwv sync --continue --keep yours"))
+                    .claim(Claim::OutputContains("rwv sync --continue --keep incoming")),
+                keeps("--keep incoming", H::Merge),
+                head_manifest().claim(Claim::OutputContains("history = \"merge\"")),
             ]);
-            "an unstaged edit of the conflicted rwv.toml is kept when a setter rewrites it"
-        }
-        S::OrdinarySetterLayout => {
-            steps.extend([
-                comment(&ww("w")),
-                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-                head_manifest().claim(Claim::OutputContains("# laid out by hand")),
-                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
-                head_manifest()
-                    .claim(Claim::OutputContains("role = \"fork\""))
-                    .claim(Claim::OutputLacks("# laid out by hand")),
-            ]);
-            "an ordinary setter writes rwv.toml whole, dropping a comment"
-        }
-        S::SettledLayout => {
-            steps.extend([
-                comment(&ww("w")),
-                Step::hand_edit(
-                    &ww("w"),
-                    Repo::Proj,
-                    "rwv.toml",
-                    "[repositories.\"local/remotes/lib\"]\n",
-                    "[repositories.\"local/remotes/lib\"]\nhistory = \"linear\"\n",
-                ),
-                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-                set_history(&a(), "merge", LIB),
-                stop(H::Merge),
-                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("# laid out by hand")),
-                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
-                continues(),
-                head_manifest()
-                    .claim(Claim::OutputContains("history = \"linear\""))
-                    .claim(Claim::OutputLacks("# laid out by hand")),
-            ]);
-            "settling the last rwv.toml entry writes the file whole, as an ordinary setter does"
+            "a setter at an rwv.toml stop refuses, naming the continue that takes a side"
         }
         S::LinesOnly(history) | S::LinesOnlyLand(history) => {
             let land = matches!(how, S::LinesOnlyLand(_));
@@ -18979,12 +18881,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 "`rwv sync --continue` writes and stages the merge of both sides"
             };
             let landed_at = if land { a() } else { ww("w") };
-            steps = vec![
-                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
-                Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
-                create("w"),
-                Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
-                Step::rwv(&ww("w"), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+            steps = lines_only();
+            steps.extend([
                 Step::rwv(&ww("w"), start)
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
@@ -19016,7 +18914,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains(
                         "[repositories.\"local/remotes/lib\"]",
                     )),
-            ];
+            ]);
             match (land, history) {
                 (false, H::Merge) => {
                     "a sync's continue writes the merge where each side added a member, at a merge stop"
@@ -19033,12 +18931,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             }
         }
         S::LinesOnlyHandEdited => {
-            steps = vec![
-                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
-                Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
-                create("w"),
-                Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
-                Step::rwv(&ww("w"), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+            steps = lines_only();
+            steps.extend([
                 stop(H::Merge),
                 Step::hand_edit(
                     &ww("w"),
@@ -19052,17 +18946,47 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains("kept in backup")),
                 Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
                     .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("# half-way through")),
+                    .claim(Claim::OutputContains("# half-way through"))
+                    .claim(Claim::OutputContains("<<<<<<<")),
+                both_members().claim(Claim::OutputLacks("half-way through")),
+            ]);
+            "a continue that writes the merge of rwv.toml keeps an unstaged edit of it in a backup"
+        }
+        S::HandResolvedUnstaged => {
+            steps = lines_only();
+            steps.extend([
+                stop(H::Merge),
+                Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"])
+                    .expect(Exit::Succeeds),
+                parked()
+                    .claim(Claim::OutputContains(
+                        "reads as a manifest other than the merge",
+                    ))
+                    .claim(Claim::OutputLacks("wrote and staged")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+                Step::rwv_printed_holding(&ww("w"), "git -C ", "add -- rwv.toml")
+                    .expect(Exit::Succeeds),
+                continues(),
                 head_manifest()
                     .claim(Claim::OutputContains(
                         "[repositories.\"local/remotes/docs\"]",
                     ))
-                    .claim(Claim::OutputContains(
-                        "[repositories.\"local/remotes/lib\"]",
-                    ))
-                    .claim(Claim::OutputLacks("half-way through")),
-            ];
-            "a continue that writes the merge of rwv.toml keeps an unstaged edit of it in a backup"
+                    .claim(Claim::OutputLacks("local/remotes/lib")),
+            ]);
+            "a continue refuses to replace an rwv.toml resolved by hand and not staged"
+        }
+        S::KeepWithNothingInConflict => {
+            steps = lines_only();
+            steps.extend([
+                stop(H::Merge),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "yours"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("`--keep yours` took nothing")),
+                both_members(),
+            ]);
+            "keeping a side where no entry is in conflict takes nothing and says so"
         }
         S::LinesOnlyReplayed => {
             steps = vec![
@@ -19075,21 +18999,23 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&ww("w"), "ff-only", APP),
                 stop(H::Linear)
                     .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
-                    .claim(Claim::OutputLacks("keep yours")),
+                    .claim(Claim::OutputLacks("--keep")),
                 Step::rwv(&ww("w"), &["sync", "--continue"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .may_strand(&[Repo::Proj])
                     .claim(Claim::OutputContains("wrote and staged the merge"))
                     .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
                     .claim(Claim::OutputLacks("recurse-submodules")),
-                continues_after(H::Linear)
-                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                replayed(
+                    continues().claim(Claim::OutputContains("wrote and staged the merge")),
+                    H::Linear,
+                ),
                 head_manifest()
                     .claim(Claim::OutputContains("role = \"fork\""))
                     .claim(Claim::OutputContains("recurse-submodules = false"))
                     .claim(Claim::OutputContains("history = \"ff-only\"")),
             ];
-            "each replay stop with only lines of rwv.toml in conflict is continued with no question"
+            "each replay stop with no rwv.toml entry in conflict is continued with no question"
         }
         S::Land(history) => {
             let start: &[&str] = match history {
@@ -19121,41 +19047,32 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::rwv(&ww("w"), start)
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains(
-                        "keep yours: rwv branch set-history linear --repo local/remotes/lib",
+                        "history: \"linear\" in yours, \"merge\" incoming",
                     ))
-                    .claim(Claim::OutputContains(
-                        "keep incoming: rwv branch set-history merge --repo local/remotes/lib",
-                    ))
-                    .claim(Claim::OutputContains("rwv land --continue")),
+                    .claim(Claim::OutputContains("rwv land --continue --keep yours")),
             ]);
             match history {
-                H::Merge => steps.extend([
-                    settles(
-                        &["branch", "set-history", "linear", "--repo", LIB],
-                        Some("local/remotes/app"),
-                    ),
-                    settles(&["branch", "set-history", "linear", "--repo", APP], None),
-                ]),
+                H::Merge => steps.push(
+                    Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep yours")
+                        .expect(Exit::Succeeds),
+                ),
                 H::Linear => steps.extend([
-                    settles(&["branch", "set-history", "linear", "--repo", LIB], None),
-                    Step::rwv(&ww("w"), &["land", "--continue"])
+                    Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep yours")
                         .expect(Exit::refuses_kind(RefusalKind::OpParked))
                         .may_strand(&[Repo::Proj])
                         .claim(Claim::OutputContains(
-                            "keep yours: rwv branch set-history linear --repo local/remotes/app",
+                            "rwv.toml entry local/remotes/app is in conflict:",
                         )),
-                    settles(&["branch", "set-history", "linear", "--repo", APP], None),
+                    Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep yours")
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj]),
                 ]),
             }
-            steps.extend([
-                replayed(
-                    Step::rwv(&ww("w"), &["land", "--continue"]).expect(Exit::Succeeds),
-                    history,
-                ),
+            steps.push(
                 Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputLacks("history = \"merge\"")),
-            ]);
+            );
             match history {
                 H::Merge => "a landing's merge stop lists the rwv.toml entries in conflict",
                 H::Linear => "each stop of a linear landing lists the rwv.toml entries in conflict",
@@ -19171,86 +19088,94 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::rwv(&b(), &["pull", "--merge-upstream"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains(
-                        "keep yours: rwv branch set-history linear --repo local/remotes/lib",
+                        "history: \"linear\" in yours, \"merge\" incoming",
                     ))
-                    .claim(Claim::OutputContains(
-                        "keep incoming: rwv branch set-history merge --repo local/remotes/lib",
-                    ))
-                    .claim(Claim::OutputContains("rwv pull --continue")),
-                Step::rwv(&b(), &["branch", "set-history", "linear", "--repo", LIB])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("no entry left in conflict")),
-                Step::rwv(&b(), &["pull", "--continue"]).expect(Exit::Succeeds),
+                    .claim(Claim::OutputContains("rwv pull --continue --keep yours")),
+                Step::rwv_printed_holding(&b(), "rwv ", "--keep yours").expect(Exit::Succeeds),
                 Step::git(&b(), Repo::Proj, &["show", "HEAD:rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("history = \"linear\""))
                     .claim(Claim::OutputLacks("history = \"merge\"")),
             ];
-            "a pull's merge stop lists the rwv.toml entries in conflict"
+            "a pull's merge stop lists the rwv.toml entries in conflict and keeps a side"
         }
         S::CherryPick => {
-            let tables = |at: &Place, enabled: &str, file: &str| {
-                Step::hand_edit(
-                    at,
-                    Repo::Proj,
-                    "rwv.toml",
-                    "[integrations.vscode-workspace]\nenabled = false\n",
-                    &format!(
-                        "[integrations.vscode-workspace]\nenabled = {enabled}\n\n[workweave]\n\
-                         copy = [\"{file}\"]\n"
-                    ),
-                )
-            };
             steps.extend([
-                set_history(&ww("w"), "linear", LIB),
-                tables(&ww("w"), "false", "notes.txt"),
-                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-                tables(&a(), "true", "main.txt"),
-                Step::hand_edit(
-                    &a(),
+                Step::hand_commit(&a(), Repo::Proj, "main", &[("NOTES.txt", "main note\n")]),
+                Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+                Step::hand_commit(
+                    &ww("w"),
                     Repo::Proj,
-                    "rwv.toml",
-                    "[repositories.\"local/remotes/lib\"]\n",
-                    "[repositories.\"local/remotes/lib\"]\nhistory = \"merge\"\n",
+                    "proj--w",
+                    &[("NOTES.txt", "w note\n")],
                 ),
-                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--hard"]),
                 Step::rwv(&ww("w"), &["cherry-pick", "main"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains("rwv cherry-pick --continue")),
-                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("rwv.toml")),
                 Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
-                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
-                Step::rwv(&ww("w"), &["cherry-pick", "--continue"])
-                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                    .claim(Claim::OutputContains("workweave changed on both sides"))
-                    .claim(Claim::OutputLacks("set-history")),
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+                    .claim(Claim::OutputLacks("--keep")),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "incoming"])
+                    .expect(Exit::refuses_kind(RefusalKind::ResumeContradictsRecord)),
                 Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
-                head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
             ]);
-            "a setter at an rwv cherry-pick stop that leaves rwv.toml unmerged refuses"
+            "a setter and a sync's continue at an rwv cherry-pick stop offer no --keep"
         }
-        S::TypedElsewhere => {
+        S::TypedElsewhere | S::TypedElsewhereLand => {
+            let land = matches!(how, S::TypedElsewhereLand);
+            let start: &[&str] = if land {
+                &[
+                    "-w",
+                    "proj--w",
+                    "land",
+                    "--history",
+                    "merge",
+                    "--allow-member-change",
+                    LIB,
+                ]
+            } else {
+                &["-w", "proj--w", "sync", "--history", "merge"]
+            };
             steps.extend([
                 set_history(&a(), "merge", LIB),
                 set_history(&ww("w"), "linear", LIB),
-                Step::rwv(&a(), &["-w", "proj--w", "sync", "--history", "merge"])
+                Step::rwv(&a(), start)
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                    .claim(Claim::OutputContains("keep yours: rwv -C "))
-                    .claim(Claim::OutputContains("then run `rwv -C "))
-                    .claim(Claim::OutputContains("or `rwv -C ")),
-                Step::rwv_printed_after(&a(), "keep yours: ", "--repo local/remotes/lib")
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("no entry left in conflict"))
-                    .claim(Claim::LocalStateUnchanged(a())),
-                Step::rwv_printed_after(&a(), "then run ", "--continue").expect(Exit::Succeeds),
-                head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
-                Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("history = \"merge\"")),
+                    .claim(Claim::OutputContains("--continue --keep yours"))
+                    .claim(Claim::OutputContains("`rwv -C ")),
             ]);
-            "a stop reached with -w prints lines that act on its workspace from where it was typed"
+            if !land {
+                steps.extend([
+                    Step::rwv(&a(), &["-w", "proj--w", "status"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains("resume with `rwv -C "))
+                        .claim(Claim::OutputContains("abort` rolls it back")),
+                    Step::rwv(&a(), &["-w", "proj--w", "member", "set-role", LIB, "fork"])
+                        .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+                        .claim(Claim::OutputContains("rwv -C "))
+                        .claim(Claim::OutputContains("abort")),
+                ]);
+            }
+            steps.push(
+                Step::rwv_printed_holding(&a(), "rwv -C ", "--keep yours").expect(Exit::Succeeds),
+            );
+            if land {
+                steps.push(
+                    Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains("history = \"linear\"")),
+                );
+                "a landing's stop reached with -w prints a continue that acts on its workspace from where it was typed"
+            } else {
+                steps.extend([
+                    head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
+                    Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains("history = \"merge\"")),
+                ]);
+                "a stop reached with -w prints a continue that acts on its workspace from where it was typed"
+            }
         }
         S::BothAdded => {
             steps = vec![
@@ -19271,13 +19196,12 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         "rwv.toml entry local/remotes/docs is in conflict:",
                     ))
                     .claim(Claim::OutputContains(
-                        "keep yours: rwv member set-role local/remotes/docs owned",
+                        "role: \"owned\" in yours, \"fork\" incoming",
                     )),
-                settles(&["member", "set-role", DOCS, "owned"], None),
-                continues(),
+                keeps("--keep yours", H::Merge),
                 head_manifest().claim(Claim::OutputLacks("fork")),
             ];
-            "a member both sides added differently is settled by the setter of the field they differ in"
+            "a member both sides added differently takes the side kept whole"
         }
         S::CleanFieldBeside => {
             steps.extend([
@@ -19286,17 +19210,9 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&a(), "merge", APP),
                 set_history(&ww("w"), "linear", APP),
                 stop(H::Merge)
-                    .claim(Claim::OutputContains("--repo local/remotes/app"))
+                    .claim(Claim::OutputContains("local/remotes/app"))
                     .claim(Claim::OutputLacks("local/remotes/lib")),
-                settles(&["branch", "set-history", "merge", "--repo", APP], None),
-                Step::git(
-                    &ww("w"),
-                    Repo::Proj,
-                    &["status", "--porcelain", "--", "rwv.toml"],
-                )
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("UU")),
-                continues(),
+                keeps("--keep incoming", H::Merge),
                 head_manifest()
                     .claim(Claim::OutputContains("role = \"fork\""))
                     .claim(Claim::OutputContains("fork/lib.git"))
@@ -19310,11 +19226,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&a(), "merge", LIB),
                 set_history(&ww("w"), "linear", LIB),
                 stop(H::Merge).claim(Claim::OutputLacks("local/remotes/app")),
-                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("role = \"fork\"")),
-                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
-                continues(),
+                keeps("--keep yours", H::Merge),
                 Step::git(
                     &ww("w"),
                     Repo::Proj,
@@ -19323,112 +19235,49 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("fork")),
             ]);
-            "an entry git merged outside the markers comes out as git merged it"
+            "an entry only incoming changed comes out as incoming has it"
         }
-        S::BranchAndUrl(history) => {
+        S::KeepsLayout => {
             steps.extend([
-                Step::rwv(&a(), &["member", "set-url", LIB, "url:fork:lib"]).expect(Exit::Succeeds),
-                Step::rwv(&a(), &["member", "set-branch", LIB, "lib-main", "--new"])
-                    .expect(Exit::Succeeds),
-                Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
-                    .expect(Exit::Succeeds),
-                stop(history)
-                    .claim(Claim::OutputContains(
-                        "keep yours: rwv member set-branch local/remotes/lib lib-w",
-                    ))
-                    .claim(Claim::OutputContains(
-                        "keep incoming: rwv member set-branch local/remotes/lib lib-main",
-                    ))
-                    .claim(Claim::OutputLacks("set-url")),
-                Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
-                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
-                Step::rwv(
+                Step::hand_edit(
                     &ww("w"),
-                    &[
-                        "member",
-                        "set-branch",
-                        LIB,
-                        "lib-w",
-                        "--url",
-                        "url:fork:lib",
-                    ],
-                )
-                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
-                settles(&["member", "set-branch", LIB, "lib-w"], None),
-                continues_after(history),
-                head_manifest()
-                    .claim(Claim::OutputContains("branch = \"lib-w\""))
-                    .claim(Claim::OutputContains("fork/lib.git")),
-            ]);
-            match history {
-                H::Merge => {
-                    "a member's branch is settled by its setter and its url changed on one side kept, at a merge stop"
-                }
-                H::Linear => {
-                    "a member's branch is settled by its setter and its url changed on one side kept, at a linear stop"
-                }
-            }
-        }
-        S::AbortSettled(history) => {
-            let (target, own) = match history {
-                H::Merge => ("merge", "linear"),
-                H::Linear => ("linear", "merge"),
-            };
-            steps.extend([
-                set_history(&a(), target, LIB),
-                set_history(&ww("w"), own, LIB),
-                Step::git(&ww("w"), Repo::Proj, &["rev-parse", "HEAD"]).expect(Exit::Succeeds),
-                stop(history),
-                Step::rwv(&ww("w"), &["branch", "set-history", own, "--repo", LIB])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("no entry left in conflict")),
-                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
-                in_flight(history).expect(Exit::Code(1)),
-                Step::git(&ww("w"), Repo::Proj, &["status", "--porcelain"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputLacks("rwv.toml")),
-                head_manifest().claim(Claim::OutputContains(match history {
-                    H::Merge => "history = \"linear\"",
-                    H::Linear => "history = \"merge\"",
-                })),
-            ]);
-            match history {
-                H::Merge => {
-                    "abort after every rwv.toml entry is settled at a merge stop puts it back"
-                }
-                H::Linear => {
-                    "abort after every rwv.toml entry is settled at a linear stop puts it back"
-                }
-            }
-        }
-        S::KilledMidRewrite => {
-            steps.extend([
-                set_history(&a(), "merge", APP),
-                set_history(&a(), "merge", LIB),
-                set_history(&ww("w"), "linear", APP),
-                set_history(&ww("w"), "linear", LIB),
-                stop(H::Merge),
-                Step::rwv_paused(
-                    &ww("w"),
-                    &["branch", "set-history", "merge", "--repo", APP],
-                    "conflict-sides-recorded",
-                    "settling",
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[integrations.vscode-workspace]\nenabled = false\n",
+                    "# laid out by hand\n[integrations.vscode-workspace]\nenabled   =   false\n",
                 ),
-                Step::kill("settling"),
-                in_flight(H::Merge),
-                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("<<<<<<<")),
-                parked()
-                    .claim(Claim::OutputContains("--repo local/remotes/lib"))
-                    .claim(Claim::OutputLacks("--repo local/remotes/app")),
-                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
-                continues(),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                set_history(&ww("w"), "linear", LIB),
+                set_history(&a(), "merge", LIB),
+                stop(H::Merge),
+                keeps("--keep yours", H::Merge),
                 head_manifest()
-                    .claim(Claim::OutputContains("history = \"merge\""))
-                    .claim(Claim::OutputContains("history = \"linear\"")),
+                    .claim(Claim::OutputContains("history = \"linear\""))
+                    .claim(Claim::OutputContains("# laid out by hand"))
+                    .claim(Claim::OutputContains("enabled   =   false")),
             ]);
-            "a setter killed after recording the settled sides leaves the next entry's setter to finish"
+            "the continue's write of rwv.toml keeps its comments and layout"
+        }
+        S::ForeignMerge => {
+            steps = lines_only();
+            steps.extend([
+                Step::commit(&a(), Repo::Proj, "main-later"),
+                stop(H::Merge),
+                Step::git(&ww("w"), Repo::Proj, &["merge", "--abort"]).expect(Exit::Succeeds),
+                Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main~1"])
+                    .expect(Exit::Code(1)),
+                parked()
+                    .claim(Claim::OutputContains(
+                        "not the one the stopped operation started",
+                    ))
+                    .claim(Claim::OutputLacks("wrote and staged")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+                Step::git(&ww("w"), Repo::Proj, &["merge", "--abort"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+            ]);
+            "a continue writes nothing into a merge its operation did not start"
         }
     };
     scenario(name, steps)
@@ -19553,13 +19402,12 @@ fn project_merge_in_flight() -> Step {
 
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
-/// conflict, printing each field's setter with each side's value. Each
-/// setter settles its field on both sides and commits nothing; `--continue`
-/// refuses while a field is left, naming it, and completes with no hand edit
-/// once none is.
+/// conflict, listing each field with each side's value. `--continue` refuses
+/// while a field is in conflict, naming both, and the printed `--keep yours`
+/// takes yours for each and completes with no hand edit.
 pub fn dc04_conflict_setter() -> Scenario {
     scenario(
-        "dc04 a conflicted entry is settled by its setters",
+        "dc04 a conflicted entry is settled by keeping a side",
         vec![
             create("w"),
             Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
@@ -19573,35 +19421,20 @@ pub fn dc04_conflict_setter() -> Scenario {
             Step::rwv(&ww("w"), &["sync", "--history", "merge"])
                 .expect(Exit::refuses_kind(RefusalKind::OpParked))
                 .claim(Claim::OutputContains(
-                    "rwv member set-branch local/remotes/lib lib-w",
+                    "branch: \"lib-w\" in yours, \"lib-main\" incoming",
                 ))
                 .claim(Claim::OutputContains(
-                    "rwv member set-branch local/remotes/lib lib-main",
-                ))
-                .claim(Claim::OutputContains(
-                    "rwv branch set-history merge --repo local/remotes/lib",
-                ))
-                .claim(Claim::OutputContains(
-                    "rwv branch set-history linear --repo local/remotes/lib",
+                    "history: \"merge\" in yours, \"linear\" incoming",
                 )),
             Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("still has entries in conflict"))
-                .claim(Claim::OutputContains(
-                    "rwv branch set-history linear --repo local/remotes/lib",
-                )),
+                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
             project_merge_in_flight(),
             Step::rwv(&ww("w"), &["sync", "--continue"])
                 .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                .claim(Claim::OutputContains(
-                    "rwv branch set-history merge --repo local/remotes/lib",
-                ))
-                .claim(Claim::OutputLacks("set-branch")),
-            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("no entry left in conflict")),
+                .claim(Claim::OutputContains("branch: \"lib-w\" in yours"))
+                .claim(Claim::OutputContains("rwv sync --continue --keep yours")),
             project_merge_in_flight(),
-            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+            Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep yours").expect(Exit::Succeeds),
             Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("branch = \"lib-w\""))

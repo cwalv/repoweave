@@ -124,8 +124,10 @@ The others follow.
 | `rwv.toml or rwv.lock uncommitted`, for `rwv branch create` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
 | `lock unresolved` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 | `commit mid-operation` | mark each unmerged path resolved once it holds what you mean | VCS action (git: `git -C <checkout> add -- <paths>`) | the checkout | stages the working files as they stand; the operation is still in progress |
+| `commit mid-operation` | take one side for every `rwv.toml` entry both sides changed differently, and write and stage the merge of both sides | the stopped operation's `--continue --keep yours` | here | the checkout's edits are kept in a backup first; a working `rwv.toml` that reads as another manifest is refused, not replaced |
+| `commit mid-operation` | take one side for every `rwv.toml` entry both sides changed differently, and write and stage the merge of both sides | the stopped operation's `--continue --keep incoming` | here | the checkout's edits are kept in a backup first; a working `rwv.toml` that reads as another manifest is refused, not replaced |
 | `commit mid-operation` | let the operation that stopped go on, committing what is staged | the stopped operation's `--continue` | here | it stops again while any path is unmerged |
-| `commit mid-operation` | abandon the operation that stopped | `rwv abort` | here | `rwv abort` moves only what the operation moved, back to where it found it |
+| `commit mid-operation` | abandon the operation that stopped | `rwv abort`, against the stopped operation's workspace | here | `rwv abort` moves only what the operation moved, back to where it found it |
 | `commit mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md); [Sync semantics](../explanation/joints/sync-semantics.md).

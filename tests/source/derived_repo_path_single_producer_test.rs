@@ -85,13 +85,6 @@ const ALLOWLIST: &[Allowed] = &[
              Nothing is derived from an identity.",
     },
     Allowed {
-        file: "cli/dispatch.rs",
-        count: 1,
-        justification: "A setter's lookup key at a stop where rwv.toml is conflicted: \
-             the operator's typed path is matched against the entries in conflict, and \
-             a path none of them is goes on to the setter, which refuses it.",
-    },
-    Allowed {
         file: "member_pin.rs",
         count: 1,
         justification: "The pin verb's lookup key: the operator's typed path is \

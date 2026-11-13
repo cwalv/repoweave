@@ -408,6 +408,9 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides
+        #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
+        keep: Option<crate::manifest_conflict::Side>,
         /// Resume a sync a conflict stopped, after resolving it; every parameter comes from the op record
         #[arg(long = "continue")]
         do_continue: bool,
@@ -459,6 +462,9 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides
+        #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
+        keep: Option<crate::manifest_conflict::Side>,
         /// Resume a landing a conflict stopped, after resolving it; every parameter comes
         /// from the op record. `--project` asserts the recorded project and refuses another
         #[arg(long = "continue")]
@@ -540,6 +546,9 @@ pub enum Commands {
         /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
         reset_to_upstream: Vec<crate::manifest::ResetOperand>,
+        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides
+        #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
+        keep: Option<crate::manifest_conflict::Side>,
         /// Resume the pull a conflict stopped, from the workspace it runs in
         #[arg(long = "continue")]
         do_continue: bool,

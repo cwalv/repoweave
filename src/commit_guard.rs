@@ -57,9 +57,12 @@ fn judge(
             return Ok(());
         }
     }
-    let resume = workspace
-        .and_then(|workspace| crate::op_state::read_owner_header(workspace).ok().flatten())
-        .map(|header| crate::op_state::resume_command(header.verb));
+    let recorded = workspace.and_then(|workspace| {
+        crate::op_state::read_owner_header(workspace)
+            .ok()
+            .flatten()
+            .map(|header| (header.verb, workspace))
+    });
     let subject = match op {
         Some(op) => format!("a {op} in progress"),
         None => "unmerged paths".to_owned(),
@@ -75,12 +78,26 @@ fn judge(
         .listing(&unmerged)
         .bind_list("<paths>", &unmerged)
         .checkout(dir);
-    match resume {
-        Some(resume) => {
+    match recorded {
+        Some((verb, workspace)) => {
             without.push(ChoiceId::C32);
-            judging = judging.bind_list("<resume>", resume.split_whitespace());
+            if !unmerged
+                .iter()
+                .any(|path| path == crate::manifest::Manifest::FILE_NAME)
+            {
+                without.push(ChoiceId::KeepSide);
+            }
+            let resume = crate::op_state::resume_command_at(verb, workspace);
+            let abort = crate::op_state::abort_command_at(workspace);
+            judging = judging
+                .bind_list("<resume>", resume.split_whitespace())
+                .bind_list("<abort>", abort.split_whitespace());
         }
-        None => without.extend([ChoiceId::ResumeOperation, ChoiceId::AbortOperation]),
+        None => without.extend([
+            ChoiceId::KeepSide,
+            ChoiceId::ResumeOperation,
+            ChoiceId::AbortOperation,
+        ]),
     }
     Err(judging.without(&without).judge(vcs).refused())
 }

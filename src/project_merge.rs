@@ -680,12 +680,7 @@ impl ProjectMerge<'_> {
         repo: &str,
     ) -> anyhow::Result<Merged> {
         let stop = |paths: Vec<String>| {
-            let setters = crate::manifest_conflict::stop_lines(
-                vcs,
-                dir,
-                self.ctx.active_path(),
-                &self.resume,
-            );
+            let setters = crate::manifest_conflict::stop_lines(vcs, dir, &self.resume);
             conflict_stop(
                 self.verb,
                 self.ctx.active_path(),
@@ -789,12 +784,7 @@ impl ProjectMerge<'_> {
                         &self.resume,
                         &conflicted,
                         vcs_for(entry.vcs_type).as_ref(),
-                        &crate::manifest_conflict::stop_lines(
-                            vcs,
-                            dir,
-                            self.ctx.active_path(),
-                            &self.resume,
-                        ),
+                        &crate::manifest_conflict::stop_lines(vcs, dir, &self.resume),
                     ));
                 }
                 Err(MemberStop::Refused(error)) => return Err(error),

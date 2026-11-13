@@ -2619,6 +2619,111 @@ fn is_release_shape_tag(tag: &str) -> bool {
     crate::vcs::is_release_shape_name(tag)
 }
 
+impl GitVcs {
+    fn replay(
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
+        pausing: Option<&str>,
+    ) -> Result<(), VcsError> {
+        let old = Self::head_commit(repo)?;
+        // `--empty=drop`: drop commits that become empty after rebase. This
+        // is what turns a derived-content-only commit into a silent no-op
+        // when the policy resolved its paths to the target side, leaving
+        // nothing for the commit to record.
+        //
+        // `--no-keep-empty`: also drop commits that were originally empty
+        // (e.g. `git commit --allow-empty`), so regeneration noise does not
+        // survive a replay.
+        //
+        // `--force-rebase`: force a replay even when `upstream` is already an
+        // ancestor of HEAD. Without it, git short-circuits to "up to date" —
+        // and the commits that should have been dropped survive.
+        let empty = match derived.resolution() {
+            DerivedContentResolution::KeepTargetSideKeepingEmpty => "--empty=keep",
+            _ => "--empty=drop",
+        };
+        let (record, todo) = Self::start_replay_record(repo, &old, onto.id())?;
+        let todo = match pausing {
+            Some(path) => {
+                let range = format!("{}..{}", upstream.id().as_str(), old.as_str());
+                let edits: String = Self::run(["rev-list", range.as_str(), "--", path], repo)?
+                    .split_whitespace()
+                    .map(|sha| format!(" -e 's/^pick \\([0-9a-f]*\\) {sha}$/edit \\1 {sha}/'"))
+                    .collect();
+                if edits.is_empty() {
+                    todo
+                } else {
+                    todo.replacen(
+                        "; }; f",
+                        &format!(
+                            " && sed{edits} \"$1\" > \"$1.rwv\" && mv -f \"$1.rwv\" \"$1\"; }}; f"
+                        ),
+                        1,
+                    )
+                }
+            }
+            None => todo,
+        };
+        let rebase_args = [
+            "rebase",
+            "--interactive",
+            "--force-rebase",
+            "--no-keep-empty",
+            empty,
+            "--onto",
+            onto.id().as_str(),
+            upstream.id().as_str(),
+        ];
+        let mut args = rebase_config_args(derived);
+        if pausing.is_some() {
+            args.extend(["-c".to_owned(), "rebase.instructionFormat=%H".to_owned()]);
+        }
+        args.extend(rebase_args[..5].iter().map(|a| (*a).to_owned()));
+        args.extend(["--exec".to_owned(), record]);
+        args.extend(rebase_args[5..].iter().map(|a| (*a).to_owned()));
+
+        let output = git_command()
+            .args(&args)
+            .env("GIT_SEQUENCE_EDITOR", &todo)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rebase --onto {} {}",
+                    onto.id().as_str(),
+                    upstream.id().as_str()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
+        // otherwise it's some other rebase error (bad refs, etc.).
+        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase))
+            && !Self::unmerged(repo)?.is_empty()
+        {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Rebase,
+            });
+        }
+
+        // Report the operation, not the policy: the `-c` pairs are how the
+        // policy is spelled to git, not something the operator asked for.
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: rebase_args.iter().map(|a| (*a).to_owned()).collect(),
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+}
+
 impl Vcs for GitVcs {
     fn name(&self) -> &str {
         "git"
@@ -3384,76 +3489,18 @@ impl Vcs for GitVcs {
         upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
     ) -> Result<(), VcsError> {
-        let old = Self::head_commit(repo)?;
-        // `--empty=drop`: drop commits that become empty after rebase. This
-        // is what turns a derived-content-only commit into a silent no-op
-        // when the policy resolved its paths to the target side, leaving
-        // nothing for the commit to record.
-        //
-        // `--no-keep-empty`: also drop commits that were originally empty
-        // (e.g. `git commit --allow-empty`), so regeneration noise does not
-        // survive a replay.
-        //
-        // `--force-rebase`: force a replay even when `upstream` is already an
-        // ancestor of HEAD. Without it, git short-circuits to "up to date" —
-        // and the commits that should have been dropped survive.
-        let empty = match derived.resolution() {
-            DerivedContentResolution::KeepTargetSideKeepingEmpty => "--empty=keep",
-            _ => "--empty=drop",
-        };
-        let (record, todo) = Self::start_replay_record(repo, &old, onto.id())?;
-        let rebase_args = [
-            "rebase",
-            "--interactive",
-            "--force-rebase",
-            "--no-keep-empty",
-            empty,
-            "--onto",
-            onto.id().as_str(),
-            upstream.id().as_str(),
-        ];
-        let mut args = rebase_config_args(derived);
-        args.extend(rebase_args[..5].iter().map(|a| (*a).to_owned()));
-        args.extend(["--exec".to_owned(), record]);
-        args.extend(rebase_args[5..].iter().map(|a| (*a).to_owned()));
+        Self::replay(repo, onto, upstream, derived, None)
+    }
 
-        let output = git_command()
-            .args(&args)
-            .env("GIT_SEQUENCE_EDITOR", &todo)
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git rebase --onto {} {}",
-                    onto.id().as_str(),
-                    upstream.id().as_str()
-                ),
-                source: e,
-            })?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
-        // otherwise it's some other rebase error (bad refs, etc.).
-        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase))
-            && !Self::unmerged(repo)?.is_empty()
-        {
-            return Err(VcsError::RebaseConflict {
-                repo: repo.to_path_buf(),
-                op: ConflictOp::Rebase,
-            });
-        }
-
-        // Report the operation, not the policy: the `-c` pairs are how the
-        // policy is spelled to git, not something the operator asked for.
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Err(VcsError::CommandFailed {
-            args: rebase_args.iter().map(|a| (*a).to_owned()).collect(),
-            repo: repo.to_path_buf(),
-            stderr,
-        })
+    fn rebase_pausing(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
+        path: &str,
+    ) -> Result<(), VcsError> {
+        Self::replay(repo, onto, upstream, derived, Some(path))
     }
 
     fn replayed(
@@ -5688,16 +5735,16 @@ impl Vcs for GitVcs {
         Ok(any.then_some(sides))
     }
 
-    fn rewrite_conflict(
+    fn record_conflict(
         &self,
         checkout: &Path,
         path: &str,
         sides: &crate::vcs::ConflictSides,
     ) -> Result<(), VcsError> {
-        let mode = Self::stage_entries(checkout, path)?
-            .into_iter()
+        let mode = Self::run(["ls-files", "-s", "--", path], checkout)?
+            .split_whitespace()
             .next()
-            .map_or_else(|| "100644".to_owned(), |(mode, _, _)| mode);
+            .map_or_else(|| "100644".to_owned(), str::to_owned);
         let path_arg = format!("--path={path}");
         let mut info = format!("0 {}\t{path}\n", "0".repeat(40));
         for (stage, text) in [("1", &sides.base), ("2", &sides.ours), ("3", &sides.theirs)] {
@@ -5710,9 +5757,14 @@ impl Vcs for GitVcs {
             info.push_str(&format!("{mode} {} {stage}\t{path}\n", blob.trim()));
         }
         Self::run_with_stdin(["update-index", "--index-info"], checkout, info.as_bytes())?;
-        crate::test_pause::point("conflict-sides-recorded");
-        Self::run(["checkout", "--merge", "--", path], checkout)?;
         Ok(())
+    }
+
+    fn rebase_replaying(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
+        if Self::mid_op_state(checkout) != Some(MidOperation::Conflict(ConflictOp::Rebase)) {
+            return Ok(None);
+        }
+        Ok(Self::ref_tip(checkout, "REBASE_HEAD")?.map(|tip| tip.id().clone()))
     }
 
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {

@@ -50,6 +50,7 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<dep>", "dep-x"),
         ("<b-checkout>", "/x/b"),
         ("<resume>", "sync"),
+        ("<abort>", "abort"),
         ("<paths>", "NOTES.txt"),
         ("<file>", "README.md"),
         ("<ignored>", "build.log"),
