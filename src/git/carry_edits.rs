@@ -209,6 +209,7 @@ pub(super) fn staged_against_head(repo: &Path) -> Result<Vec<String>, VcsError> 
         [
             "diff",
             "--cached",
+            "--ita-visible-in-index",
             "--name-only",
             "--no-renames",
             "--ignore-submodules=all",

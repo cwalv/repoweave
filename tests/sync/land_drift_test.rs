@@ -2714,3 +2714,36 @@ fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
         "ww/project"
     );
 }
+
+/// An entry only intended for adding beside a both-file: the stash refuses
+/// it, and the set-back judgment prints the unstage that clears it before
+/// the merge; run as printed, the two finish, the new file kept.
+#[test]
+fn an_intent_to_add_entry_in_a_set_back_checkout_is_cleared_by_the_printed_unstage() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("newf.txt"), "new work\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "-N", "newf.txt"]);
+
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains("restore --staged"), "{stderr}");
+    let out = run_printed(&stderr, "restore --staged", &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(said.contains("drift in github/acme/lib"), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["symbolic-ref", "--short", "HEAD"]),
+        "ww/project",
+        "{said}"
+    );
+    let notes = read(&f.ww_lib.join("notes.txt")).unwrap();
+    assert!(notes.contains("mine") && notes.contains("three"), "{notes}");
+    assert_eq!(
+        read(&f.ww_lib.join("newf.txt")).as_deref(),
+        Some("new work\n")
+    );
+}
