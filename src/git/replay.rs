@@ -395,7 +395,7 @@ impl GitVcs {
             in_index(&["update-index", "-z", "--index-info"], &info, &[])?;
         }
         let tree = in_index(&["write-tree"], &[], &[])?;
-        let args = [
+        let mut args = vec![
             "commit-tree",
             tree.as_str(),
             "-p",
@@ -403,6 +403,9 @@ impl GitVcs {
             "-F",
             "-",
         ];
+        if Self::signs_commits(repo)? {
+            args.push("-S");
+        }
         let mut env: Vec<(&str, &str)> = author.to_vec();
         if !Self::has_identity(repo)? {
             env.extend_from_slice(&super::records::FALLBACK_IDENTITY);

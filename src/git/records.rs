@@ -368,6 +368,18 @@ impl GitVcs {
         commit_id(&commit, &["commit-tree"], repo)
     }
 
+    pub(super) fn signs_commits(repo: &Path) -> Result<bool, VcsError> {
+        let output = git_command()
+            .args(["config", "--type=bool", "--get", "commit.gpgsign"])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: "failed to spawn git config".to_owned(),
+                source: e,
+            })?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+    }
+
     pub(super) fn has_identity(repo: &Path) -> Result<bool, VcsError> {
         let output = git_command()
             .args(["var", "GIT_COMMITTER_IDENT"])

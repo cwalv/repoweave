@@ -2145,3 +2145,41 @@ fn a_named_path_commit_before_the_first_commit_leaves_other_staged_work_staged()
     assert_eq!(names_at_head(p), "ours.txt");
     assert_eq!(status(p), "A  staged.txt\n?? loose.txt\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_replayed_commit_copied_under_commit_gpgsign_is_signed() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = init_repo();
+    let p = dir.path();
+    let signer = p.join(".git").join("fake-gpg");
+    fs::write(
+        &signer,
+        "#!/bin/sh\ncat >/dev/null\necho '[GNUPG:] SIG_CREATED D 1 8 00 1700000000 A' >&2\n\
+         printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&signer, fs::Permissions::from_mode(0o755)).unwrap();
+    let base = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    fs::write(p.join("more.txt"), "more").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "replayed"]);
+    let replayed = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    common::git_in(p, &["config", "commit.gpgsign", "true"]);
+    common::git_in(p, &["config", "gpg.program", signer.to_str().unwrap()]);
+
+    let copy = git_vcs()
+        .copy_replayed(
+            p,
+            &repoweave::vcs::CommitId::parse(&replayed).unwrap(),
+            &repoweave::vcs::CommitId::parse(&base).unwrap(),
+            &[repoweave::vcs::FileChange {
+                path: "rwv.lock".to_owned(),
+                content: Some(b"{}".to_vec()),
+            }],
+        )
+        .unwrap();
+
+    let raw = common::git_in(p, &["cat-file", "commit", copy.as_str()]);
+    assert!(raw.contains("\ngpgsig "), "{raw}");
+}
