@@ -891,6 +891,7 @@ every_scenario!(
     rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
     abort_stops_at_the_first_write_that_fails,
+    abort_judges_again_once_it_holds_the_target,
     leave_target_gives_up_the_target_only_after_the_source_is_restored,
     abort_refuses_while_the_target_cannot_be_read,
     abort_of_a_landing_over_a_cancel_the_vcs_refuses,
@@ -3102,6 +3103,14 @@ holding_rwv! {
             }
         }
     }
+}
+
+/// An abort that judged its plan and then took the target's claim judges
+/// again before it begins: a commit made in between refuses it whole.
+#[test]
+fn an_abort_judges_again_once_it_holds_the_target() {
+    runner::run(scenarios::abort_judges_again_once_it_holds_the_target())
+        .assert_fully_decided_green();
 }
 
 #[test]

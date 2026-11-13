@@ -8670,6 +8670,7 @@ fn abort_op(
     if header.verb == OpVerb::Land {
         *retaken = Some(retake_target(&reading, &owner_workspace, &cwd_project_dir)?);
     }
+    crate::test_pause::point("abort-retaken");
     let (plan, other_ws_dir) = make_plan();
     let standing = judge();
     if unit_refuses(&standing) || plan.blocked() {
