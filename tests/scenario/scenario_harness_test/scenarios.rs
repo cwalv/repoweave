@@ -21093,6 +21093,9 @@ pub enum LeftBy {
     StagedFix,
     /// The printed `rwv abort`.
     Abort,
+    /// `rwv abort` run in the landing's target, which reads the source's
+    /// `rwv.toml` from the other side.
+    AbortInTheTarget,
 }
 
 /// Which verb takes the other side's `rwv.toml` in, under which history.
@@ -21180,6 +21183,9 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
         taking_in.says(),
     ));
     match left_by {
+        LeftBy::AbortInTheTarget => {
+            steps.extend(aborted_from(Step::rwv(&a(), &["abort"]), &ww("w"), &[]))
+        }
         LeftBy::StagedFix => {
             steps.push(stops_unparseable(
                 Step::rwv_printed(&ww("w"), taking_in.resume()),
@@ -21247,15 +21253,19 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
 }
 
 /// The printed `rwv abort`, run at `at`, putting back the members in `moved`
-/// too: the project repo is back on its own
-/// commit, with no merge in flight and nothing staged, and `a`'s `main`
-/// does not hold the workweave's work.
+/// too: the project repo is back on its own commit, with no merge in flight
+/// and nothing staged, and `a`'s `main` does not hold the workweave's work.
 fn aborted_to_the_workweaves_own(at: &Place, moved: &[Repo]) -> Vec<Step> {
+    aborted_from(Step::rwv_printed(at, "rwv abort"), at, moved)
+}
+
+/// [`aborted_to_the_workweaves_own`] by `abort`, run wherever it runs.
+fn aborted_from(abort: Step, at: &Place, moved: &[Repo]) -> Vec<Step> {
     let restored: Vec<Repo> = std::iter::once(Repo::Proj)
         .chain(moved.iter().copied())
         .collect();
     vec![
-        Step::rwv_printed(at, "rwv abort")
+        abort
             .expect(Exit::Succeeds)
             .may_restore(&restored)
             .may_rewind(moved)
@@ -21325,7 +21335,9 @@ pub fn unparseable_merged_manifest_pulled(left_by: LeftBy) -> Scenario {
                 .claim(Claim::OutputContains(A_COPIES))
                 .claim(Claim::OutputLacks("w.txt")),
         ]),
-        LeftBy::Abort => steps.extend(aborted_to_the_workweaves_own(&b(), &[])),
+        LeftBy::Abort | LeftBy::AbortInTheTarget => {
+            steps.extend(aborted_to_the_workweaves_own(&b(), &[]))
+        }
     }
     scenario(
         "an unparseable rwv.toml merged by pull is left by its printed choices",

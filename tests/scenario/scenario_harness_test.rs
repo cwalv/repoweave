@@ -799,6 +799,14 @@ every_scenario!(
     unparseable_merged_manifest(scenarios::TakingIn::LandLinear, scenarios::LeftBy::Abort),
     unparseable_merged_manifest(scenarios::TakingIn::LandMerge, scenarios::LeftBy::StagedFix),
     unparseable_merged_manifest(scenarios::TakingIn::LandMerge, scenarios::LeftBy::Abort),
+    unparseable_merged_manifest(
+        scenarios::TakingIn::LandLinear,
+        scenarios::LeftBy::AbortInTheTarget
+    ),
+    unparseable_merged_manifest(
+        scenarios::TakingIn::LandMerge,
+        scenarios::LeftBy::AbortInTheTarget
+    ),
     unparseable_merged_manifest_pulled(scenarios::LeftBy::StagedFix),
     unparseable_merged_manifest_pulled(scenarios::LeftBy::Abort),
     abort_restores_members_past_an_unparseable_manifest(scenarios::TargetMembers::Adds),
@@ -6442,6 +6450,18 @@ fn an_unparseable_merged_manifest_is_left_by_its_printed_choices() {
             runner::run(scenarios::unparseable_merged_manifest(taking_in, left_by))
                 .assert_fully_decided_green();
         }
+    }
+}
+
+#[test]
+fn an_unparseable_landing_is_aborted_from_its_target() {
+    use scenarios::{LeftBy, TakingIn};
+    for taking_in in [TakingIn::LandLinear, TakingIn::LandMerge] {
+        runner::run(scenarios::unparseable_merged_manifest(
+            taking_in,
+            LeftBy::AbortInTheTarget,
+        ))
+        .assert_fully_decided_green();
     }
 }
 
