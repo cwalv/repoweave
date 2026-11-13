@@ -2424,7 +2424,7 @@ fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
     std::fs::write(
         claim_dir.join(".rwv-landing.lock"),
         format!(
-            "{{\"op\":\"4242\",\"owner\":\"{}\"}}",
+            "{{\"format\":1,\"op\":\"4242\",\"owner\":\"{}\"}}",
             common::json_escaped(&elsewhere)
         ),
     )
@@ -2481,7 +2481,7 @@ fn an_unreadable_claim_is_reported_and_released_only_by_its_named_flag() {
         .join("0")
         .join(".rwv-landing.lock");
     std::fs::create_dir_all(claim.parent().unwrap()).unwrap();
-    std::fs::write(&claim, "{\"format\":2,\"op\":\"4242\"}").unwrap();
+    std::fs::write(&claim, "{\"holder\":\"4242\"}").unwrap();
 
     let doctor = |args: &[&str]| {
         let out = rwv_cmd()
@@ -2498,7 +2498,7 @@ fn an_unreadable_claim_is_reported_and_released_only_by_its_named_flag() {
 
     let json = doctor(&["doctor", "--json"]);
     assert!(
-        json.contains("\"claim-unreadable\"") && json.contains("format"),
+        json.contains("\"claim-unreadable\"") && json.contains("holder"),
         "doctor reports the claim and what it holds: {json}"
     );
 
@@ -2602,6 +2602,55 @@ fn a_release_on_one_target_leaves_every_other_unreadable_claim() {
         text.contains(&release.display().to_string()),
         "the claim left is still reported: {text}"
     );
+}
+
+/// A claim a different rwv version wrote is reported under its own kind, and no
+/// flag releases it.
+#[test]
+fn a_claim_of_another_format_is_reported_and_never_released() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let claim = project_dir
+        .join(".git")
+        .join("rwv-landings")
+        .join("0")
+        .join(".rwv-landing.lock");
+    std::fs::create_dir_all(claim.parent().unwrap()).unwrap();
+    std::fs::write(&claim, "{\"format\":2,\"op\":\"4242\"}").unwrap();
+
+    let doctor = |args: &[&str]| {
+        let out = rwv_cmd()
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("failed to spawn rwv doctor");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let json = doctor(&["doctor", "--json"]);
+    assert!(json.contains("\"claim-format-unknown\""), "{json}");
+    assert!(!json.contains("\"claim-unreadable\""), "{json}");
+
+    for flag in [
+        "--release-unreadable-claims",
+        "--release-unreadable-claims-on=main",
+    ] {
+        let released = doctor(&["doctor", "--fix", flag]);
+        assert!(claim.exists(), "{flag} releases nothing: {released}");
+        assert!(
+            released.contains("claim-format-unknown") && !released.contains("[fixed] core: claim"),
+            "{released}"
+        );
+    }
 }
 
 /// A landing claim rwv cannot read at all is reported as such, and no flag

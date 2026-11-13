@@ -2234,6 +2234,34 @@
         {
           "type": "object",
           "required": [
+            "file",
+            "kind",
+            "marker"
+          ],
+          "properties": {
+            "file": {
+              "description": "Absolute path to the claim or takeover guard.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-format-unknown"
+              ]
+            },
+            "marker": {
+              "description": "The `format` marker it carries, as written.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "absolute_path",
             "kind",
             "op_id",

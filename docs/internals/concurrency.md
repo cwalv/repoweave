@@ -250,7 +250,11 @@ the removal of a claim reading the dead op's bytes, and that op never claims
 again. The claim path is never emptied while it holds a live claim
 (`tests/process/landing_claim_contention_test.rs` drives this with takers in
 separate processes). No process id, host or clock is consulted, so a
-claim whose op is recorded is never taken from it. A claim whose bytes this
+claim whose op is recorded is never taken from it. A claim and a takeover guard carry
+a `format` marker (`CLAIM_FORMAT`, written by `Holder`, read only as it); one
+that names another format is a different rwv version's, which may be live: a
+landing waits on it and refuses `claim-format-unknown`, `rwv doctor` reports it
+under that kind, and no flag releases it. A claim whose bytes this
 rwv does not read, or a takeover guard beside it that this rwv does not read,
 is never judged dead either: a landing waits on it and refuses
 `claim-unreadable`, and `rwv doctor` reports it and releases it only under
