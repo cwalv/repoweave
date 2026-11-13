@@ -2686,23 +2686,26 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 }
 
 // ---------------------------------------------------------------------------
-// Cell 6: mixed — op-advanced repos auto-restore, foreign repo refuses.
+// Cell 6: mixed — a foreign repo refuses the whole abort, op-advanced repos included.
 //
 // Synthesizes the 2026-06-10 incident as a regression test. The server repo
 // was advanced to its advanced_tips target (op's own ff). An operator commit
 // was then added on top of the server tip after the crash, making the server's
 // current HEAD genuinely foreign.
 // A second manifest repo (simulated via a worktree of the server shared repo
-// used as a second logical repo) is at its advanced_tips target → auto-restores.
+// used as a second logical repo) is at its advanced_tips target and stays where it is.
 // Practically: server at foreign_tip, project at advanced_tips[(project)] target.
-// Exactly the foreign repo refuses; project restores.
+// The foreign repo blocks the abort, so nothing is restored, the project
+// included.
 // ---------------------------------------------------------------------------
 
 /// Cell 6 (§8.6): mixed — server carries a post-crash operator commit
-/// (foreign); project advanced to its advanced_tips target. Exactly the server
-/// refuses; project auto-restores. Regression test for the 2026-06-10 incident.
+/// (foreign); project advanced to its advanced_tips target. The abort is
+/// refused naming the server and moves nothing: the foreign tip stays, the
+/// op-advanced project is not restored, and the record is kept. Regression
+/// test for the 2026-06-10 incident.
 #[test]
-fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
+fn cell_advanced_tips_mixed_foreign_server_refuses_whole_and_moves_nothing() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, primary_server_tip, _ww_project_tip) = make_primary_ahead_sync(tmp.path());
 
