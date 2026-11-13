@@ -564,7 +564,7 @@ fn resume_of(holder: &Holder) -> String {
 /// re-read and the removal under the guard are one step to every other
 /// remover. A guard whose holder is dead is itself removed this way first.
 /// Returns what blocks the removal: a guard another standing op holds, or
-/// one this rwv does not read.
+/// one this rwv does not read; `None` once `path` is removed or gone.
 fn remove_dead(
     path: Removable<'_>,
     seen: &[u8],
@@ -573,9 +573,15 @@ fn remove_dead(
 ) -> anyhow::Result<Option<Standing>> {
     let guard = path.guard(dead);
     loop {
+        crate::test_pause::point("landing-claim-dead-seen");
         match crate::durable_file::create_new(&guard, &mine.bytes()?) {
             Ok(()) => break,
             Err(CreateNewError::AlreadyExists) => {}
+            // The claim's directory went with the release of the last claim in
+            // it, and the dead claim with it: nothing is left to take over.
+            Err(CreateNewError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None)
+            }
             Err(CreateNewError::Io(e)) => return Err(e.into()),
             Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
         }

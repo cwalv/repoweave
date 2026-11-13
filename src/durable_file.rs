@@ -185,14 +185,14 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 fn replace_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = parent_of(path);
     sweep_abandoned_temps(path);
-    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    let mut restage = Restage::new();
     loop {
         let mut staged = staged_temp(path, bytes, publisher.lock)
             .with_context(|| format!("failed to stage a write of {}", path.display()))?;
         let tmp = staged.ready_to_publish();
         match rename_over(tmp, path) {
             Ok(()) => break,
-            Err(e) if vanished(&e) && std::time::Instant::now() < deadline => continue,
+            Err(e) if vanished(&e) => restage.again(path)?,
             Err(e) => {
                 let _ = std::fs::remove_file(tmp);
                 return Err(anyhow::Error::new(e).context(format!(
@@ -256,7 +256,7 @@ pub(crate) fn create_new(path: &Path, bytes: &[u8]) -> Result<(), CreateNewError
 fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
     let parent = parent_of(path);
     sweep_abandoned_temps(path);
-    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    let mut restage = Restage::new();
     let published = loop {
         let mut staged = staged_temp(path, bytes, publisher.lock).map_err(CreateNewError::Io)?;
         let tmp = staged.ready_to_publish();
@@ -264,7 +264,9 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
         // The temp's role ends here whether or not the publish took.
         let _ = std::fs::remove_file(tmp);
         match published {
-            Err(Published::Io(e)) if vanished(&e) && std::time::Instant::now() < deadline => {}
+            Err(Published::Io(e)) if vanished(&e) => {
+                restage.again(path).map_err(CreateNewError::Io)?
+            }
             published => break published,
         }
     };
@@ -584,6 +586,39 @@ fn filesystem_of(dir: &Path) -> String {
 /// [`sweep_abandoned_temps`] that met it before its writer held it.
 fn vanished(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::NotFound
+}
+
+/// How long a publish keeps staging again a temp a sweep removed. The first
+/// restage is always made, however long the staging that preceded it took;
+/// giving up is an error of its own kind, so a caller reads `NotFound` from a
+/// publish only as "the directory is gone".
+struct Restage {
+    deadline: Option<std::time::Instant>,
+}
+
+impl Restage {
+    fn new() -> Self {
+        Self { deadline: None }
+    }
+
+    fn again(&mut self, path: &Path) -> std::io::Result<()> {
+        crate::test_pause::point("durable-file-restage");
+        let now = std::time::Instant::now();
+        match self.deadline {
+            None => {
+                self.deadline = Some(now + CLAIM_WAIT);
+                Ok(())
+            }
+            Some(deadline) if now < deadline => Ok(()),
+            Some(_) => Err(std::io::Error::other(format!(
+                "could not publish {}: another process removed the copy staged beside it each \
+                 time it was staged, for {}s, as the temp sweep of a host that does not see \
+                 this host's file locks does. Nothing was published there; rerunning is safe.",
+                path.display(),
+                CLAIM_WAIT.as_secs()
+            ))),
+        }
+    }
 }
 
 /// Remove a lock file rwv created at `path` with [`create_new`]; one already
@@ -965,6 +1000,26 @@ mod tests {
             }
             assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
         }
+    }
+
+    #[test]
+    fn the_first_restage_is_always_made_and_giving_up_is_never_read_as_a_missing_directory() {
+        let path = Path::new("f");
+        let mut restage = Restage {
+            deadline: Some(std::time::Instant::now()),
+        };
+        let gave_up = restage.again(path).unwrap_err();
+        assert_ne!(gave_up.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            gave_up.to_string().contains("rerunning is safe"),
+            "{gave_up}"
+        );
+
+        let mut restage = Restage::new();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        restage
+            .again(path)
+            .expect("a first vanish is staged again however long staging took");
     }
 
     #[test]

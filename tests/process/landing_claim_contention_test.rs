@@ -272,3 +272,52 @@ fn takers_contending_for_a_claim_never_remove_a_live_one_and_all_get_it() {
     .expect("released");
     assert_eq!(claim_files(&project_dir), Vec::<PathBuf>::new());
 }
+
+/// A taker that read a dead claim finds the claim's directory gone when it
+/// comes to guard the takeover: another taker took the claim over, landed and
+/// released it, removing the directory. Nothing is left to take over, so the
+/// taker goes round again and takes the claim.
+#[cfg(feature = "test-pause")]
+#[test]
+fn a_taker_whose_dead_claim_went_with_its_directory_takes_the_claim() {
+    let tmp = common::tempdir().expect("tempdir");
+    let project_dir = tmp.path().join("project");
+    std::fs::create_dir_all(&project_dir).expect("project dir");
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    let results = tmp.path().join("results");
+    std::fs::create_dir_all(&results).expect("results dir");
+
+    let gone = workspace(tmp.path(), "gone");
+    let dead_op: OpId = "1".parse().expect("op id");
+    record(&gone, &dead_op);
+    let vcs = repoweave::git::git_vcs();
+    let _dead = LandingClaim::take(
+        vcs.as_ref(),
+        &project_dir,
+        &project(),
+        TARGET,
+        &dead_op,
+        &gone,
+    )
+    .expect("the dead op's claim");
+    op_state::clear_owner(&gone);
+    let [claim] = claim_files(&project_dir).try_into().expect("one claim");
+
+    let taker: OpId = "100".parse().expect("op id");
+    let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
+    cmd.args(common::test_name(claim_taker_child).selector());
+    cmd.env(CHILD_PROJECT, &project_dir);
+    cmd.env(CHILD_OWNER, workspace(tmp.path(), "taker"));
+    cmd.env(CHILD_OP, taker.as_str());
+    cmd.env(CHILD_RESULTS, &results);
+    let held =
+        common::pause::Paused::spawn(cmd, "landing-claim-dead-seen", &tmp.path().join("pause"))
+            .unwrap_or_else(|why| panic!("{why}"));
+
+    std::fs::remove_dir_all(claim.parent().expect("claim dir")).expect("the directory goes");
+
+    let out = held.release();
+    assert!(out.status.success(), "{out:?}");
+    let outcome = std::fs::read_to_string(results.join(taker.as_str())).expect("recorded");
+    assert_eq!(outcome, "ok", "the taker takes the claim: {outcome}");
+}
