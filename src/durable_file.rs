@@ -21,8 +21,8 @@
 //! The pid keeps concurrent processes apart; a process-local monotonic
 //! counter keeps threads within one process apart; a key drawn once per
 //! process keeps a later process that reuses a pid from ever spelling a dead
-//! one's temp, so a temp's name is never reused. All three are structural. An earlier revision used a nanosecond timestamp for the
-//! intra-process half: two barrier-synchronized threads read the same
+//! one's temp, so a temp's name is never reused. All three are structural.
+//! An earlier revision used a nanosecond timestamp for the intra-process half: two barrier-synchronized threads read the same
 //! `SystemTime::now()` under load, collided on the temp path, and each
 //! unlinked the other's in-flight temp, so the winner's publish hit ENOENT
 //! and *both* calls failed. Uniqueness here must not be re-derived from a
@@ -36,7 +36,8 @@
 //! on its temp for as long as the publish runs, which the kernel drops when
 //! the process dies; on Windows a writer holds its temp open without sharing
 //! deletion until just before it publishes. A temp that may still be held is
-//! left. Where the filesystem takes no lock, nothing is removed. A writer
+//! left. The lock never decides anything else: a writer that cannot take it
+//! publishes all the same, and its temp is only the more sweepable. A writer
 //! whose temp vanished before it published it stages it again.
 
 use anyhow::Context;
@@ -178,11 +179,15 @@ pub(crate) fn after_release<T>(
 /// `rename(2)` is atomic within a filesystem, so a concurrent reader sees
 /// either the old file or the new one, never a splice of the two.
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    replace_with(Publisher::native(), path, bytes)
+}
+
+fn replace_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = parent_of(path);
     sweep_abandoned_temps(path);
     let deadline = std::time::Instant::now() + CLAIM_WAIT;
     loop {
-        let mut staged = staged_temp(path, bytes)
+        let mut staged = staged_temp(path, bytes, publisher.lock)
             .with_context(|| format!("failed to stage a write of {}", path.display()))?;
         let tmp = staged.ready_to_publish();
         match rename_over(tmp, path) {
@@ -253,7 +258,7 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
     sweep_abandoned_temps(path);
     let deadline = std::time::Instant::now() + CLAIM_WAIT;
     let published = loop {
-        let mut staged = staged_temp(path, bytes).map_err(CreateNewError::Io)?;
+        let mut staged = staged_temp(path, bytes, publisher.lock).map_err(CreateNewError::Io)?;
         let tmp = staged.ready_to_publish();
         let published = publisher.publish(tmp, path);
         // The temp's role ends here whether or not the publish took.
@@ -273,12 +278,14 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
     }
 }
 
-/// How [`create_new`] publishes a staged temp: the calls a filesystem makes
-/// or refuses, apart so a test can stand in a filesystem that lacks one.
+/// How a publish stages and publishes a temp: the calls a filesystem makes or
+/// refuses, apart so a test can stand in a filesystem that lacks one.
 #[derive(Clone, Copy)]
 struct Publisher {
     link: fn(&Path, &Path) -> std::io::Result<()>,
     rename_no_replace: fn(&Path, &Path) -> std::io::Result<()>,
+    /// The non-blocking lock a unix writer takes on its temp.
+    lock: fn(&std::fs::File) -> std::io::Result<()>,
 }
 
 enum Published {
@@ -303,6 +310,7 @@ impl Publisher {
             } else {
                 rename_no_replace
             },
+            lock: |f| f.try_lock().map_err(std::io::Error::from),
         }
     }
 
@@ -649,7 +657,11 @@ fn is_temp_of(name: &str, published: &str) -> bool {
 
 /// Write `bytes` into a sibling temp of `path`, fsync it, and hold it. On
 /// failure nothing is left behind and `path` has not been touched.
-fn staged_temp(path: &Path, bytes: &[u8]) -> std::io::Result<Staged> {
+fn staged_temp(
+    path: &Path,
+    bytes: &[u8],
+    lock: fn(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<Staged> {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -658,7 +670,7 @@ fn staged_temp(path: &Path, bytes: &[u8]) -> std::io::Result<Staged> {
     let tmp_path = parent_of(path).join(temp_name(&file_name, serial));
 
     match (|| -> std::io::Result<std::fs::File> {
-        let mut f = open_held(&tmp_path)?;
+        let mut f = open_held(&tmp_path, lock)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         Ok(f)
@@ -675,20 +687,30 @@ fn staged_temp(path: &Path, bytes: &[u8]) -> std::io::Result<Staged> {
     }
 }
 
+/// The lock only tells a sweep this temp is not garbage. Whether it is taken
+/// changes nothing else: a filesystem that refuses it (NFS `ENOLCK`, macOS
+/// `ENOTSUP`) or a sweep that took it first leaves the temp sweepable, and a
+/// temp swept from under its writer is staged again.
 #[cfg(unix)]
-fn open_held(tmp: &Path) -> std::io::Result<std::fs::File> {
+fn open_held(
+    tmp: &Path,
+    lock: fn(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<std::fs::File> {
     let f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(tmp)?;
-    match f.lock() {
-        Err(e) if e.kind() != std::io::ErrorKind::Unsupported => Err(e),
-        _ => Ok(f),
-    }
+    let _ = lock(&f);
+    Ok(f)
 }
 
+/// A Windows lock is mandatory, so it would stop a reader of the published
+/// file: the temp is held by a handle that shares no deletion instead.
 #[cfg(windows)]
-fn open_held(tmp: &Path) -> std::io::Result<std::fs::File> {
+fn open_held(
+    tmp: &Path,
+    _lock: fn(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_SHARE_READ: u32 = 0x1;
     const FILE_SHARE_WRITE: u32 = 0x2;
@@ -715,9 +737,11 @@ fn sweep_abandoned_temps(path: &Path) {
     }
 }
 
+/// Opened for writing: an NFS client grants an exclusive `flock` only on a
+/// file open for writing.
 #[cfg(unix)]
 fn remove_if_abandoned(tmp: &Path) {
-    let Ok(f) = std::fs::File::open(tmp) else {
+    let Ok(f) = std::fs::OpenOptions::new().write(true).open(tmp) else {
         return;
     };
     if f.try_lock().is_ok() {
@@ -854,6 +878,7 @@ mod tests {
         let denied = Publisher {
             link: |_, _| Err(std::io::Error::from_raw_os_error(nix::libc::EACCES)),
             rename_no_replace: |_, _| panic!("a denied permission must not reach the rename"),
+            ..Publisher::native()
         };
         match create_new_with(denied, &path, b"x") {
             Err(CreateNewError::Io(e)) => {
@@ -887,6 +912,7 @@ mod tests {
         let neither = Publisher {
             link: |_, _| Err(no_hard_links_error()),
             rename_no_replace: |_, _| Err(no_rename_no_replace_error()),
+            ..Publisher::native()
         };
         let Err(CreateNewError::NoExclusivePublish(e)) = create_new_with(neither, &path, b"x")
         else {
@@ -901,6 +927,42 @@ mod tests {
         assert!(text.contains("hard links"), "{text}");
         assert!(!path.exists());
         assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    /// Each way a writer's lock on its temp can fail: taken first by a sweep,
+    /// NFS's failed lock protocol, macOS's and Linux's "not supported", an
+    /// interrupted call. None of them may fail or stall a publish.
+    #[cfg(unix)]
+    const LOCK_FAILURES: [fn(&std::fs::File) -> std::io::Result<()>; 5] = [
+        |_| Err(std::io::Error::from_raw_os_error(nix::libc::EWOULDBLOCK)),
+        |_| Err(std::io::Error::from_raw_os_error(nix::libc::ENOLCK)),
+        |_| Err(std::io::Error::from_raw_os_error(nix::libc::ENOTSUP)),
+        |_| Err(std::io::Error::from_raw_os_error(nix::libc::EOPNOTSUPP)),
+        |_| Err(std::io::Error::from_raw_os_error(nix::libc::EINTR)),
+    ];
+
+    #[test]
+    #[cfg(unix)]
+    fn a_lock_that_fails_never_fails_a_publish_in_either_mode() {
+        for (i, lock) in LOCK_FAILURES.into_iter().enumerate() {
+            let tmp = crate::tempdir().unwrap();
+            for (mode, publisher) in [
+                ("link", Publisher::native()),
+                ("rename", without_hard_links()),
+            ] {
+                let publisher = Publisher { lock, ..publisher };
+                let path = tmp.path().join(format!("created-{mode}"));
+                create_new_with(publisher, &path, b"x")
+                    .unwrap_or_else(|e| panic!("lock failure {i}, {mode}: {e:?}"));
+                assert_eq!(std::fs::read(&path).unwrap(), b"x");
+                let path = tmp.path().join(format!("replaced-{mode}"));
+                replace_with(publisher, &path, b"one").unwrap();
+                replace_with(publisher, &path, b"two")
+                    .unwrap_or_else(|e| panic!("lock failure {i}, {mode}: {e:#}"));
+                assert_eq!(std::fs::read(&path).unwrap(), b"two");
+            }
+            assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+        }
     }
 
     #[test]
@@ -932,7 +994,7 @@ mod tests {
     fn a_temp_its_writer_still_holds_is_left() {
         let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f");
-        let staged = staged_temp(&path, b"in flight").unwrap();
+        let staged = staged_temp(&path, b"in flight", Publisher::native().lock).unwrap();
         replace(&path, b"x").unwrap();
         assert!(staged.path.exists(), "a held temp must not be swept");
         drop(staged);
