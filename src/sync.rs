@@ -8394,24 +8394,46 @@ pub fn run_abort(
     aborted
 }
 
-/// The project an abort enumerates. Where a merge or replay stopped in the
-/// project repo left the working `rwv.toml` holding something no manifest
-/// parses, conflict markers included, its manifest is read at the checked-out
-/// commit instead.
-fn project_to_abort(dir: &Path, name: ProjectName) -> anyhow::Result<Project> {
+/// The project an abort enumerates. Where the working `rwv.toml` does not
+/// parse, conflict markers or a merge or replay's unparseable result
+/// included, its manifest is read at the checked-out commit while the
+/// project repo is stopped in a VCS operation, else at the savepoint `key`,
+/// which parsed when the operation began.
+fn project_to_abort(dir: &Path, name: ProjectName, key: &SavepointKey) -> anyhow::Result<Project> {
     let working = Project::from_dir_skip_lock(dir, name.clone());
     let vcs = project_vcs();
-    if working.is_ok() || !vcs.is_repo(dir) || vcs.mid_operation(dir).is_none() {
+    let vcs = vcs.as_ref();
+    if working.is_ok() || !vcs.is_repo(dir) {
         return working;
     }
-    let head = vcs.head_revision(dir)?;
-    let text = vcs.read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))?;
-    Ok(Project {
-        dir: dir.to_path_buf(),
-        name,
-        manifest: Manifest::from_toml_str(&text)?,
-        lock: None,
-    })
+    let at_head = vcs
+        .mid_operation(dir)
+        .and_then(|_| vcs.head_revision(dir).ok())
+        .and_then(|head| {
+            let text = vcs
+                .read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))
+                .ok()?;
+            Manifest::from_toml_str(&text).ok()
+        });
+    let manifest = at_head.or_else(|| {
+        vcs.resolve_savepoint(dir, key)
+            .and_then(|at| manifest_at_revision(vcs, dir, &at).ok())
+    });
+    match manifest {
+        Some(manifest) => Ok(Project {
+            dir: dir.to_path_buf(),
+            name,
+            manifest,
+            lock: None,
+        }),
+        None => working.with_context(|| {
+            format!(
+                "rwv abort reads the members it restores from rwv.toml in {}, and neither the \
+                 working file nor the one at the operation's savepoint there parses",
+                dir.display()
+            )
+        }),
+    }
 }
 
 fn abort_op(
@@ -8495,8 +8517,11 @@ fn abort_op(
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
     // manifest (to enumerate repo paths); it never reads lock contents.
-    let cwd_project = project_to_abort(&cwd_project_dir, op_project_name.clone())
-        .context("failed to load CWD project")?;
+    let cwd_project = project_to_abort(
+        &cwd_project_dir,
+        op_project_name.clone(),
+        &AbortSide::of(workspace, &header).savepoint_key(&op_id),
+    )?;
     crate::workweave::refuse_symlinked_members_named(
         &workspace_dir,
         &op_project_name,
@@ -8576,9 +8601,13 @@ fn abort_op(
                 Ok(other_ctx) => {
                     let dir = other_ctx.active_path().to_path_buf();
                     let other_project_dir = project_dir(&dir, &op_project_name);
-                    match Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone()) {
+                    let side = AbortSide::of(other_ctx.active_root(), &header);
+                    match project_to_abort(
+                        &other_project_dir,
+                        op_project_name.clone(),
+                        &side.savepoint_key(&op_id),
+                    ) {
                         Ok(other_project) => {
-                            let side = AbortSide::of(other_ctx.active_root(), &header);
                             members.take_project(
                                 &other_project_dir,
                                 &other_project,
