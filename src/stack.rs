@@ -4,7 +4,7 @@
 
 use crate::diagnosis::{ChoiceId, Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoKey};
-use crate::op_state::{Carrying, OpVerb, Rebasing, RefMove};
+use crate::op_state::{CarryRemap, Carrying, OpVerb, Rebasing, RefMove};
 use crate::records::BranchName;
 use crate::refusal::RefusalKind;
 use crate::vcs::{
@@ -444,6 +444,7 @@ pub(crate) struct Carried {
     pub(crate) was: CommitId,
     pub(crate) now: CommitId,
     pub(crate) backup: String,
+    pub(crate) remapped: Vec<CarryRemap>,
 }
 
 /// What a carry moved, and the dependents it found landed already.
@@ -593,6 +594,7 @@ impl Carrier<'_> {
         let dir = self.repos.dir(&carrying.repo);
         let vcs = self.repos.vcs(&carrying.repo);
         let mut tip = head;
+        let mut pins = Vec::new();
         let replayed = crate::remap::recorded(
             vcs.as_ref(),
             &dir,
@@ -628,11 +630,21 @@ impl Carrier<'_> {
                 vcs.set_detached_head(&dir, &rev(&rewritten))?;
                 tip = rewritten;
             }
+            pins = remap
+                .remapped
+                .into_iter()
+                .map(|moved| CarryRemap {
+                    member: moved.member,
+                    was: moved.was,
+                    now: moved.now,
+                })
+                .collect();
         }
         crate::op_state::journal_carrying(
             self.workspace,
             Carrying {
                 composed: Some(tip.clone()),
+                remapped: pins,
                 ..carrying.clone()
             },
         )?;
@@ -829,6 +841,7 @@ impl Carrier<'_> {
             from: from.clone(),
             onto: onto.clone(),
             composed: None,
+            remapped: Vec::new(),
         };
         crate::op_state::journal_carrying(self.workspace, carrying.clone())?;
         vcs.set_detached_head(&dir, &rev(from))?;
@@ -875,6 +888,7 @@ impl Carrier<'_> {
             was: carrying.from.clone(),
             now: to.clone(),
             backup,
+            remapped: carrying.remapped.clone(),
         })
     }
 
@@ -1003,6 +1017,7 @@ impl Carrier<'_> {
                 was: carrying.from.clone(),
                 now: to.clone(),
                 backup,
+                remapped: carrying.remapped.clone(),
             });
         }
         crate::test_pause::point("carry-moved");

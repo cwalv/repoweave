@@ -620,6 +620,18 @@ pub struct Carrying {
     pub from: CommitId,
     pub onto: CommitId,
     pub composed: Option<CommitId>,
+    /// The pins the carry's project replay moved onto what the member
+    /// rebases made of the commits they pinned.
+    pub remapped: Vec<CarryRemap>,
+}
+
+/// A pin of `member` a carried project commit held on a dropped commit, moved
+/// from `was` to `now`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarryRemap {
+    pub member: crate::manifest::RepoPath,
+    pub was: CommitId,
+    pub now: CommitId,
 }
 
 impl Carrying {

@@ -242,7 +242,9 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   dependent detached in the source's checkout of every repo the feature was
   rewritten in (members before the project branch, whose pins it re-maps),
   journaling each as `TakeInRecord.carries` before it starts and recording
-  the tip it composed; the checkout returns to the branch it was on. Only
+  the tip it composed and, for a project carry, the pins its re-map moved,
+  which the verb reports with the dependent's move, on a rerun too; the
+  checkout returns to the branch it was on. Only
   then does each dependent's branch move, by compare-and-swap after a
   `rebased` backup, the move journaled in `ref_moves` for `rwv abort`. A
   stop on a carry is finished by `Carrier::finish_stopped` before anything

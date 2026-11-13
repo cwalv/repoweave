@@ -1661,6 +1661,20 @@ fn act(
                 carried.backup
             ),
         );
+        for moved in &carried.remapped {
+            say(
+                output,
+                &format!(
+                    "{}: re-pinned {} to {} in the carried '{}': the rebase dropped the commit \
+                     it pinned, already on {}",
+                    moved.member,
+                    moved.was.short(),
+                    moved.now.short(),
+                    carried.branch,
+                    sync.source_name()
+                ),
+            );
+        }
     }
     settle(sync, &pre_manifest, reported, output)?;
     let hits = delivered_materialized_inputs(sync, &key);

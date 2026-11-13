@@ -18993,6 +18993,31 @@ pub fn a_carry_refuses_to_write_over_an_ignored_file() -> Scenario {
     )
 }
 
+/// `stack-carried` where `main` already holds `w2`'s `app` commit: the carry
+/// drops it, the project commit that pinned it is re-mapped, and the sync
+/// names the re-map as it names the landing's own, and a landing's `--json`
+/// lists it.
+pub fn a_carry_reports_the_pins_it_re_mapped(verb: &'static str) -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend([
+        Step::git(&a(), Repo::App, &["cherry-pick", "w2"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    let step = if verb == "land" {
+        Step::rwv(&ww("w1"), &["land", "--json"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("\"kind\": \"carried\""))
+            .claim(Claim::OutputContains("\"kind\": \"remapped\""))
+    } else {
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::OutputContains("in the carried 'w2'"))
+    };
+    steps.push(step);
+    scenario("stack: a carry reports the pins it re-mapped", steps)
+}
+
 /// `stack-carried` with another project branch declaring `w2`'s `app`
 /// branch: the carry would rewrite a declared branch, so `w1`'s sync refuses
 /// before anything moves, as a landing into it would.

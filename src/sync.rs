@@ -6432,6 +6432,16 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 backup: carried.backup,
             },
         )?;
+        for moved in carried.remapped {
+            report_landing(
+                ctx,
+                op_state::LandingReport::Remapped {
+                    repo: RepoKey::Member(moved.member),
+                    was: moved.was,
+                    now: moved.now,
+                },
+            )?;
+        }
     }
 
     // Record converged tips on the owner record. These are read by
