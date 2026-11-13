@@ -18482,6 +18482,12 @@ pub enum ManifestSettle {
     /// `lib`'s `history` changed differently here and upstream, settled at
     /// the stop of `pull --merge-upstream`.
     Pull,
+    /// `rwv cherry-pick` of a `main` commit that changes `[workweave]`
+    /// against the workweave's own, an integration's table, and `lib`'s
+    /// `history` against the workweave's: its stop leaves `rwv.toml`
+    /// unmerged, and a setter there refuses rather than settle, since the
+    /// pick ports no entry.
+    CherryPick,
     /// The sync typed in the primary with `-w`: each line the stop prints
     /// for the operator to run, run there as printed, acts on the
     /// workweave.
@@ -19181,6 +19187,45 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("history = \"merge\"")),
             ];
             "a pull's merge stop lists the rwv.toml entries in conflict"
+        }
+        S::CherryPick => {
+            let tables = |at: &Place, enabled: &str, file: &str| {
+                Step::hand_edit(
+                    at,
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[integrations.vscode-workspace]\nenabled = false\n",
+                    &format!(
+                        "[integrations.vscode-workspace]\nenabled = {enabled}\n\n[workweave]\n\
+                         copy = [\"{file}\"]\n"
+                    ),
+                )
+            };
+            steps.extend([
+                set_history(&ww("w"), "linear", LIB),
+                tables(&ww("w"), "false", "notes.txt"),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                tables(&a(), "true", "main.txt"),
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[repositories.\"local/remotes/lib\"]\n",
+                    "[repositories.\"local/remotes/lib\"]\nhistory = \"merge\"\n",
+                ),
+                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["cherry-pick", "main"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("rwv cherry-pick --continue")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+                Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
+                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+                head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
+            ]);
+            "a setter at an rwv cherry-pick stop that leaves rwv.toml unmerged refuses"
         }
         S::TypedElsewhere => {
             steps.extend([

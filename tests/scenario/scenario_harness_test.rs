@@ -959,6 +959,7 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanFieldBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::BothAdded),
     settle_a_manifest_stop(scenarios::ManifestSettle::TypedElsewhere),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CherryPick),
     settle_a_manifest_stop(scenarios::ManifestSettle::Land(
         scenarios::ManifestStopHistory::Merge
     )),
@@ -6920,6 +6921,14 @@ fn manifest_stop_at_a_pull_lists_entries() {
 fn manifest_stop_typed_elsewhere_prints_lines_that_reach_it() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::TypedElsewhere,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_at_a_cherry_pick_is_no_settle_route() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::CherryPick,
     ))
     .assert_fully_decided_green();
 }
