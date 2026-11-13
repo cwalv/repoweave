@@ -8479,7 +8479,11 @@ fn abort_op(
     // manifest (to enumerate repo paths); it never reads lock contents.
     let cwd_project = project_to_abort(&cwd_project_dir, op_project_name.clone())
         .context("failed to load CWD project")?;
-    refuse_symlinked_members(&workspace_dir, &op_project_name)?;
+    crate::workweave::refuse_symlinked_members_named(
+        &workspace_dir,
+        &op_project_name,
+        &cwd_project.manifest,
+    )?;
     if let Some(other) = &other_workspace {
         refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }

@@ -80,12 +80,31 @@ fn symlinked_members(workweave_dir: &Path, manifest: &Manifest) -> Vec<RepoPath>
 /// workweave of `project` passes: a primary's member slots are the canonical
 /// clones themselves, and a symlink there is the operator's own arrangement.
 pub fn refuse_symlinked_members(workspace_dir: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    match WorkweaveMarker::read(workspace_dir)? {
-        Some(marker) if marker.project() == project => {}
-        _ => return Ok(()),
+    if !is_workweave_of(workspace_dir, project)? {
+        return Ok(());
     }
-    let manifest = load_manifest(workspace_dir, project)?;
-    let linked = symlinked_members(workspace_dir, &manifest);
+    refuse_symlinked_members_of(workspace_dir, &load_manifest(workspace_dir, project)?)
+}
+
+fn is_workweave_of(workspace_dir: &Path, project: &ProjectName) -> anyhow::Result<bool> {
+    Ok(WorkweaveMarker::read(workspace_dir)?.is_some_and(|marker| marker.project() == project))
+}
+
+/// [`refuse_symlinked_members`] with the members `manifest` names, for a
+/// caller that read the project's manifest itself.
+pub fn refuse_symlinked_members_named(
+    workspace_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    if !is_workweave_of(workspace_dir, project)? {
+        return Ok(());
+    }
+    refuse_symlinked_members_of(workspace_dir, manifest)
+}
+
+fn refuse_symlinked_members_of(workspace_dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
+    let linked = symlinked_members(workspace_dir, manifest);
     if linked.is_empty() {
         return Ok(());
     }
