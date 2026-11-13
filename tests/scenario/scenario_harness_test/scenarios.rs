@@ -8216,6 +8216,118 @@ pub fn moved_and_edited_judged_by(verb: HeldVerb) -> Scenario {
     )
 }
 
+/// A seat whose `lib` branch moved under it, leaving `stale.txt` at the old
+/// tip's content, with `other.txt` edited, judged by `verb`. A verb that
+/// judges edits refreshes the drift first and judges `other.txt` alone
+/// `dirty`, so each choice it prints sets aside the edit and not the move's
+/// reverse; plain doctor names the drift as drift and writes nothing.
+pub fn plain_drift_judged_by(verb: HeldVerb) -> Scenario {
+    let me = ww("me");
+    let (at, args): (Place, &[&str]) = match verb {
+        HeldVerb::Lock => (me.clone(), &["lock"]),
+        HeldVerb::LockCommit => (me.clone(), &["lock", "--commit"]),
+        HeldVerb::UpdateRemote => (me.clone(), &["update", "--remote"]),
+        HeldVerb::Switch => (me.clone(), &["switch", "main"]),
+        HeldVerb::Sync => (me.clone(), &["sync", "--history", "merge"]),
+        HeldVerb::Doctor => (me.clone(), &["doctor"]),
+        HeldVerb::WorkweaveDelete => (a(), &["workweave", "delete", "me"]),
+    };
+    let mut steps = vec![
+        create("me"),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "proj--me",
+            &[("other.txt", "o\n"), ("stale.txt", "s\n")],
+        ),
+        Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+        Step::hand_commit(&a(), Repo::Lib, "proj--me", &[("stale.txt", "s2\n")]),
+        Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+    ];
+    if verb == HeldVerb::Sync {
+        steps.push(Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "main",
+            &[("main.txt", "m\n")],
+        ));
+        steps.push(Step::git(&a(), Repo::Lib, &["reset", "-q", "--hard"]));
+        steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    }
+    steps.push(Step::hand_edit(&me, Repo::Lib, "other.txt", "o", "mine"));
+    let stale_untouched = Step::git(
+        &me,
+        Repo::Lib,
+        &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+    );
+    if verb == HeldVerb::Doctor {
+        steps.extend([
+            Step::rwv(&at, args)
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("working tree stale"))
+                .claim(Claim::OutputContains("index stale"))
+                .claim(Claim::OutputLacks("edits dirty"))
+                .claim(Claim::OutputContains(
+                    "once `rwv doctor --fix` has refreshed what beside them is stale",
+                )),
+            stale_untouched.clone().expect(Exit::Code(1)),
+            Step::rwv(&me, &["doctor", "--fix"]).expect(Exit::Succeeds),
+            stale_untouched.expect(Exit::Succeeds),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "mine", "--", "other.txt"]),
+        ]);
+        return scenario("plain drift, judged by plain doctor", steps);
+    }
+    let refused = || {
+        Step::rwv(&at, args)
+            .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+            .claim(Claim::OutputContains("    other.txt"))
+            .claim(Claim::OutputLacks("    stale.txt"))
+    };
+    steps.extend([
+        refused().claim(Claim::OutputContains("refreshed drift")),
+        stale_untouched.expect(Exit::Succeeds),
+    ]);
+    let recorded_past = match verb {
+        HeldVerb::Lock => Some("rwv lock --dirty"),
+        HeldVerb::UpdateRemote => Some("rwv update --remote --dirty"),
+        _ => None,
+    };
+    if let Some(choice) = recorded_past {
+        steps.extend([
+            Step::rwv_printed(&at, choice).expect(Exit::Succeeds),
+            refused().claim(Claim::OutputLacks("refreshed drift")),
+        ]);
+    }
+    steps.extend([
+        Step::rwv_printed_holding(&at, "git -C ", "stash push").expect(Exit::Succeeds),
+        Step::git(&me, Repo::Lib, &["stash", "show", "--name-only"])
+            .claim(Claim::OutputLine("other.txt"))
+            .claim(Claim::OutputLacks("stale.txt")),
+        match verb {
+            HeldVerb::Switch => Step::rwv(&at, args)
+                .expect(Exit::refuses(Repo::Proj, State::CheckoutInRawWorktree))
+                .claim(Claim::OutputLacks("edits")),
+            HeldVerb::WorkweaveDelete => {
+                Step::rwv(&at, &["workweave", "delete", "me", "--discard-unlanded"])
+                    .expect(Exit::Succeeds)
+            }
+            _ => Step::rwv(&at, args).expect(Exit::Succeeds),
+        },
+    ]);
+    scenario(
+        match verb {
+            HeldVerb::Lock => "plain drift, judged by lock",
+            HeldVerb::LockCommit => "plain drift, judged by lock --commit",
+            HeldVerb::UpdateRemote => "plain drift, judged by update --remote",
+            HeldVerb::Switch => "plain drift, judged by switch",
+            HeldVerb::Sync => "plain drift, judged by sync",
+            HeldVerb::Doctor => "plain drift, judged by plain doctor",
+            HeldVerb::WorkweaveDelete => "plain drift, judged by workweave delete",
+        },
+        steps,
+    )
+}
+
 /// The primary's checkout of `lib`, on the landing's target, holds a file
 /// both moved and edited: the landing from the seat refuses it, and the
 /// printed merge names the primary's workspace, so it runs as printed from
@@ -8409,6 +8521,52 @@ pub fn moved_and_edited_moved_again_before_the_write() -> Scenario {
                 Repo::Lib,
                 &["grep", "-q", "-e", "^s3$", "--", "stale.txt"],
             ),
+        ],
+    )
+}
+
+/// A seat's `lib` holds plain drift beside an edit, and the stale file is
+/// written with the moved tip's content while `rwv lock` waits between its two
+/// readings: the lock writes nothing and refuses the stale path as `drift left
+/// in place`, offering no commit; the printed `rwv doctor --fix` refreshes it,
+/// after which the lock judges the edit alone.
+pub fn plain_drift_changed_before_a_verb_refreshes() -> Scenario {
+    let me = ww("me");
+    scenario(
+        "plain drift, changed before a verb refreshes it",
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[("other.txt", "o\n"), ("stale.txt", "s\n")],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(&a(), Repo::Lib, "proj--me", &[("stale.txt", "s2\n")]),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&me, Repo::Lib, "other.txt", "o", "mine"),
+            Step::rwv_paused(&me, &["lock"], "drift-read", "locking"),
+            Step::hand_edit(&me, Repo::Lib, "stale.txt", "s", "s2"),
+            Step::release("locking")
+                .expect(Exit::refuses(Repo::Lib, State::EditsDriftLeftInPlace))
+                .claim(Claim::OutputContains("a path changed after it was read"))
+                .claim(Claim::OutputContains("    stale.txt"))
+                .claim(Claim::OutputLacks("commit your edits")),
+            Step::git(&me, Repo::Lib, &["diff", "--cached", "--quiet", "HEAD"])
+                .expect(Exit::Code(1)),
+            Step::rwv_printed(&me, "rwv doctor --fix")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("refreshed drift")),
+            Step::git(
+                &me,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+            ),
+            Step::rwv(&me, &["lock"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::OutputContains("    other.txt"))
+                .claim(Claim::OutputLacks("    stale.txt")),
         ],
     )
 }

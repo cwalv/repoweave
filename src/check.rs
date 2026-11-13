@@ -6521,8 +6521,9 @@ impl CheckViolation {
                 let detail = match kind {
                     IndexDriftKind::SafeToFix => "index stale (run `rwv doctor --fix` to reset)",
                     IndexDriftKind::LiveStaged => {
-                        "index has live staged changes (commit them if they are yours, or \
-                             stash them; not auto-fixed)"
+                        "index has live staged changes (once `rwv doctor --fix` has \
+                             refreshed what beside them is stale, commit them if they are yours, \
+                             or stash them; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")
@@ -6651,8 +6652,9 @@ impl CheckViolation {
                         "working tree stale (run `rwv doctor --fix` to restore)"
                     }
                     WorkingTreeDriftKind::LiveEdits => {
-                        "working tree has live edits (commit them if they are yours, or \
-                             stash them; not auto-fixed)"
+                        "working tree has live edits (once `rwv doctor --fix` has \
+                             refreshed what beside them is stale, commit them if they are yours, \
+                             or stash them; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")

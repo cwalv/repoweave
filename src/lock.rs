@@ -103,12 +103,18 @@ pub fn generate_lock(
                 crate::workspace::member_checkout_dir(repo_path, workspace_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
             let tracked = vcs.tracked_dirty_file_names(checkout.path())?;
-            if !tracked.is_empty() {
-                report.add(
-                    crate::diagnosis::dirty(vcs.as_ref(), repo_path, checkout.path(), tracked)
-                        .checkout(checkout.path())
-                        .judge(vcs.as_ref()),
-                );
+            if let Some(judging) = (!tracked.is_empty())
+                .then(|| {
+                    crate::diagnosis::dirty_beside_drift(
+                        vcs.as_ref(),
+                        repo_path,
+                        checkout.path(),
+                        tracked,
+                    )
+                })
+                .flatten()
+            {
+                report.add(judging.checkout(checkout.path()).judge(vcs.as_ref()));
             }
         }
         report.into_result()?;
@@ -607,9 +613,12 @@ fn judge_member(
 
     if !relocking.dirty {
         let tracked = vcs.tracked_dirty_file_names(dir)?;
-        if !tracked.is_empty() {
+        if let Some(judging) = (!tracked.is_empty())
+            .then(|| crate::diagnosis::dirty_beside_drift(vcs.as_ref(), path, dir, tracked))
+            .flatten()
+        {
             refusals.add(
-                crate::diagnosis::dirty(vcs.as_ref(), path, dir, tracked)
+                judging
                     .member()
                     .checkout(dir)
                     .by_verb(relocking.verb)

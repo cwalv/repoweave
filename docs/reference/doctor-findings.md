@@ -1441,16 +1441,18 @@ It can also be drift rwv cannot show: an old commit's content in a checkout
 whose reflog records no move under it, or one that already took part of the
 move. `--fix` does not touch it.
 
-**What to do:** commit it if it is your change. If it is not, run
-`rwv doctor --fix` first when the checkout also has `safe-to-fix` drift, then
-stash what is left (`git -C <checkout> stash push`): nothing is committed and
-nothing is lost. Committing drift records the move's reverse on the branch.
-Then re-run.
+**What to do:** when the checkout also has `safe-to-fix` drift, run
+`rwv doctor --fix` first: committing or stashing drift records or sets aside
+the move's reverse with your change. Then commit it if it is your change, or
+stash it (`git -C <checkout> stash push`) if it is not: nothing is committed
+and nothing is lost. Then re-run.
 
 Where a path both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
 `rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
-keeping the working copy and index as a backup first.
+and `rwv doctor --fix --set-aside-edited-drift` gives the file the moved tip's
+content and keeps your edit only in the backup; each keeps the working copy
+and index as a backup first.
 
 ### `working-tree-drift`
 
@@ -1477,16 +1479,18 @@ its content (a deletion, a file returned to an earlier version, a copy, a mode
 change), or a file both the move and you changed. It can also be drift rwv
 cannot show, as for `live-staged`. `--fix` does not touch it.
 
-**What to do:** commit them if they are your changes. If they are not, run
-`rwv doctor --fix` first when the checkout also has `safe-to-fix` drift, then
-stash what is left (`git -C <checkout> stash push`): nothing is committed and
-nothing is lost. Committing drift records the move's reverse on the branch.
-Then re-run.
+**What to do:** when the checkout also has `safe-to-fix` drift, run
+`rwv doctor --fix` first: committing or stashing drift records or sets aside
+the move's reverse with your edits. Then commit them if they are your changes,
+or stash them (`git -C <checkout> stash push`) if they are not: nothing is
+committed and nothing is lost. Then re-run.
 
 Where a file both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
 `rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
-keeping the working copy and index as a backup first.
+and `rwv doctor --fix --set-aside-edited-drift` gives the file the moved tip's
+content and keeps your edit only in the backup; each keeps the working copy
+and index as a backup first.
 
 ### `orphaned-savepoint`
 

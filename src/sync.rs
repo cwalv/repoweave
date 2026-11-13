@@ -2209,12 +2209,11 @@ pub(crate) fn plan_checkout_removal(
         .dirty_file_names(&dest)
         .with_context(|| format!("{repo_path}: {dropped}, but its status could not be read"))
         .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
-    if !dirty.is_empty() {
-        report.add(
-            crate::diagnosis::dirty(vcs, repo_path, &dest, dirty)
-                .checkout(&dest)
-                .judge(vcs),
-        );
+    if let Some(judging) = (!dirty.is_empty())
+        .then(|| crate::diagnosis::dirty_beside_drift(vcs, repo_path, &dest, dirty))
+        .flatten()
+    {
+        report.add(judging.checkout(&dest).judge(vcs));
     }
     if let Checkout::Primary { .. } = &ctx.checkout {
         judge_store_checkouts(vcs, &dest, ctx.primary_path(), repo_path, &mut report)?;
@@ -5399,7 +5398,7 @@ fn judge_edits_in(
     elsewhere: Option<&Path>,
     report: &mut Report,
 ) {
-    if let Some(judged) = crate::diagnosis::judge_edits(vcs, repo, dir, dirty, elsewhere) {
+    if let Some(judged) = crate::diagnosis::judge_edits_as_found(vcs, repo, dir, dirty, elsewhere) {
         report.add(judged);
     }
 }

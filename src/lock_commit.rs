@@ -195,12 +195,18 @@ pub(crate) fn run(
             continue;
         }
         let dirty = vcs.tracked_dirty_file_names(&located.dir)?;
-        if !dirty.is_empty() {
-            refusals.add(
-                crate::diagnosis::dirty(vcs.as_ref(), &change.path, &located.dir, dirty)
-                    .checkout(&located.dir)
-                    .judge(vcs.as_ref()),
-            );
+        if let Some(judging) = (!dirty.is_empty())
+            .then(|| {
+                crate::diagnosis::dirty_beside_drift(
+                    vcs.as_ref(),
+                    &change.path,
+                    &located.dir,
+                    dirty,
+                )
+            })
+            .flatten()
+        {
+            refusals.add(judging.checkout(&located.dir).judge(vcs.as_ref()));
         }
     }
     if let Some(path) = changes

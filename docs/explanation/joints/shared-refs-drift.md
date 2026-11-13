@@ -91,11 +91,14 @@ what differs.
 
 ## Safe-to-fix classification
 
-rwv repairs drift in three places: `rwv doctor --fix`, which reports it
+rwv repairs drift in four places: `rwv doctor --fix`, which reports it
 and refreshes it when asked; `rwv land`, which refreshes it in each
 checkout, in either workspace, whose edits it judges, before judging
-them; and the end of `rwv sync`, for each checkout the sync took in. The
-interesting question is *what counts as drift*.
+them; every other verb that refuses on a checkout's edits or writes to it
+(`rwv lock`, `rwv update --remote`, `rwv switch`, `rwv sync`,
+`rwv workweave delete` and the rest), which refreshes that checkout's drift
+before judging what is left; and the end of `rwv sync`, for each checkout
+the sync took in. `rwv doctor` without `--fix` only reports it, as drift. The interesting question is *what counts as drift*.
 
 A checkout that differs from its HEAD is not evidence that its branch
 moved. A deleted file, a file returned to an earlier version, a staged
@@ -210,6 +213,13 @@ refusal offers there cannot commit the old tip's content back over the move.
 Drift left in place refuses the landing as `edits` `drift left in place`,
 whose one choice is to land again; that checkout's other edits are listed
 beside it with no choice of their own until the drift is refreshed.
+
+Every other verb that judges a checkout's edits does the same: it refreshes
+the checkout's drift, says what it replaced, and judges only what is left, so
+the `git commit` and `git stash push` it offers there carry your edits and not
+the move's reverse. Drift it leaves in place refuses it as `edits`
+`drift left in place`, whose one choice is `rwv doctor --fix`; the checkout's
+other edits are judged once that has refreshed it.
 
 ### Drift rwv cannot show
 

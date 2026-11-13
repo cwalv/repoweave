@@ -1292,6 +1292,14 @@ every_scenario!(
     moved_and_edited_judged_by(scenarios::HeldVerb::Sync),
     moved_and_edited_judged_by(scenarios::HeldVerb::Doctor),
     moved_and_edited_judged_by(scenarios::HeldVerb::WorkweaveDelete),
+    plain_drift_judged_by(scenarios::HeldVerb::Lock),
+    plain_drift_judged_by(scenarios::HeldVerb::LockCommit),
+    plain_drift_judged_by(scenarios::HeldVerb::UpdateRemote),
+    plain_drift_judged_by(scenarios::HeldVerb::Switch),
+    plain_drift_judged_by(scenarios::HeldVerb::Sync),
+    plain_drift_judged_by(scenarios::HeldVerb::Doctor),
+    plain_drift_judged_by(scenarios::HeldVerb::WorkweaveDelete),
+    plain_drift_changed_before_a_verb_refreshes,
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Journaled),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Refreshed),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Written),
@@ -5583,6 +5591,64 @@ fn workweave_delete_names_a_file_moved_and_edited_and_offers_no_commit() {
         scenarios::HeldVerb::WorkweaveDelete,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn lock_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(scenarios::HeldVerb::Lock))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn lock_commit_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(
+        scenarios::HeldVerb::LockCommit,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(
+        scenarios::HeldVerb::UpdateRemote,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn switch_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(
+        scenarios::HeldVerb::Switch,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(scenarios::HeldVerb::Sync))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn plain_doctor_names_plain_drift_as_drift_and_writes_nothing() {
+    runner::run(scenarios::plain_drift_judged_by(
+        scenarios::HeldVerb::Doctor,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn workweave_delete_refreshes_plain_drift_and_judges_only_the_edit_left() {
+    runner::run(scenarios::plain_drift_judged_by(
+        scenarios::HeldVerb::WorkweaveDelete,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_verb_whose_drift_refresh_is_left_in_place_offers_doctor_fix_and_no_commit() {
+    runner::run(scenarios::plain_drift_changed_before_a_verb_refreshes())
+        .assert_fully_decided_green();
 }
 
 #[test]

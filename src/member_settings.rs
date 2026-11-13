@@ -88,13 +88,12 @@ pub fn run_set_role(
         let dirty = vcs
             .tracked_dirty_file_names(&member)
             .with_context(|| format!("failed to read the status of '{repo_path}'"))?;
-        if !dirty.is_empty() {
+        if let Some(judging) = (!dirty.is_empty())
+            .then(|| crate::diagnosis::dirty_beside_drift(vcs.as_ref(), &repo_path, &member, dirty))
+            .flatten()
+        {
             let mut report = crate::diagnosis::Report::default();
-            report.add(
-                crate::diagnosis::dirty(vcs.as_ref(), &repo_path, &member, dirty)
-                    .checkout(&member)
-                    .judge(vcs.as_ref()),
-            );
+            report.add(judging.checkout(&member).judge(vcs.as_ref()));
             report.into_result()?;
         }
     }

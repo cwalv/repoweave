@@ -746,12 +746,16 @@ impl State {
                         for the reason named: a path changed after it was read or something \
                         on disk was in the way, the branch moved again, the index holds \
                         unresolved conflicts, or the write failed. They still hold the old \
-                        tip's content, so committing them would record the move's reverse; \
-                        the checkout's other edits are listed beside it with no choice of \
-                        their own until the drift is refreshed",
+                        tip's content, so committing them would record the move's reverse. \
+                        The checkout's other edits are judged once the drift is refreshed; a \
+                        landing lists them beside it, with no choice of their own until then",
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
-                             workspace",
-                offers: &[Form::DriftLandAgain, Form::DriftResolveThenLand],
+                             workspace, and every other verb that judges a checkout's edits",
+                offers: &[
+                    Form::DriftLandAgain,
+                    Form::DriftResolveThenLand,
+                    Form::DriftRefreshAgain,
+                ],
                 verb_offers: &[],
             },
             Self::EditsMovedAndEdited => &StateRow {
@@ -1980,6 +1984,7 @@ pub enum ChoiceId {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    RefreshAgain,
     MergeEditedDrift,
     SetEditsAside,
     ResolveConflicts,
@@ -2289,6 +2294,12 @@ impl ChoiceId {
                          reads it afresh and refreshes what still holds the old tip",
                 keeps_work: "a refresh writes only paths that still hold the old tip's content",
             },
+            Self::RefreshAgain => &ChoiceRow {
+                id: None,
+                phrase: "refresh again once nothing else is changing the checkout: doctor \
+                         reads it afresh and refreshes what still holds the old tip",
+                keeps_work: "a refresh writes only paths that still hold the old tip's content",
+            },
             Self::Republish => &ChoiceRow {
                 id: None,
                 phrase: "republish rwv's own rebase over the push branch it rewrote",
@@ -2492,6 +2503,7 @@ pub enum Form {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    DriftRefreshAgain,
     MergeEditedDrift,
     SetEditsAside,
     ResolveConflicts,
@@ -2525,7 +2537,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 103] = [
+    pub const ALL: [Form; 106] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2625,6 +2637,7 @@ impl Form {
         Self::AbortOperation,
         Self::StageParsingManifest,
         Self::ResumeWithManifest,
+        Self::DriftRefreshAgain,
         Self::MergeEditedDrift,
         Self::SetEditsAside,
         Self::ResolveConflicts,
@@ -3250,6 +3263,12 @@ impl Form {
                 choice: C::ResumeWithManifest,
                 steps: &[Step::ResumeRecorded],
                 at: W::Here,
+                shipped: true,
+            },
+            Self::DriftRefreshAgain => &FormRow {
+                choice: C::RefreshAgain,
+                steps: &[Rwv("rwv doctor --fix")],
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::LostRace => &FormRow {
@@ -4116,11 +4135,35 @@ pub fn judge_edits(
     dirty: Vec<String>,
     elsewhere: Option<&Path>,
 ) -> Option<Judged> {
+    judge_edits_settling(vcs, repo, dir, dirty, elsewhere, true)
+}
+
+/// [`judge_edits`], with any drift judged as the dirt it looks like and
+/// nothing refreshed, for a landing that settles drift itself.
+pub fn judge_edits_as_found(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    dirty: Vec<String>,
+    elsewhere: Option<&Path>,
+) -> Option<Judged> {
+    judge_edits_settling(vcs, repo, dir, dirty, elsewhere, false)
+}
+
+fn judge_edits_settling(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    dirty: Vec<String>,
+    elsewhere: Option<&Path>,
+    settle: bool,
+) -> Option<Judged> {
     let mut judging = match vcs.mid_operation(dir) {
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
         None => match vcs.interrupted_merge(dir) {
             Ok(Some(merge)) => interrupted_merge(repo, &merge),
             _ if dirty.is_empty() => return None,
+            _ if settle => dirty_beside_drift(vcs, repo, dir, dirty)?,
             _ => self::dirty(vcs, repo, dir, dirty),
         },
     };
@@ -4152,6 +4195,71 @@ pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<Stri
         }
     }
     State::EditsDirty.of(repo).listing(files)
+}
+
+/// [`dirty`] for a verb about to refuse on or write to `dir`: drift its
+/// branch's move left there is refreshed first, replacing only what still
+/// holds the old tip's content, and what is left of `files` is judged; none
+/// when nothing is. A refresh left in place is judged as that, whose one
+/// choice reads the checkout afresh.
+pub fn dirty_beside_drift(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    files: Vec<String>,
+) -> Option<Judging> {
+    let repo = repo.to_string();
+    let held = matches!(vcs.interrupted_merge(dir), Ok(Some(_)))
+        || vcs.unmerged_paths(dir).is_ok_and(|u| !u.is_empty());
+    let reading = match crate::check::read_drift(vcs, dir) {
+        Ok(reading) if !held && reading.moved_and_edited().is_empty() => reading,
+        _ => return Some(dirty(vcs, repo, dir, files)),
+    };
+    if !reading.is_refreshable() {
+        return (!files.is_empty()).then(|| dirty(vcs, repo, dir, files));
+    }
+    let outcome = match crate::check::refresh_drift(vcs, dir, &reading) {
+        Ok(outcome) => outcome,
+        Err(e) => crate::check::DriftRefresh {
+            left_in_place: Some(crate::check::LeftInPlace {
+                paths: reading
+                    .stale_files()
+                    .into_iter()
+                    .chain(reading.stale_index_entries())
+                    .collect(),
+                why: crate::check::LeftWhy::Failed(format!("{e:#}")),
+            }),
+            ..crate::check::DriftRefresh::default()
+        },
+    };
+    if let Some(refreshed) = &outcome.refreshed {
+        eprintln!("rwv: {repo}: {}", refreshed.describe());
+    }
+    if let Some(unrecorded) = outcome.describe_unrecorded() {
+        eprintln!("warning: rwv: {repo}: {unrecorded}");
+    }
+    if let Some(left) = &outcome.left_in_place {
+        return Some(
+            State::EditsDriftLeftInPlace
+                .of(repo)
+                .subject(left.describe())
+                .listing(&left.paths)
+                .only_forms(&[Form::DriftRefreshAgain]),
+        );
+    }
+    if !outcome.held.is_empty() {
+        return Some(dirty(vcs, repo, dir, files));
+    }
+    let left: Vec<String> = files
+        .into_iter()
+        .filter(|file| {
+            !outcome
+                .refreshed
+                .as_ref()
+                .is_some_and(|refreshed| refreshed.replaced(file))
+        })
+        .collect();
+    (!left.is_empty()).then(|| dirty(vcs, repo, dir, left))
 }
 
 fn unresolved(repo: impl fmt::Display, conflicted: Vec<String>) -> Judging {
