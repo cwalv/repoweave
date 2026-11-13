@@ -17706,6 +17706,62 @@ pub fn abort_leaving_the_target_of_a_landing_that_carried_a_dependent() -> Scena
     )
 }
 
+/// `stack-carried`, `w2` tracking a file `w1`'s checkout of `app` holds
+/// ignored: the carry composes in that checkout, which would write over the
+/// file, so the sync refuses before any dependent moves, naming it, the file
+/// as it was, and once the file is moved aside `--continue` carries `w2`.
+pub fn a_carry_refuses_to_write_over_an_ignored_file() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend([
+        Step::hand_commit(
+            &ww("w1"),
+            Repo::App,
+            "w2",
+            &[("scratch.cfg", "theirs\n")],
+        ),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &[
+                "-c",
+                "alias.mk=!echo scratch.cfg >> \"$(git rev-parse --git-path info/exclude)\"; printf mine > scratch.cfg",
+                "mk",
+            ],
+        ),
+    ]);
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::UntrackedCollision))
+            .claim(Claim::OutputContains("scratch.cfg"))
+            .claim(Claim::OutputContains("rwv sync --continue")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["-c", "alias.slurp=!cat scratch.cfg", "slurp"],
+        )
+        .claim(Claim::OutputContains("mine")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["-c", "alias.aside=!mv scratch.cfg aside.cfg", "aside"],
+        ),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["-c", "alias.slurp=!cat aside.cfg", "slurp"],
+        )
+        .claim(Claim::OutputContains("mine")),
+    ]);
+    scenario(
+        "stack: a carry refuses to write over an ignored file",
+        steps,
+    )
+}
+
 /// How the refusal of a continued carry, met a dependent checked out
 /// elsewhere, is cleared.
 #[derive(Debug, Clone, Copy)]

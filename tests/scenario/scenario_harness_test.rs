@@ -824,6 +824,7 @@ every_scenario!(
     a_stopped_carry_continued_meets_a_dependent_checked_out(scenarios::ContinuedCarryMeets::Rebind),
     a_stopped_carry_continued_meets_a_dependent_checked_out(scenarios::ContinuedCarryMeets::Abort),
     abort_leaving_the_target_of_a_landing_that_carried_a_dependent,
+    a_carry_refuses_to_write_over_an_ignored_file,
     a_landing_killed_after_its_carry_continues,
     a_landing_resumed_after_its_target_moved_past_a_carry,
     a_carry_left_by_a_quit_is_unrecorded,
@@ -5581,6 +5582,12 @@ fn a_stopped_carry_continued_meets_a_dependent_checked_out_and_each_choice_ends_
 #[test]
 fn abort_leaving_the_target_of_a_landing_that_carried_a_dependent() {
     runner::run(scenarios::abort_leaving_the_target_of_a_landing_that_carried_a_dependent())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_carry_refuses_to_write_over_an_ignored_file() {
+    runner::run(scenarios::a_carry_refuses_to_write_over_an_ignored_file())
         .assert_fully_decided_green();
 }
 

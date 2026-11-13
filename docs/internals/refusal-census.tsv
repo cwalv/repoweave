@@ -272,6 +272,7 @@ src/stack.rs	target dependent checked out elsewhere	-	1
 src/stack.rs	target dependent lacks the tip	-	1
 src/stack.rs	target dependent moved mid-operation	-	1
 src/stack.rs	target dependent on another machine	-	1
+src/stack.rs	untracked-collision	-	1
 src/status.rs	alignment project moved	-	1
 src/status.rs	alignment project unaligned	-	1
 src/status.rs	pin none	tests/doctor/benign_staleness_test.rs	1

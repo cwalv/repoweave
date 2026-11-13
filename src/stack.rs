@@ -333,6 +333,49 @@ pub(crate) fn judge(
     }
 }
 
+/// Refuse where a carry would write over something a checkout holds that no
+/// commit records: a path a carried dependent's tip adds, or a directory
+/// above one, standing untracked, ignored or not, where HEAD tracks nothing.
+fn refuse_in_the_way(stack: &Stack, repos: &Repos<'_>, verb: &str) -> anyhow::Result<()> {
+    let mut in_the_way = Vec::new();
+    for carry in &stack.carried {
+        for (repo, tip) in &carry.tips {
+            let dir = repos.dir(repo);
+            let vcs = repos.vcs(repo);
+            let head = vcs.head_revision(&dir)?;
+            for changed in vcs.changed_paths_between(&dir, &head, &rev(tip))? {
+                let changed = Path::new(&changed);
+                let standing = changed
+                    .ancestors()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .find(|p| match std::fs::symlink_metadata(dir.join(p)) {
+                        Ok(meta) => *p == changed || !meta.is_dir(),
+                        Err(_) => false,
+                    });
+                if let Some(path) = standing {
+                    if !vcs.is_tracked(&dir, path)? {
+                        in_the_way.push(format!(
+                            "{}: {} ('{}' tracks it)",
+                            repos.label(repo),
+                            path.display(),
+                            carry.dependent
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if in_the_way.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::UntrackedCollision,
+        "carrying a dependent along would write over what these checkouts hold untracked, \
+         ignored files included:\n  {}\nmove them aside, then run `rwv {verb} --continue`",
+        in_the_way.join("\n  ")
+    );
+}
+
 /// What carrying one dependent's branch in one repo did.
 #[derive(Debug, Clone)]
 pub(crate) struct Carried {
@@ -524,6 +567,7 @@ impl Carrier<'_> {
             .collect();
         judge(&stack, &self.repos, self.t, verb, &claimed, &mut report);
         report.into_result()?;
+        refuse_in_the_way(&stack, &self.repos, verb)?;
         let project_dir = self.repos.dir(&RepoKey::Project);
         let project_vcs = self.repos.vcs(&RepoKey::Project);
         for carry in &stack.carried {
