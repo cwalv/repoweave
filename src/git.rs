@@ -1356,6 +1356,10 @@ fn tree_with_paths_from(
     })
 }
 
+/// The HEAD reflog message of a refresh begun, followed by the tip it
+/// refreshes from.
+const REFRESHING: &str = "rwv: refreshing drift from ";
+
 /// [`Vcs::record_checkout_at_head`] for git: a `HEAD` reflog entry at `head`,
 /// by an update whose old and new values are both `head`, so it moves no ref
 /// and fails where HEAD names anything else by now.
@@ -4044,6 +4048,57 @@ impl Vcs for GitVcs {
 
     fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {
         record_checkout_at_head(repo, head)
+    }
+
+    fn mark_refreshing(
+        &self,
+        repo: &Path,
+        left: &CommitId,
+        head: &CommitId,
+    ) -> Result<(), VcsError> {
+        let message = format!("{REFRESHING}{left}");
+        GitVcs::run(
+            [
+                "update-ref",
+                "--create-reflog",
+                "-m",
+                message.as_str(),
+                "HEAD",
+                head.as_str(),
+                head.as_str(),
+            ],
+            repo,
+        )
+        .map(drop)
+    }
+
+    fn refreshing_from(&self, repo: &Path) -> Result<Option<CommitId>, VcsError> {
+        let HeadAttachment::Attached(_) = self.head_attachment(repo)? else {
+            return Ok(None);
+        };
+        let Ok(recorded) = GitVcs::run_trimmed(
+            [
+                "log",
+                "-g",
+                "-n1",
+                "--no-show-signature",
+                "--format=%H %gs",
+                "HEAD",
+            ],
+            repo,
+        ) else {
+            return Ok(None);
+        };
+        let Some((at, said)) = recorded.split_once(' ') else {
+            return Ok(None);
+        };
+        let Some(left) = said.strip_prefix(REFRESHING) else {
+            return Ok(None);
+        };
+        let (Ok(at), Ok(left)) = (CommitId::parse(at), CommitId::parse(left)) else {
+            return Ok(None);
+        };
+        Ok((*self.head_revision(repo)?.id() == at).then_some(left))
     }
 
     fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {

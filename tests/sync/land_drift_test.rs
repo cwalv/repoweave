@@ -933,6 +933,7 @@ fn fix(f: &Fixture, side: Side) -> std::process::Output {
 fn landing_and_fix_keep(
     side: Side,
     state: State,
+    compares: bool,
     kept: &[&str],
     prepare: impl FnOnce(&Path),
     change: impl FnOnce(&Path),
@@ -954,26 +955,24 @@ fn landing_and_fix_keep(
         before,
         "{side:?}: the landing replaced what was there:\n{stderr}"
     );
-    let compare: Vec<String> = match state {
-        State::EditsMovedAndEdited => {
-            assert!(
-                !stderr.contains("edited-drift"),
-                "a file the VCS does not compare is offered no merge or set-aside first:\n{stderr}"
-            );
-            stderr
-                .lines()
-                .map(str::trim)
-                .filter(|line| line.starts_with("git -C "))
-                .map(str::to_owned)
-                .collect()
-        }
-        _ => Vec::new(),
-    };
+    let compare: Vec<String> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("git -C "))
+        .map(str::to_owned)
+        .collect();
     assert_eq!(
         compare.is_empty(),
-        state != State::EditsMovedAndEdited,
-        "the compare choice is printed:\n{stderr}"
+        !compares,
+        "the compare choice is printed where the VCS does not compare the file:\n{stderr}"
     );
+    if state == State::EditsMovedAndEdited && !compares {
+        assert!(
+            stderr.contains("move out of the way"),
+            "something in the way is offered the move-aside first:\n{stderr}"
+        );
+        assert!(!stderr.contains("set-aside-edited-drift"), "{stderr}");
+    }
 
     let out = fix(&f, side);
 
@@ -983,7 +982,7 @@ fn landing_and_fix_keep(
         "{side:?}: doctor --fix replaced what was there:\n{}",
         common::cli::describe(&out)
     );
-    if state != State::EditsMovedAndEdited {
+    if !compares {
         return;
     }
     let workspace = match side {
@@ -993,7 +992,8 @@ fn landing_and_fix_keep(
     for flag in ["--merge-edited-drift", "--set-aside-edited-drift"] {
         let out = common::cli::run(&["doctor", "--fix", flag], workspace);
         let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
-        assert!(stderr.contains("so no backup would keep"), "{stderr}");
+        assert!(!stderr.contains("kept as backup"), "{stderr}");
+        assert!(stderr.contains("a backup keeps it"), "{stderr}");
         assert_eq!(
             path_state(&checkout, kept),
             before,
@@ -1015,15 +1015,17 @@ fn landing_and_fix_keep(
     let out = common::cli::run(&["doctor", "--fix", "--merge-edited-drift"], workspace);
     let said = common::cli::describe(&out);
     assert!(said.contains("kept as backup"), "{said}");
-    assert!(!said.contains("so no backup would keep"), "{said}");
+    assert!(!said.contains("a backup keeps it"), "{said}");
 }
 
 /// An untracked file stands where the move puts a directory: git would
-/// remove the file to make the directory, and the file is in no commit.
+/// remove the file to make the directory, and the file is in no commit. It
+/// holds the checkout, offered the move-aside alone.
 fn untracked_file_where_the_move_puts_a_directory(side: Side) {
     landing_and_fix_keep(
         side,
-        State::EditsDirty,
+        State::EditsMovedAndEdited,
+        false,
         &["docs"],
         |checkout| std::fs::write(checkout.join("docs"), "never committed\n").unwrap(),
         |elsewhere| {
@@ -1050,6 +1052,7 @@ fn ignored_file_where_the_move_adds_one(side: Side) {
     landing_and_fix_keep(
         side,
         State::EditsMovedAndEdited,
+        true,
         &["build.log"],
         |checkout| {
             let exclude = common::git_in(
@@ -1085,6 +1088,7 @@ fn unwatched_change_under_a_move(side: Side, flag: &'static str) {
     landing_and_fix_keep(
         side,
         State::EditsMovedAndEdited,
+        true,
         &["notes.txt"],
         |checkout| {
             common::git_in(checkout, &["update-index", flag, "notes.txt"]);
@@ -1404,7 +1408,7 @@ fn an_ignored_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
 fn an_ignored_directory_put_where_the_move_adds_a_file_as_the_refresh_starts_is_kept() {
     put_where_the_move_adds_a_file_as_the_refresh_starts(
         "out",
-        State::EditsDirty,
+        State::EditsMovedAndEdited,
         |checkout| {
             let common_dir = common::git_in(
                 checkout,
@@ -1626,11 +1630,11 @@ fn a_declined_file_write_leaves_the_index_entries_and_records_nothing() {
     );
 }
 
-/// An index entry staged while the refresh is between its file write and its
-/// index-entry write: the index-entry write is declined, and the files it had
-/// written are put back, so the checkout is not left half refreshed.
+/// The refresh writes its index-only entries before its files, and a landing
+/// killed between the two still reads the checkout as drift: the next
+/// landing refreshes the files and lands.
 #[test]
-fn a_declined_index_entry_write_puts_the_written_files_back() {
+fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
     let f = fixture();
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
@@ -1638,31 +1642,31 @@ fn a_declined_index_entry_write_puts_the_written_files_back() {
     });
     std::fs::write(f.ww_lib.join("spare.txt"), "spare moved\n").unwrap();
     let held = held_landing(&f, "drift-write-index");
-    std::fs::write(f.ww_lib.join("spare.txt"), "mine\n").unwrap();
-    common::git_in(&f.ww_lib, &["add", "spare.txt"]);
-
-    let out = held.release();
-
-    let stderr = left_in_place(&out, "a path changed after it was read");
-    assert!(!stderr.contains("refreshed drift"), "{stderr}");
-    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+    drop(held);
     assert_eq!(
-        common::git_in(&f.ww_lib, &["diff", "--name-only", "--", "notes.txt"]),
+        common::git_in(
+            &f.ww_lib,
+            &["diff", "--name-only", "HEAD", "--", "spare.txt"]
+        ),
         "",
-        "the put-back leaves notes.txt's file and index entry together"
-    );
-
-    let out = common::cli::run(&["land"], &f.ww);
-
-    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
-    assert!(!stderr.contains("refreshed drift"), "{stderr}");
-    assert_eq!(
-        listing_under(&stderr, "edits moved and edited"),
-        vec!["spare.txt".to_owned()],
-        "{stderr}"
+        "the index-only entry was written first"
     );
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
-    assert_eq!(read(&f.ww_lib.join("spare.txt")).as_deref(), Some("mine\n"));
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(!said.contains("commit your edits"), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n"),
+        "{said}"
+    );
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
 }
 
 /// An edit refused beside drift whose refresh was declined is listed with no

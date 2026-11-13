@@ -88,7 +88,7 @@ pub(super) fn set_back_from(repo: &Path) -> Result<Option<SetBack>, VcsError> {
             "-g",
             "-n1",
             "--no-show-signature",
-            "--format=%H%x00%gs",
+            "--format=%H %gs",
             "HEAD",
         ],
         repo,
@@ -97,7 +97,7 @@ pub(super) fn set_back_from(repo: &Path) -> Result<Option<SetBack>, VcsError> {
         return Ok(None);
     }
     let recorded = text(output.stdout);
-    let Some((at, said)) = recorded.split_once('\0') else {
+    let Some((at, said)) = recorded.split_once(' ') else {
         return Ok(None);
     };
     let Some(branch) = said

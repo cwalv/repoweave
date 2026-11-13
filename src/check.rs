@@ -7369,24 +7369,28 @@ impl DriftReading {
 /// checkout, and the path still holds what the moved-from tip held. Without
 /// that every difference is an edit, as it is in a checkout stopped in an
 /// operation, and in one whose index already holds HEAD's entry for a path
-/// the move changed while its file holds something else: a checkout left
-/// behind holds the old tip at every such path it has not edited, so one
-/// whose index took part of the move without its file has had it taken by
-/// something its history does not show. A path whose entry and file both
-/// hold HEAD's is simply refreshed, as a refresh stopped between its writes
-/// leaves it.
+/// the move changed: a checkout left behind holds the old tip at every such
+/// path it has not edited, so one that took part of the move has had it
+/// taken by something its history does not show, unless its history shows
+/// a refresh from the old tip begun and not finished.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
+    let refreshing = match vcs.mid_operation(repo) {
+        Some(_) => None,
+        None => vcs.refreshing_from(repo)?,
+    };
     let left = match vcs.mid_operation(repo) {
         Some(_) => None,
+        None if refreshing.is_some() => refreshing.clone(),
         None => vcs.left_behind_at(repo)?,
     };
     let standings = vcs.path_standings(repo, left.as_ref())?;
     let left = left.filter(|_| {
-        !standings.iter().any(|standing| {
-            standing.moved && standing.index == Holds::Head && standing.file != Holds::Head
-        })
+        refreshing.is_some()
+            || !standings
+                .iter()
+                .any(|standing| standing.moved && standing.index == Holds::Head)
     });
     let head = match left {
         Some(_) => Some(vcs.head_revision(repo)?.id().clone()),
@@ -7640,6 +7644,7 @@ pub fn refresh_drift(
     if vcs.head_revision(repo)?.id() != moved_to {
         return Ok(left_in_place(first, LeftWhy::MovedAgain));
     }
+    vcs.mark_refreshing(repo, moved_from, moved_to)?;
     let declined = |write: RefreshWrite, paths: &[String]| -> Result<Option<LeftWhy>, VcsError> {
         Ok(match write {
             RefreshWrite::Written => None,
@@ -8575,9 +8580,12 @@ fn drift_findings_standing(
         .merged
         .iter()
         .map(|at| {
+            let conflicted = vcs.unmerged_paths(at).is_ok_and(|u| !u.is_empty());
             (
                 at.clone(),
                 read_drift(vcs, at)
+                    .ok()
+                    .filter(|_| !conflicted)
                     .map(|reading| drift_findings(&reading))
                     .unwrap_or_default(),
             )

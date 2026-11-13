@@ -4157,6 +4157,21 @@ pub trait Vcs: Send + Sync {
     /// The lock a killed VCS process left on `repo`'s index, if any.
     fn index_lock(&self, repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError>;
 
+    /// Record in the checkout's own history that a refresh from `left` to
+    /// `head` has begun, so [`Vcs::refreshing_from`] answers `left` until
+    /// [`Vcs::record_checkout_at_head`] records it finished. Fails, recording
+    /// nothing, where HEAD no longer names `head`.
+    fn mark_refreshing(
+        &self,
+        repo: &Path,
+        left: &CommitId,
+        head: &CommitId,
+    ) -> Result<(), VcsError>;
+
+    /// The tip a refresh begun in `repo` and not recorded finished started
+    /// from, while HEAD has not moved since.
+    fn refreshing_from(&self, repo: &Path) -> Result<Option<CommitId>, VcsError>;
+
     /// Record in the checkout's own history that it stands at `head`, so
     /// [`Vcs::left_behind_at`] answers `None` until the branch next moves
     /// under it. Fails, recording nothing, where HEAD no longer names `head`.
