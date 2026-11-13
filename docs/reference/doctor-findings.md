@@ -1447,6 +1447,11 @@ stash what is left (`git -C <checkout> stash push`): nothing is committed and
 nothing is lost. Committing drift records the move's reverse on the branch.
 Then re-run.
 
+Where a path both the move and you changed is among them, `--fix` writes
+nothing to the checkout and refuses it as `edits` `moved and edited`:
+`rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
+keeping the working copy and index as a backup first.
+
 ### `working-tree-drift`
 
 A repo's working-tree files do not match its HEAD tree. Read path by path, as
@@ -1477,6 +1482,11 @@ cannot show, as for `live-staged`. `--fix` does not touch it.
 stash what is left (`git -C <checkout> stash push`): nothing is committed and
 nothing is lost. Committing drift records the move's reverse on the branch.
 Then re-run.
+
+Where a file both the move and you changed is among them, `--fix` writes
+nothing to the checkout and refuses it as `edits` `moved and edited`:
+`rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
+keeping the working copy and index as a backup first.
 
 ### `orphaned-savepoint`
 

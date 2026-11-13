@@ -241,6 +241,18 @@ content, which that tip holds, so nothing is lost that history does not hold.
 To keep such a return, commit it before rwv next reads the checkout. A path holding
 content other than the old tip's is an edit and is never replaced.
 
+A file the move changed that you edited too is neither. rwv does not
+refresh that checkout at all, because a partial refresh would erase what
+shows the move: it lists such files as `moved and edited`. `rwv doctor --fix
+--merge-edited-drift` merges each such edit onto the moved tip, against the
+tip the checkout was at, once the working copy and index are kept as a
+backup, refreshing the move's other files in the same run; a file the merge
+cannot resolve is left conflicted, both versions in it, for you to resolve
+and mark resolved. Setting the edits aside instead keeps everything,
+including the old tip's content at every path the move changed, so taking
+them back brings that content back too; commit nothing from there until
+the edits are on the moved tip.
+
 ## The shared invariant
 
 > rwv replaces a path only where its branch is shown to have moved under the

@@ -1275,6 +1275,13 @@ every_scenario!(
     a_landing_records_the_tip_of_a_member_it_does_not_move,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
+    moved_and_edited(scenarios::MovedAndEditedEnd::Stash),
+    moved_and_edited(scenarios::MovedAndEditedEnd::MergeClean),
+    moved_and_edited(scenarios::MovedAndEditedEnd::MergeConflict),
+    moved_and_edited(scenarios::MovedAndEditedEnd::Derived),
+    moved_and_edited(scenarios::MovedAndEditedEnd::TwoEdits),
+    moved_and_edited_doctor,
+    moved_and_edited_second_reading,
     drift_staged_return_after_a_hand_refresh,
     drift_staged_return_with_an_edit_is_kept,
     cross_repo_pr,
@@ -5461,7 +5468,57 @@ fn a_landing_contacts_no_remote_for_a_history_pin_it_lacks() {
 
 #[test]
 fn dc11_safe_drift_is_refreshed_before_edits_are_judged_and_the_moved_tip_lands() {
-    runner::run(scenarios::dc11_drift_before_dirt()).assert_green();
+    runner::run(scenarios::dc11_drift_before_dirt()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_file_moved_and_edited_set_aside_lets_the_landing_land() {
+    runner::run(scenarios::moved_and_edited(
+        scenarios::MovedAndEditedEnd::Stash,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_file_moved_and_edited_merged_cleanly_lands_with_both_changes() {
+    runner::run(scenarios::moved_and_edited(
+        scenarios::MovedAndEditedEnd::MergeClean,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_file_moved_and_edited_merged_with_a_conflict_is_unresolved_until_resolved() {
+    runner::run(scenarios::moved_and_edited(
+        scenarios::MovedAndEditedEnd::MergeConflict,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_derived_file_moved_and_edited_takes_the_moved_tip_and_keeps_the_edit_in_the_backup() {
+    runner::run(scenarios::moved_and_edited(
+        scenarios::MovedAndEditedEnd::Derived,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_file_moved_and_edited_twice_is_refused_by_the_merge_naming_stash() {
+    runner::run(scenarios::moved_and_edited(
+        scenarios::MovedAndEditedEnd::TwoEdits,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn plain_doctor_fix_writes_nothing_beside_a_file_moved_and_edited_and_refreshes_other_seats() {
+    runner::run(scenarios::moved_and_edited_doctor()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_of_edited_drift_whose_second_reading_differs_writes_nothing() {
+    runner::run(scenarios::moved_and_edited_second_reading()).assert_fully_decided_green();
 }
 
 #[test]

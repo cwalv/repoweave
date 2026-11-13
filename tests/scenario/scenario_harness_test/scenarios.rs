@@ -7737,8 +7737,9 @@ pub fn parallel_retire_fetch() -> Scenario {
 /// before edits are judged, and the landing carries the moved tip. Beside an
 /// edit to a file the move did not touch, the drift is still refreshed and the
 /// edit alone is refused, so the commit C13 offers cannot carry the move's
-/// reverse. A file both moved and edited is left as it stands; what the
-/// landing then offers is undecided.
+/// reverse. A file both moved and edited holds the whole checkout back,
+/// refused as `moved and edited`; the printed merge leaves it conflicted,
+/// refused as `unresolved` until resolved, and the landing then lands.
 pub fn dc11_drift_before_dirt() -> Scenario {
     scenario(
         "dc11 drift before dirt",
@@ -7784,12 +7785,340 @@ pub fn dc11_drift_before_dirt() -> Scenario {
             ),
             Step::hand_edit(&ww("w"), Repo::Lib, "moved-again.txt", "x", "mine"),
             Step::hand_commit(&a(), Repo::Lib, "proj--w", &[("moved-again.txt", "y\n")]),
-            Step::rwv(&ww("w"), &["land"]),
+            Step::rwv(&ww("w"), &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains(
+                    "rwv doctor --fix --merge-edited-drift",
+                ))
+                .claim(Claim::OutputContains("stash push"))
+                .claim(Claim::OutputLacks("refreshed drift")),
             Step::git(
                 &ww("w"),
                 Repo::Lib,
                 &["grep", "-q", "mine", "--", "moved-again.txt"],
             ),
+            Step::rwv_printed(&ww("w"), "rwv doctor --fix --merge-edited-drift")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::OutputContains("left conflicted")),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsUnresolved))
+                .claim(Claim::OutputContains("add <file>")),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["checkout", "--ours", "--", "moved-again.txt"],
+            ),
+            Step::git(&ww("w"), Repo::Lib, &["add", "moved-again.txt"]),
+            Step::git(&ww("w"), Repo::Lib, &["commit", "-q", "-m", "mine over y"]),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["grep", "-q", "mine", "main", "--", "moved-again.txt"],
+            ),
+        ],
+    )
+}
+
+/// How `moved_and_edited` ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovedAndEditedEnd {
+    /// The edits are set aside with the VCS's stash.
+    Stash,
+    /// The printed merge resolves the edit onto the moved tip.
+    MergeClean,
+    /// The printed merge leaves a conflict, which the operator resolves.
+    MergeConflict,
+    /// The edited file is declared derived: the merge takes the moved tip's.
+    Derived,
+    /// The edit is staged and edited again: the merge refuses, naming stash.
+    TwoEdits,
+}
+
+/// A seat whose `lib` branch is moved from the primary, changing
+/// `edited.txt`, `stale.txt` and the derived `DERIVED`, while the seat edits
+/// `edited.txt`. Landing refuses it as `moved and edited`, listing
+/// `edited.txt` alone, refreshing and recording nothing: `stale.txt` still
+/// holds the old tip's content, and landing again refuses the same way. Each
+/// printed choice is then run to a clean landing.
+pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
+    let at = ww("me");
+    let mut steps = vec![
+        create("me"),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "proj--me",
+            &[
+                (".gitattributes", "DERIVED merge=rwv-ours\n"),
+                ("edited.txt", "one\ntwo\nthree\n"),
+                ("stale.txt", "s\n"),
+                ("DERIVED", "base\n"),
+            ],
+        ),
+        Step::git(&at, Repo::Lib, &["reset", "-q", "--hard"]),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "proj--me",
+            &[
+                ("edited.txt", "one\ntwo\nTHREE\n"),
+                ("stale.txt", "s2\n"),
+                ("DERIVED", "moved\n"),
+            ],
+        ),
+        Step::rwv(&at, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+    ];
+    match end {
+        MovedAndEditedEnd::MergeConflict => steps.push(Step::hand_edit(
+            &at,
+            Repo::Lib,
+            "edited.txt",
+            "three",
+            "mine",
+        )),
+        MovedAndEditedEnd::Derived => steps.push(Step::hand_edit(
+            &at,
+            Repo::Lib,
+            "DERIVED",
+            "base",
+            "mine-derived",
+        )),
+        _ => steps.push(Step::hand_edit(&at, Repo::Lib, "edited.txt", "one", "ONE")),
+    }
+    if end == MovedAndEditedEnd::TwoEdits {
+        steps.push(Step::git(&at, Repo::Lib, &["add", "edited.txt"]));
+        steps.push(Step::hand_edit(&at, Repo::Lib, "edited.txt", "two", "TWO"));
+    }
+    let held = if end == MovedAndEditedEnd::Derived {
+        "    DERIVED"
+    } else {
+        "    edited.txt"
+    };
+    for _ in 0..2 {
+        steps.push(
+            Step::rwv(&at, &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains(held))
+                .claim(Claim::OutputLacks("    stale.txt"))
+                .claim(Claim::OutputLacks("refreshed drift")),
+        );
+        steps.push(
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+            )
+            .expect(Exit::Code(1)),
+        );
+    }
+    let merge = || Step::rwv_printed(&at, "rwv doctor --fix --merge-edited-drift");
+    let refreshed = || {
+        Step::git(
+            &at,
+            Repo::Lib,
+            &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+        )
+        .expect(Exit::Succeeds)
+    };
+    match end {
+        MovedAndEditedEnd::Stash => steps.extend([
+            Step::git(&at, Repo::Lib, &["stash", "push", "-q"]),
+            Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
+            Step::git(&at, Repo::Lib, &["stash", "list"]).claim(Claim::OutputContains("stash@{0}")),
+        ]),
+        MovedAndEditedEnd::MergeClean => steps.extend([
+            merge()
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::OutputContains("were merged onto")),
+            refreshed(),
+            Step::git(&at, Repo::Lib, &["grep", "-q", "ONE", "--", "edited.txt"]),
+            Step::git(&at, Repo::Lib, &["grep", "-q", "THREE", "--", "edited.txt"]),
+            Step::git(&at, Repo::Lib, &["diff", "--cached", "--quiet", "HEAD"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&at, &["land"]).expect(Exit::refuses(Repo::Lib, State::EditsDirty)),
+            Step::git(&at, Repo::Lib, &["commit", "-q", "-a", "-m", "ONE"]),
+            Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["grep", "-q", "ONE", "main", "--", "edited.txt"],
+            ),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["grep", "-q", "THREE", "main", "--", "edited.txt"],
+            ),
+        ]),
+        MovedAndEditedEnd::MergeConflict => steps.extend([
+            merge()
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::OutputContains("left conflicted")),
+            refreshed(),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["grep", "-q", "<<<<<<<", "--", "edited.txt"],
+            ),
+            Step::rwv(&at, &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsUnresolved))
+                .claim(Claim::OutputContains("    edited.txt"))
+                .claim(Claim::OutputLacks("commit your edits")),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["checkout", "--theirs", "--", "edited.txt"],
+            ),
+            Step::git(&at, Repo::Lib, &["add", "edited.txt"]),
+            Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["grep", "-q", "THREE", "main", "--", "edited.txt"],
+            ),
+        ]),
+        MovedAndEditedEnd::Derived => steps.extend([
+            merge()
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("kept as backup")),
+            refreshed(),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "DERIVED"],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["log", "--all", "-m", "--format=kept %s", "-Smine-derived"],
+            )
+            .claim(Claim::OutputContains("kept ")),
+            Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
+        ]),
+        MovedAndEditedEnd::TwoEdits => steps.extend([
+            merge()
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains("two versions of the edit"))
+                .claim(Claim::OutputLacks("kept as backup")),
+            Step::git(&at, Repo::Lib, &["grep", "-q", "TWO", "--", "edited.txt"]),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+            )
+            .expect(Exit::Code(1)),
+            Step::rwv(&at, &["land"]).expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited)),
+            Step::git(&at, Repo::Lib, &["stash", "push", "-q"]),
+            Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
+        ]),
+    }
+    scenario(
+        match end {
+            MovedAndEditedEnd::Stash => "moved and edited, set aside",
+            MovedAndEditedEnd::MergeClean => "moved and edited, merged cleanly",
+            MovedAndEditedEnd::MergeConflict => "moved and edited, merged with a conflict",
+            MovedAndEditedEnd::Derived => "moved and edited, a derived file takes the moved tip",
+            MovedAndEditedEnd::TwoEdits => "moved and edited, two versions of the edit",
+        },
+        steps,
+    )
+}
+
+/// Plain `rwv doctor --fix` names a checkout holding a file both moved and
+/// edited and writes nothing to it, while it still refreshes another seat's
+/// drift; `--merge-edited-drift` with no such checkout refuses.
+pub fn moved_and_edited_doctor() -> Scenario {
+    let me = ww("me");
+    scenario(
+        "moved and edited, plain doctor --fix",
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[("edited.txt", "a\n"), ("stale.txt", "s\n")],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[("edited.txt", "b\n"), ("stale.txt", "s2\n")],
+            ),
+            Step::hand_edit(&me, Repo::Lib, "edited.txt", "a", "mine"),
+            Step::hand_commit(&a(), Repo::App, "proj--me", &[("moved.txt", "m\n")]),
+            Step::rwv(&me, &["doctor", "--fix"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains(
+                    "rwv doctor --fix --merge-edited-drift",
+                )),
+            Step::git(
+                &me,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "stale.txt"],
+            )
+            .expect(Exit::Code(1)),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "mine", "--", "edited.txt"]),
+            Step::git(&me, Repo::App, &["status", "--porcelain"])
+                .claim(Claim::OutputLacks("moved.txt")),
+            Step::git(&me, Repo::Lib, &["stash", "push", "-q"]),
+            Step::rwv(&me, &["doctor", "--fix", "--merge-edited-drift"])
+                .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+                .claim(Claim::OutputContains(
+                    "no checkout here holds a file both moved",
+                )),
+        ],
+    )
+}
+
+/// A file read stale by `--merge-edited-drift`'s first reading is edited
+/// before its second: nothing is merged, refreshed or backed up, and running
+/// it again merges.
+pub fn moved_and_edited_second_reading() -> Scenario {
+    let me = ww("me");
+    scenario(
+        "moved and edited, a second reading that differs",
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[("edited.txt", "one\ntwo\nthree\n"), ("stale.txt", "s\n")],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[("edited.txt", "one\ntwo\nTHREE\n"), ("stale.txt", "s2\n")],
+            ),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&me, Repo::Lib, "edited.txt", "one", "ONE"),
+            Step::rwv_paused(
+                &me,
+                &["doctor", "--fix", "--merge-edited-drift"],
+                "drift-merge-read",
+                "merging",
+            ),
+            Step::hand_edit(&me, Repo::Lib, "stale.txt", "s", "late"),
+            Step::release("merging")
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains("nothing was merged or refreshed"))
+                .claim(Claim::OutputLacks("kept as backup")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "late", "--", "stale.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "three", "--", "edited.txt"]),
+            Step::hand_edit(&me, Repo::Lib, "stale.txt", "late", "s"),
+            Step::rwv(&me, &["doctor", "--fix", "--merge-edited-drift"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("were merged onto")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "THREE", "--", "edited.txt"]),
         ],
     )
 }
@@ -20593,8 +20922,8 @@ pub fn drift_staged_return_after_a_hand_refresh() -> Scenario {
 }
 
 /// A staged return after a hand refresh, one of whose files then gets content
-/// no commit holds: that file is an edit and is never replaced, and the
-/// landing refuses it.
+/// no commit holds: that file is both moved and edited, is never replaced,
+/// and holds the whole checkout.
 pub fn drift_staged_return_with_an_edit_is_kept() -> Scenario {
     let at = ww("q3-edit");
     scenario(
@@ -20613,7 +20942,7 @@ pub fn drift_staged_return_with_an_edit_is_kept() -> Scenario {
             Step::hand_edit(&at, Repo::Lib, "q3-edit.txt", "q3-edit", "mine"),
             Step::git(&at, Repo::Lib, &["add", "q3-edit.txt"]),
             Step::rwv(&at, &["land", "--history", "linear"])
-                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
                 .claim(Claim::OutputLacks("refreshed drift")),
             Step::git(
                 &at,

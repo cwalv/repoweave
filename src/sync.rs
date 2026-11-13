@@ -1786,6 +1786,9 @@ pub(crate) fn refresh_drift_after(
             if let Some(left) = outcome.describe_left_in_place(vcs, dir, "rwv doctor --fix") {
                 eprintln!("warning: rwv {verb}: {repo}: {left}");
             }
+            if let Some(held) = outcome.describe_held(vcs, dir) {
+                eprintln!("warning: rwv {verb}: {repo}: {held}");
+            }
             if let Some(unrecorded) = outcome.describe_unrecorded() {
                 eprintln!("warning: rwv {verb}: {repo}: {unrecorded}");
             }
@@ -5243,12 +5246,14 @@ fn judge_edits_beside_drift(
         .filter(|file| !reading.refreshes(file))
         .collect();
     match drifted {
-        Some(drifted) if reading.is_refreshable() => drifted.push(DriftedCheckout {
-            vcs,
-            at,
-            reading,
-            edits,
-        }),
+        Some(drifted) if reading.is_refreshable() || !reading.moved_and_edited().is_empty() => {
+            drifted.push(DriftedCheckout {
+                vcs,
+                at,
+                reading,
+                edits,
+            })
+        }
         _ => judge_edits_in(
             vcs.as_ref(),
             &at.repo,
@@ -5303,6 +5308,45 @@ fn settle_drift(
                 index_entries: refreshed.index_entries,
             });
         }
+        let elsewhere = |judging: crate::diagnosis::Judging| match &at.elsewhere {
+            Some(workspace) => judging.elsewhere(workspace),
+            None => judging,
+        };
+        if !outcome.held.is_empty() {
+            let (moved_from, moved_to) = (
+                checkout.reading.left.as_ref().map(CommitId::short),
+                checkout.reading.head.as_ref().map(CommitId::short),
+            );
+            report.add(
+                elsewhere(
+                    State::EditsMovedAndEdited
+                        .of(&at.repo)
+                        .subject(format!(
+                            "its branch moved from {} to {} outside this checkout",
+                            moved_from.unwrap_or_default(),
+                            moved_to.unwrap_or_default()
+                        ))
+                        .listing(&outcome.held),
+                )
+                .checkout(&at.dir)
+                .judge(vcs),
+            );
+            let others: Vec<String> = checkout
+                .edits
+                .iter()
+                .filter(|file| !outcome.held.contains(file))
+                .cloned()
+                .collect();
+            if !others.is_empty() {
+                report.add(
+                    elsewhere(State::EditsDirty.of(&at.repo).listing(others))
+                        .only(&[])
+                        .checkout(&at.dir)
+                        .judge(vcs),
+                );
+            }
+            continue;
+        }
         let Some(left) = outcome.left_in_place else {
             judge_edits_in(
                 vcs,
@@ -5313,10 +5357,6 @@ fn settle_drift(
                 report,
             );
             continue;
-        };
-        let elsewhere = |judging: crate::diagnosis::Judging| match &at.elsewhere {
-            Some(workspace) => judging.elsewhere(workspace),
-            None => judging,
         };
         let land_again = match left.why {
             crate::check::LeftWhy::Unresolved => crate::diagnosis::Form::DriftResolveThenLand,

@@ -155,6 +155,23 @@ impl AbandonLostPinsConsent {
     }
 }
 
+/// Proof that the operator consented to `rwv doctor --fix` merging edits
+/// onto a branch's moved tip, writing the merged files over the working copy
+/// once it is kept as a backup. Minted from `--merge-edited-drift`.
+///
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct MergeEditedDriftConsent(());
+
+impl MergeEditedDriftConsent {
+    /// Mint from the parsed `--merge-edited-drift` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(merge_edited_drift: bool) -> Option<Self> {
+        merge_edited_drift.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to releasing the landing claims and
 /// takeover guards `rwv doctor` reports as unreadable, giving up the claim a
 /// live landing of another rwv release may hold: every one, or only those on

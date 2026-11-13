@@ -756,6 +756,17 @@ fn path_state(repo: &Path, paths: &[&str]) -> String {
     out
 }
 
+/// The paths listed beneath the first line holding `state`.
+fn listing_under(stderr: &str, state: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .skip_while(|l| !l.contains(state))
+        .skip(1)
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim().to_owned())
+        .collect()
+}
+
 /// The paths an `edits dirty` refusal lists.
 fn edits_listing(stderr: &str) -> Vec<String> {
     stderr
@@ -810,8 +821,18 @@ fn moved_edit_is_kept(shape: MovedShape, staging: Staging, phase: Phase, side: S
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
-    let listing = edits_listing(&stderr);
+    let held = phase == Phase::Drifted && shape != MovedShape::Revert;
+    let stderr = common::cli::refused(
+        &out,
+        match held {
+            true => State::EditsMovedAndEdited,
+            false => State::EditsDirty,
+        },
+    );
+    let listing = match held {
+        true => listing_under(&stderr, "edits moved and edited"),
+        false => edits_listing(&stderr),
+    };
     for path in &touched {
         assert!(
             listing.iter().any(|l| l == path),
@@ -1218,9 +1239,10 @@ fn source_head(f: &Fixture) -> String {
 
 /// A file saved while the refresh is about to write is git's to refuse over:
 /// nothing is written, the landing names the drift left in place and offers
-/// to land again, and landing again refreshes everything but the edit.
+/// to land again, and landing again finds the file both moved and edited,
+/// which holds the whole checkout.
 #[test]
-fn an_edit_saved_as_the_refresh_starts_is_kept_and_landing_again_refreshes_the_rest() {
+fn an_edit_saved_as_the_refresh_starts_is_kept_and_landing_again_holds_the_checkout() {
     let f = fixture();
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
@@ -1240,18 +1262,15 @@ fn an_edit_saved_as_the_refresh_starts_is_kept_and_landing_again_refreshes_the_r
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
     assert_eq!(
-        edits_listing(&stderr),
+        listing_under(&stderr, "edits moved and edited"),
         vec!["notes.txt".to_owned()],
         "{stderr}"
     );
-    assert!(
-        stderr.contains("refreshed drift") && stderr.contains("new.txt"),
-        "{stderr}"
-    );
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
-    assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{stderr}");
 }
 
 /// The checkout takes part of the move by hand after the landing first read
@@ -1365,9 +1384,11 @@ fn a_file_deleted_as_the_refresh_starts_stays_deleted() {
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
     assert!(
-        edits_listing(&stderr).iter().any(|l| l == "notes.txt"),
+        listing_under(&stderr, "edits moved and edited")
+            .iter()
+            .any(|l| l == "notes.txt"),
         "{stderr}"
     );
     assert_eq!(read(&f.ww_lib.join("notes.txt")), None, "{stderr}");
@@ -1530,13 +1551,13 @@ fn a_declined_file_write_leaves_the_index_entries_and_records_nothing() {
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
     assert!(
-        stderr.contains("these index entries were reset") && stderr.contains("spare.txt"),
-        "the next landing still reads the index entry as drift:\n{stderr}"
+        !stderr.contains("refreshed drift"),
+        "a file both moved and edited holds the whole checkout:\n{stderr}"
     );
     assert_eq!(
-        edits_listing(&stderr),
+        listing_under(&stderr, "edits moved and edited"),
         vec!["notes.txt".to_owned()],
         "{stderr}"
     );
@@ -1570,16 +1591,14 @@ fn a_declined_index_entry_write_puts_the_written_files_back() {
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
-    assert!(
-        stderr.contains("refreshed drift") && stderr.contains("notes.txt"),
-        "{stderr}"
-    );
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert!(!stderr.contains("refreshed drift"), "{stderr}");
     assert_eq!(
-        edits_listing(&stderr),
+        listing_under(&stderr, "edits moved and edited"),
         vec!["spare.txt".to_owned()],
         "{stderr}"
     );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
     assert_eq!(read(&f.ww_lib.join("spare.txt")).as_deref(), Some("mine\n"));
 }
 
@@ -1702,10 +1721,11 @@ fn a_move_turning_a_directory_into_a_file_is_refreshed_whole() {
 }
 
 /// `rwv doctor --fix` held as it is about to write, a file saved meanwhile:
-/// the fix names the drift left in place and its route, running that route
-/// refreshes the rest, and the saved file is kept throughout.
+/// the fix names the drift left in place and its route; running that route
+/// finds the file both moved and edited and writes nothing to the checkout,
+/// and the saved file is kept throughout.
 #[test]
-fn doctor_fix_names_a_declined_write_and_running_it_again_refreshes_the_rest() {
+fn doctor_fix_names_a_declined_write_and_running_it_again_holds_the_checkout() {
     let f = fixture();
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
@@ -1728,11 +1748,8 @@ fn doctor_fix_names_a_declined_write_and_running_it_again_refreshes_the_rest() {
 
     let out = fix(&f, Side::Source);
 
-    let said = common::cli::describe(&out);
-    assert!(
-        said.contains("refreshed drift") && said.contains("new.txt"),
-        "{said}"
-    );
+    let said = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert!(!said.contains("refreshed drift"), "{said}");
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
-    assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
+    assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{said}");
 }

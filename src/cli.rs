@@ -253,6 +253,15 @@ pub enum Commands {
         /// or the active project names.
         #[arg(long, requires = "fix", value_name = "TARGET", conflicts_with = "all")]
         release_unreadable_claims_on: Option<String>,
+        /// With `--fix`, in each checkout whose branch moved under it and
+        /// that holds files both that move and an edit here changed, merge
+        /// each such file's edit onto the moved tip, against the tip the
+        /// checkout was at, and refresh the move's other files, keeping the
+        /// working copy and index as a backup first; a file the merge does not
+        /// resolve is left conflicted. Without this flag, `--fix` writes
+        /// nothing to such a checkout and names it.
+        #[arg(long)]
+        merge_edited_drift: bool,
         /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,

@@ -485,7 +485,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"read-tree\", \"-m\"",
         count: 1,
-        callers: &[("refresh_paths_if_left", 4)],
+        callers: &[("refresh_paths_if_left", 5)],
         justification: "refresh_paths_if_left, the one write of a drift \
             refresh: a two-way merge from the moved-from tip to that tip's \
             tree with the stale paths taken from HEAD, so in an index that \
@@ -503,7 +503,32 @@ const ALLOWLIST: &[Allowed] = &[
             check::read_drift agree are stale, and the put-back of the files \
             scope with the two tips swapped when the index-only scope is \
             declined after it, which git refuses unless each path still holds \
-            what the first write put there.",
+            what the first write put there; and check::merge_edited_drift, \
+            which makes the same two writes and the same put-back on paths a \
+            second reading agrees are stale, after the checkout's working \
+            copy and index are kept as a backup.",
+    },
+    Allowed {
+        file: "git/working_copy_merge.rs",
+        pattern: "remove_dir_all",
+        count: 1,
+        callers: &[],
+        justification: "merge_into_working_copy: removes the scratch \
+            directory it wrote the three blobs of each merge into, named for \
+            this process under the checkout's private git directory; no \
+            tracked or untracked file of the checkout is in it.",
+    },
+    Allowed {
+        file: "git/working_copy_merge.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "merge_into_working_copy: removes a working file only \
+            where the repo declares the path derived and the incoming tip \
+            removed it, the merge taking the incoming side. Reached only \
+            through check::merge_edited_drift, whose before_write keeps the \
+            checkout's working copy and index as a backup first, and only once \
+            the file still holds what was read when the merge was computed.",
     },
     Allowed {
         file: "git/backup.rs",

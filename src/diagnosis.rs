@@ -518,6 +518,8 @@ impl Finding {
 pub enum State {
     EditsDirty,
     EditsDriftLeftInPlace,
+    EditsMovedAndEdited,
+    EditsUnresolved,
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
@@ -619,9 +621,11 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 86] = [
+    pub const ALL: [State; 88] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
+        Self::EditsMovedAndEdited,
+        Self::EditsUnresolved,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
@@ -746,6 +750,34 @@ impl State {
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
                              workspace",
                 offers: &[Form::DriftLandAgain, Form::DriftResolveThenLand],
+                verb_offers: &[],
+            },
+            Self::EditsMovedAndEdited => &StateRow {
+                axis: Axis::Edits,
+                name: "moved and edited",
+                means: "the checkout's branch moved under it from another checkout, and each \
+                        listed file was changed both by that move and by an uncommitted edit \
+                        here. Nothing in the checkout is refreshed while such a file stands, so \
+                        the move's other files still hold the old tip's content and a commit \
+                        there would record the move's reverse; the checkout's other edits are \
+                        listed beside it with no choice of their own. Setting the edits aside \
+                        sets aside the old tip's content with them, and taking them back brings \
+                        it back",
+                refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
+                             workspace; `rwv doctor --fix` and `rwv sync` name it and write \
+                             nothing to that checkout",
+                offers: &[Form::MergeEditedDrift, Form::SetEditsAside],
+                verb_offers: &[],
+            },
+            Self::EditsUnresolved => &StateRow {
+                axis: Axis::Edits,
+                name: "unresolved",
+                means: "the checkout holds conflicted files, listed, with no operation in \
+                        progress, as a merge of edits onto a moved tip leaves the files it \
+                        could not resolve: each holds both versions between conflict markers, \
+                        and no commit is possible until each is resolved and marked resolved",
+                refused_by: "every verb that refuses a `dirty` checkout, in its place",
+                offers: &[Form::ResolveConflicts],
                 verb_offers: &[],
             },
             Self::EditsMidOperation => &StateRow {
@@ -1927,6 +1959,9 @@ pub enum ChoiceId {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    MergeEditedDrift,
+    SetEditsAside,
+    ResolveConflicts,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2184,6 +2219,25 @@ impl ChoiceId {
                 keeps_work: "a merge commits it in the merge; a replay makes it part of the \
                              replayed tip; it stops again while the staged file does not parse",
             },
+            Self::MergeEditedDrift => &ChoiceRow {
+                id: None,
+                phrase: "merge each listed file's edit onto the moved tip, refreshing the \
+                         move's other files",
+                keeps_work: "the working copy and index are kept as a backup before anything \
+                             is written; a file the merge does not resolve is left conflicted, \
+                             holding both versions",
+            },
+            Self::SetEditsAside => &ChoiceRow {
+                id: None,
+                phrase: "set the edits aside, the old tip's content with them",
+                keeps_work: "the stash keeps every difference; taking it back brings the old \
+                             tip's content back too",
+            },
+            Self::ResolveConflicts => &ChoiceRow {
+                id: None,
+                phrase: "resolve each conflicted file, then mark it resolved",
+                keeps_work: "nothing is written but what you write",
+            },
             Self::LandAgain => &ChoiceRow {
                 id: None,
                 phrase: "land again once nothing else is changing the checkout: the landing \
@@ -2389,6 +2443,9 @@ pub enum Form {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    MergeEditedDrift,
+    SetEditsAside,
+    ResolveConflicts,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2416,7 +2473,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 99] = [
+    pub const ALL: [Form; 102] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2516,6 +2573,9 @@ impl Form {
         Self::AbortOperation,
         Self::StageParsingManifest,
         Self::ResumeWithManifest,
+        Self::MergeEditedDrift,
+        Self::SetEditsAside,
+        Self::ResolveConflicts,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3056,6 +3116,24 @@ impl Form {
             Self::MigrateLockDriver => &FormRow {
                 choice: C::MigrateLockDriver,
                 steps: &[Rwv("rwv doctor --fix")],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::MergeEditedDrift => &FormRow {
+                choice: C::MergeEditedDrift,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::SetEditsAside => &FormRow {
+                choice: C::SetEditsAside,
+                steps: &[Vcs(A::Stash)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::ResolveConflicts => &FormRow {
+                choice: C::ResolveConflicts,
+                steps: &[Vcs(A::MarkResolved)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -3947,7 +4025,12 @@ pub fn judge_edits(
     let mut judging = match vcs.mid_operation(dir) {
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
         None if dirty.is_empty() => return None,
-        None => State::EditsDirty.of(repo).listing(dirty),
+        None => match vcs.unmerged_paths(dir) {
+            Ok(conflicted) if !conflicted.is_empty() => {
+                State::EditsUnresolved.of(repo).listing(conflicted)
+            }
+            _ => State::EditsDirty.of(repo).listing(dirty),
+        },
     };
     if let Some(workspace) = elsewhere {
         judging = judging.elsewhere(workspace);

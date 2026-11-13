@@ -13,7 +13,7 @@ use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
     CommitId, Holds, PathStanding, RawRevisionId, RefreshScope, RefreshWrite, ResolvedRevisionId,
-    VcsError,
+    VcsError, WorkingCopyMerge,
 };
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
@@ -7301,6 +7301,16 @@ impl DriftReading {
         self.named(PathDrift::StaleIndexEntry)
     }
 
+    /// The paths both the move and an edit here changed, of those the VCS
+    /// compares with their recorded entries.
+    pub fn moved_and_edited(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .filter(|(p, d)| *d == PathDrift::MovedAndEdited && p.compared)
+            .map(|(p, _)| p.path.clone())
+            .collect()
+    }
+
     pub fn is_refreshable(&self) -> bool {
         self.paths
             .iter()
@@ -7469,6 +7479,9 @@ pub struct DriftRefresh {
     pub refreshed: Option<Refreshed>,
     pub left_in_place: Option<LeftInPlace>,
     pub unrecorded: Option<String>,
+    /// Files both moved and edited, for which nothing in the checkout was
+    /// written.
+    pub held: Vec<String>,
 }
 
 impl DriftRefresh {
@@ -7498,6 +7511,23 @@ impl DriftRefresh {
         ))
     }
 
+    /// The line naming the files both moved and edited that held the whole
+    /// checkout back, after its label, with the choices that clear it.
+    pub fn describe_held(&self, vcs: &dyn crate::vcs::Vcs, dir: &Path) -> Option<String> {
+        if self.held.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "drift held: these files were changed both by the branch's move and by an edit \
+             here, so nothing in this checkout is refreshed; merge each edit onto the moved \
+             tip with `rwv doctor --fix --merge-edited-drift`, or set the edits aside, the old \
+             tip's content with them, with `{}`: {}",
+            vcs.hint(crate::vcs::VcsAction::Stash)
+                .replace("<checkout>", &dir.display().to_string()),
+            self.held.join(", ")
+        ))
+    }
+
     /// The line saying the refresh went unrecorded, after the checkout's label.
     pub fn describe_unrecorded(&self) -> Option<String> {
         self.unrecorded.as_ref().map(|said| {
@@ -7520,6 +7550,13 @@ pub fn refresh_drift(
     let (Some(moved_from), Some(moved_to)) = (&reading.left, &reading.head) else {
         return Ok(DriftRefresh::default());
     };
+    let held = reading.moved_and_edited();
+    if !held.is_empty() {
+        return Ok(DriftRefresh {
+            held,
+            ..DriftRefresh::default()
+        });
+    }
     if !reading.is_refreshable() {
         return Ok(DriftRefresh::default());
     }
@@ -7638,7 +7675,213 @@ pub fn refresh_drift(
             .record_checkout_at_head(repo, moved_to)
             .err()
             .map(|e| format!("{e:#}")),
+        held: Vec::new(),
     })
+}
+
+/// What [`merge_edited_drift`] did in one checkout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditedDriftMerge {
+    /// No move of the checkout's branch under it is shown, so there is no
+    /// tip it was at to merge from.
+    NoMove,
+    /// The checkout holds no file both moved and edited.
+    NothingHeld,
+    /// Nothing was written.
+    LeftInPlace(LeftInPlace),
+    /// Nothing was written: these files each hold two versions of the
+    /// operator's edit, one staged and another in the working copy.
+    TwoEdits(Vec<String>),
+    Merged {
+        backup: Option<String>,
+        refreshed: Refreshed,
+        clean: Vec<String>,
+        conflicted: Vec<String>,
+        unrecorded: Option<String>,
+    },
+}
+
+impl EditedDriftMerge {
+    /// The report line, after the checkout's label; `Err` for an outcome
+    /// that wrote nothing where the operator asked for a merge.
+    pub fn describe(&self, vcs: &dyn crate::vcs::Vcs, dir: &Path) -> Result<String, String> {
+        let stash = vcs
+            .hint(crate::vcs::VcsAction::Stash)
+            .replace("<checkout>", &dir.display().to_string());
+        match self {
+            Self::NoMove => Err(
+                "no move of its branch under it is shown, so there is no tip \
+                                 it was at to merge an edit from; its edits are edits"
+                    .to_owned(),
+            ),
+            Self::NothingHeld => Err("no file in it was changed both by its branch's move and \
+                                      by an edit"
+                .to_owned()),
+            Self::LeftInPlace(left) => Err(format!(
+                "nothing was merged or refreshed ({}); run `rwv doctor --fix \
+                 --merge-edited-drift` again, which reads it afresh: {}",
+                left.describe(),
+                left.paths.join(", ")
+            )),
+            Self::TwoEdits(paths) => Err(format!(
+                "nothing was merged: these files hold two versions of an edit, one staged \
+                 and another in the working copy, and no merge chooses between them; set the \
+                 edits aside with `{stash}`: {}",
+                paths.join(", ")
+            )),
+            Self::Merged {
+                backup,
+                refreshed,
+                clean,
+                conflicted,
+                unrecorded: _,
+            } => {
+                let mut said = String::new();
+                if let Some(backup) = backup {
+                    said.push_str(&format!(
+                        "its working copy and index are kept as backup {backup} \
+                         (`rwv backup list`); "
+                    ));
+                }
+                said.push_str(&refreshed.describe());
+                if !clean.is_empty() {
+                    said.push_str(&format!(
+                        "; these edits were merged onto {}'s content and stand as edits: {}",
+                        refreshed.moved_to.short(),
+                        clean.join(", ")
+                    ));
+                }
+                if !conflicted.is_empty() {
+                    said.push_str(&format!(
+                        "; these did not merge and are left conflicted, holding both versions: \
+                         resolve each, then `{}`: {}",
+                        vcs.hint(crate::vcs::VcsAction::MarkResolved)
+                            .replace("<checkout>", &dir.display().to_string()),
+                        conflicted.join(", ")
+                    ));
+                }
+                Ok(said)
+            }
+        }
+    }
+}
+
+/// Merge each file `reading` found both moved and edited onto the tip its
+/// branch moved to, against the tip the checkout was at, refreshing the
+/// move's other files, once a second reading taken immediately before agrees
+/// with the first. Before anything is written the checkout's working copy and
+/// index are kept as a backup; then the move's other files are refreshed,
+/// whole or not at all, and only then are the merged files written. The
+/// checkout is recorded at its HEAD once every write is made.
+pub fn merge_edited_drift(
+    vcs: &dyn crate::vcs::Vcs,
+    repo: &Path,
+    reading: &DriftReading,
+) -> Result<EditedDriftMerge, VcsError> {
+    let (Some(moved_from), Some(moved_to)) = (&reading.left, &reading.head) else {
+        return Ok(EditedDriftMerge::NoMove);
+    };
+    let held = reading.moved_and_edited();
+    if held.is_empty() {
+        return Ok(EditedDriftMerge::NothingHeld);
+    }
+    let classified = |r: &DriftReading| {
+        (
+            r.stale_files(),
+            r.stale_index_entries(),
+            r.moved_and_edited(),
+        )
+    };
+    let every = |r: &DriftReading| -> Vec<String> {
+        let (files, entries, both) = classified(r);
+        files.into_iter().chain(entries).chain(both).collect()
+    };
+    crate::test_pause::point("drift-merge-read");
+    let now = read_drift(vcs, repo)?;
+    if (&now.left, &now.head) != (&reading.left, &reading.head)
+        || classified(&now) != classified(reading)
+    {
+        let why = match vcs.head_revision(repo)?.id() == moved_to {
+            true => LeftWhy::Changed,
+            false => LeftWhy::MovedAgain,
+        };
+        return Ok(EditedDriftMerge::LeftInPlace(LeftInPlace {
+            paths: every(reading),
+            why,
+        }));
+    }
+    let files = reading.stale_files();
+    let index_entries = reading.stale_index_entries();
+    let mut backup = None;
+    let mut stopped = None;
+    let refreshing = |scope, paths: &[String], from: &CommitId, to: &CommitId| {
+        vcs.refresh_paths_if_left(repo, from, to, paths, scope)
+    };
+    let why = |write: RefreshWrite| match write {
+        RefreshWrite::Written => None,
+        RefreshWrite::Unresolved => Some(LeftWhy::Unresolved),
+        RefreshWrite::Declined { vcs_said } => Some(LeftWhy::Failed(vcs_said)),
+    };
+    let outcome = vcs.merge_into_working_copy(
+        repo,
+        moved_from,
+        moved_to,
+        &held,
+        crate::vcs::DerivedContentPolicy::keep_incoming_side(),
+        &mut || {
+            crate::test_pause::point("drift-merge-write");
+            if vcs.head_revision(repo)?.id() != moved_to {
+                stopped = Some(LeftWhy::MovedAgain);
+                return Ok(false);
+            }
+            backup = vcs
+                .backup_edits(repo)?
+                .map(|kept| kept.backup().name.to_string());
+            let written = refreshing(RefreshScope::IndexAndFiles, &files, moved_from, moved_to)?;
+            if let Some(left) = why(written) {
+                stopped = Some(left);
+                return Ok(false);
+            }
+            let written = refreshing(
+                RefreshScope::IndexOnly,
+                &index_entries,
+                moved_from,
+                moved_to,
+            )?;
+            if let Some(left) = why(written) {
+                refreshing(RefreshScope::IndexAndFiles, &files, moved_to, moved_from)?;
+                stopped = Some(left);
+                return Ok(false);
+            }
+            Ok(true)
+        },
+    )?;
+    let left = |why: LeftWhy| {
+        Ok(EditedDriftMerge::LeftInPlace(LeftInPlace {
+            paths: every(reading),
+            why,
+        }))
+    };
+    match outcome {
+        WorkingCopyMerge::TwoEdits(paths) => Ok(EditedDriftMerge::TwoEdits(paths)),
+        WorkingCopyMerge::Declined { .. } => left(LeftWhy::Changed),
+        WorkingCopyMerge::Stopped => left(stopped.unwrap_or(LeftWhy::Changed)),
+        WorkingCopyMerge::Merged { clean, conflicted } => Ok(EditedDriftMerge::Merged {
+            backup,
+            refreshed: Refreshed {
+                moved_from: moved_from.clone(),
+                moved_to: moved_to.clone(),
+                files,
+                index_entries,
+            },
+            clean,
+            conflicted,
+            unrecorded: vcs
+                .record_checkout_at_head(repo, moved_to)
+                .err()
+                .map(|e| format!("{e:#}")),
+        }),
+    }
 }
 
 /// The `index-drift` and `working-tree-drift` findings one checkout's reading
@@ -8007,12 +8250,21 @@ fn unreadable_claim_text(seen: &[u8]) -> String {
     }
 }
 
+/// Files both moved and edited, as `--fix` meets them: whether it may merge
+/// them, the checkouts it wrote nothing to, and whether any held such a file.
+struct HeldDrift {
+    merging: Option<crate::cli::consent::MergeEditedDriftConsent>,
+    refused: crate::diagnosis::Report,
+    merge_found: bool,
+}
+
 fn apply_finding_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
     violations: Vec<CheckViolation>,
     repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
     release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
+    held: &mut HeldDrift,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let vcs = world.vcs.as_ref();
@@ -8064,6 +8316,104 @@ fn apply_finding_repairs(
 
     let mut refreshed_checkouts: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
+    let mut held_checkouts = std::collections::HashSet::new();
+    let mut drifted: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for v in &violations {
+        if let CheckViolation::IndexDrift {
+            workweave, repo, ..
+        }
+        | CheckViolation::WorkingTreeDrift {
+            workweave, repo, ..
+        } = v
+        {
+            if let Some(repo_abs) = repo_locations.get(&(workweave.clone(), repo.clone())) {
+                if !drifted.iter().any(|(_, at)| at == repo_abs) {
+                    drifted.push((location_of(workweave, repo), repo_abs.clone()));
+                }
+            }
+        }
+    }
+    let mut merged_any = false;
+    for (location, repo_abs) in &drifted {
+        let reading = match read_drift(vcs, repo_abs) {
+            Ok(reading) if !reading.moved_and_edited().is_empty() => reading,
+            Ok(_) => continue,
+            Err(e) => {
+                fix_errors.push(format!("{location}: drift could not be read: {e:#}"));
+                continue;
+            }
+        };
+        held_checkouts.insert(repo_abs.clone());
+        let moved = format!(
+            "its branch moved from {} to {} outside this checkout",
+            reading
+                .left
+                .as_ref()
+                .map(CommitId::short)
+                .unwrap_or_default(),
+            reading
+                .head
+                .as_ref()
+                .map(CommitId::short)
+                .unwrap_or_default()
+        );
+        let judged = |subject: String, listing: Vec<String>| {
+            crate::diagnosis::State::EditsMovedAndEdited
+                .of(location)
+                .subject(subject)
+                .listing(listing)
+                .checkout(repo_abs)
+        };
+        if held.merging.is_none() {
+            held.refused
+                .add(judged(moved, reading.moved_and_edited()).judge(vcs));
+            continue;
+        }
+        merged_any = true;
+        match self::merge_edited_drift(vcs, repo_abs, &reading) {
+            Ok(EditedDriftMerge::TwoEdits(paths)) => held.refused.add(
+                judged(
+                    format!(
+                        "{moved}; these hold two versions of the edit, one staged and another \
+                         in the working copy, and no merge chooses between them"
+                    ),
+                    paths,
+                )
+                .only_forms(&[crate::diagnosis::Form::SetEditsAside])
+                .judge(vcs),
+            ),
+            Ok(EditedDriftMerge::LeftInPlace(left)) => held.refused.add(
+                judged(
+                    format!(
+                        "{moved}; nothing was merged or refreshed: {}",
+                        left.describe()
+                    ),
+                    reading.moved_and_edited(),
+                )
+                .judge(vcs),
+            ),
+            Ok(outcome) => match outcome.describe(vcs, repo_abs) {
+                Ok(said) => {
+                    outln!("[fixed] core: drift in {location}: {said}");
+                    if let EditedDriftMerge::Merged {
+                        unrecorded: Some(unrecorded),
+                        ..
+                    } = &outcome
+                    {
+                        fix_errors.push(format!(
+                            "{location}: the merge was written but could not be recorded in \
+                             the checkout: {unrecorded}"
+                        ));
+                    }
+                    held_checkouts.remove(repo_abs);
+                    refreshed_checkouts.insert(repo_abs.clone());
+                }
+                Err(said) => fix_errors.push(format!("{location}: {said}")),
+            },
+            Err(e) => fix_errors.push(format!("{location}: merging edited drift failed: {e:#}")),
+        }
+    }
+    held.merge_found = merged_any;
     for v in violations {
         if matches!(v.fix_disposition(), FixDisposition::ReportOnly) {
             kept.push(v);
@@ -8183,6 +8533,7 @@ fn apply_finding_repairs(
                 repo,
                 kind: WorkingTreeDriftKind::SafeToFix,
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) if held_checkouts.contains(repo_abs) => false,
                 Some(repo_abs) if !refreshed_checkouts.insert(repo_abs.clone()) => true,
                 Some(repo_abs) => {
                     let location = location_of(workweave, repo);
@@ -8956,6 +9307,7 @@ pub fn run_check(
     scope: Scope,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
+    merge_edited_drift: Option<crate::cli::consent::MergeEditedDriftConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
@@ -8966,6 +9318,11 @@ pub fn run_check(
     crate::health_floor::enforce(ctx.primary_path())?;
 
     let mut fix_errors: Vec<String> = Vec::new();
+    let mut held = HeldDrift {
+        merging: merge_edited_drift,
+        refused: crate::diagnosis::Report::default(),
+        merge_found: false,
+    };
     let fix = repair == Repair::Apply;
 
     if fix {
@@ -8995,6 +9352,7 @@ pub fn run_check(
             violations,
             &findings.repo_locations,
             release_unreadable_claims,
+            &mut held,
             &mut fix_errors,
         );
         findings.violations = repair_member_permissions(
@@ -9060,6 +9418,15 @@ pub fn run_check(
         }
     }
 
+    held.refused.into_result()?;
+    if fix && merge_edited_drift.is_some() && !held.merge_found {
+        crate::refuse!(
+            crate::refusal::RefusalKind::InapplicableFlag,
+            "--merge-edited-drift: no checkout here holds a file both moved by its branch and \
+             edited, so there is no edit to merge onto a moved tip; where no move of a \
+             checkout's branch under it is shown, its differences are edits"
+        );
+    }
     Ok(verdict)
 }
 

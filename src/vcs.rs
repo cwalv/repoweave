@@ -2485,6 +2485,23 @@ pub enum RefreshWrite {
     Unresolved,
 }
 
+/// What [`Vcs::merge_into_working_copy`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkingCopyMerge {
+    Merged {
+        clean: Vec<String>,
+        conflicted: Vec<String>,
+    },
+    /// Nothing was written: these paths each hold two versions of an edit,
+    /// one recorded and another in the working copy.
+    TwoEdits(Vec<String>),
+    /// Nothing was written: a path changed while the merge was computed, or
+    /// the VCS could not write. `vcs_said` is for the operator only.
+    Declined { vcs_said: String },
+    /// Nothing was written: the caller's `before_write` stopped it.
+    Stopped,
+}
+
 /// One path of a checkout whose index entry or file differs from `HEAD`, or
 /// that the move under it changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2494,6 +2511,9 @@ pub struct PathStanding {
     pub moved: bool,
     pub index: Holds,
     pub file: Holds,
+    /// The VCS compares this path's file with its recorded entry: it has one,
+    /// or no file stands there, and nothing marks it to be skipped.
+    pub compared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4056,6 +4076,29 @@ pub trait Vcs: Send + Sync {
         paths: &[String],
         scope: RefreshScope,
     ) -> Result<RefreshWrite, VcsError>;
+
+    /// Three-way merge each of `paths`: its content at `base`, the working
+    /// copy's, and its content at `incoming`, writing the result to the
+    /// working copy. A path that merges cleanly is recorded as `incoming`
+    /// holds it, the merge standing as an uncommitted edit; one that does not
+    /// is marked conflicted as the VCS marks a conflicted merge. A path
+    /// `derived` resolves takes the side it names, `incoming` being the side
+    /// brought in. Each path's recorded entry must hold `base`'s content or
+    /// the working copy's; where one holds neither the answer is
+    /// [`WorkingCopyMerge::TwoEdits`], and where any path's entry or working
+    /// copy changes while the merge is computed, [`WorkingCopyMerge::Declined`];
+    /// either way nothing is written. `before_write` runs once every check
+    /// has passed and before anything is written; where it answers `false`,
+    /// nothing is, and the answer is [`WorkingCopyMerge::Stopped`].
+    fn merge_into_working_copy(
+        &self,
+        repo: &Path,
+        base: &CommitId,
+        incoming: &CommitId,
+        paths: &[String],
+        derived: DerivedContentPolicy,
+        before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+    ) -> Result<WorkingCopyMerge, VcsError>;
 
     /// Record in the checkout's own history that it stands at `head`, so
     /// [`Vcs::left_behind_at`] answers `None` until the branch next moves

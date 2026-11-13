@@ -1207,6 +1207,7 @@ pub fn run() -> anyhow::Result<()> {
             abandon_lost_pins,
             release_unreadable_claims,
             release_unreadable_claims_on,
+            merge_edited_drift,
             kind,
             project,
         }) => {
@@ -1220,6 +1221,8 @@ pub fn run() -> anyhow::Result<()> {
                 release_unreadable_claims,
                 release_unreadable_claims_on,
             );
+            let merge_edited_drift =
+                consent::MergeEditedDriftConsent::from_flag(merge_edited_drift);
             // Validated at the boundary: an unknown kind refuses here,
             // before any scan runs, naming the valid set.
             let kind_filter = if kind.is_empty() {
@@ -1242,6 +1245,7 @@ pub fn run() -> anyhow::Result<()> {
                     scope,
                     abandon_lost_pins,
                     release_unreadable_claims,
+                    merge_edited_drift,
                     kind_filter.as_ref(),
                 )?
             };

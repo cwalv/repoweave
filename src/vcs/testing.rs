@@ -1238,6 +1238,18 @@ impl Vcs for FakeVcs {
         unsupported("refresh_paths_if_left")
     }
 
+    fn merge_into_working_copy(
+        &self,
+        _repo: &Path,
+        _base: &CommitId,
+        _incoming: &CommitId,
+        _paths: &[String],
+        _derived: crate::vcs::DerivedContentPolicy,
+        _before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+    ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
+        unsupported("merge_into_working_copy")
+    }
+
     fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {
         unsupported("record_checkout_at_head")
     }

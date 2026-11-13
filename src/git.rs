@@ -36,6 +36,7 @@ mod records;
 mod replay;
 #[cfg(test)]
 mod restore_plan_tests;
+mod working_copy_merge;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -1039,7 +1040,7 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
     refresh_stat_data(repo);
     let file_vs_head = changed_against(repo, "HEAD", false)?;
     let index_vs_head = changed_against(repo, "HEAD", true)?;
-    let (moved, file_vs_left, index_vs_left, unwatched) = match left {
+    let (moved, file_vs_left, index_vs_left, unwatched, indexed) = match left {
         Some(left) => (
             nul_terminated_fields(&GitVcs::run(
                 [
@@ -1058,6 +1059,9 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
             changed_against(repo, left.as_str(), false)?,
             changed_against(repo, left.as_str(), true)?,
             unwatched_entries(repo)?,
+            nul_terminated_fields(&GitVcs::run(["ls-files", "-z"], repo)?)
+                .into_iter()
+                .collect::<BTreeSet<String>>(),
         ),
         None => Default::default(),
     };
@@ -1093,6 +1097,9 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
                 true => Holds::Other,
                 false => side(&file_vs_head, &file_vs_left, path),
             },
+            compared: left.is_none()
+                || (!unwatched.contains(path)
+                    && (indexed.contains(path) || nothing_on_disk(repo, path))),
         })
         .collect();
     let removed: BTreeSet<String> = standings
@@ -1145,6 +1152,21 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
         }
     }
     Ok(standings)
+}
+
+/// Whether neither `path` nor anything in place of one of its leading
+/// directories stands on disk.
+fn nothing_on_disk(repo: &Path, path: &str) -> bool {
+    let mut at = repo.to_path_buf();
+    for component in path.split('/') {
+        at.push(component);
+        match std::fs::symlink_metadata(&at) {
+            Err(_) => return true,
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return false,
+        }
+    }
+    false
 }
 
 /// Refresh the index's stat data, as `git status` does: no content is
@@ -3953,6 +3975,25 @@ impl Vcs for GitVcs {
         scope: RefreshScope,
     ) -> Result<RefreshWrite, VcsError> {
         refresh_paths_if_left(repo, left, head, paths, scope)
+    }
+
+    fn merge_into_working_copy(
+        &self,
+        repo: &Path,
+        base: &CommitId,
+        incoming: &CommitId,
+        paths: &[String],
+        derived: DerivedContentPolicy,
+        before_write: &mut dyn FnMut() -> Result<bool, VcsError>,
+    ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
+        working_copy_merge::merge_into_working_copy(
+            repo,
+            base,
+            incoming,
+            paths,
+            derived,
+            before_write,
+        )
     }
 
     fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {
@@ -11349,6 +11390,7 @@ mod name_reading_tests {
                 moved: true,
                 index: Holds::LeftTip,
                 file: Holds::LeftTip,
+                compared: true,
             }]
         );
         let head = tip(&worktree, "HEAD");
@@ -11757,6 +11799,7 @@ mod drift_tests {
                 moved: true,
                 index: Holds::LeftTip,
                 file: Holds::Head,
+                compared: true,
             }]
         );
     }
