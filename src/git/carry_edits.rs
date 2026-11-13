@@ -180,7 +180,7 @@ pub(super) fn set_aside_from(repo: &Path, at: &CommitId) -> Result<Option<Commit
         let (Some(kept), Some(base)) = (fields.next(), fields.next()) else {
             continue;
         };
-        let subject = record.splitn(2, ' ').nth(1).unwrap_or_default();
+        let subject = record.split_once(' ').map_or("", |(_, rest)| rest);
         if base == at.as_str() && subject.ends_with(SET_ASIDE) {
             return Ok(CommitId::parse(kept).ok());
         }
