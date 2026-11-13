@@ -677,6 +677,16 @@ know is ignored there):
 | `rebase.backend` | `merge` | the apply backend runs no exec, so the replay would go unrecorded |
 | `rebase.rescheduleFailedExec` | `false` | would retry a failed record step and stop on it |
 
+Each of `updateRefs`, `rebaseMerges` and `autoStash` has a seam test that fails
+with its pin reverted (`tests/vcs/vcs_test.rs`). The other three provably
+cannot change a ref or what a rebase produces here, so none has one:
+`autoSquash` acts only on an interactive rebase, and rwv's is not (`--exec`
+does not make it so; with the pin reverted, a replayed range holding a
+`fixup!` commit came out in the same order); `backend` is moot because
+`--exec` runs on the merge backend whatever the config names; and
+`rescheduleFailedExec` changes only whether a continue repeats a record step
+that failed, which moves no ref and writes no commit.
+
 **Left to the operator**, because none changes which refs move or which
 commits are replayed: `rebase.missingCommitsCheck` (acts only on a todo the
 operator edits), `rebase.forkPoint` (rwv always names the upstream),
