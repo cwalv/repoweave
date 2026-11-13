@@ -1185,12 +1185,13 @@ impl State {
             Self::UnparseableProjectCommit => &StateRow {
                 axis: Axis::UnparseableProject,
                 name: "commit",
-                means: "the `rwv.toml` of a commit the verb copies from, or of the commit it is \
-                        compared with, does not parse, listed with the commit and the parser's \
-                        error. The verb cannot tell which members the commit changes, so it \
-                        copies nothing; a commit is never rewritten, so nothing makes its \
-                        `rwv.toml` parse",
-                refused_by: "`rwv cherry-pick`",
+                means: "the `rwv.toml` of a commit the verb reads by name does not parse, listed \
+                        with the commit and the parser's error: one it copies from or compares \
+                        with, or one it would check out or start a workweave at. The verb cannot \
+                        tell which members the commit declares, so it moves and makes nothing; \
+                        a commit is never rewritten, so nothing makes its `rwv.toml` parse",
+                refused_by: "`rwv cherry-pick`, `rwv switch` to a commit, `rwv workweave create \
+                             --at`",
                 offers: &[],
                 verb_offers: &[],
             },

@@ -2029,7 +2029,13 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     report.into_result()?;
     let (manifest, workspace_lock) =
         crate::switch::committed_files(project_vcs.as_ref(), &source_project, &intent.start)?;
-    let manifest = manifest?;
+    let manifest = crate::cherry_pick::refuse_unparseable_at(
+        project_vcs.as_ref(),
+        crate::workspace::project_rel_path(project),
+        &source_project,
+        intent.start.id(),
+        manifest,
+    )??;
     if let Some(opening) = &intent.opening {
         crate::switch::localize_opened(project_vcs.as_ref(), &source_project, opening)?;
     }

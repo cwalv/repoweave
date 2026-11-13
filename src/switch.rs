@@ -244,6 +244,12 @@ fn judge_members_at(
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let (manifest, lock) = project_files(vcs, dir, at)?;
+    let manifest = match vcs.head_revision(dir)? == *at {
+        true => manifest,
+        false => {
+            crate::cherry_pick::refuse_unparseable_at(vcs, label(project), dir, at.id(), manifest)?
+        }
+    };
     let Ok(manifest) = manifest else {
         return Ok(());
     };
@@ -703,7 +709,11 @@ fn report_names(
     } else {
         project_files(vcs, dir, start)?
     };
-    let manifest = manifest?;
+    let manifest = if from_commits || vcs.head_revision(dir)? != *start {
+        crate::cherry_pick::refuse_unparseable_at(vcs, label(project), dir, start.id(), manifest)??
+    } else {
+        manifest?
+    };
     let mut repos = vec![Moving::present(
         label(project),
         dir.to_path_buf(),

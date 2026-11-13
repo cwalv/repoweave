@@ -1128,7 +1128,11 @@ pub(crate) fn settle_replayed_manifest(
             "{earlier} earlier replayed {} the rwv.toml that does not parse, as the replay \
              wrote it: only the tip takes the staged fix, and rwv's verbs that read a commit \
              by name refuse {}",
-            if earlier == 1 { "commit keeps" } else { "commits keep" },
+            if earlier == 1 {
+                "commit keeps"
+            } else {
+                "commits keep"
+            },
             if earlier == 1 { "it" } else { "them" },
         ));
     }

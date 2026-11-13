@@ -163,17 +163,48 @@ fn manifest_at(
     };
     Manifest::from_other_commit(&text)
         .map(Some)
-        .map_err(|error| {
-            let error = format!("{error:#}");
-            State::UnparseableProjectCommit
-                .of(label)
-                .project_repo()
-                .subject(commit.short())
-                .listing(error.lines())
-                .checkout(dir)
-                .judge(vcs)
-                .refused()
-        })
+        .map_err(|error| unparseable_commit(vcs, label, dir, commit, &error))
+}
+
+/// The refusal of a verb that reads `commit` in the project repo `label` at
+/// `dir`, whose `rwv.toml` does not parse, with the parser's `error`.
+pub(crate) fn unparseable_commit(
+    vcs: &dyn Vcs,
+    label: impl std::fmt::Display,
+    dir: &Path,
+    commit: &CommitId,
+    error: &anyhow::Error,
+) -> anyhow::Error {
+    let error = format!("{error:#}");
+    State::UnparseableProjectCommit
+        .of(label)
+        .project_repo()
+        .subject(commit.short())
+        .listing(error.lines())
+        .checkout(dir)
+        .judge(vcs)
+        .refused()
+}
+
+/// `manifest`, read at `commit` in the project repo `label` at `dir`, with a
+/// file that is there and does not parse, and is no earlier release's,
+/// refused as [`unparseable_commit`].
+pub(crate) fn refuse_unparseable_at(
+    vcs: &dyn Vcs,
+    label: impl std::fmt::Display,
+    dir: &Path,
+    commit: &CommitId,
+    manifest: anyhow::Result<Manifest>,
+) -> anyhow::Result<anyhow::Result<Manifest>> {
+    match manifest {
+        Err(error)
+            if !error.is::<crate::manifest::PreSchemaManifest>()
+                && error.downcast_ref::<crate::vcs::VcsError>().is_none() =>
+        {
+            Err(unparseable_commit(vcs, label, dir, commit, &error))
+        }
+        read => Ok(read),
+    }
 }
 
 fn lock_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<LockFile> {
