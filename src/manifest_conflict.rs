@@ -297,12 +297,11 @@ pub(crate) fn settle(
     }
     setting.apply(&mut sides.ours);
     setting.apply(&mut sides.theirs);
-    let kept = vcs.backup_edits(dir)?;
     let left = sides.conflicts();
-    if left.is_empty() {
-        sides.merged()?.write(&dir.join(Manifest::FILE_NAME))?;
-        vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
+    let kept = if left.is_empty() {
+        write_merged(vcs, dir, &sides)?
     } else {
+        let kept = vcs.backup_edits(dir)?;
         let text = |manifest: &Manifest| {
             toml::to_string(manifest).context("failed to serialize a side of rwv.toml")
         };
@@ -315,12 +314,43 @@ pub(crate) fn settle(
                 theirs: Some(text(&sides.theirs)?),
             },
         )?;
-    }
+        kept
+    };
     Ok(Some(Settled {
         entry: entry_name(&setting.path()),
         left,
         kept,
     }))
+}
+
+/// Keep the checkout's edits as a backup, then write and stage the merge of
+/// `sides`.
+fn write_merged(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    sides: &Sides,
+) -> anyhow::Result<Option<crate::vcs::BackupWitness>> {
+    let merged = sides.merged()?;
+    let kept = vcs.backup_edits(dir)?;
+    merged.write(&dir.join(Manifest::FILE_NAME))?;
+    vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
+    Ok(kept)
+}
+
+fn kept_lines(vcs: &dyn Vcs, dir: &Path, kept: &crate::vcs::BackupWitness) -> [String; 2] {
+    [
+        format!(
+            "rwv.toml as it stood before is kept in backup {}; to read it:",
+            kept.backup().name
+        ),
+        format!(
+            "  {}",
+            vcs.hint(VcsAction::ShowKeptFile)
+                .replace("<checkout>", &dir.display().to_string())
+                .replace("<revision>", kept.backup().tip.id().as_str())
+                .replace("<paths>", Manifest::FILE_NAME)
+        ),
+    ]
 }
 
 /// Run at a stop where the active project's `rwv.toml` is conflicted and
@@ -355,24 +385,23 @@ pub(crate) fn settle_at_stop(
         "rwv {verb}: settled rwv.toml entry {} on both sides",
         settled.entry
     );
-    if let Some(kept) = &settled.kept {
-        eprintln!(
-            "rwv.toml as it stood before is kept in backup {}; to read it:",
-            kept.backup().name
-        );
-        eprintln!(
-            "  {}",
-            vcs.hint(VcsAction::ShowKeptFile)
-                .replace("<checkout>", &dir.display().to_string())
-                .replace("<revision>", kept.backup().tip.id().as_str())
-                .replace("<paths>", Manifest::FILE_NAME)
-        );
+    for line in settled
+        .kept
+        .iter()
+        .flat_map(|kept| kept_lines(vcs, &dir, kept))
+    {
+        eprintln!("{line}");
     }
     if settled.left.is_empty() {
         eprintln!("rwv.toml has no entry left in conflict, and is staged");
     } else {
         eprintln!("rwv.toml still has entries in conflict:");
-        for line in reading_lines(vcs, &dir, &Reading::Entries(settled.left)) {
+        for line in reading_lines(
+            vcs,
+            &dir,
+            &Reading::Entries(settled.left),
+            resume.as_deref(),
+        ) {
             eprintln!("{line}");
         }
     }
@@ -382,10 +411,13 @@ pub(crate) fn settle_at_stop(
     Ok(true)
 }
 
-/// Refuse an operation's continue while the active project's `rwv.toml` is
-/// conflicted, naming what is left to settle.
-pub(crate) fn refuse_continue_while_conflicted(
+/// At the `typed` continue of the operation stopped in the active project:
+/// where `rwv.toml` is unmerged with no entry in conflict, write and stage
+/// the merge of its sides, keeping the checkout's edits as a backup first;
+/// refuse while it is in conflict otherwise, naming what is left to settle.
+pub(crate) fn continue_at_stop(
     ctx: &crate::workspace::WorkspaceContext,
+    typed: crate::op_state::OpVerb,
 ) -> anyhow::Result<()> {
     let Some(project) = ctx.active_project() else {
         return Ok(());
@@ -402,8 +434,23 @@ pub(crate) fn refuse_continue_while_conflicted(
     if header.verb == crate::op_state::OpVerb::CherryPick {
         return Ok(());
     }
-    let reading = match reading(vcs, &dir)? {
-        Some(reading) => reading,
+    let resume = crate::op_state::resume_command(header.verb);
+    let reading = match vcs.conflict_sides(&dir, Manifest::FILE_NAME)? {
+        Some(recorded) => match read(&recorded) {
+            Ok(sides) if header.verb == typed && sides.conflicts().is_empty() => {
+                let kept = write_merged(vcs, &dir, &sides)?;
+                eprintln!(
+                    "{resume}: no rwv.toml entry was in conflict, only lines were; wrote and \
+                     staged the merge of both sides"
+                );
+                for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
+                    eprintln!("{line}");
+                }
+                return Ok(());
+            }
+            Ok(sides) => Reading::Entries(sides.conflicts()),
+            Err((side, why)) => Reading::Unreadable { side, why },
+        },
         None => match std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) {
             Ok(text) => match Manifest::from_toml_str(&text) {
                 Ok(_) => return Ok(()),
@@ -417,13 +464,12 @@ pub(crate) fn refuse_continue_while_conflicted(
         crate::workspace::project_rel_path(project),
         dir.display()
     );
-    for line in reading_lines(vcs, &dir, &reading) {
+    for line in reading_lines(vcs, &dir, &reading, Some(&resume)) {
         text.push_str(&line);
         text.push('\n');
     }
     text.push_str(&format!(
-        "then run `{}`, or `rwv abort` to put everything back as it was",
-        crate::op_state::resume_command(header.verb)
+        "then run `{resume}`, or `rwv abort` to put everything back as it was"
     ));
     Err(crate::refusal::refusal(
         crate::refusal::RefusalKind::OpParked,
@@ -444,14 +490,21 @@ fn entry_name(path: &[String]) -> String {
 /// The lines a stop prints for a conflicted `rwv.toml` in `dir`: each
 /// entry in conflict, both sides' values, and the setter that keeps each;
 /// where no verb settles it, the hand edit and the staging that do.
-pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
+pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path, resume: &str) -> Vec<String> {
     match reading(vcs, dir) {
-        Ok(Some(reading)) => reading_lines(vcs, dir, &reading),
+        Ok(Some(reading)) => reading_lines(vcs, dir, &reading, Some(resume)),
         _ => Vec::new(),
     }
 }
 
-pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec<String> {
+/// `resume`: the command that continues the operation stopped in `dir`,
+/// `None` where no operation of rwv's is stopped there.
+pub(crate) fn reading_lines(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    reading: &Reading,
+    resume: Option<&str>,
+) -> Vec<String> {
     let by_hand = "no verb settles it: edit rwv.toml, then stage it";
     let replaying = matches!(vcs.rebase_in_flight(dir), Ok(Some(_)));
     let label = |side: &str| match (side, replaying) {
@@ -467,9 +520,13 @@ pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec
         Reading::Unparsed(why) => vec![format!(
             "rwv.toml does not read as a manifest ({why}); {by_hand}"
         )],
-        Reading::Entries(conflicts) if conflicts.is_empty() => vec![format!(
-            "rwv.toml: no entry is in conflict, only lines are; {by_hand}"
-        )],
+        Reading::Entries(conflicts) if conflicts.is_empty() => vec![match resume {
+            Some(resume) => format!(
+                "rwv.toml: no entry is in conflict, only lines are; `{resume}` writes and stages \
+                 the merge of both sides"
+            ),
+            None => format!("rwv.toml: no entry is in conflict, only lines are; {by_hand}"),
+        }],
         Reading::Entries(conflicts) => {
             let mut lines = Vec::new();
             let mut heading: Option<&[String]> = None;

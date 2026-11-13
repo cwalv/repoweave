@@ -18464,6 +18464,18 @@ pub enum ManifestSettle {
     /// `lib`'s role changed differently on both sides and its
     /// `recurse-submodules` only on `main`: the role alone is in conflict.
     MemberFields(ManifestStopHistory),
+    /// Each side adds a different member: only lines conflict, and the
+    /// continue of the sync writes and stages the merge of both sides.
+    LinesOnly(ManifestStopHistory),
+    /// [`ManifestSettle::LinesOnly`] at a landing's stop.
+    LinesOnlyLand(ManifestStopHistory),
+    /// [`ManifestSettle::LinesOnly`] with the working `rwv.toml` edited and
+    /// not staged: the continue keeps the edit in a backup it names.
+    LinesOnlyHandEdited,
+    /// The workweave's first and third commits change `app`'s role and its
+    /// `history`, `main` its `recurse-submodules`: each replay stop has only
+    /// lines in conflict, and neither asks for `recurse-submodules` again.
+    LinesOnlyReplayed,
     /// `docs` added on both sides with different roles: the whole member is
     /// in conflict, and its role's setter settles it.
     BothAdded,
@@ -18917,6 +18929,123 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("# laid out by hand")),
             ]);
             "settling the last rwv.toml entry writes the file whole, as an ordinary setter does"
+        }
+        S::LinesOnly(history) | S::LinesOnlyLand(history) => {
+            let land = matches!(how, S::LinesOnlyLand(_));
+            let (start, resume): (&[&str], &[&str]) = match (land, history) {
+                (true, H::Merge) => (&["land", "--history", "merge"], &["land", "--continue"]),
+                (true, H::Linear) => (&["land", "--history", "linear"], &["land", "--continue"]),
+                (false, H::Merge) => (&["sync", "--history", "merge"], &["sync", "--continue"]),
+                (false, H::Linear) => (&["sync", "--history", "linear"], &["sync", "--continue"]),
+            };
+            let resume_line = if land {
+                "`rwv land --continue` writes and stages the merge of both sides"
+            } else {
+                "`rwv sync --continue` writes and stages the merge of both sides"
+            };
+            let landed_at = if land { a() } else { ww("w") };
+            steps = vec![
+                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+                create("w"),
+                Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+                if land {
+                    Step::rwv(&ww("w"), start).expect(Exit::refuses_kind(RefusalKind::OpParked))
+                } else {
+                    Step::rwv(&ww("w"), start)
+                        .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                        .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
+                        .claim(Claim::OutputContains(resume_line))
+                },
+                replayed(
+                    Step::rwv(&ww("w"), resume)
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains("wrote and staged the merge")),
+                    history,
+                ),
+                Step::git(&landed_at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/docs\"]",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/lib\"]",
+                    )),
+            ];
+            match (land, history) {
+                (false, H::Merge) => {
+                    "a sync's continue writes the merge where each side added a member, at a merge stop"
+                }
+                (false, H::Linear) => {
+                    "a sync's continue writes the merge where each side added a member, at a linear stop"
+                }
+                (true, H::Merge) => {
+                    "a landing's continue writes the merge where each side added a member, at a merge stop"
+                }
+                (true, H::Linear) => {
+                    "a landing's continue writes the merge where each side added a member, at a linear stop"
+                }
+            }
+        }
+        S::LinesOnlyHandEdited => {
+            steps = vec![
+                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+                create("w"),
+                Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+                stop(H::Merge),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[integrations.vscode-workspace]\nenabled = false\n",
+                    "[integrations.vscode-workspace]\nenabled = false\n# half-way through\n",
+                ),
+                continues()
+                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("kept in backup")),
+                Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("# half-way through")),
+                head_manifest()
+                    .claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/docs\"]",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/lib\"]",
+                    ))
+                    .claim(Claim::OutputLacks("half-way through")),
+            ];
+            "a continue that writes the merge of rwv.toml keeps an unstaged edit of it in a backup"
+        }
+        S::LinesOnlyReplayed => {
+            steps = vec![
+                set_history(&a(), "linear", DOCS),
+                create("w"),
+                Step::rwv(&a(), &["member", "set-recurse-submodules", APP, "false"])
+                    .expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+                Step::commit(&ww("w"), Repo::Proj, "w-notes"),
+                set_history(&ww("w"), "ff-only", APP),
+                stop(H::Linear)
+                    .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
+                    .claim(Claim::OutputLacks("keep yours")),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
+                    .claim(Claim::OutputLacks("recurse-submodules")),
+                continues_after(H::Linear)
+                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                head_manifest()
+                    .claim(Claim::OutputContains("role = \"fork\""))
+                    .claim(Claim::OutputContains("recurse-submodules = false"))
+                    .claim(Claim::OutputContains("history = \"ff-only\"")),
+            ];
+            "each replay stop with only lines of rwv.toml in conflict is continued with no question"
         }
         S::BothAdded => {
             steps = vec![

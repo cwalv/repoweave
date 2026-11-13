@@ -430,25 +430,23 @@ fn writes_project(command: Option<&Commands>) -> bool {
     }
 }
 
-fn continues(command: Option<&Commands>) -> bool {
-    matches!(
-        command,
-        Some(
-            Commands::Sync {
-                do_continue: true,
-                ..
-            } | Commands::Land {
-                do_continue: true,
-                ..
-            } | Commands::CherryPick {
-                do_continue: true,
-                ..
-            } | Commands::Pull {
-                do_continue: true,
-                ..
-            }
-        )
-    )
+fn continues(command: Option<&Commands>) -> Option<crate::op_state::OpVerb> {
+    use crate::op_state::OpVerb;
+    match command? {
+        Commands::Sync {
+            do_continue: true, ..
+        } => Some(OpVerb::Sync),
+        Commands::Land {
+            do_continue: true, ..
+        } => Some(OpVerb::Land),
+        Commands::CherryPick {
+            do_continue: true, ..
+        } => Some(OpVerb::CherryPick),
+        Commands::Pull {
+            do_continue: true, ..
+        } => Some(OpVerb::Pull),
+        _ => None,
+    }
 }
 
 /// A setter invocation that, at a stop where its entry of `rwv.toml` is in
@@ -963,9 +961,9 @@ pub fn run() -> anyhow::Result<()> {
         reconcile_policy(cli.command.as_ref(), root)
     })?;
 
-    if continues(cli.command.as_ref()) {
+    if let Some(typed) = continues(cli.command.as_ref()) {
         let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-        crate::manifest_conflict::refuse_continue_while_conflicted(&ctx)?;
+        crate::manifest_conflict::continue_at_stop(&ctx, typed)?;
     }
     if let Some(at_stop) = entry_setting(cli.command.as_ref()) {
         let project_override = at_stop.project.map(ProjectName::new).transpose()?;

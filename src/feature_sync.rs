@@ -1750,7 +1750,11 @@ fn conflict_refusal(
 ) -> anyhow::Error {
     let paths = vcs.unmerged_paths(dir).unwrap_or_default();
     let entries = if dir == sync.dir {
-        crate::manifest_conflict::stop_lines(vcs, dir)
+        crate::manifest_conflict::stop_lines(
+            vcs,
+            dir,
+            &crate::op_state::resume_command(OpVerb::Sync),
+        )
     } else {
         Vec::new()
     };
