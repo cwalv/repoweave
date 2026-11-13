@@ -1443,6 +1443,10 @@ mod doctor_json {
             file: String,
             content: String,
         },
+        ClaimFormatUnknown {
+            file: String,
+            marker: String,
+        },
         ClaimUnopenable {
             file: String,
             error: String,
