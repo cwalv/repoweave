@@ -972,7 +972,7 @@ fn report_pins_held_by_no_branch(
         &pushed.tip,
         project_url_remote,
     )?;
-    let mut history = None;
+    let mut records = None;
     for member in members {
         if !member.acting
             || !member.dir.exists()
@@ -1034,33 +1034,29 @@ fn report_pins_held_by_no_branch(
                 .collect();
             unheld.push((pin, listing, holding));
         }
-        let lacking: BTreeSet<crate::vcs::CommitId> = unheld
+        let unbacked: BTreeSet<crate::vcs::CommitId> = unheld
             .iter()
             .filter(|(_, _, holding)| holding.is_empty())
             .map(|(pin, ..)| pin.clone())
             .collect();
-        let moved_off: BTreeSet<crate::vcs::CommitId> = if lacking.is_empty() {
-            BTreeSet::new()
-        } else {
-            let history = match &mut history {
+        let mut moved_off = BTreeSet::new();
+        if !unbacked.is_empty() {
+            let records = match &mut records {
                 Some(read) => read,
-                None => history.insert(crate::lineage::PinHistory::of(
-                    pvcs,
-                    &pushed.project_dir,
-                    pushed.tip.id(),
-                )?),
+                None => records.insert(
+                    range
+                        .iter()
+                        .map(|(commit, _)| {
+                            crate::repin::recorded(pvcs, &pushed.project_dir, commit)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>(),
+                ),
             };
-            history
-                .superseded(
-                    pvcs,
-                    &member.path,
-                    &lacking,
-                    &crate::lineage::MemberClone::probed(vcs, &member.dir),
-                )?
-                .into_iter()
-                .map(|superseded| superseded.pin)
-                .collect()
-        };
+            moved_off = moved_off_by_name(vcs, &member.dir, &member.path, records, unbacked)?;
+        }
         for (pin, mut listing, holding) in unheld {
             if holding.is_empty() && moved_off.contains(&pin) {
                 continue;
@@ -1103,6 +1099,39 @@ fn report_pins_held_by_no_branch(
         }
     }
     Ok(())
+}
+
+/// Which of `pins`, pins of `member` no branch or backup holds, a record of
+/// `records` re-pinned the member off by name, or off a commit containing
+/// it.
+fn moved_off_by_name(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    member: &RepoPath,
+    records: &[crate::repin::Repin],
+    pins: BTreeSet<crate::vcs::CommitId>,
+) -> Result<BTreeSet<crate::vcs::CommitId>, crate::vcs::VcsError> {
+    let exits: Vec<ResolvedRevisionId> = records
+        .iter()
+        .filter(|record| &record.member == member)
+        .filter_map(|record| {
+            vcs.resolve_revision(dir, record.from.as_ref()?.as_str())
+                .ok()
+        })
+        .collect();
+    let mut moved_off = BTreeSet::new();
+    for pin in pins {
+        let Ok(at) = vcs.resolve_revision(dir, pin.as_str()) else {
+            continue;
+        };
+        for exit in &exits {
+            if vcs.is_ancestor(dir, &at, exit)? {
+                moved_off.insert(pin);
+                break;
+            }
+        }
+    }
+    Ok(moved_off)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2454,4 +2483,59 @@ fn refuse_uncommitted_project_state(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vcs::CommitId;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn commit(dir: &Path, message: &str) -> CommitId {
+        git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
+        CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap()
+    }
+
+    #[test]
+    fn a_pin_a_record_moved_off_or_one_it_contains_is_moved_off_by_name_and_no_other() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        let base = commit(&dir, "base");
+        let early = commit(&dir, "early");
+        let left = commit(&dir, "left");
+        git(&dir, &["checkout", "-q", "-b", "side", base.as_str()]);
+        let side = commit(&dir, "side");
+        let other = commit(&dir, "other member's");
+        let m = RepoPath::new("m").unwrap();
+        let record = |member: &RepoPath, from: &CommitId| crate::repin::Repin {
+            member: member.clone(),
+            from: Some(from.clone()),
+            to: base.clone(),
+            verb: "member pin".to_owned(),
+        };
+        let records = vec![
+            record(&m, &left),
+            record(&RepoPath::new("n").unwrap(), &other),
+        ];
+        let vcs = crate::git::git_vcs();
+        let pins: BTreeSet<CommitId> = [&early, &left, &side, &other]
+            .into_iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            moved_off_by_name(vcs.as_ref(), &dir, &m, &records, pins).unwrap(),
+            [early, left].into_iter().collect()
+        );
+    }
 }

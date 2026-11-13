@@ -4342,16 +4342,17 @@ pub trait Vcs: Send + Sync {
         commit: &CommitId,
     ) -> Result<bool, VcsError>;
 
-    /// Every commit `tip` reaches, through any parent, whose content of
-    /// `path` differs from one of its parents', or that adds it, newest
-    /// first: the commits that hold each version of the file `tip`'s history
-    /// has held.
+    /// Every commit `tip` reaches and none of `excluding` reaches, through
+    /// any parent, whose content of `path` differs from one of its parents',
+    /// or that adds it, newest first: the commits that hold each version of
+    /// the file that history has held.
     ///
-    /// For git: `git rev-list --full-history <tip> -- <path>`.
+    /// For git: `git rev-list --full-history <tip> --not <excluding>... -- <path>`.
     fn commits_changing(
         &self,
         repo: &Path,
         tip: &CommitId,
+        excluding: &[CommitId],
         path: &str,
     ) -> Result<Vec<CommitId>, VcsError>;
 

@@ -792,14 +792,12 @@ pub enum LandingReportOutput {
         commits: Vec<LeftCommitOutput>,
     },
     /// A pin of `path` that `lock` in the target's history held, which this
-    /// clone lacks, left out of the lineage rule because `by`, a later lock
-    /// of that history, re-pinned it by `verb`.
-    HistoryPinSkipped {
+    /// clone lacks and no remote of the member held when asked, so it did
+    /// not decide the base.
+    HistoryPinAbsent {
         path: String,
         lock: CommitId,
         pin: CommitId,
-        by: CommitId,
-        verb: String,
     },
     /// `branch` holds the landing and its push branch does not: the landing
     /// is not published until `branch` is pushed.
@@ -937,19 +935,13 @@ impl LandingReportOutput {
                 files: files.clone(),
                 index_entries: index_entries.clone(),
             },
-            op_state::LandingReport::HistoryPinSkipped {
-                repo,
-                lock,
-                pin,
-                by,
-                verb,
-            } => Self::HistoryPinSkipped {
-                path: repo.to_string(),
-                lock: lock.clone(),
-                pin: pin.clone(),
-                by: by.clone(),
-                verb: verb.clone(),
-            },
+            op_state::LandingReport::HistoryPinAbsent { repo, lock, pin } => {
+                Self::HistoryPinAbsent {
+                    path: repo.to_string(),
+                    lock: lock.clone(),
+                    pin: pin.clone(),
+                }
+            }
             op_state::LandingReport::BeyondPin {
                 repo,
                 target,
@@ -1115,18 +1107,9 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     refreshed.describe()
                 );
             }
-            op_state::LandingReport::HistoryPinSkipped {
-                repo,
-                lock,
-                pin,
-                by,
-                verb,
-            } => {
+            op_state::LandingReport::HistoryPinAbsent { repo, lock, pin } => {
                 if let RepoKey::Member(path) = repo {
-                    eprintln!(
-                        "land: {}",
-                        crate::lineage::skipped_line(path, lock, pin, by, verb)
-                    );
+                    eprintln!("land: {}", crate::lineage::absent_line(path, lock, pin));
                 }
             }
             op_state::LandingReport::BeyondPin {
@@ -4439,7 +4422,7 @@ fn guard_and_mark<'a>(
             commits: commits.clone(),
         });
     for report in plan
-        .skipped_pins
+        .absent_pins
         .iter()
         .cloned()
         .chain(beyond_pin)

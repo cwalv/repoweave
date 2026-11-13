@@ -46,17 +46,25 @@ change, a rewritten branch), and integrating it would carry that line along.
 The sync refuses such a member as `pin` `off lineage` before anything moves.
 
 The rule reads commits, so its answer depends on which commits the clone holds
-in one case. A pin of the target's history that this clone lacks stops the
-rule (`pin` `unreachable`), unless the history moved off that pin by name:
-each later lock that changed the member's pin from it records the move (`rwv
-member pin`, a waiver, a rebase `rwv land` or `rwv sync` made), or moves to a
-pin this clone also lacks that was moved off the same way. Such a pin does not
-decide the base on a clone that lacks it, and the verb reports it as `history
-pin skipped`. A clone that holds the pin still judges by it. So work built on
-a commit another clone moved off by name can be refused as `pin` `off lineage`
-on a clone that holds that commit and land from a clone that lacks it. That
-matches single-repo git, where work built on a commit another clone reset away
-comes back when it is merged.
+in one case: a pin of the target's history that this clone lacks. A lacked pin
+can only make the base newer, and so turn a pass into a refusal, and only where
+the commit it names held some of the very work being landed. Such a pin is
+looked for only where a lock commit the source's project branch does not reach
+holds it: the target's history since the two branches parted. For that pin the
+verb fetches the member's remotes, as `rwv fetch` does, and says so. A pin the
+fetch brings is judged like any other, so a colleague's commit not yet fetched
+is judged as if it had been. One no remote holds does not decide the base, and
+the verb reports it as `history pin absent`. Where a remote cannot be reached,
+whether it holds the pin cannot be told, and the verb refuses as `pin`
+`unasked`; `rwv fetch`, once the remote is back, lets the next run through.
+
+A lacked pin from before the two branches parted is not looked for. It could
+decide the base only where the source's member was carried by hand onto commits
+the target had pinned and moved off before then, and landing those brings back
+commits the target dropped, as merging them would in single-repo git, which
+checks nothing for a submodule commit that has gone. A clone that holds such a
+pin still judges by it, so the same work can be refused as `pin` `off lineage`
+on a clone that holds that commit and land from one that lacks it.
 
 **`--from <branch>`** merges another weave branch's history in, whatever the
 setting, and always as a merge commit: work moving between published branches

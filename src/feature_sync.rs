@@ -7,7 +7,7 @@
 //! moved member at its new tip.
 
 use crate::diagnosis::{ChoiceId, Fact, FactKind, Form, Judged, Report, State};
-use crate::lineage::{Lineage, PinHistory};
+use crate::lineage::{Lineage, PinHistory, Verdict};
 use crate::lock_merge::{merge_pins, Held, Parent, PinMerge, Reach};
 use crate::manifest::{
     History, LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
@@ -84,9 +84,9 @@ struct Member {
     /// The merge its range holds, where that range is integrated by a merge
     /// commit under a rebasing setting.
     merged: Option<CommitId>,
-    /// Pins of the target's history this clone lacks that the lineage rule
-    /// left out, the re-pin new to this branch.
-    skipped: Vec<crate::lineage::Superseded>,
+    /// Pins of the target's history the lineage rule asked about that this
+    /// clone lacks and no remote of the member holds.
+    absent: Vec<crate::lineage::HistoryPin>,
 }
 
 struct Sync<'a> {
@@ -100,6 +100,9 @@ struct Sync<'a> {
     target: Option<String>,
     history: Option<History>,
     jobs: usize,
+    /// Whether the lineage rule fetches a member's remotes for a pin it asks
+    /// about; where not, such a pin is judged absent.
+    asks_remotes: bool,
 }
 
 impl Sync<'_> {
@@ -189,13 +192,11 @@ fn replay_reports(output: OutputMode, reported: &mut Reported, take_in: &TakeInR
                 "{repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
                 was.short()
             ),
-            crate::op_state::LandingReport::HistoryPinSkipped {
+            crate::op_state::LandingReport::HistoryPinAbsent {
                 repo: RepoKey::Member(member),
                 lock,
                 pin,
-                by,
-                verb,
-            } => crate::lineage::skipped_line(member, lock, pin, by, verb),
+            } => crate::lineage::absent_line(member, lock, pin),
             _ => continue,
         };
         say(output, &line);
@@ -293,6 +294,7 @@ fn take(
                 from,
                 history: owner.history,
                 jobs: 1,
+                asks_remotes: true,
             };
             replay_reports(output, reported, &take_in);
             act(&sync, &op, &take_in, output, reported)
@@ -421,6 +423,7 @@ fn fresh(
         },
         history: args.history,
         jobs: args.jobs,
+        asks_remotes: true,
     };
     let planned = plan(&sync, as_mode, &args.reset_to_target)?;
 
@@ -497,19 +500,17 @@ fn fresh(
                 Some(crate::set_history::merged_line(&member.path, merge)),
             )?;
         }
-        for skipped in &member.skipped {
+        for absent in &member.absent {
             report_integration(
                 output,
                 &op.workspace,
                 reported,
-                crate::op_state::LandingReport::HistoryPinSkipped {
+                crate::op_state::LandingReport::HistoryPinAbsent {
                     repo: RepoKey::Member(member.path.clone()),
-                    lock: skipped.lock.clone(),
-                    pin: skipped.pin.clone(),
-                    by: skipped.by.clone(),
-                    verb: skipped.verb.clone(),
+                    lock: absent.lock.clone(),
+                    pin: absent.pin.clone(),
                 },
-                Some(skipped.line(&member.path)),
+                Some(absent.absent_line(&member.path)),
             )?;
         }
         for line in member.report_lines() {
@@ -772,7 +773,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let base_commit = vcs.merge_bases(dir, &head, &source)?.into_iter().next();
     let base_manifest = base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b));
     let history = match &sync.from {
-        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.seen_from(&head),
+        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.since(&head),
         SyncFrom::From(_) => PinHistory::default(),
     };
 
@@ -1185,7 +1186,7 @@ fn plan_member(
         vcs,
         act: Act::Nothing,
         beyond_pin: Vec::new(),
-        skipped: Vec::new(),
+        absent: Vec::new(),
         new_work: Vec::new(),
         dropped: Vec::new(),
         was: Some(head.clone()),
@@ -1384,19 +1385,22 @@ fn plan_member(
         }
     };
     if !follows || (inputs.dependents && !contained) {
-        let supersede = |absent: &BTreeSet<CommitId>| {
-            inputs.history.superseded(
-                crate::vcs::project_vcs().as_ref(),
-                path,
-                absent,
-                &crate::lineage::MemberClone::lacking(mvcs, &mdir, absent),
-            )
-        };
-        match crate::lineage::judge(mvcs, &mdir, &head, &pins, supersede, &source)? {
-            Lineage::Passes { skipped, .. } => {
-                member.skipped = skipped.into_iter().filter(|s| !s.known).collect();
-            }
-            Lineage::Off { base } => {
+        let judged = crate::lineage::judge_asking(
+            project_vcs().as_ref(),
+            inputs.history,
+            path,
+            mvcs,
+            &mdir,
+            &head,
+            &source,
+            || match sync.asks_remotes {
+                true => crate::fetch::ask_remotes(mvcs, path, "sync", &mdir, &entry.url),
+                false => Ok(crate::lineage::Asked::Fetched),
+            },
+        )?;
+        match judged {
+            Verdict::Passes { absent, .. } => member.absent = absent,
+            Verdict::Off { base } => {
                 let mut judging = State::PinOffLineage
                     .of(path)
                     .member()
@@ -1413,15 +1417,12 @@ fn plan_member(
                 }
                 report.add(judging.judge(mvcs));
             }
-            Lineage::Unreachable { absent } => report.add(unreachable(format!(
-                "{} pinned {} for it, which this clone lacks, so its base cannot be read here",
-                sync.source_name(),
-                absent
-                    .iter()
-                    .map(|c| c.short().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))),
+            Verdict::Unasked { pins, cause } => report.add(
+                crate::lineage::unasked(sync.source_name(), path, &pins, cause)
+                    .checkout(&mdir)
+                    .by_verb("sync")
+                    .judge(mvcs),
+            ),
         }
     }
     judge_push_branch(
@@ -2541,6 +2542,7 @@ pub(crate) fn reset_offer(
         target: Some(target.to_string()),
         history: None,
         jobs: 1,
+        asks_remotes: false,
     };
     let runs = plan(&sync, Some(as_mode), &[RepoOperand::Member(path.clone())]).is_ok();
     Some(ResetOffer { landing_tip, runs })
@@ -2648,9 +2650,7 @@ impl FeatureLineage {
         by: MergeUpstreamBy,
     ) -> anyhow::Result<Option<Judged>> {
         let pins = self.pins.of_member(path);
-        let Lineage::Off { base } =
-            crate::lineage::judge(vcs, dir, local, &pins, |_| Ok(Vec::new()), upstream)?
-        else {
+        let Lineage::Off { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)? else {
             return Ok(None);
         };
         let (present, _) = crate::lineage::split_present(vcs, dir, &pins);

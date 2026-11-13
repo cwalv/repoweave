@@ -47,13 +47,15 @@ another weave branch lands into this one, moves only when the branch it lands
 on contains its base: the newest commit of its first-parent chain that a lock in
 the target's history pins. Otherwise the sync refuses as `pin` `off lineage`,
 listing the base and the branch, with the fact `patch-equivalent` where commits
-on that branch carry the same changes. A pin this clone lacks, where the rule
-must read it, is `pin` `unreachable`, unless the target's history moved off it
-by name: each later lock that changed the member's pin from it records that
-move (`rwv member pin`, a waiver, a rebase `rwv land` or `rwv sync` made), or
-moves to a pin this clone also lacks that was moved off the same way. Such a
-pin does not decide the base here, and the sync reports it as `history pin
-skipped` (under `--json`, `history-pin-skipped` in `reports`).
+on that branch carry the same changes. A pin this clone lacks decides the base
+only where the rule looks for it: a pin a lock commit of the target's history
+holds that this branch does not reach, a lock written since the two branches
+parted. For such a pin the sync fetches the member's remotes, as `rwv fetch`
+does, and says so; a pin the fetch brings is judged like any other, and one no
+remote holds does not decide the base and is reported as `history pin absent`
+(under `--json`, `history-pin-absent` in `reports`). Where a remote cannot be
+reached, whether it holds the pin cannot be told, and the sync refuses as `pin`
+`unasked`, offering `rwv fetch` for once the remote is back.
 
 **`--from <branch>`** merges the branch's history in for one run, whatever the
 setting: each member that lacks the branch's pin merges it as a merge commit
@@ -99,6 +101,7 @@ regenerating from their source of record.
 | `history` | `contradicted` | `--history` differs from the setting the target records for a repo |
 | `pin` | `off lineage` | a member's base is not on the branch it lands on |
 | `pin` | `unreachable` | the target pins a commit this clone lacks |
+| `pin` | `unasked` | a pin of the target's history since the branches parted that this clone lacks could decide the base, and a remote of the member could not be fetched to look for it |
 | `pin` | `not on declared branch` | `--from` on a declared branch, for a member the named branch declares elsewhere |
 | `push-branch` | `behind` | a branch the sync would move is behind its push branch |
 | `push-branch` | `diverged` | a branch the sync would move, or the target, has diverged from its upstream |
@@ -1174,24 +1177,19 @@ Schema:
           }
         },
         {
-          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks, left out of the lineage rule because `by`, a later lock of that history, re-pinned it by `verb`.",
+          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks and no remote of the member held when asked, so it did not decide the base.",
           "type": "object",
           "required": [
-            "by",
             "kind",
             "lock",
             "path",
-            "pin",
-            "verb"
+            "pin"
           ],
           "properties": {
-            "by": {
-              "$ref": "#/definitions/CommitId"
-            },
             "kind": {
               "type": "string",
               "enum": [
-                "history-pin-skipped"
+                "history-pin-absent"
               ]
             },
             "lock": {
@@ -1202,9 +1200,6 @@ Schema:
             },
             "pin": {
               "$ref": "#/definitions/CommitId"
-            },
-            "verb": {
-              "type": "string"
             }
           }
         },

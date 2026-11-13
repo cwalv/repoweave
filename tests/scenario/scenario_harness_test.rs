@@ -1200,8 +1200,12 @@ every_scenario!(
     landed_history_waived_pin_on_a_second_machine,
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::Landing),
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::SyncFirst),
-    a_history_pin_not_repinned_still_refuses,
-    a_sync_reports_a_skipped_history_pin_in_json,
+    a_history_pin_no_remote_holds_is_named_and_lands,
+    a_colleagues_history_pin_is_fetched_and_judged(scenarios::Colleague::Unshared),
+    a_colleagues_history_pin_is_fetched_and_judged(scenarios::Colleague::Shared),
+    a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched,
+    a_member_with_no_remote_is_given_its_url_remote_and_asked,
+    a_sync_reports_an_absent_history_pin_in_json,
     a_seat_pushes_after_landing_without_retire,
     a_fast_forward_landing_records_a_member_it_rebased,
     merged_project_with_rebased_members_on_a_second_machine,
@@ -5262,7 +5266,7 @@ holding_rwv! {
 }
 
 #[test]
-fn a_landed_history_pin_no_ref_keeps_lands_on_a_second_machine() {
+fn a_history_pin_no_clone_holds_is_asked_about_only_by_seats_cut_before_it() {
     runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
 }
 
@@ -5295,8 +5299,8 @@ fn a_seat_pushes_after_landing_without_retire() {
 }
 
 #[test]
-fn a_sync_reports_a_skipped_history_pin_in_json() {
-    runner::run(scenarios::a_sync_reports_a_skipped_history_pin_in_json())
+fn a_sync_reports_an_absent_history_pin_in_json() {
+    runner::run(scenarios::a_sync_reports_an_absent_history_pin_in_json())
         .assert_fully_decided_green();
 }
 
@@ -5369,8 +5373,31 @@ fn a_refused_landing_leaves_a_lock_behind_as_it_stood() {
 }
 
 #[test]
-fn a_history_pin_not_repinned_still_refuses_on_a_second_machine() {
-    runner::run(scenarios::a_history_pin_not_repinned_still_refuses()).assert_fully_decided_green();
+fn a_history_pin_no_remote_holds_is_named_and_lands() {
+    runner::run(scenarios::a_history_pin_no_remote_holds_is_named_and_lands())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_colleagues_history_pin_is_fetched_and_judged() {
+    for how in [scenarios::Colleague::Unshared, scenarios::Colleague::Shared] {
+        runner::run(scenarios::a_colleagues_history_pin_is_fetched_and_judged(
+            how,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched() {
+    runner::run(scenarios::a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_member_with_no_remote_is_given_its_url_remote_and_asked() {
+    runner::run(scenarios::a_member_with_no_remote_is_given_its_url_remote_and_asked())
+        .assert_fully_decided_green();
 }
 
 #[test]

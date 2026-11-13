@@ -6773,102 +6773,125 @@ pub fn records_drop_races_create() -> Scenario {
     )
 }
 
-/// A lock commit that pinned a member commit no ref keeps (locked, then
-/// amended and re-pinned by name) lands into a target that did not move, and
-/// is published. Machine B lacks that commit. A seat B cut before it fetched
-/// lands: the lineage rule leaves the pin out, the later lock having
-/// re-pinned it by name, and says so, since the seat had not taken that
-/// re-pin in. A seat cut after it lands quietly. Machine A, which holds the
-/// commit, then lands as well: both clones judge the history alike.
-pub fn landed_history_pin_no_ref_keeps() -> Scenario {
+/// The steps that leave `main`'s history pinning an `app` commit no clone
+/// and no remote holds, as rwv's own relocks once did: a seat locks its
+/// `app` work, amends it and re-pins by name, lands and publishes, and
+/// machine A drops the amended-away commit. Seats `early` on A and `b-early`
+/// on B were cut before that lock commit, `b-sync` on B too.
+fn a_history_pin_no_clone_holds() -> Vec<Step> {
     let app = Repo::App.rel_path();
-    scenario(
-        "a landed history pin no ref keeps",
-        vec![
-            Step::new_machine(Machine::B),
-            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "early"])
-                .expect(Exit::Succeeds),
-            Step::commit(&b_ww("early"), Repo::App, "early-app"),
-            create("w"),
-            Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::git(
-                &ww("w"),
-                Repo::App,
-                &["commit", "--amend", "-q", "-m", "w-app amended"],
-            )
-            .may_strand(&[Repo::App])
-            .may_leave_unresolved(&[Repo::App]),
-            Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"])
-                .expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
-            publishes_records(Step::rwv(&a(), &["push"]))
-                .pushes(Remote::origin(Repo::App), "main")
-                .pushes(Remote::origin(Repo::Proj), "main")
-                .expect(Exit::Succeeds),
-            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&b_ww("early"), &["land", "--history", "linear"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains(
-                    "local/remotes/app: history pin skipped",
-                ))
-                .claim(Claim::OutputContains("by name later (member pin)")),
-            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
-                .expect(Exit::Succeeds),
-            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
-            Step::rwv(&b_ww("w2"), &["land"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("history pin skipped")),
-            publishes_records(Step::rwv(&b(), &["push"]))
-                .pushes(Remote::origin(Repo::App), "main")
-                .pushes(Remote::origin(Repo::Proj), "main")
-                .expect(Exit::Succeeds),
-            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-            create("w3"),
-            Step::commit(&ww("w3"), Repo::App, "w3-app"),
-            Step::rwv(&ww("w3"), &["land"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("history pin skipped")),
-        ],
-    )
+    vec![
+        Step::new_machine(Machine::B),
+        create("early"),
+        Step::commit(&ww("early"), Repo::App, "early-app"),
+        Step::rwv(
+            &b(),
+            &["workweave", "create", "--project", "proj", "b-early"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("b-early"), Repo::App, "b-early-app"),
+        Step::rwv(
+            &b(),
+            &["workweave", "create", "--project", "proj", "b-sync"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("b-sync"), Repo::App, "b-sync-app"),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["commit", "--amend", "-q", "-m", "w-app amended"],
+        )
+        .may_strand(&[Repo::App])
+        .may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["reflog", "expire", "--expire=now", "--all"],
+        )
+        .may_leave_unresolved(&[Repo::App]),
+        Step::git(&a(), Repo::App, &["gc", "-q", "--prune=now"]).may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+    ]
 }
 
-/// [`landed_history_pin_no_ref_keeps`] taken in on machine B by `rwv sync
-/// --json` from a seat cut before the re-pin: the skip is one of the sync's
+/// [`a_history_pin_no_clone_holds`], then each seat lands or syncs. A seat cut
+/// before the lock commit that pins the dropped commit asks `app`'s remotes
+/// for it, on either machine, and names it as absent; a seat cut after it,
+/// or one that has synced past it, asks no remote: each lands with `app`'s
+/// remote unreachable.
+pub fn landed_history_pin_no_ref_keeps() -> Scenario {
+    let mut steps = a_history_pin_no_clone_holds();
+    let absent = || Claim::OutputOnce("local/remotes/app: history pin absent");
+    steps.extend([
+        Step::rwv(&ww("early"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(absent())
+            .claim(Claim::OutputContains("judged on refs as just fetched")),
+        Step::rwv(&b_ww("b-early"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(absent()),
+        Step::rwv(&b_ww("b-sync"), &["sync", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(absent()),
+        Step::unreachable(Remote::origin(Repo::App)),
+        Step::rwv(&b_ww("b-sync"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::OutputLacks("history pin absent"))
+            .claim(Claim::OutputLacks("just fetched")),
+        create("late"),
+        Step::commit(&ww("late"), Repo::App, "late-app"),
+        Step::rwv(&ww("late"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::OutputLacks("history pin absent"))
+            .claim(Claim::OutputLacks("just fetched")),
+        Step::rwv(
+            &b(),
+            &["workweave", "create", "--project", "proj", "b-late"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("b-late"), Repo::App, "b-late-app"),
+        Step::rwv(&b_ww("b-late"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::OutputLacks("history pin absent"))
+            .claim(Claim::OutputLacks("just fetched")),
+        Step::reachable(Remote::origin(Repo::App)),
+    ]);
+    scenario("a landed history pin no ref keeps", steps)
+}
+
+/// [`a_history_pin_no_clone_holds`] taken in on machine B by `rwv sync
+/// --json` from a seat cut before it: the absent pin is one of the sync's
 /// reports, as it is a landing's.
-pub fn a_sync_reports_a_skipped_history_pin_in_json() -> Scenario {
-    let app = Repo::App.rel_path();
-    scenario(
-        "a sync reports a skipped history pin in json",
-        vec![
-            Step::new_machine(Machine::B),
-            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "early"])
-                .expect(Exit::Succeeds),
-            Step::commit(&b_ww("early"), Repo::App, "early-app"),
-            create("w"),
-            Step::commit(&ww("w"), Repo::App, "w-app"),
-            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::git(
-                &ww("w"),
-                Repo::App,
-                &["commit", "--amend", "-q", "-m", "w-app amended"],
-            )
-            .may_strand(&[Repo::App])
-            .may_leave_unresolved(&[Repo::App]),
-            Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"])
-                .expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
-            publishes_records(Step::rwv(&a(), &["push"]))
-                .pushes(Remote::origin(Repo::App), "main")
-                .pushes(Remote::origin(Repo::Proj), "main")
-                .expect(Exit::Succeeds),
-            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&b_ww("early"), &["sync", "--history", "linear", "--json"])
-                .expect(Exit::Succeeds)
-                .may_rewrite(&[Repo::App])
-                .claim(Claim::OutputContains("\"history-pin-skipped\"")),
-        ],
-    )
+pub fn a_sync_reports_an_absent_history_pin_in_json() -> Scenario {
+    let mut steps = a_history_pin_no_clone_holds();
+    steps.push(
+        Step::rwv(&b_ww("b-sync"), &["sync", "--history", "linear", "--json"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::OutputContains("\"history-pin-absent\"")),
+    );
+    scenario("a sync reports an absent history pin in json", steps)
 }
 
 /// A seat locks `app`, whose `main` then moves upstream with nothing locking it, so
@@ -7384,38 +7407,171 @@ pub fn a_refused_landing_leaves_a_lock_behind_as_it_stood() -> Scenario {
     )
 }
 
-/// A lock commit of the target's history pins a member commit machine B
-/// lacks, and no later lock re-pinned it by name: B's landing in that member
-/// still refuses, and the printed fetch clears it once the commit is
-/// published.
-pub fn a_history_pin_not_repinned_still_refuses() -> Scenario {
+/// How the commit machine B lacks bears on its seat's work in
+/// [`a_colleagues_history_pin_is_fetched_and_judged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Colleague {
+    /// B's work shares no commit with the lacked pin's lineage.
+    Unshared,
+    /// B's work carries a commit the lacked pin built on, which `main` moved
+    /// off by name.
+    Shared,
+}
+
+/// Machine A locks an `app` commit, `a-app`, then moves `main` off it by
+/// name and on to `after`, and publishes the project and `app`'s `main`;
+/// `a-app` goes to `app`'s branch `x` only where `publish` says. Machine B
+/// takes in the project and `app`'s `main` alone, so of `main`'s history it
+/// lacks only `a-app`, from a seat `w2` cut before. Under
+/// [`Colleague::Shared`], `a-app` is built on `shared`, published as `y`,
+/// which B holds and carries `w2`'s `app` onto.
+fn a_colleagues_pin_b_lacks(how: Colleague, publish: bool) -> Vec<Step> {
+    let app = Repo::App.rel_path();
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    let back = match how {
+        Colleague::Unshared => "HEAD~1",
+        Colleague::Shared => {
+            steps.extend([
+                Step::commit(&a(), Repo::App, "shared"),
+                Step::git(
+                    &a(),
+                    Repo::App,
+                    &["push", "-q", "origin", "HEAD:refs/heads/y"],
+                )
+                .pushes(Remote::origin(Repo::App), "y"),
+                Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            ]);
+            "HEAD~2"
+        }
+    };
+    steps.extend([
+        Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "a-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    if publish {
+        steps.push(
+            Step::git(
+                &a(),
+                Repo::App,
+                &["push", "-q", "origin", "HEAD:refs/heads/x"],
+            )
+            .pushes(Remote::origin(Repo::App), "x"),
+        );
+    }
+    steps.extend([
+        Step::git(&a(), Repo::App, &["reset", "-q", "--hard", back])
+            .may_strand(&[Repo::App])
+            .may_rewrite(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&a(), &["member", "pin", &app, "HEAD", "--commit"])
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "after"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        Step::git(&b(), Repo::Proj, &["fetch", "-q", "origin"]),
+        Step::git(&b(), Repo::App, &["fetch", "-q", "origin", "main"]),
+    ]);
+    if how == Colleague::Shared {
+        steps.push(
+            Step::git(
+                &b_ww("w2"),
+                Repo::App,
+                &["reset", "-q", "--hard", "origin/y"],
+            )
+            .may_strand(&[Repo::App]),
+        );
+    }
+    steps.push(Step::commit(&b_ww("w2"), Repo::App, "w2-app"));
+    steps
+}
+
+/// [`a_colleagues_pin_b_lacks`] with `a-app` published nowhere: B's landing
+/// fetches `app`'s remotes for it, finds it on none, names it, and lands.
+pub fn a_history_pin_no_remote_holds_is_named_and_lands() -> Scenario {
+    let mut steps = a_colleagues_pin_b_lacks(Colleague::Unshared, false);
+    steps.push(
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+            .may_leave_unresolved(&[Repo::App])
+            .may_rewrite(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputOnce("local/remotes/app: history pin absent"))
+            .claim(Claim::OutputContains("no remote of the member holds")),
+    );
+    scenario("a history pin no remote holds is named and lands", steps)
+}
+
+/// [`a_colleagues_pin_b_lacks`] with `a-app` published: B's landing fetches
+/// `app`'s remotes, finds it, and judges by it: the work lands where it
+/// shares nothing with `a-app`'s lineage, and is off lineage where it
+/// carries `shared`, which `main` moved off.
+pub fn a_colleagues_history_pin_is_fetched_and_judged(how: Colleague) -> Scenario {
+    let mut steps = a_colleagues_pin_b_lacks(how, true);
+    let landing = Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+        .may_leave_unresolved(&[Repo::App])
+        .may_rewrite(&[Repo::App])
+        .claim(Claim::OutputContains("judged on refs as just fetched"))
+        .claim(Claim::OutputLacks("history pin absent"));
+    steps.push(match how {
+        Colleague::Unshared => landing.expect(Exit::Succeeds),
+        Colleague::Shared => landing.expect(Exit::refuses(Repo::App, State::PinOffLineage)),
+    });
+    scenario("a colleague's history pin is fetched and judged", steps)
+}
+
+/// [`a_colleagues_pin_b_lacks`] with `app`'s remote unreachable when B
+/// lands: whether a remote holds the pin cannot be told, so the landing
+/// refuses; once the remote is back, the printed fetch lets it land.
+pub fn a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched() -> Scenario {
+    let mut steps = a_colleagues_pin_b_lacks(Colleague::Unshared, true);
+    steps.extend([
+        Step::unreachable(Remote::origin(Repo::App)),
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+            .may_leave_unresolved(&[Repo::App])
+            .expect(Exit::refuses(Repo::App, State::PinUnasked))
+            .claim(Claim::OutputContains("could not be asked"))
+            .claim(Claim::OutputLacks("choose where it pushes and pulls"))
+            .claim(Claim::OutputLacks("wait until the PR lands")),
+        Step::reachable(Remote::origin(Repo::App)),
+        Step::rwv_printed(&b_ww("w2"), "rwv fetch").expect(Exit::Succeeds),
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+            .may_rewrite(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("history pin absent"))
+            .claim(Claim::OutputLacks("just fetched")),
+    ]);
     scenario(
-        "a history pin not re-pinned still refuses",
-        vec![
-            Step::new_machine(Machine::B),
-            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
-                .expect(Exit::Succeeds),
-            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
-            Step::commit(&a(), Repo::App, "a-app"),
-            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::commit(&a(), Repo::App, "a-app-2"),
-            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
-                .pushes(Remote::origin(Repo::Proj), "main")
-                .may_leave_unresolved(&[Repo::App]),
-            Step::git(&b(), Repo::Proj, &["fetch", "origin"]).may_leave_unresolved(&[Repo::App]),
-            Step::rwv(&b_ww("w2"), &["land"])
-                .may_leave_unresolved(&[Repo::App])
-                .expect(Exit::refuses(Repo::App, State::PinUnreachable))
-                .claim(Claim::OutputContains("rwv fetch"))
-                .claim(Claim::OutputLacks("history pin skipped"))
-                .claim(Claim::LocalStateUnchanged(b_ww("w2"))),
-            Step::rwv(&a(), &["push", "--repo", &Repo::App.rel_path()])
-                .pushes(Remote::origin(Repo::App), "main")
-                .expect(Exit::Succeeds),
-            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
-            Step::rwv(&b_ww("w2"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
-        ],
+        "a history pin whose remote cannot be reached refuses until fetched",
+        steps,
+    )
+}
+
+/// [`a_colleagues_pin_b_lacks`] with B's `app` clone left with no remote:
+/// the landing adds `app`'s url remote, as `rwv fetch` does, and fetches the
+/// pin from it.
+pub fn a_member_with_no_remote_is_given_its_url_remote_and_asked() -> Scenario {
+    let mut steps = a_colleagues_pin_b_lacks(Colleague::Unshared, true);
+    steps.extend([
+        Step::git(
+            &b(),
+            Repo::App,
+            &["merge", "-q", "--ff-only", "origin/main"],
+        ),
+        Step::git(&b(), Repo::App, &["remote", "remove", "origin"]),
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+            .may_rewrite(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("judged on refs as just fetched"))
+            .claim(Claim::OutputLacks("history pin absent")),
+    ]);
+    scenario(
+        "a member with no remote is given its url remote and asked",
+        steps,
     )
 }
 

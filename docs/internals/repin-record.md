@@ -104,36 +104,22 @@ pins disagree with the lock change waives nothing and is listed under
 
 ## The lineage reader
 
-`lineage::PinHistory::of` reads one lock per commit `rev-list --full-history
--- rwv.lock` lists; nothing else is read until the lineage rule meets a pin
-this clone lacks. Then `PinHistory::superseded` reads the commit graph once
-(`Vcs::ancestry`). A parent's lock is the lock of the nearest listed commit
-on its first-parent chain: an unlisted commit is TREESAME to every parent.
-Each lock commit whose parent pinned the member at `X` and which pins `Y != X`
-is an exit from `X`. An exit is
+The lineage rule does not read these records. `lineage::PinHistory::of` reads
+one lock per commit `rev-list --full-history -- rwv.lock` lists, and
+`lineage::judge` decides the base from the pins this clone holds. A pin this
+clone lacks is asked about only where `PinHistory::asked_about` finds it in a
+lock commit the source's project branch does not reach (`rev-list --not
+<source>`, which covers every merge base of a criss-cross at once); then
+`lineage::judge_asking` fetches the member's remotes once and judges again.
+A pin from before the branches parted decides nothing on a clone that lacks it,
+and no remote is asked for it. The bound holds unless the work's first-parent
+chain carries a commit that no held pin of the target's history contains and
+that the source did not make after the branches parted: a member carried by
+hand onto commits of a lineage the target pinned and moved off. That landing
+passes with no fetch and no note where a clone holding the pin would refuse it
+`pin` `off lineage`; it brings back commits the target dropped, which is what
+merging them does in single-repo git.
 
-- recorded where the commit records `<X> <Y>` for the member,
-- waived where the commit is a merge and a later commit holds a trusted
-  backward re-pin of the member whose `<new>` does not contain `X` (the
-  `pin` `waived` test, applied to the pin the merge left), and
-- an advance where the clone lacks `Y`, or holds both and `X` reaches `Y`.
-  Ancestry is asked only of commits the clone resolved (`lineage::Held`).
-
-`X` is superseded unless a chain of exits that are neither recorded nor waived
-reaches the tip's pin, no pin, or a held pin that is no advance: a least fixed
-point over the exits reached from the pins asked about. Records are read only
-for exits reached that way, one `annotation_values` per commit. The fact
-names the oldest record the chain reaches (`Superseded::by`). It prints
-unless the source's project branch already holds that record (`seen_from`).
-
-The answer is per clone. A clone that holds a superseded pin judges by it, so
-the same history can refuse work as `pin` `off lineage` on one clone and land
-it from another that lacks the pin. This is an accepted residual: it is the
-parity with single-repo git, where work built on a commit another clone reset
-away comes back when it is merged. A pin left by an unrecorded jump to a pin
-this clone holds refuses `pin` `unreachable` on every clone that lacks it.
-Only obtaining the commit clears that refusal (`rwv fetch` from a remote that
-holds it).
-
-`rwv push` asks `superseded` only for a pin of the pushed range that no branch
-or backup holds, to leave it out of `pin held by no branch`.
+`rwv push` reads the records of the pushed range once per push, and leaves out
+of `pin held by no branch` a pin no backup holds that is the old pin of a
+record of the range for the member, or that such an old pin contains.

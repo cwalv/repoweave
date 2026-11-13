@@ -7,7 +7,7 @@
 //! composes in the source and fast-forwards the receiving branches.
 
 use crate::diagnosis::{Form, Judged, Report, State};
-use crate::lineage::{Lineage, PinHistory};
+use crate::lineage::{PinHistory, Verdict};
 use crate::manifest::{
     History, LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
 };
@@ -88,10 +88,9 @@ pub struct Plan {
     /// The commits each moved member's receiving branch holds beyond `T`'s
     /// pin, which the landing pins into `T` with the member's work.
     pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
-    /// Each pin of `T`'s history this clone lacks that the lineage rule left
-    /// out, a later lock having re-pinned it by name, where the source had
-    /// not taken that re-pin in.
-    pub skipped_pins: Vec<crate::op_state::LandingReport>,
+    /// Each pin of `T`'s history the lineage rule asked about that this
+    /// clone lacks and no remote of the member holds.
+    pub absent_pins: Vec<crate::op_state::LandingReport>,
     /// Each change to `T`'s entries `--allow-member-change` named.
     pub landed_changes: Vec<crate::op_state::LandingReport>,
     /// The repos composed by a merge commit, first parent the receiving
@@ -640,7 +639,7 @@ impl Sides {
             our_lock: lock_at(vcs, dir, head),
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
-            history: PinHistory::of(vcs, dir, target_tip)?.seen_from(head),
+            history: PinHistory::of(vcs, dir, target_tip)?.since(head),
         })
     }
 
@@ -1301,7 +1300,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         our_lock: None,
         their_lock: None,
         base_lock: None,
-        history: PinHistory::of(vcs, &dir, resumed.target_tip)?.seen_from(&head),
+        history: PinHistory::of(vcs, &dir, resumed.target_tip)?.since(&head),
     };
     let changes = entry_changes(resumed.project, &sides, source_root, None);
     if let Some(refused) = inapplicable(resumed.added, &changes, resumed.target) {
@@ -1957,30 +1956,33 @@ fn judge_moved(
     plan: &mut Plan,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let Member { path, dir, vcs, .. } = *member;
-    let pins = sides.history.of_member(path);
-    let supersede = |absent: &BTreeSet<CommitId>| {
-        sides.history.superseded(
-            crate::vcs::project_vcs().as_ref(),
-            path,
-            absent,
-            &crate::lineage::MemberClone::lacking(vcs, dir, absent),
-        )
-    };
-    match crate::lineage::judge(vcs, dir, head, &pins, supersede, tip)? {
-        Lineage::Passes { skipped, .. } => {
-            plan.skipped_pins
-                .extend(skipped.into_iter().filter(|s| !s.known).map(|s| {
-                    crate::op_state::LandingReport::HistoryPinSkipped {
-                        repo: RepoKey::Member(path.clone()),
-                        lock: s.lock,
-                        pin: s.pin,
-                        by: s.by,
-                        verb: s.verb,
-                    }
-                }));
+    let Member {
+        path,
+        entry,
+        dir,
+        vcs,
+    } = *member;
+    let judged = crate::lineage::judge_asking(
+        crate::vcs::project_vcs().as_ref(),
+        &sides.history,
+        path,
+        vcs,
+        dir,
+        head,
+        tip,
+        || crate::fetch::ask_remotes(vcs, path, "land", dir, &entry.url),
+    )?;
+    match judged {
+        Verdict::Passes { absent, .. } => {
+            plan.absent_pins.extend(absent.into_iter().map(|absent| {
+                crate::op_state::LandingReport::HistoryPinAbsent {
+                    repo: RepoKey::Member(path.clone()),
+                    lock: absent.lock,
+                    pin: absent.pin,
+                }
+            }));
         }
-        Lineage::Off { base } => {
+        Verdict::Off { base } => {
             let mut judging = State::PinOffLineage
                 .of(path)
                 .member()
@@ -1999,22 +2001,9 @@ fn judge_moved(
             }
             report.add(judging.judge(vcs));
         }
-        Lineage::Unreachable { absent } => report.add(
-            State::PinUnreachable
-                .of(path)
-                .member()
+        Verdict::Unasked { pins, cause } => report.add(
+            crate::lineage::unasked(&landing.target, path, &pins, cause)
                 .checkout(dir)
-                .bind("<m>", path)
-                .subject(format!(
-                    "'{}' pinned {} for it, which this clone lacks, so its base cannot be \
-                     read here",
-                    landing.target,
-                    absent
-                        .iter()
-                        .map(|c| c.short().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
                 .by_verb("land")
                 .judge(vcs),
         ),

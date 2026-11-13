@@ -532,6 +532,7 @@ pub enum State {
     PushBranchUnconfirmed,
     PinNone,
     PinUnreachable,
+    PinUnasked,
     NameTaken,
     NameExists,
     NameARevision,
@@ -616,7 +617,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 84] = [
+    pub const ALL: [State; 85] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -640,6 +641,7 @@ impl State {
         Self::PinOffLineage,
         Self::PinNotOnDeclaredBranch,
         Self::PinUnreachable,
+        Self::PinUnasked,
         Self::PinOffRemote,
         Self::PinBackwards,
         Self::PinUnmerged,
@@ -942,14 +944,7 @@ impl State {
                 axis: Axis::Pin,
                 name: "unreachable",
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
-                        is on the declared branch at the tip of the remote's branch. At a \
-                        landing or `rwv sync`, a pin of the target's history this clone lacks \
-                        refuses unless that history moved off it by name: each later lock \
-                        that changed the member's pin from it records the move (a re-pin, a \
-                        waiver, or a rebase rwv made), or moves to a pin this clone also lacks \
-                        that was moved off the same way. That pin does not decide the base \
-                        here, and the verb reports it (`history pin skipped`) where the \
-                        source had not taken that record in",
+                        is on the declared branch at the tip of the remote's branch",
                 refused_by: "`rwv push`; `rwv land`, for a pin of the target's lock as last \
                              fetched, naming `rwv fetch`; `rwv clone`, which does not refuse: it \
                              completes, lists the member and exits with status 3; `rwv \
@@ -957,6 +952,18 @@ impl State {
                              status` reports it",
                 offers: &[Form::C17, Form::C25, Form::C19],
                 verb_offers: &[("land", Form::C33)],
+            },
+            Self::PinUnasked => &StateRow {
+                axis: Axis::Pin,
+                name: "unasked",
+                means: "a pin of the target's history this clone lacks, held by a lock commit \
+                        the source's project branch does not reach, could make the work's base \
+                        newer, and a remote of the member could not be fetched to look for it, \
+                        the cause listed: whether a remote holds it cannot be told. Once the \
+                        remote can be reached, a fetch lets the next run judge it",
+                refused_by: "`rwv land` and `rwv sync`",
+                offers: &[Form::C33],
+                verb_offers: &[],
             },
             Self::NameTaken => &StateRow {
                 axis: Axis::Name,
@@ -1224,9 +1231,10 @@ impl State {
                 means: "a project commit of the range being pushed pins the commit named, which \
                         no branch or remote-tracking branch reaches, listed with the project \
                         commits pinning it, the backups holding it, and the pushed tip's pin \
-                        where that records a copy of it. A pin a later lock of the pushed \
-                        history re-pinned by name, which no backup holds, is not listed. Only the pushed tip's pins \
-                        must be reached, so the push publishes the range",
+                        where that records a copy of it. A pin no backup holds is not listed \
+                        where a commit of the range re-pinned the member by name off it or off \
+                        a commit containing it. Only the pushed tip's pins must be reached, so \
+                        the push publishes the range",
                 refused_by: "nothing refuses; `rwv push` reports it",
                 offers: &[Form::C27],
                 verb_offers: &[],

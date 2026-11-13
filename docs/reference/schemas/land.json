@@ -994,24 +994,19 @@
           }
         },
         {
-          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks, left out of the lineage rule because `by`, a later lock of that history, re-pinned it by `verb`.",
+          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks and no remote of the member held when asked, so it did not decide the base.",
           "type": "object",
           "required": [
-            "by",
             "kind",
             "lock",
             "path",
-            "pin",
-            "verb"
+            "pin"
           ],
           "properties": {
-            "by": {
-              "$ref": "#/definitions/CommitId"
-            },
             "kind": {
               "type": "string",
               "enum": [
-                "history-pin-skipped"
+                "history-pin-absent"
               ]
             },
             "lock": {
@@ -1022,9 +1017,6 @@
             },
             "pin": {
               "$ref": "#/definitions/CommitId"
-            },
-            "verb": {
-              "type": "string"
             }
           }
         },

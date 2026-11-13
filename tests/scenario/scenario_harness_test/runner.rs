@@ -455,6 +455,8 @@ pub enum Claim {
     JudgedOnly(Repo, State),
     /// What the step printed holds this text.
     OutputContains(&'static str),
+    /// What the step printed holds this text exactly once.
+    OutputOnce(&'static str),
     /// What the step printed does not hold this text.
     OutputLacks(&'static str),
     /// One line of what the step printed is exactly this text.
@@ -1907,6 +1909,10 @@ impl Run<'_> {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
                 }
             }
+            Claim::OutputOnce(text) => match output.matches(text).count() {
+                1 => Ok(()),
+                n => Err(format!("the output holds {text:?} {n} times:\n{output}")),
+            },
             Claim::OutputInOrder(texts) => {
                 let mut from = 0;
                 for text in *texts {

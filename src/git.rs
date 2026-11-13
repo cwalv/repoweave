@@ -4525,10 +4525,16 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         tip: &CommitId,
+        excluding: &[CommitId],
         path: &str,
     ) -> Result<Vec<CommitId>, VcsError> {
-        let args = ["rev-list", "--full-history", tip.as_str(), "--", path];
-        Self::run_trimmed(args, repo)?
+        let mut args = vec!["rev-list", "--full-history", tip.as_str()];
+        if !excluding.is_empty() {
+            args.push("--not");
+            args.extend(excluding.iter().map(CommitId::as_str));
+        }
+        args.extend(["--", path]);
+        Self::run_trimmed(&args, repo)?
             .lines()
             .filter(|l| !l.is_empty())
             .map(|id| commit_id_printed(id, &args, repo))

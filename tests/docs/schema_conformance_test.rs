@@ -1891,12 +1891,10 @@ fn landing_reports() -> Vec<LandingReportOutput> {
                 subject: "upstream fix".to_owned(),
             }],
         },
-        LandingReportOutput::HistoryPinSkipped {
+        LandingReportOutput::HistoryPinAbsent {
             path: "local/remotes/app".to_owned(),
             lock: id('a'),
             pin: id('b'),
-            by: id('c'),
-            verb: "member pin".to_owned(),
         },
         LandingReportOutput::PushBranchAhead {
             path: "(project)".to_owned(),

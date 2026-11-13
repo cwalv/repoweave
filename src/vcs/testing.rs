@@ -1360,6 +1360,7 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _tip: &CommitId,
+        _excluding: &[CommitId],
         _path: &str,
     ) -> Result<Vec<CommitId>, VcsError> {
         unsupported("commits_changing")
