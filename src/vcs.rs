@@ -2476,11 +2476,11 @@ pub enum Holds {
     Other,
 }
 
-/// What a drift refresh writes for a path: its index entry and file, or its
-/// index entry alone.
+/// What a drift refresh writes for a path: its file alone, or its index
+/// entry alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshScope {
-    IndexAndFiles,
+    FilesOnly,
     IndexOnly,
 }
 
@@ -4110,13 +4110,13 @@ pub trait Vcs: Send + Sync {
         left: Option<&CommitId>,
     ) -> Result<Vec<PathStanding>, VcsError>;
 
-    /// Give each of `paths` `head`'s content in the index, and with
-    /// [`RefreshScope::IndexAndFiles`] in the working tree too, removing those
-    /// `head` lacks; only where each still holds `left`'s content there, each
-    /// file `left` and `head` both hold is still on disk, and nothing on disk
-    /// is in the way of a file `head` adds. Where any does not, the answer is
-    /// [`RefreshWrite::Declined`] and nothing is written. Nothing else in the
-    /// checkout changes either way.
+    /// Give each of `paths` `head`'s content in the index, or with
+    /// [`RefreshScope::FilesOnly`] in the working tree alone, removing those
+    /// `head` lacks; only where each still holds `left`'s content in the index
+    /// and, with files, on disk, each file `left` and `head` both hold is still
+    /// on disk, and nothing on disk is in the way of a file `head` adds. Where
+    /// any does not, the answer is [`RefreshWrite::Declined`] and nothing is
+    /// written. Nothing else in the checkout changes either way.
     fn refresh_paths_if_left(
         &self,
         repo: &Path,
@@ -4160,21 +4160,6 @@ pub trait Vcs: Send + Sync {
 
     /// The lock a killed VCS process left on `repo`'s index, if any.
     fn index_lock(&self, repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError>;
-
-    /// Record in the checkout's own history that a refresh from `left` to
-    /// `head` has begun, so [`Vcs::refreshing_from`] answers `left` until
-    /// [`Vcs::record_checkout_at_head`] records it finished. Fails, recording
-    /// nothing, where HEAD no longer names `head`.
-    fn mark_refreshing(
-        &self,
-        repo: &Path,
-        left: &CommitId,
-        head: &CommitId,
-    ) -> Result<(), VcsError>;
-
-    /// The tip a refresh begun in `repo` and not recorded finished started
-    /// from, while HEAD has not moved since.
-    fn refreshing_from(&self, repo: &Path) -> Result<Option<CommitId>, VcsError>;
 
     /// Record in the checkout's own history that it stands at `head`, so
     /// [`Vcs::left_behind_at`] answers `None` until the branch next moves

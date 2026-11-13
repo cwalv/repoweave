@@ -1282,19 +1282,6 @@ impl Vcs for FakeVcs {
         Ok(None)
     }
 
-    fn mark_refreshing(
-        &self,
-        _repo: &Path,
-        _left: &CommitId,
-        _head: &CommitId,
-    ) -> Result<(), VcsError> {
-        unsupported("mark_refreshing")
-    }
-
-    fn refreshing_from(&self, _repo: &Path) -> Result<Option<CommitId>, VcsError> {
-        Ok(None)
-    }
-
     fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {
         unsupported("record_checkout_at_head")
     }

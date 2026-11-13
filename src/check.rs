@@ -7371,26 +7371,19 @@ impl DriftReading {
 /// operation, and in one whose index already holds HEAD's entry for a path
 /// the move changed: a checkout left behind holds the old tip at every such
 /// path it has not edited, so one that took part of the move has had it
-/// taken by something its history does not show, unless its history shows
-/// a refresh from the old tip begun and not finished.
+/// taken by something its history does not show.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
-    let refreshing = match vcs.mid_operation(repo) {
-        Some(_) => None,
-        None => vcs.refreshing_from(repo)?,
-    };
     let left = match vcs.mid_operation(repo) {
         Some(_) => None,
-        None if refreshing.is_some() => refreshing.clone(),
         None => vcs.left_behind_at(repo)?,
     };
     let standings = vcs.path_standings(repo, left.as_ref())?;
     let left = left.filter(|_| {
-        refreshing.is_some()
-            || !standings
-                .iter()
-                .any(|standing| standing.moved && standing.index == Holds::Head)
+        !standings
+            .iter()
+            .any(|standing| standing.moved && standing.index == Holds::Head)
     });
     let head = match left {
         Some(_) => Some(vcs.head_revision(repo)?.id().clone()),
@@ -7573,9 +7566,10 @@ impl DriftRefresh {
 /// Replace what `reading` found stale, writing only what a second reading,
 /// taken immediately before, agrees on, each write made only where every path
 /// in it still holds the moved-from tip's content; and, once nothing stale is
-/// left, record that the checkout stands at its HEAD. A write declined after
-/// another was made puts the first back, so the checkout is either refreshed
-/// whole or not at all.
+/// left, record that the checkout stands at its HEAD. The files are written
+/// first and every index entry after them in one write, so a run stopped or
+/// declined between the two leaves each path's index entry at the moved-from
+/// tip beside a file holding HEAD's content, which reads as drift again.
 pub fn refresh_drift(
     vcs: &dyn crate::vcs::Vcs,
     repo: &Path,
@@ -7644,7 +7638,6 @@ pub fn refresh_drift(
     if vcs.head_revision(repo)?.id() != moved_to {
         return Ok(left_in_place(first, LeftWhy::MovedAgain));
     }
-    vcs.mark_refreshing(repo, moved_from, moved_to)?;
     let declined = |write: RefreshWrite, paths: &[String]| -> Result<Option<LeftWhy>, VcsError> {
         Ok(match write {
             RefreshWrite::Written => None,
@@ -7661,42 +7654,22 @@ pub fn refresh_drift(
             }
         })
     };
-    let written = vcs.refresh_paths_if_left(
-        repo,
-        moved_from,
-        moved_to,
-        &index_entries,
-        RefreshScope::IndexOnly,
-    )?;
-    if let Some(why) = declined(written, &index_entries)? {
+    let written =
+        vcs.refresh_paths_if_left(repo, moved_from, moved_to, &files, RefreshScope::FilesOnly)?;
+    if let Some(why) = declined(written, &files)? {
         return Ok(left_in_place(first, why));
     }
     crate::test_pause::point("drift-write-index");
+    let entries: Vec<String> = files.iter().chain(&index_entries).cloned().collect();
     let written = vcs.refresh_paths_if_left(
         repo,
         moved_from,
         moved_to,
-        &files,
-        RefreshScope::IndexAndFiles,
+        &entries,
+        RefreshScope::IndexOnly,
     )?;
-    if let Some(why) = declined(written, &files)? {
-        let put_back = vcs.refresh_paths_if_left(
-            repo,
-            moved_to,
-            moved_from,
-            &index_entries,
-            RefreshScope::IndexOnly,
-        )?;
-        let mut outcome = left_in_place(first, why);
-        if put_back != RefreshWrite::Written {
-            outcome.refreshed = Some(Refreshed {
-                moved_from: moved_from.clone(),
-                moved_to: moved_to.clone(),
-                files: Vec::new(),
-                index_entries,
-            });
-        }
-        return Ok(outcome);
+    if let Some(why) = declined(written, &entries)? {
+        return Ok(left_in_place(first, why));
     }
     Ok(DriftRefresh {
         refreshed: Some(Refreshed {

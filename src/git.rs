@@ -1208,6 +1208,11 @@ fn refresh_stat_data(repo: &Path) {
 /// `paths` no longer holds `left`'s content in the index or a tracked file, or
 /// something untracked is in the way.
 ///
+/// The files are written through a copy of the index, which git checks them
+/// against and then updates, so the checkout's own index keeps `left`'s
+/// entries: a write stopped there leaves each path's index entry at `left`
+/// beside a file holding `head`'s content, which reads as drift again.
+///
 /// Git's check passes two things a person can lose: an ignored file or
 /// directory where `head` adds a path, which the merge treats as expendable,
 /// and a tracked file deleted from disk, which it treats as up to date and
@@ -1226,15 +1231,18 @@ fn refresh_paths_if_left(
     if !GitVcs::run(["ls-files", "-u", "-z"], repo)?.is_empty() {
         return Ok(RefreshWrite::Unresolved);
     }
-    let index = GitVcs::run_trimmed(
-        [
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            &format!("rwv-drift-index-{}", std::process::id()),
-        ],
-        repo,
-    )?;
+    let scratch = |name: &str| {
+        GitVcs::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &format!("rwv-drift-{name}-{}", std::process::id()),
+            ],
+            repo,
+        )
+    };
+    let index = scratch("index")?;
     let target = tree_with_paths_from(repo, &index, left, head, paths);
     let _ = std::fs::remove_file(&index);
     let target = match target {
@@ -1245,7 +1253,8 @@ fn refresh_paths_if_left(
         Err(e) => return Err(e),
     };
     refresh_stat_data(repo);
-    if scope == RefreshScope::IndexAndFiles {
+    let mut env = Vec::new();
+    if scope == RefreshScope::FilesOnly {
         let outside = carry_edits::uncompared(repo, paths)?.skipped;
         let removed: BTreeSet<String> = paths
             .iter()
@@ -1268,10 +1277,28 @@ fn refresh_paths_if_left(
                 vcs_said: format!("{path} no longer stands as it was read"),
             });
         }
+        if let Some(lock) = carry_edits::index_lock(repo)? {
+            return Ok(RefreshWrite::Declined {
+                vcs_said: format!(
+                    "Unable to create '{}': File exists; another git process holds the index",
+                    lock.display()
+                ),
+            });
+        }
+        let own = GitVcs::run_trimmed(
+            ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            repo,
+        )?;
+        let files_index = scratch("files")?;
+        std::fs::copy(&own, &files_index).map_err(|e| VcsError::Io {
+            ctx: format!("failed to copy the index {own} to {files_index}"),
+            source: e,
+        })?;
+        env.push(("GIT_INDEX_FILE", files_index));
     }
     let mut args = vec!["read-tree", "-m"];
     args.push(match scope {
-        RefreshScope::IndexAndFiles => "-u",
+        RefreshScope::FilesOnly => "-u",
         RefreshScope::IndexOnly => "-i",
     });
     args.extend([
@@ -1279,16 +1306,23 @@ fn refresh_paths_if_left(
         left.as_str(),
         target.tree.as_str(),
     ]);
-    let output = git_command()
+    let mut command = git_command();
+    for (key, value) in &env {
+        command.env(key, value);
+    }
+    let output = command
         .args(&args)
         .current_dir(repo)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!("failed to spawn git {args:?}"),
-            source: e,
-        })?;
+        .output();
+    for (_, written) in &env {
+        let _ = std::fs::remove_file(written);
+    }
+    let output = output.map_err(|e| VcsError::Io {
+        ctx: format!("failed to spawn git {args:?}"),
+        source: e,
+    })?;
     if output.status.success() {
         return Ok(RefreshWrite::Written);
     }
@@ -1355,10 +1389,6 @@ fn tree_with_paths_from(
         in_head: in_head.into_keys().collect(),
     })
 }
-
-/// The HEAD reflog message of a refresh begun, followed by the tip it
-/// refreshes from.
-const REFRESHING: &str = "rwv: refreshing drift from ";
 
 /// [`Vcs::record_checkout_at_head`] for git: a `HEAD` reflog entry at `head`,
 /// by an update whose old and new values are both `head`, so it moves no ref
@@ -4052,57 +4082,6 @@ impl Vcs for GitVcs {
 
     fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {
         record_checkout_at_head(repo, head)
-    }
-
-    fn mark_refreshing(
-        &self,
-        repo: &Path,
-        left: &CommitId,
-        head: &CommitId,
-    ) -> Result<(), VcsError> {
-        let message = format!("{REFRESHING}{left}");
-        GitVcs::run(
-            [
-                "update-ref",
-                "--create-reflog",
-                "-m",
-                message.as_str(),
-                "HEAD",
-                head.as_str(),
-                head.as_str(),
-            ],
-            repo,
-        )
-        .map(drop)
-    }
-
-    fn refreshing_from(&self, repo: &Path) -> Result<Option<CommitId>, VcsError> {
-        let HeadAttachment::Attached(_) = self.head_attachment(repo)? else {
-            return Ok(None);
-        };
-        let Ok(recorded) = GitVcs::run_trimmed(
-            [
-                "log",
-                "-g",
-                "-n1",
-                "--no-show-signature",
-                "--format=%H %gs",
-                "HEAD",
-            ],
-            repo,
-        ) else {
-            return Ok(None);
-        };
-        let Some((at, subject)) = recorded.split_once(' ') else {
-            return Ok(None);
-        };
-        let Some(left) = subject.strip_prefix(REFRESHING) else {
-            return Ok(None);
-        };
-        let (Ok(at), Ok(left)) = (CommitId::parse(at), CommitId::parse(left)) else {
-            return Ok(None);
-        };
-        Ok((*self.head_revision(repo)?.id() == at).then_some(left))
     }
 
     fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {
@@ -11507,17 +11486,13 @@ mod name_reading_tests {
             }]
         );
         let head = tip(&worktree, "HEAD");
-        assert_eq!(
-            refresh_paths_if_left(
-                &worktree,
-                &base,
-                &head,
-                &[AWKWARD.to_owned()],
-                RefreshScope::IndexAndFiles
-            )
-            .unwrap(),
-            RefreshWrite::Written
-        );
+        for scope in [RefreshScope::FilesOnly, RefreshScope::IndexOnly] {
+            assert_eq!(
+                refresh_paths_if_left(&worktree, &base, &head, &[AWKWARD.to_owned()], scope)
+                    .unwrap(),
+                RefreshWrite::Written
+            );
+        }
         assert_eq!(
             std::fs::read_to_string(worktree.join(AWKWARD))
                 .unwrap()
@@ -11707,7 +11682,7 @@ mod drift_tests {
             &left,
             &head,
             &["new.txt".to_owned()],
-            RefreshScope::IndexAndFiles,
+            RefreshScope::FilesOnly,
         )
         .unwrap();
 
@@ -11855,7 +11830,7 @@ mod drift_tests {
             &left,
             &head,
             &["a.txt".to_owned()],
-            RefreshScope::IndexAndFiles,
+            RefreshScope::FilesOnly,
         )
         .unwrap();
 

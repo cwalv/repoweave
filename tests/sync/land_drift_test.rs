@@ -1630,9 +1630,10 @@ fn a_declined_file_write_leaves_the_index_entries_and_records_nothing() {
     );
 }
 
-/// The refresh writes its index-only entries before its files, and a landing
-/// killed between the two still reads the checkout as drift: the next
-/// landing refreshes the files and lands.
+/// The refresh writes its files before any index entry, and a landing
+/// killed between the two leaves every index entry at the old tip beside
+/// files holding HEAD's content, which still reads as drift: the next verb
+/// resets the entries.
 #[test]
 fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
     let f = fixture();
@@ -1644,14 +1645,15 @@ fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
     let held = held_landing(&f, "drift-write-index");
     drop(held);
     assert_eq!(
-        common::git_in(
-            &f.ww_lib,
-            &["diff", "--name-only", "HEAD", "--", "spare.txt"]
-        ),
-        "",
-        "the index-only entry was written first"
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n"),
+        "the files were written first"
     );
-    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["diff", "--cached", "--name-only", "HEAD"]),
+        "notes.txt\nspare.txt",
+        "no index entry was written"
+    );
 
     let out = common::cli::run(&["lock"], &f.ww);
 
@@ -2478,4 +2480,96 @@ fn no_verb_commits_the_reverse_of_a_project_branch_move() {
         }
     }
     assert!(reversed.is_empty(), "{}", reversed.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// A refresh stopped between its writes
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn set_writable(dir: &Path, writable: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if writable { 0o755 } else { 0o555 };
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// A refresh git declines part way through its file write, then a hand
+/// refresh and a staged deletion and revert: the refused write left nothing
+/// that makes the later staged changes read as drift, so they are kept.
+#[cfg(unix)]
+#[test]
+fn staged_changes_after_a_declined_refresh_and_a_hand_refresh_are_kept() {
+    let f = fixture();
+    std::fs::create_dir_all(f.ww_lib.join("ro")).unwrap();
+    commit_file(&f.ww_lib, "ro/x.txt", "x\n", "ro");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("ro/x.txt"), "x2\n").unwrap();
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    set_writable(&f.ww_lib.join("ro"), false);
+    let out = common::cli::run(&["lock"], &f.ww);
+    set_writable(&f.ww_lib.join("ro"), true);
+    common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    common::git_in(&f.ww_lib, &["checkout", "HEAD", "--", "."]);
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+    common::git_in(&f.ww_lib, &["rm", "-q", "new.txt"]);
+    common::git_in(&f.ww_lib, &["checkout", "HEAD~1", "--", "notes.txt"]);
+    let kept = ["new.txt", "notes.txt"];
+    let before = path_state(&f.ww_lib, &kept);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert_eq!(
+        edits_listing(&stderr),
+        vec!["new.txt".to_owned(), "notes.txt".to_owned()]
+    );
+    assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert_eq!(path_state(&f.ww_lib, &kept), before, "{stderr}");
+}
+
+/// A refresh killed once its files are written, then a second move of the
+/// branch before any verb: nothing of the first move is ever offered as a
+/// commit. A path only the first move changed reads as drift in the index
+/// alone; one both moves changed holds the first move's content, which no
+/// reading tells from an edit, so it is held as moved and edited, and the
+/// printed merge, the first move's change being part of the second tip,
+/// brings the checkout to that tip.
+#[test]
+fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
+    let f = fixture();
+    commit_file(&f.ww_lib, "u.txt", "a\nm\nm\nm\nb\n", "u");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("u.txt"), "a2\nm\nm\nm\nb\n").unwrap();
+    });
+    drop(held_landing(&f, "drift-write-index"));
+    assert_eq!(
+        read(&f.ww_lib.join("u.txt")).as_deref(),
+        Some("a2\nm\nm\nm\nb\n")
+    );
+    let second = f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("u.txt"), "a2\nm\nm\nm\nb2\n").unwrap();
+    });
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert_eq!(
+        listing_under(&stderr, "edits moved and edited"),
+        vec!["u.txt".to_owned()],
+        "{stderr}"
+    );
+    assert!(!stderr.contains("commit"), "{stderr}");
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), second);
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    let out = common::cli::run(&["lock"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
