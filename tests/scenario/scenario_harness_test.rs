@@ -872,6 +872,9 @@ every_scenario!(
     abort_after_a_landing_merge_stops,
     landing_merge_continued_writes_one_project_merge,
     abort_after_a_sync_merge_stops,
+    a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
+    a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitOnceStaged),
+    a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::Abort),
     sync_continue_merges_a_range_the_stop_gave_a_merge,
     landing_names_every_field,
     history_unset_fast_forward,
@@ -6133,6 +6136,30 @@ fn abort_after_a_landing_merge_stops_scenario() {
 fn landing_merge_continued_writes_one_project_merge_scenario() {
     runner::run(scenarios::landing_merge_continued_writes_one_project_merge())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_project_stop_refuses_a_commit_while_a_path_is_unmerged() {
+    runner::run(scenarios::a_project_stop_refuses_every_commit(
+        scenarios::AtAProjectStop::CommitWhileUnmerged,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_project_stop_refuses_a_commit_once_its_paths_are_staged() {
+    runner::run(scenarios::a_project_stop_refuses_every_commit(
+        scenarios::AtAProjectStop::CommitOnceStaged,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_project_stops_refused_commit_leaves_abort_to_put_it_back() {
+    runner::run(scenarios::a_project_stop_refuses_every_commit(
+        scenarios::AtAProjectStop::Abort,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

@@ -520,6 +520,7 @@ pub enum State {
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
+    EditsCommitMidOperation,
     CheckoutInAnotherWorkspace,
     CheckoutInRawWorktree,
     PushBranchDiverged,
@@ -615,12 +616,13 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 83] = [
+    pub const ALL: [State; 84] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
+        Self::EditsCommitMidOperation,
         Self::CheckoutInAnotherWorkspace,
         Self::CheckoutInRawWorktree,
         Self::PushBranchDiverged,
@@ -769,6 +771,27 @@ impl State {
                 refused_by: "every verb resolved for a project, until it is resolved; `rwv \
                              doctor` and `rwv abort` run",
                 offers: &[Form::C32],
+                verb_offers: &[],
+            },
+            Self::EditsCommitMidOperation => &StateRow {
+                axis: Axis::Edits,
+                name: "commit mid-operation",
+                means: "the project repo is in the middle of a merge, rebase, cherry-pick or \
+                        revert, named, with each path still unmerged listed. A commit made \
+                        there now would become that operation's commit, concluding it with \
+                        only what the commit carries. The operation ends by its own continue, \
+                        which commits what is staged, or by its abort",
+                refused_by: "every verb that commits the project repo: the `rwv member` and \
+                             `rwv branch` setters, `rwv lock --commit`, `rwv doctor --fix`, and \
+                             `rwv sync`, `rwv land`, `rwv pull`, `rwv cherry-pick` and \
+                             `rwv update --remote` as they start; each operation's own \
+                             `--continue` and `rwv abort` run",
+                offers: &[
+                    Form::MarkResolved,
+                    Form::ResumeOperation,
+                    Form::AbortOperation,
+                    Form::C32,
+                ],
                 verb_offers: &[],
             },
             Self::EditsLockFilesUncommitted => &StateRow {
@@ -1861,6 +1884,9 @@ pub enum ChoiceId {
     CarryAgain,
     Republish,
     LandAgain,
+    MarkResolved,
+    ResumeOperation,
+    AbortOperation,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2089,6 +2115,23 @@ impl ChoiceId {
                 keeps_work: "`rwv abort` moves only what the operation moved, from the tips it \
                              wrote; a branch someone else moved stays where they left it",
             },
+            Self::MarkResolved => &ChoiceRow {
+                id: None,
+                phrase: "mark each unmerged path resolved once it holds what you mean",
+                keeps_work: "stages the working files as they stand; the operation is still \
+                             in progress",
+            },
+            Self::ResumeOperation => &ChoiceRow {
+                id: None,
+                phrase: "let the operation that stopped go on, committing what is staged",
+                keeps_work: "it stops again while any path is unmerged",
+            },
+            Self::AbortOperation => &ChoiceRow {
+                id: None,
+                phrase: "abandon the operation that stopped",
+                keeps_work: "`rwv abort` moves only what the operation moved, back to where it \
+                             found it",
+            },
             Self::LandAgain => &ChoiceRow {
                 id: None,
                 phrase: "land again once nothing else is changing the checkout: the landing \
@@ -2286,6 +2329,9 @@ pub enum Form {
     Republish,
     DriftLandAgain,
     DriftResolveThenLand,
+    MarkResolved,
+    ResumeOperation,
+    AbortOperation,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2312,7 +2358,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 94] = [
+    pub const ALL: [Form; 97] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2407,6 +2453,9 @@ impl Form {
         Self::Republish,
         Self::DriftLandAgain,
         Self::DriftResolveThenLand,
+        Self::MarkResolved,
+        Self::ResumeOperation,
+        Self::AbortOperation,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -2959,6 +3008,24 @@ impl Form {
             Self::DriftResolveThenLand => &FormRow {
                 choice: C::LandAgain,
                 steps: &[Vcs(A::Status), Rwv("rwv land")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::MarkResolved => &FormRow {
+                choice: C::MarkResolved,
+                steps: &[Vcs(A::MarkResolved)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::ResumeOperation => &FormRow {
+                choice: C::ResumeOperation,
+                steps: &[Rwv("rwv <resume>")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::AbortOperation => &FormRow {
+                choice: C::AbortOperation,
+                steps: &[Rwv("rwv abort")],
                 at: W::Here,
                 shipped: true,
             },

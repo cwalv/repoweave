@@ -138,7 +138,7 @@ fn repins(
 
 /// Commit `paths` of the project repo at `dir`, whose `rwv.lock` stages
 /// `lock`, recording each pin of a member `naming` names that moves from the
-/// one `HEAD`'s lock holds.
+/// one `HEAD`'s lock holds. Refused while an operation is in flight there.
 pub(crate) fn commit(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -146,7 +146,7 @@ pub(crate) fn commit(
     message: &str,
     lock: Option<&LockFile>,
     naming: &Naming,
-) -> Result<bool, VcsError> {
+) -> anyhow::Result<bool> {
     commit_annotated(vcs, dir, paths, message, lock, naming, Vec::new())
 }
 
@@ -159,13 +159,43 @@ pub(crate) fn commit_annotated(
     lock: Option<&LockFile>,
     naming: &Naming,
     annotations: Vec<Annotation>,
-) -> Result<bool, VcsError> {
+) -> anyhow::Result<bool> {
+    crate::commit_guard::refuse_commit_mid_operation(vcs, dir.display(), dir, None)?;
+    commit_unguarded(vcs, dir, paths, message, lock, naming, annotations)
+}
+
+/// [`commit_annotated`] for the commit that concludes `copy`, the one
+/// operation in flight that commit may conclude.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn commit_concluding_copy(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    paths: &[&str],
+    message: &str,
+    lock: Option<&LockFile>,
+    naming: &Naming,
+    annotations: Vec<Annotation>,
+    copy: crate::commit_guard::ConcludingCopy<'_>,
+) -> anyhow::Result<bool> {
+    crate::commit_guard::refuse_commit_mid_operation_but(vcs, dir.display(), dir, copy)?;
+    commit_unguarded(vcs, dir, paths, message, lock, naming, annotations)
+}
+
+fn commit_unguarded(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    paths: &[&str],
+    message: &str,
+    lock: Option<&LockFile>,
+    naming: &Naming,
+    annotations: Vec<Annotation>,
+) -> anyhow::Result<bool> {
     let mut recorded = match lock {
         Some(lock) => repins(vcs, dir, vcs.head_revision(dir).ok(), lock, naming),
         None => Vec::new(),
     };
     recorded.extend(annotations);
-    vcs.commit_only(dir, paths, message, &recorded)
+    Ok(vcs.commit_only(dir, paths, message, &recorded)?)
 }
 
 /// Commit the merge staged in `dir`, whose `rwv.lock` stages `lock`,

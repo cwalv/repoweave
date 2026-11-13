@@ -47,7 +47,7 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
 
 ## Common conflict cases
 
-- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is recorded again once every repo has taken in.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`.
+- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is recorded again once every repo has taken in.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`. Until the operation ends, no verb that commits the project repo runs there — the `rwv member` and `rwv branch` setters, `rwv lock --commit`, and a new `rwv sync`, `rwv land`, `rwv pull` or `rwv cherry-pick` refuse with `edits` `commit mid-operation`, even once every path is staged, since their commit would become the merge's. The operation's own `--continue` writes that commit from what you staged; make the setting change after it, or `rwv abort`.
 - **Member repo conflict:** A member repo's branch has a textual conflict against the incoming target revision. Resolve the conflicted files in that member checkout, run `git add`, and resume with `--continue`.
 - **`rwv land --retire` conflict:** When `--retire` hits a conflict, the workweave is preserved so you can resolve it. After staging fixes, run bare `rwv land --continue` — `--retire` is remembered in op-state and runs automatically once the sync finishes.
 

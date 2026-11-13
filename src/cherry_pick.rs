@@ -1902,7 +1902,7 @@ fn commit_project(
             RepoKey::Project => None,
         }),
     );
-    let made = crate::repin::commit_annotated(
+    let made = crate::repin::commit_concluding_copy(
         vcs,
         dir,
         &paths,
@@ -1913,6 +1913,7 @@ fn commit_project(
             key: PICKED_FROM,
             value: commit.to_string(),
         }],
+        crate::commit_guard::ConcludingCopy(&commit),
     )?;
     if !made {
         vcs.cancel_in_flight_op(dir);

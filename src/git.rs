@@ -3054,6 +3054,7 @@ impl Vcs for GitVcs {
             VcsAction::SetDefaultRemote => "git -C <checkout> config checkout.defaultRemote <r>",
             VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
             VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
+            VcsAction::MarkResolved => "git -C <checkout> add -- <paths>",
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
             }

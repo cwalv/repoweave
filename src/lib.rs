@@ -138,6 +138,7 @@ pub mod check;
 pub mod cherry_pick;
 pub mod cli;
 pub mod clone;
+pub mod commit_guard;
 pub mod declarations;
 pub mod deletion;
 pub mod diagnosis;

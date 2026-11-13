@@ -16661,6 +16661,122 @@ pub fn abort_after_a_sync_merge_stops() -> Scenario {
     scenario("abort after a sync's merge stops", steps)
 }
 
+/// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of
+/// the project repo both sides added differently.
+#[derive(Debug, Clone, Copy)]
+pub enum AtAProjectStop {
+    /// A setter and `rwv lock --commit` while `NOTES.txt` is unmerged.
+    CommitWhileUnmerged,
+    /// A setter once `NOTES.txt` is resolved and staged, the merge not yet
+    /// concluded.
+    CommitOnceStaged,
+    /// `rwv abort` after the refused setter.
+    Abort,
+}
+
+/// A `sync` merging `main` in stops on `NOTES.txt`; no verb that commits the
+/// project repo runs while that merge is in flight, unmerged paths or not, so
+/// the merge commit is the one `--continue` writes, holding the resolution
+/// the operator staged.
+pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+            .claim(Claim::OutputContains("merge"))
+    };
+    let merge_in_flight = || {
+        Step::git(
+            &ww("w"),
+            Repo::Proj,
+            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        )
+        .expect(Exit::Succeeds)
+    };
+    let mut steps = vec![
+        create("w"),
+        Step::hand_commit(&a(), Repo::Proj, "main", &[("NOTES.txt", "main note\n")]),
+        Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+        Step::hand_commit(
+            &ww("w"),
+            Repo::Proj,
+            "proj--w",
+            &[("NOTES.txt", "w note\n")],
+        ),
+        Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--hard"]),
+        Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("NOTES.txt")),
+    ];
+    match at {
+        AtAProjectStop::CommitWhileUnmerged => steps.extend([
+            refused(Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]))
+                .claim(Claim::OutputContains("NOTES.txt"))
+                .claim(Claim::OutputContains("rwv sync --continue"))
+                .claim(Claim::OutputContains("rwv abort")),
+            merge_in_flight(),
+            Step::rwv(&ww("w"), &["sync", "--continue"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            refused(Step::rwv(&ww("w"), &["lock", "--commit"]))
+                .claim(Claim::OutputContains("NOTES.txt")),
+            merge_in_flight(),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "NOTES.txt"])
+                .expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:NOTES.txt"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main note")),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["rev-parse", "-q", "--verify", "HEAD^2"],
+            )
+            .expect(Exit::Succeeds),
+        ]),
+        AtAProjectStop::CommitOnceStaged => steps.extend([
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "NOTES.txt"])
+                .expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["add", "NOTES.txt"]).expect(Exit::Succeeds),
+            refused(Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]))
+                .claim(Claim::OutputContains("rwv sync --continue"))
+                .claim(Claim::OutputLacks("NOTES.txt")),
+            merge_in_flight(),
+            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:NOTES.txt"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main note")),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["rev-parse", "-q", "--verify", "HEAD^2"],
+            )
+            .expect(Exit::Succeeds),
+        ]),
+        AtAProjectStop::Abort => steps.extend([
+            refused(Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"])),
+            Step::rwv_printed(&ww("w"), "rwv abort").expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            )
+            .expect(Exit::Code(1)),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:NOTES.txt"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("w note")),
+        ]),
+    }
+    let name = match at {
+        AtAProjectStop::CommitWhileUnmerged => {
+            "a project stop refuses a commit while a path is unmerged"
+        }
+        AtAProjectStop::CommitOnceStaged => {
+            "a project stop refuses a commit once its paths are staged"
+        }
+        AtAProjectStop::Abort => "a project stop's refused commit leaves abort to put it back",
+    };
+    scenario(name, steps)
+}
+
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
 /// conflict, printing each field's setter with each side's value. The

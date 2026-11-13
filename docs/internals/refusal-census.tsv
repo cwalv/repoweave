@@ -101,6 +101,7 @@ src/cli/dispatch.rs	wrong-address-flag	-	4
 src/clone.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/clone.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
+src/commit_guard.rs	edits commit mid-operation	-	1
 src/deletion.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	-	1
 src/deletion.rs	protected declared	tests/sync/protection_test.rs	1

@@ -398,11 +398,13 @@ fn bind_project_scoped(
 }
 
 /// How a project-scoped verb binds to its project: whether `-w` addressed it,
-/// and whether the verb writes the project repo or its lock.
+/// whether the verb writes the project repo or its lock, and whether it
+/// commits the project repo.
 #[derive(Clone, Copy)]
 struct Binding {
     workweave_flag: bool,
     writes_project: bool,
+    commits_project: bool,
 }
 
 /// Whether `command` writes the project repo or its lock, and so refuses a
@@ -428,6 +430,22 @@ fn writes_project(command: Option<&Commands>) -> bool {
     }
 }
 
+/// Whether `command` commits the project repo. Each operation's own
+/// `--continue` is not counted: it concludes the operation that stopped.
+fn commits_project(command: Option<&Commands>) -> bool {
+    match command {
+        Some(Commands::Member { .. }) => true,
+        Some(Commands::Lock { commit, .. }) => *commit,
+        Some(Commands::Sync { do_continue, .. })
+        | Some(Commands::Land { do_continue, .. })
+        | Some(Commands::CherryPick { do_continue, .. })
+        | Some(Commands::Pull { do_continue, .. }) => !do_continue,
+        Some(Commands::Update { remote, .. }) => *remote,
+        Some(Commands::Branch { action }) => !matches!(action, BranchAction::List { .. }),
+        _ => false,
+    }
+}
+
 /// Refuse while the project's lock is unmerged, and, for a verb that writes
 /// the project repo or its lock, while its lock merge driver is not set up as
 /// this release sets it up.
@@ -442,6 +460,14 @@ fn refuse_unsettled_lock(ctx: &WorkspaceContext, binding: Binding) -> anyhow::Re
     let vcs = crate::vcs::project_vcs();
     let repo = crate::workspace::project_rel_path(project);
     crate::lock_driver::refuse_unresolved(vcs.as_ref(), &repo, &dir)?;
+    if binding.commits_project {
+        crate::commit_guard::refuse_commit_mid_operation(
+            vcs.as_ref(),
+            &repo,
+            &dir,
+            Some(ctx.active_path()),
+        )?;
+    }
     if binding.writes_project {
         crate::lock_driver::refuse_unmigrated(vcs.as_ref(), &repo, &dir)?;
     }
@@ -788,6 +814,7 @@ pub fn run() -> anyhow::Result<()> {
     let binding = Binding {
         workweave_flag: use_workweave_flag,
         writes_project: writes_project(cli.command.as_ref()),
+        commits_project: commits_project(cli.command.as_ref()),
     };
 
     // Step 3: the root's marker against the index and the worktree relation,
