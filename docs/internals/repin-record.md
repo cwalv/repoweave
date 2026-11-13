@@ -83,7 +83,10 @@ landing, `rwv sync` under a linear setting and a stack carry) keeps its
 message, and its records are rewritten through the same member images its
 lock's pins go through (`repin::copy_with_lock`, `Vcs::copy_replayed` with
 replacement annotations), so a copied record still names the pins its copy and
-the copy's parent hold. A record the images leave moving nothing is dropped.
+the copy's parent hold. A record the images leave moving nothing is dropped,
+and so is one whose old pin the copy's parent does not hold: where the target
+moved the member under the first replayed commit, the copy's parent pins the
+target's commit, and no reader trusts a record whose old pin no parent holds.
 
 Every file that calls `lock::report_backward_repin` also builds a by-name
 commit (`tests/source/repin_writers_test.rs`): a verb that reports a pin moved

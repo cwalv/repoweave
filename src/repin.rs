@@ -252,7 +252,8 @@ pub(crate) fn recorded(
 
 /// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
 /// its message kept, each re-pin it records taken through `map` as its
-/// lock's pins were; a re-pin `map` leaves moving nothing is dropped.
+/// lock's pins were; a re-pin `map` leaves moving nothing, or moving off a
+/// pin `parent`'s lock does not hold, is dropped.
 pub(crate) fn copy_with_lock(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -263,12 +264,35 @@ pub(crate) fn copy_with_lock(
 ) -> Result<CommitId, VcsError> {
     let records = recorded(vcs, dir, commit)?;
     let had_records = !records.is_empty();
+    let parent_lock = if had_records {
+        vcs.read_file_at_revision(
+            dir,
+            &ResolvedRevisionId::from(parent.clone()),
+            Path::new(LockFile::FILE_NAME),
+        )
+        .ok()
+        .and_then(|text| LockFile::from_json_str(&text).ok())
+    } else {
+        None
+    };
+    let held_by_parent = |member: &RepoPath, pin: &CommitId| {
+        parent_lock
+            .as_ref()
+            .and_then(|lock| lock.get_entry(member))
+            .and_then(|entry| entry.version.as_commit_id())
+            .as_ref()
+            == Some(pin)
+    };
     let mapped: Vec<Annotation> = records
         .into_iter()
         .filter_map(|repin| {
             let from = repin.from.as_ref().map(|from| map(&repin.member, from));
             let to = map(&repin.member, &repin.to);
-            (from.as_ref() != Some(&to)).then(|| Repin { from, to, ..repin }.annotation())
+            let moves = from.as_ref() != Some(&to)
+                && from
+                    .as_ref()
+                    .is_none_or(|from| held_by_parent(&repin.member, from));
+            moves.then(|| Repin { from, to, ..repin }.annotation())
         })
         .collect();
     vcs.copy_replayed(
@@ -335,11 +359,20 @@ mod tests {
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
 
-    fn copied_records(map_to: impl Fn(&CommitId) -> CommitId) -> Vec<Repin> {
+    fn copied_records(parent_pin: CommitId, map_to: impl Fn(&CommitId) -> CommitId) -> Vec<Repin> {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         git(dir, &["init", "-q", "-b", "main"]);
-        git(dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        std::fs::write(
+            dir.join(LockFile::FILE_NAME),
+            format!(
+                r#"{{"repositories":{{"m":{{"type":"git","url":"u","version":"{}"}}}}}}"#,
+                parent_pin.as_str()
+            ),
+        )
+        .unwrap();
+        git(dir, &["add", LockFile::FILE_NAME]);
+        git(dir, &["commit", "-q", "-m", "base"]);
         let parent = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
         let (from, to) = (id('a'), id('b'));
         let message = format!(
@@ -364,7 +397,16 @@ mod tests {
 
     #[test]
     fn a_copied_record_takes_both_its_pins_through_the_lock_s_re_map() {
-        let records = copied_records(|pin| if *pin == id('a') { id('c') } else { id('d') });
+        let records = copied_records(
+            id('c'),
+            |pin| {
+                if *pin == id('a') {
+                    id('c')
+                } else {
+                    id('d')
+                }
+            },
+        );
         assert_eq!(
             records
                 .iter()
@@ -376,6 +418,21 @@ mod tests {
 
     #[test]
     fn a_copied_record_the_re_map_leaves_moving_nothing_is_dropped() {
-        assert!(copied_records(|_| id('e')).is_empty());
+        assert!(copied_records(id('e'), |_| id('e')).is_empty());
+    }
+
+    #[test]
+    fn a_copied_record_moving_off_a_pin_its_new_parent_does_not_hold_is_dropped() {
+        let records = copied_records(
+            id('f'),
+            |pin| {
+                if *pin == id('a') {
+                    id('c')
+                } else {
+                    id('d')
+                }
+            },
+        );
+        assert!(records.is_empty());
     }
 }
