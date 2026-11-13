@@ -576,6 +576,7 @@ pub(crate) fn remap_rebased_project(
         project_vcs.record_replayed(project_dir, &project.from, &project.onto, became)?;
         crate::test_pause::point("remap-recorded");
         project_vcs.take_rewritten(&on, &tip, rewritten)?;
+        crate::test_pause::point("remap-moved");
     }
     Ok(Some(RemappedProject {
         remapped: remap.remapped,

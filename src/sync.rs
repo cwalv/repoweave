@@ -9003,6 +9003,9 @@ pub(crate) struct RepoAt {
     /// Whether it is a landing's target, which abort restores whole or not
     /// at all.
     on_target: bool,
+    /// Whether the replay a backup keeps here holds the operator's staged
+    /// `rwv.toml`, written into the replayed tip whose own did not parse.
+    replay_holds_fix: bool,
 }
 
 /// What becomes of a checkout of the target's workspace the landing made.
@@ -9457,6 +9460,7 @@ fn plan_abort_workspace(
             dir: abs.clone(),
             vcs,
             on_target: matches!(side, AbortSide::LandTarget),
+            replay_holds_fix: false,
         };
         if unmoved_target {
             let stopped = at.vcs.mid_op(&abs);
@@ -9474,6 +9478,24 @@ fn plan_abort_workspace(
                 .as_ref()
                 .and_then(|head| replay_of(at.vcs.as_ref(), &abs, &replays, &repo_key, head.id())),
             AbortSide::LandTarget => None,
+        };
+        let parses = |commit: &CommitId| {
+            at.vcs
+                .read_file_at_revision(
+                    &abs,
+                    &ResolvedRevisionId::from(commit.clone()),
+                    Path::new(Manifest::FILE_NAME),
+                )
+                .is_ok_and(|text| Manifest::from_toml_str(&text).is_ok())
+        };
+        let replay_holds_fix = repo_key == RepoKey::Project
+            && matches!(
+                (finished_by_hand.as_ref(), advanced_tips.get(&repo_key)),
+                (Some(by_hand), Some(replayed)) if parses(by_hand) && !parses(replayed)
+            );
+        let at = RepoAt {
+            replay_holds_fix,
+            ..at
         };
         let integrates = match (side, operates_in) {
             (AbortSide::LandTarget, _) => Integrates::No,
@@ -9663,6 +9685,7 @@ fn plan_in_place(
                 dir,
                 vcs,
                 on_target: true,
+                replay_holds_fix: false,
             };
             if wrote.is_none() {
                 plan.steps.push(AbortStep::LeaveCheckout {
@@ -9734,6 +9757,7 @@ fn plan_made(record: &op_state::OwnerRecord, target_dir: &Path, label: &str, pla
                 dir,
                 vcs,
                 on_target: true,
+                replay_holds_fix: false,
             },
             plan: made,
         });
@@ -9830,6 +9854,7 @@ fn plan_in_place_as_ref(
             dir: store,
             vcs,
             on_target: true,
+            replay_holds_fix: false,
         },
         key: key.clone(),
         branch,
@@ -11035,6 +11060,7 @@ fn plan_landing_refs(
                     RepoKey::Project => None,
                 }),
                 on_target: true,
+                replay_holds_fix: false,
             };
             let written = journaled
                 .iter()
@@ -11200,6 +11226,7 @@ fn run_step(
                         named: &at.named,
                         dir: &at.dir,
                         give_up: &give_up,
+                        replay_holds_fix: at.replay_holds_fix,
                     },
                     &outcome,
                     tally,
@@ -11671,6 +11698,7 @@ struct Reported<'a> {
     named: &'a RepoOperand,
     dir: &'a Path,
     give_up: &'a GiveUp,
+    replay_holds_fix: bool,
 }
 
 impl Reported<'_> {
@@ -11895,6 +11923,11 @@ fn report_abort_outcome(
                 match work {
                     crate::vcs::KeptWork::Edits(backup) => outln!(
                         "  {label}: its uncommitted edits are kept as backup {} (`rwv backup list`)",
+                        backup.backup().name
+                    ),
+                    crate::vcs::KeptWork::FinishedByHand(backup) if at.replay_holds_fix => outln!(
+                        "  {label}: the replayed tip with your staged rwv.toml is kept as backup \
+                         {} (`rwv backup list`)",
                         backup.backup().name
                     ),
                     crate::vcs::KeptWork::FinishedByHand(backup) => outln!(
@@ -12838,6 +12871,7 @@ mod tests {
             dir: PathBuf::from("/nowhere"),
             vcs: crate::vcs::probe_vcs(),
             on_target: true,
+            replay_holds_fix: false,
         }
     }
 

@@ -21781,10 +21781,10 @@ fn the_fix_is_in_the_tip(taking_in: TakingIn) -> Vec<Step> {
 /// [`a_fix_staged_at_the_replayed_tip`], its `--continue` killed at `point`:
 /// at the re-map's record, before the branch moves to the copy of the
 /// replayed tip that holds the fix, or after it moved, the tip then holding
-/// the fix. Run again, the
-/// `--continue` finishes with the fix in the tip; `rwv abort` puts the
-/// workweave back with no `--abandon-foreign-tip`, keeping the fix, still
-/// uncommitted before the move, as a backup.
+/// the fix. Run again, the `--continue` finishes with the fix in the tip;
+/// `rwv abort` puts the workweave back with no `--abandon-foreign-tip`,
+/// keeping the fix as a backup: still uncommitted before the move, and in
+/// the replayed tip after a sync's move, until its relock.
 pub fn a_carried_fix_killed_part_way(
     taking_in: TakingIn,
     point: &'static str,
@@ -21819,12 +21819,14 @@ pub fn a_carried_fix_killed_part_way(
         ThenRun::Abort => {
             let abort = Step::rwv(&ww("w"), &["abort"]).may_strand(&[Repo::Proj]);
             steps.extend(aborted_from(
-                if point == "remap-recorded" {
-                    abort.claim(Claim::OutputContains(
+                match point {
+                    "remap-recorded" => abort.claim(Claim::OutputContains(
                         "uncommitted edits are kept as backup",
-                    ))
-                } else {
-                    abort
+                    )),
+                    "remap-moved" => abort.claim(Claim::OutputContains(
+                        "the replayed tip with your staged rwv.toml is kept as backup",
+                    )),
+                    _ => abort,
                 },
                 &ww("w"),
                 &[Repo::Lib],

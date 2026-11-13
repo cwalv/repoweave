@@ -6539,6 +6539,7 @@ holding_rwv! {
         use scenarios::{TakingIn, ThenRun};
         for (taking_in, point) in [
             (TakingIn::SyncLinear, "remap-recorded"),
+            (TakingIn::SyncLinear, "remap-moved"),
             (TakingIn::LandLinear, "remap-recorded"),
             (TakingIn::LandLinear, "relocking"),
         ] {
