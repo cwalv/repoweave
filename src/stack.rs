@@ -347,7 +347,7 @@ pub(crate) fn judge(
 /// Refuse where a carry would write over something a checkout holds that no
 /// commit records: a path a carried dependent's tip adds, or a directory
 /// above one, standing untracked, ignored or not, where HEAD tracks nothing.
-fn refuse_in_the_way(stack: &Stack, repos: &Repos<'_>, verb: &str) -> anyhow::Result<()> {
+fn refuse_in_the_way(stack: &Stack, repos: &Repos<'_>, verb: OpVerb) -> anyhow::Result<()> {
     let mut in_the_way = Vec::new();
     for carry in &stack.carried {
         for (repo, tip) in &carry.tips {
@@ -382,8 +382,9 @@ fn refuse_in_the_way(stack: &Stack, repos: &Repos<'_>, verb: &str) -> anyhow::Re
     crate::refuse!(
         RefusalKind::UntrackedCollision,
         "carrying a dependent along would write over what these checkouts hold untracked, \
-         ignored files included:\n  {}\nmove them aside, then run `rwv {verb} --continue`",
-        in_the_way.join("\n  ")
+         ignored files included:\n  {}\nmove them aside, then run `{}`",
+        in_the_way.join("\n  "),
+        crate::op_state::resume_command(verb)
     );
 }
 
@@ -578,7 +579,7 @@ impl Carrier<'_> {
             .collect();
         judge(&stack, &self.repos, self.t, verb, Some(&claimed), &mut report);
         report.into_result()?;
-        refuse_in_the_way(&stack, &self.repos, verb)?;
+        refuse_in_the_way(&stack, &self.repos, self.verb)?;
         let project_dir = self.repos.dir(&RepoKey::Project);
         let project_vcs = self.repos.vcs(&RepoKey::Project);
         for carry in &stack.carried {
@@ -743,7 +744,7 @@ impl Carrier<'_> {
                 return Err(crate::refusal::refusal(
                     RefusalKind::OpParked,
                     format!(
-                        "rwv {verb}: carrying '{dependent}' along in {repo} failed at {}: {e}\n\
+                        "rwv {verb}: carrying '{dependent}' along in {repo} failed at {}: {e:#}\n\
                          Nothing moved; fix the cause, then run `{}`, or `rwv abort` to put \
                          everything back as it was",
                         dir.display(),
