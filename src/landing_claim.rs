@@ -1261,11 +1261,11 @@ mod tests {
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
         let held = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
-        let budget = Duration::from_millis(1000);
+        let budget = Duration::from_millis(3000);
         let holder = {
             let owner = owner.clone();
             std::thread::spawn(move || {
-                for step in 0..40 {
+                for step in 0..70 {
                     let mut record = crate::op_state::OwnerRecord::new_land(
                         &op(1),
                         None,
@@ -1289,7 +1289,7 @@ mod tests {
         holder.join().unwrap();
         assert!(taken.is_ok(), "{:#}", taken.unwrap_err());
         assert!(
-            started.elapsed() > budget * 3,
+            started.elapsed() > budget * 2,
             "the wait outlasted the budget"
         );
     }
