@@ -7523,17 +7523,15 @@ impl DriftRefresh {
 
     /// The line naming the files both moved and edited that held the whole
     /// checkout back, after its label, with the choices that clear it.
-    pub fn describe_held(&self, vcs: &dyn crate::vcs::Vcs, dir: &Path) -> Option<String> {
+    pub fn describe_held(&self) -> Option<String> {
         if self.held.is_empty() {
             return None;
         }
         Some(format!(
             "drift held: these files were changed both by the branch's move and by an edit \
              here, so nothing in this checkout is refreshed; merge each edit onto the moved \
-             tip with `rwv doctor --fix --merge-edited-drift`, or set the edits aside, the old \
-             tip's content with them, with `{}`: {}",
-            vcs.hint(crate::vcs::VcsAction::Stash)
-                .replace("<checkout>", &dir.display().to_string()),
+             tip with `rwv doctor --fix --merge-edited-drift`, or set the edits aside in a \
+             backup with `rwv doctor --fix --set-aside-edited-drift`: {}",
             self.held.join(", ")
         ))
     }
@@ -7721,6 +7719,11 @@ pub enum EditedDriftMerge {
         took_incoming: Vec<String>,
         conflicted: Vec<String>,
         unrecorded: Option<String>,
+        /// The backup's tip, and the files it holds a staged version of
+        /// apart from the working copy's.
+        backup_tip: Option<String>,
+        staged_apart: Vec<String>,
+        resolution: crate::vcs::EditResolution,
     },
 }
 
@@ -7742,10 +7745,28 @@ impl EditedDriftMerge {
             took_incoming,
             conflicted,
             unrecorded: _,
+            backup_tip,
+            staged_apart,
+            resolution,
         } = self
         else {
             return None;
         };
+        let mut shown = Vec::new();
+        if let Some(tip) = backup_tip {
+            for file in took_incoming {
+                let spelled = |action| {
+                    vcs.hint(action)
+                        .replace("<checkout>", &dir.display().to_string())
+                        .replace("<tip>", tip)
+                        .replace("<file>", file)
+                };
+                shown.push(spelled(crate::vcs::VcsAction::ShowFromBackup));
+                if staged_apart.contains(file) {
+                    shown.push(spelled(crate::vcs::VcsAction::ShowStagedFromBackup));
+                }
+            }
+        }
         let mut said = String::new();
         if let Some(backup) = backup {
             said.push_str(&format!(
@@ -7761,9 +7782,13 @@ impl EditedDriftMerge {
             ));
         }
         if !took_incoming.is_empty() {
+            let why = match resolution {
+                crate::vcs::EditResolution::SetAside => "these files were set aside",
+                crate::vcs::EditResolution::Merge => "these files are declared derived",
+            };
             said.push_str(&format!(
-                "; these files are declared derived, so each now holds {}'s content and the \
-                 edit made here is set aside in {}: {}",
+                "; {why}, so each now holds {}'s content, and the version edited here is \
+                 kept only in {}: {}",
                 refreshed.moved_to.short(),
                 backup_named(backup.as_deref()),
                 took_incoming.join(", ")
@@ -7778,6 +7803,15 @@ impl EditedDriftMerge {
                     .replace("<paths>", &conflicted.join(" ")),
                 conflicted.join(", ")
             ));
+        }
+        if !shown.is_empty() {
+            said.push_str(
+                "\nthe version each held here, and its staged version where that differed, \
+                 is shown by:",
+            );
+            for line in shown {
+                said.push_str(&format!("\n    {line}"));
+            }
         }
         Some(said)
     }
@@ -7797,9 +7831,10 @@ impl MergeDeclined {
             Self::Submodule(_) => {
                 "these are submodules, whose checkouts no merge here writes".to_owned()
             }
-            Self::Uncompared(_) => "the VCS does not compare these files with what it records \
-                                    (ignored, or marked unchanged), so no backup would keep \
-                                    their content"
+            Self::Uncompared { .. } => "the VCS does not compare these files with what it \
+                                        records (ignored, or marked unchanged), so no backup \
+                                        would keep their content; once it does, run the merge \
+                                        or the set-aside again"
                 .to_owned(),
             Self::Driver { path, driver } => {
                 format!("{path} names its own merge driver `{driver}`, which is not run here")
@@ -7827,6 +7862,7 @@ pub fn merge_edited_drift(
     vcs: &dyn crate::vcs::Vcs,
     repo: &Path,
     reading: &DriftReading,
+    resolution: crate::vcs::EditResolution,
 ) -> Result<EditedDriftMerge, VcsError> {
     let (Some(moved_from), Some(moved_to)) = (&reading.left, &reading.head) else {
         return Ok(EditedDriftMerge::NoMove);
@@ -7863,6 +7899,7 @@ pub fn merge_edited_drift(
     let files = reading.stale_files();
     let index_entries = reading.stale_index_entries();
     let mut backup = None;
+    let mut backup_tip = None;
     let request = crate::vcs::WorkingCopyMergeRequest {
         base: moved_from,
         incoming: moved_to,
@@ -7870,15 +7907,16 @@ pub fn merge_edited_drift(
         stale_files: &files,
         stale_index_entries: &index_entries,
         derived: crate::vcs::DerivedContentPolicy::keep_incoming_side(),
+        resolution,
     };
     let outcome = vcs.merge_into_working_copy(repo, &request, &mut || {
         crate::test_pause::point("drift-merge-write");
         if vcs.head_revision(repo)?.id() != moved_to {
             return Ok(crate::vcs::BeforeWrite::Stop);
         }
-        backup = vcs
-            .backup_edits(repo)?
-            .map(|kept| kept.backup().name.to_string());
+        let kept = vcs.backup_edits(repo)?;
+        backup = kept.as_ref().map(|kept| kept.backup().name.to_string());
+        backup_tip = kept.map(|kept| kept.backup().tip.id().as_str().to_owned());
         Ok(crate::vcs::BeforeWrite::Write {
             backup: backup.clone(),
         })
@@ -7910,7 +7948,11 @@ pub fn merge_edited_drift(
             clean,
             took_incoming,
             conflicted,
+            staged_apart,
         } => EditedDriftMerge::Merged {
+            backup_tip,
+            staged_apart,
+            resolution,
             backup,
             refreshed: Refreshed {
                 moved_from: moved_from.clone(),
@@ -8298,7 +8340,7 @@ fn unreadable_claim_text(seen: &[u8]) -> String {
 /// Files both moved and edited, as `--fix` meets them: whether it may merge
 /// them, the checkouts it wrote nothing to, and whether any held such a file.
 struct HeldDrift {
-    merging: Option<crate::cli::consent::MergeEditedDriftConsent>,
+    resolving: Option<crate::vcs::EditResolution>,
     refused: crate::diagnosis::Report,
     merge_found: bool,
     unread: bool,
@@ -8306,7 +8348,7 @@ struct HeldDrift {
 
 /// The checkouts `--fix` writes nothing to for their edits' sake, judged
 /// into `held.refused`: a merge of edits interrupted, and files both moved and
-/// edited, which are merged where `held.merging` consents and judged where it
+/// edited, which are resolved where `held.resolving` consents and judged where it
 /// does not; `merged` holds the checkouts merged.
 struct HeldPass {
     held: std::collections::HashSet<std::path::PathBuf>,
@@ -8364,7 +8406,7 @@ fn settle_held_drift(
                 continue;
             }
         };
-        if held.merging.is_none() {
+        if held.resolving.is_none() {
             held_checkouts.insert(repo_abs.clone());
             held.refused.add(
                 crate::diagnosis::interrupted_merge(location, &interrupted)
@@ -8427,7 +8469,7 @@ fn settle_held_drift(
                 .listing(listing)
                 .checkout(repo_abs)
         };
-        if held.merging.is_none() {
+        if held.resolving.is_none() {
             held.refused
                 .add(judged(moved, reading.moved_and_edited()).judge(vcs));
             continue;
@@ -8442,7 +8484,10 @@ fn settle_held_drift(
             ),
             None => format!("{moved}; nothing was merged or refreshed: {why}"),
         };
-        match self::merge_edited_drift(vcs, repo_abs, &reading) {
+        let Some(resolution) = held.resolving else {
+            unreachable!("judged above where nothing consents");
+        };
+        match self::merge_edited_drift(vcs, repo_abs, &reading, resolution) {
             Ok(EditedDriftMerge::NoMove | EditedDriftMerge::NothingHeld) => {
                 held_checkouts.remove(repo_abs);
             }
@@ -8482,11 +8527,27 @@ fn settle_held_drift(
                             .only_forms(&[crate::diagnosis::Form::ReplaceThenMerge])
                             .judge(vcs)
                     }
-                    MergeDeclined::Submodule(paths) | MergeDeclined::Uncompared(paths) => {
-                        judged(subject, paths.clone())
-                            .only_forms(&set_aside)
+                    MergeDeclined::Uncompared { ignored, marked } => {
+                        let mut forms = Vec::new();
+                        if !ignored.is_empty() {
+                            forms.push(crate::diagnosis::Form::TrackIgnored);
+                        }
+                        if !marked.is_empty() {
+                            forms.push(crate::diagnosis::Form::CompareMarked);
+                        }
+                        crate::diagnosis::State::EditsMovedAndEdited
+                            .of(location)
+                            .subject(subject)
+                            .listing(ignored.iter().chain(marked))
+                            .bind_list("<ignored>", ignored)
+                            .bind_list("<marked>", marked)
+                            .checkout(repo_abs)
+                            .only_forms(&forms)
                             .judge(vcs)
                     }
+                    MergeDeclined::Submodule(paths) => judged(subject, paths.clone())
+                        .only_forms(&set_aside)
+                        .judge(vcs),
                     MergeDeclined::Driver { path, .. } => judged(subject, vec![path.clone()])
                         .only_forms(&set_aside)
                         .judge(vcs),
@@ -9547,7 +9608,7 @@ pub fn run_check(
     scope: Scope,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
-    merge_edited_drift: Option<crate::cli::consent::MergeEditedDriftConsent>,
+    edited_drift: Option<crate::cli::consent::EditedDriftConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
@@ -9559,7 +9620,9 @@ pub fn run_check(
 
     let mut fix_errors: Vec<String> = Vec::new();
     let mut held = HeldDrift {
-        merging: merge_edited_drift.filter(|_| repair == Repair::Apply),
+        resolving: edited_drift
+            .filter(|_| repair == Repair::Apply)
+            .map(crate::cli::consent::EditedDriftConsent::resolution),
         refused: crate::diagnosis::Report::default(),
         merge_found: false,
         unread: false,
@@ -9676,12 +9739,18 @@ pub fn run_check(
     }
 
     held.refused.into_result()?;
-    if fix && merge_edited_drift.is_some() && !held.merge_found && !held.unread {
+    if let (true, Some(resolution), false, false) =
+        (fix, held.resolving, held.merge_found, held.unread)
+    {
+        let flag = match resolution {
+            crate::vcs::EditResolution::Merge => "--merge-edited-drift",
+            crate::vcs::EditResolution::SetAside => "--set-aside-edited-drift",
+        };
         crate::refuse!(
             crate::refusal::RefusalKind::InapplicableFlag,
-            "--merge-edited-drift: no checkout here holds a file both moved by its branch and \
-             edited, so there is no edit to merge onto a moved tip; where no move of a \
-             checkout's branch under it is shown, its differences are edits"
+            "{flag}: no checkout here holds a file both moved by its branch and edited, so \
+             there is no edit to resolve against a moved tip; where no move of a checkout's \
+             branch under it is shown, its differences are edits"
         );
     }
     Ok(verdict)

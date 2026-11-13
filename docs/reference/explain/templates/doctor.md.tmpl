@@ -16,7 +16,7 @@ follow-up actions.
 
 ```
 rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
-           [--merge-edited-drift] [--kind <kind>]...
+           [--merge-edited-drift | --set-aside-edited-drift] [--kind <kind>]...
 ```
 
 - `--all` runs checks across every project under `projects/` and enables
@@ -53,6 +53,14 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
 - `--abandon-lost-pins` (refused without `--fix`) widens `--fix` by exactly one arm: a workweave
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
+- `--set-aside-edited-drift` is the other choice for the same checkouts. It
+  takes the same backup, prints its id, then gives each file both moved and
+  edited the moved tip's content, refreshes the move's other files and
+  records the checkout. The edits are then held only by the backup; the
+  report prints, per file, the command that shows the version it held, and
+  its staged version where that differed. It merges nothing, and refuses
+  where the merge flag refuses for links and uncompared files. The two flags
+  conflict.
 - `--merge-edited-drift` widens `--fix` for a checkout whose branch moved
   under it and that holds files both that move and an edit here changed
   (`edits` `moved and edited`). Without it `--fix` writes nothing to such a
@@ -74,8 +82,10 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   anything else standing where its directory should, refuses the merge. A
   file holding two versions of the edit, one staged and another in the
   working copy, a submodule, and a file naming a merge driver of its own are
-  merged by no rule here: the flag refuses, and setting the edits aside is
-  the choice. A write that fails puts back everything written, naming the
+  merged by no rule here: the flag refuses, and `--set-aside-edited-drift`
+  is the choice. A file git does not compare with what it records (ignored,
+  or marked assume-unchanged or skip-worktree) refuses either flag, since no
+  backup would keep it, and the command that has git compare it is printed. A write that fails puts back everything written, naming the
   backup; a run stopped part way leaves the checkout `edits` `merge
   interrupted`, and the flag run again first puts each file back as it
   stood, then merges afresh. Where no checkout holds such a file, the flag

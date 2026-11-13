@@ -418,6 +418,11 @@ pub enum VcsAction {
     StashUntracked,
     StashIgnored,
     Status,
+    MarkResolved,
+    ShowFromBackup,
+    ShowStagedFromBackup,
+    TrackIgnored,
+    CompareMarked,
     RemoveWorktree,
     BranchAt,
     SwitchTo,
@@ -435,16 +440,20 @@ pub enum VcsAction {
     AddRemote,
     UnsetUpstream,
     SetCommitIdentity,
-    MarkResolved,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 23] = [
+    pub const ALL: [VcsAction; 27] = [
         Self::Commit,
         Self::Stash,
         Self::StashUntracked,
         Self::StashIgnored,
         Self::Status,
+        Self::MarkResolved,
+        Self::ShowFromBackup,
+        Self::ShowStagedFromBackup,
+        Self::TrackIgnored,
+        Self::CompareMarked,
         Self::RemoveWorktree,
         Self::BranchAt,
         Self::SwitchTo,
@@ -462,7 +471,6 @@ impl VcsAction {
         Self::AddRemote,
         Self::UnsetUpstream,
         Self::SetCommitIdentity,
-        Self::MarkResolved,
     ];
 }
 
@@ -2495,6 +2503,9 @@ pub enum WorkingCopyMerge {
         clean: Vec<String>,
         took_incoming: Vec<String>,
         conflicted: Vec<String>,
+        /// Of `took_incoming`, those whose index held a version of the edit
+        /// apart from the working copy's.
+        staged_apart: Vec<String>,
     },
     /// Nothing was written: these paths each hold two versions of an edit,
     /// one recorded and another in the working copy.
@@ -2521,8 +2532,13 @@ pub enum MergeDeclined {
     /// These paths are submodules, whose checkouts no merge here writes.
     Submodule(Vec<String>),
     /// The VCS does not compare these paths with what it records, so a
-    /// backup of the working copy would not keep them.
-    Uncompared(Vec<String>),
+    /// backup of the working copy would not keep them: `ignored` files the
+    /// index lacks, and entries `marked` as unchanged or outside the
+    /// working copy.
+    Uncompared {
+        ignored: Vec<String>,
+        marked: Vec<String>,
+    },
     /// This path names a merge driver of its own, which is not run here.
     Driver { path: String, driver: String },
     /// The refresh of the move's other paths was declined; the VCS's account.
@@ -2547,6 +2563,17 @@ pub struct WorkingCopyMergeRequest<'a> {
     /// The paths whose index entry alone takes `incoming`'s.
     pub stale_index_entries: &'a [String],
     pub derived: DerivedContentPolicy,
+    pub resolution: EditResolution,
+}
+
+/// What [`Vcs::merge_into_working_copy`] does with each edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditResolution {
+    /// Merge it onto the incoming side.
+    Merge,
+    /// Take the incoming side's content, whatever the edit; the caller keeps
+    /// the edit in its backup.
+    SetAside,
 }
 
 /// What the caller's hook answers once every check has passed.

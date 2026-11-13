@@ -1786,7 +1786,7 @@ pub(crate) fn refresh_drift_after(
             if let Some(left) = outcome.describe_left_in_place(vcs, dir, "rwv doctor --fix") {
                 eprintln!("warning: rwv {verb}: {repo}: {left}");
             }
-            if let Some(held) = outcome.describe_held(vcs, dir) {
+            if let Some(held) = outcome.describe_held() {
                 eprintln!("warning: rwv {verb}: {repo}: {held}");
             }
             if let Some(unrecorded) = outcome.describe_unrecorded() {

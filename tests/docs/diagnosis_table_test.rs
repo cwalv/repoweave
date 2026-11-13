@@ -51,6 +51,9 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<b-checkout>", "/x/b"),
         ("<resume>", "sync"),
         ("<paths>", "NOTES.txt"),
+        ("<file>", "README.md"),
+        ("<ignored>", "build.log"),
+        ("<marked>", "local.cfg"),
     ])
 }
 

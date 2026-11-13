@@ -1098,8 +1098,9 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
                 false => side(&file_vs_head, &file_vs_left, path),
             },
             compared: left.is_none()
-                || (!unwatched.contains(path)
-                    && (indexed.contains(path) || nothing_on_disk(repo, path))),
+                || indexed.contains(path)
+                || nothing_on_disk(repo, path)
+                || standing_at_its_own_name(repo, path),
         })
         .collect();
     let removed: BTreeSet<String> = standings
@@ -1152,6 +1153,25 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
         }
     }
     Ok(standings)
+}
+
+/// Whether a file or link stands at `path` itself, below directories only.
+fn standing_at_its_own_name(repo: &Path, path: &str) -> bool {
+    let mut at = repo.to_path_buf();
+    let components: Vec<&str> = path.split('/').collect();
+    for (n, component) in components.iter().enumerate() {
+        at.push(component);
+        match std::fs::symlink_metadata(&at) {
+            Err(_) => return false,
+            Ok(meta) if n + 1 < components.len() => {
+                if !meta.is_dir() {
+                    return false;
+                }
+            }
+            Ok(meta) => return !meta.is_dir(),
+        }
+    }
+    false
 }
 
 /// Whether neither `path` nor anything in place of one of its leading
@@ -3087,6 +3107,12 @@ impl Vcs for GitVcs {
             VcsAction::StashUntracked => "git -C <checkout> stash push --include-untracked",
             VcsAction::StashIgnored => "git -C <checkout> stash push --all",
             VcsAction::Status => "git -C <checkout> status",
+            VcsAction::ShowFromBackup => "git -C <checkout> show <tip>:<file>",
+            VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
+            VcsAction::TrackIgnored => "git -C <checkout> add -f -- <ignored>",
+            VcsAction::CompareMarked => {
+                "git -C <checkout> update-index --no-assume-unchanged --no-skip-worktree -- <marked>"
+            }
             VcsAction::RemoveWorktree => "git -C <checkout> worktree remove <worktree>",
             VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
             VcsAction::SwitchTo => "git -C <checkout> switch <E>",

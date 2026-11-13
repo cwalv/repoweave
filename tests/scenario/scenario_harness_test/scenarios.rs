@@ -7791,7 +7791,10 @@ pub fn dc11_drift_before_dirt() -> Scenario {
                 .claim(Claim::OutputContains(
                     "rwv doctor --fix --merge-edited-drift",
                 ))
-                .claim(Claim::OutputContains("stash push"))
+                .claim(Claim::OutputContains(
+                    "rwv doctor --fix --set-aside-edited-drift",
+                ))
+                .claim(Claim::OutputLacks("stash push"))
                 .claim(Claim::OutputLacks("refreshed drift")),
             Step::git(
                 &ww("w"),
@@ -7825,7 +7828,7 @@ pub fn dc11_drift_before_dirt() -> Scenario {
 /// How `moved_and_edited` ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MovedAndEditedEnd {
-    /// The edits are set aside with the VCS's stash.
+    /// The printed set-aside takes the moved tip, the edit kept in a backup.
     Stash,
     /// The printed merge resolves the edit onto the moved tip.
     MergeClean,
@@ -7833,7 +7836,8 @@ pub enum MovedAndEditedEnd {
     MergeConflict,
     /// The edited file is declared derived: the merge takes the moved tip's.
     Derived,
-    /// The edit is staged and edited again: the merge refuses, naming stash.
+    /// The edit is staged and edited again: the merge refuses, naming the
+    /// set-aside, which keeps both versions in the backup.
     TwoEdits,
 }
 
@@ -7925,9 +7929,21 @@ pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
     };
     match end {
         MovedAndEditedEnd::Stash => steps.extend([
-            Step::git(&at, Repo::Lib, &["stash", "push", "-q"]),
+            Step::rwv_printed(&at, "rwv doctor --fix --set-aside-edited-drift")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("these files were set aside"))
+                .claim(Claim::OutputContains("kept only in backup")),
+            refreshed(),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["diff", "--quiet", "HEAD", "--", "edited.txt"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv_printed_holding(&at, "git -C", ":edited.txt")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("ONE\ntwo\nthree")),
             Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
-            Step::git(&at, Repo::Lib, &["stash", "list"]).claim(Claim::OutputContains("stash@{0}")),
         ]),
         MovedAndEditedEnd::MergeClean => steps.extend([
             merge()
@@ -8013,7 +8029,36 @@ pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
             )
             .expect(Exit::Code(1)),
             Step::rwv(&at, &["land"]).expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited)),
-            Step::git(&at, Repo::Lib, &["stash", "push", "-q"]),
+            merge()
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains(
+                    "rwv doctor --fix --set-aside-edited-drift",
+                ))
+                .claim(Claim::OutputLacks(
+                    "    rwv doctor --fix --merge-edited-drift",
+                )),
+            Step::rwv_printed(&at, "rwv doctor --fix --set-aside-edited-drift")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("kept only in backup")),
+            Step::rwv_printed_holding(&at, "git -C", "^2:edited.txt")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("ONE\ntwo\nthree"))
+                .claim(Claim::OutputLacks("TWO")),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &[
+                    "log",
+                    "--all",
+                    "-m",
+                    "-p",
+                    "--format=",
+                    "-STWO",
+                    "--",
+                    "edited.txt",
+                ],
+            )
+            .claim(Claim::OutputContains("+TWO")),
             Step::rwv(&at, &["land"]).expect(Exit::Succeeds),
         ]),
     }

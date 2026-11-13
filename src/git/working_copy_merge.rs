@@ -13,8 +13,9 @@ use super::{
     DERIVED_CONTENT_DRIVER_NAME,
 };
 use crate::vcs::{
-    BeforeWrite, CommitId, DerivedContentPolicy, DerivedContentResolution, InterruptedMerge,
-    MergeDeclined, RefreshScope, RefreshWrite, VcsError, WorkingCopyMerge, WorkingCopyMergeRequest,
+    BeforeWrite, CommitId, DerivedContentPolicy, DerivedContentResolution, EditResolution,
+    InterruptedMerge, MergeDeclined, RefreshScope, RefreshWrite, VcsError, WorkingCopyMerge,
+    WorkingCopyMergeRequest,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -147,7 +148,15 @@ enum Planned {
 enum Write {
     Keep,
     Remove,
-    Content { bytes: Vec<u8>, executable: bool },
+    Content {
+        bytes: Vec<u8>,
+        executable: bool,
+    },
+    /// The link standing at the path removed, then the content written.
+    OverLink {
+        bytes: Vec<u8>,
+        executable: bool,
+    },
 }
 
 fn git(
@@ -304,7 +313,7 @@ fn intended(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsError> {
 /// The paths of `paths` git does not compare with what the index records:
 /// ignored files the index lacks, and entries marked assume-unchanged or
 /// skip-worktree.
-fn uncompared(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsError> {
+fn uncompared(repo: &Path, paths: &[String]) -> Result<(Vec<String>, Vec<String>), VcsError> {
     let mut flagged = Argv::from(["--literal-pathspecs", "ls-files", "-v", "-z", "--"]);
     let mut ignored = Argv::from([
         "--literal-pathspecs",
@@ -319,17 +328,17 @@ fn uncompared(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsError> {
         flagged = flagged.text(path);
         ignored = ignored.text(path);
     }
-    let mut found: Vec<String> = fields(&succeeded(flagged, repo, None)?)
+    let marked: Vec<String> = fields(&succeeded(flagged, repo, None)?)
         .filter_map(|record| {
             let (tag, path) = record.split_once(' ')?;
             (tag.chars().any(|c| c.is_ascii_lowercase()) || tag == "S").then(|| path.to_owned())
         })
+        .filter(|path| paths.contains(path))
         .collect();
-    found.extend(fields(&succeeded(ignored, repo, None)?));
-    found.retain(|path| paths.contains(path));
-    found.sort();
-    found.dedup();
-    Ok(found)
+    let ignored: Vec<String> = fields(&succeeded(ignored, repo, None)?)
+        .filter(|path| paths.contains(path))
+        .collect();
+    Ok((ignored, marked))
 }
 
 fn index_entry(repo: &Path, path: &str) -> Result<Option<Entry>, VcsError> {
@@ -571,6 +580,7 @@ struct Planning<'a> {
     labels: [&'a str; 3],
     incoming: &'a CommitId,
     file_mode: bool,
+    resolution: EditResolution,
 }
 
 impl Planning<'_> {
@@ -610,8 +620,31 @@ impl Planning<'_> {
             write: Write::Keep,
             ours: ours_entry.clone(),
         };
+        let setting_aside = self.resolution == EditResolution::SetAside;
+        if setting_aside && read.theirs.as_ref().is_some_and(|t| t.mode == GITLINK) {
+            return Ok(Planned::Clean {
+                write: Write::Keep,
+                entry: read.theirs.clone(),
+                took_incoming: true,
+            });
+        }
+        if setting_aside && matches!(read.standing.ours, Ours::Link(_)) {
+            return Ok(Planned::Clean {
+                write: match &read.theirs {
+                    Some(theirs) => match self.content(&read.path, &theirs.blob, &theirs.mode)? {
+                        Write::Content { bytes, executable } => {
+                            Write::OverLink { bytes, executable }
+                        }
+                        other => other,
+                    },
+                    None => Write::Remove,
+                },
+                entry: read.theirs.clone(),
+                took_incoming: true,
+            });
+        }
         let replaceable = matches!(read.standing.ours, Ours::File { .. } | Ours::Absent);
-        if read.merge == MergeAttribute::Derived {
+        if read.merge == MergeAttribute::Derived || setting_aside {
             if !replaceable {
                 return Ok(stages_only());
             }
@@ -1055,8 +1088,10 @@ pub(super) fn merge_into_working_copy(
             merge,
         });
     }
+    let setting_aside = request.resolution == EditResolution::SetAside;
     let submodules: Vec<String> = reads
         .iter()
+        .filter(|_| !setting_aside)
         .filter(|r| {
             [&r.base, &r.theirs, &r.standing.index]
                 .into_iter()
@@ -1070,14 +1105,16 @@ pub(super) fn merge_into_working_copy(
             submodules,
         )));
     }
-    let not_compared = uncompared(repo, paths)?;
-    if !not_compared.is_empty() {
-        return Ok(WorkingCopyMerge::Declined(MergeDeclined::Uncompared(
-            not_compared,
-        )));
+    let (ignored, marked) = uncompared(repo, paths)?;
+    if !ignored.is_empty() || !marked.is_empty() {
+        return Ok(WorkingCopyMerge::Declined(MergeDeclined::Uncompared {
+            ignored,
+            marked,
+        }));
     }
     if let Some(read) = reads
         .iter()
+        .filter(|_| !setting_aside)
         .find(|r| matches!(r.merge, MergeAttribute::Driver(_)))
     {
         let MergeAttribute::Driver(driver) = &read.merge else {
@@ -1096,7 +1133,7 @@ pub(super) fn merge_into_working_copy(
         })
         .map(|r| r.path.clone())
         .collect();
-    if !two_edits.is_empty() {
+    if !two_edits.is_empty() && !setting_aside {
         return Ok(WorkingCopyMerge::TwoEdits(two_edits));
     }
     let scratch = git_path(
@@ -1113,6 +1150,7 @@ pub(super) fn merge_into_working_copy(
         labels: ["working copy", base.short(), incoming.short()],
         incoming,
         file_mode: file_mode_honored(repo)?,
+        resolution: request.resolution,
     };
     let planned: Result<Vec<Planned>, VcsError> = reads.iter().map(|r| planning.plan(r)).collect();
     let _ = std::fs::remove_dir_all(&scratch);
@@ -1146,7 +1184,26 @@ pub(super) fn merge_into_working_copy(
         held: journaled,
     };
     journal.write(repo)?;
-    let written = write_all(repo, request, &reads, &planned, &intended);
+    let written = write_all(repo, request, &reads, &planned, &intended).map(|written| {
+        written.map(|merged| match merged {
+            WorkingCopyMerge::Merged {
+                clean,
+                took_incoming,
+                conflicted,
+                staged_apart: _,
+            } => WorkingCopyMerge::Merged {
+                staged_apart: took_incoming
+                    .iter()
+                    .filter(|p| two_edits.contains(p))
+                    .cloned()
+                    .collect(),
+                clean,
+                took_incoming,
+                conflicted,
+            },
+            other => other,
+        })
+    });
     let declined_once_put_back = |declined: MergeDeclined| -> Result<WorkingCopyMerge, VcsError> {
         put_back(repo)?;
         Ok(WorkingCopyMerge::Declined(declined))
@@ -1243,6 +1300,10 @@ fn write_all(
             Write::Content { bytes, executable } => {
                 write_file(repo, path, bytes, Some(*executable))?
             }
+            Write::OverLink { bytes, executable } => {
+                remove_entry(repo, path)?;
+                write_file(repo, path, bytes, Some(*executable))?
+            }
         }
     }
     crate::test_pause::point("drift-merge-written");
@@ -1255,6 +1316,7 @@ fn write_all(
         clean,
         took_incoming,
         conflicted,
+        staged_apart: Vec::new(),
     }))
 }
 
@@ -1286,6 +1348,7 @@ mod tests {
         repo: PathBuf,
         base: CommitId,
         moved: CommitId,
+        resolution: EditResolution,
     }
 
     type Files<'a> = &'a [(&'a str, &'a str)];
@@ -1352,6 +1415,7 @@ mod tests {
                 repo,
                 base,
                 moved,
+                resolution: EditResolution::Merge,
             }
         }
 
@@ -1378,6 +1442,7 @@ mod tests {
                     stale_files: &stale,
                     stale_index_entries: &[],
                     derived: DerivedContentPolicy::keep_incoming_side(),
+                    resolution: self.resolution,
                 },
                 before_write,
             )
@@ -1423,6 +1488,7 @@ mod tests {
                 clean: vec!["f.txt".to_owned()],
                 took_incoming: vec![],
                 conflicted: vec![],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.text("f.txt"), "ONE\ntwo\nTHREE\n");
@@ -1448,6 +1514,7 @@ mod tests {
                 clean: vec![],
                 took_incoming: vec![],
                 conflicted: vec!["f.txt".to_owned()],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.stages("f.txt"), ["1", "2", "3"]);
@@ -1481,6 +1548,7 @@ mod tests {
                 clean: vec!["f.up".to_owned()],
                 took_incoming: vec![],
                 conflicted: vec![],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.text("f.up"), "one-mine\ntwo\nmoved\n");
@@ -1552,6 +1620,7 @@ mod tests {
                 clean: vec![],
                 took_incoming: vec![],
                 conflicted: vec!["GEN".to_owned(), "f.txt".to_owned()],
+                staged_apart: vec![],
             }
         );
         for (path, held) in [("GEN", "gen-local"), ("f.txt", "f-local")] {
@@ -1741,6 +1810,7 @@ mod tests {
                 clean: vec![],
                 took_incoming: vec![],
                 conflicted: vec!["data.tbl".to_owned()],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.text("data.tbl"), "ONE\ntwo\nthree\n");
@@ -1799,6 +1869,7 @@ mod tests {
                 clean: vec!["NOTES".to_owned()],
                 took_incoming: vec!["GEN".to_owned()],
                 conflicted: vec![],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.text("GEN"), "moved\n");
@@ -1821,6 +1892,7 @@ mod tests {
                 clean: vec![],
                 took_incoming: vec![],
                 conflicted: vec!["gone-here.txt".to_owned(), "gone-there.txt".to_owned()],
+                staged_apart: vec![],
             }
         );
         assert_eq!(at.text("gone-there.txt"), "ONE\ntwo\nthree\n");

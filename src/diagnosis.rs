@@ -771,6 +771,8 @@ impl State {
                     Form::MergeEditedDrift,
                     Form::SetEditsAside,
                     Form::ReplaceThenMerge,
+                    Form::TrackIgnored,
+                    Form::CompareMarked,
                 ],
                 verb_offers: &[],
             },
@@ -1982,6 +1984,8 @@ pub enum ChoiceId {
     SetEditsAside,
     ResolveConflicts,
     ReplaceThenMerge,
+    TrackIgnored,
+    CompareMarked,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2249,14 +2253,28 @@ impl ChoiceId {
             },
             Self::SetEditsAside => &ChoiceRow {
                 id: None,
-                phrase: "set the edits aside, the old tip's content with them",
-                keeps_work: "the stash keeps every difference; taking it back brings the old \
-                             tip's content back too",
+                phrase: "set the edits aside in a backup, each listed file taking the moved \
+                         tip's content, refreshing the move's other files",
+                keeps_work: "the working copy and index are kept as a backup before anything \
+                             is written, the only place the edits are then held; the report \
+                             prints the command that shows each file's version there",
             },
             Self::ResolveConflicts => &ChoiceRow {
                 id: None,
                 phrase: "resolve each conflicted file, then mark it resolved",
                 keeps_work: "nothing is written but what you write",
+            },
+            Self::TrackIgnored => &ChoiceRow {
+                id: None,
+                phrase: "have the VCS track each listed ignored file, so a backup keeps it, then \
+                         merge or set aside again",
+                keeps_work: "nothing is written but the index entry naming the file",
+            },
+            Self::CompareMarked => &ChoiceRow {
+                id: None,
+                phrase: "have the VCS compare each listed file it was told to treat as \
+                         unchanged, so a backup keeps it, then merge or set aside again",
+                keeps_work: "nothing is written but the index entry's marks",
             },
             Self::ReplaceThenMerge => &ChoiceRow {
                 id: None,
@@ -2478,6 +2496,8 @@ pub enum Form {
     SetEditsAside,
     ResolveConflicts,
     ReplaceThenMerge,
+    TrackIgnored,
+    CompareMarked,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2609,6 +2629,8 @@ impl Form {
         Self::SetEditsAside,
         Self::ResolveConflicts,
         Self::ReplaceThenMerge,
+        Self::TrackIgnored,
+        Self::CompareMarked,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3160,13 +3182,25 @@ impl Form {
             },
             Self::SetEditsAside => &FormRow {
                 choice: C::SetEditsAside,
-                steps: &[Vcs(A::Stash)],
-                at: W::Checkout,
+                steps: &[Rwv("rwv doctor --fix --set-aside-edited-drift")],
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::ResolveConflicts => &FormRow {
                 choice: C::ResolveConflicts,
                 steps: &[Vcs(A::MarkResolved)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::TrackIgnored => &FormRow {
+                choice: C::TrackIgnored,
+                steps: &[Vcs(A::TrackIgnored)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::CompareMarked => &FormRow {
+                choice: C::CompareMarked,
+                steps: &[Vcs(A::CompareMarked)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4144,9 +4178,11 @@ pub fn judge_unresolved(
 /// A checkout holding files both its branch's move and an edit changed,
 /// listed, whose merge is not refused by what stands above them.
 pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
-    State::EditsMovedAndEdited
-        .of(repo)
-        .without(&[ChoiceId::ReplaceThenMerge])
+    State::EditsMovedAndEdited.of(repo).without(&[
+        ChoiceId::ReplaceThenMerge,
+        ChoiceId::TrackIgnored,
+        ChoiceId::CompareMarked,
+    ])
 }
 
 /// A checkout whose merge of edits onto a moved tip was interrupted, judged.

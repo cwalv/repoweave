@@ -262,6 +262,14 @@ pub enum Commands {
         /// nothing to such a checkout and names it.
         #[arg(long)]
         merge_edited_drift: bool,
+        /// With `--fix`, in each checkout `--merge-edited-drift` would merge,
+        /// keep the working copy and index as a backup, then give each file
+        /// both the move and an edit changed the moved tip's content, and
+        /// refresh the move's other files. The edits are then held only by
+        /// the backup; the report prints, for each file, the command that
+        /// shows its version there.
+        #[arg(long, conflicts_with = "merge_edited_drift")]
+        set_aside_edited_drift: bool,
         /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,

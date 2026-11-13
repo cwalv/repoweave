@@ -5516,7 +5516,7 @@ fn a_derived_file_moved_and_edited_takes_the_moved_tip_and_keeps_the_edit_in_the
 }
 
 #[test]
-fn a_file_moved_and_edited_twice_is_refused_by_the_merge_naming_stash() {
+fn a_file_moved_and_edited_twice_is_refused_by_the_merge_and_set_aside_keeping_both_versions() {
     runner::run(scenarios::moved_and_edited(
         scenarios::MovedAndEditedEnd::TwoEdits,
     ))

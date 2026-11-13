@@ -172,6 +172,41 @@ impl MergeEditedDriftConsent {
     }
 }
 
+/// Proof that the operator consented to `rwv doctor --fix` setting edits
+/// aside: each file both a branch's move and an edit changed takes the moved
+/// tip's content once the working copy and index are kept as a backup, the
+/// backup then the only place the edit is held. Minted from
+/// `--set-aside-edited-drift`.
+///
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct SetAsideEditedDriftConsent(());
+
+impl SetAsideEditedDriftConsent {
+    /// Mint from the parsed `--set-aside-edited-drift` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(set_aside_edited_drift: bool) -> Option<Self> {
+        set_aside_edited_drift.then_some(Self(()))
+    }
+}
+
+/// Which of the two resolutions of edited drift the operator consented to.
+#[derive(Debug, Clone, Copy)]
+pub enum EditedDriftConsent {
+    Merge(MergeEditedDriftConsent),
+    SetAside(SetAsideEditedDriftConsent),
+}
+
+impl EditedDriftConsent {
+    pub fn resolution(self) -> crate::vcs::EditResolution {
+        match self {
+            Self::Merge(_) => crate::vcs::EditResolution::Merge,
+            Self::SetAside(_) => crate::vcs::EditResolution::SetAside,
+        }
+    }
+}
+
 /// Proof that the operator consented to releasing the landing claims and
 /// takeover guards `rwv doctor` reports as unreadable, giving up the claim a
 /// live landing of another rwv release may hold: every one, or only those on

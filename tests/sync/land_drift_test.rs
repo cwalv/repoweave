@@ -928,10 +928,11 @@ fn fix(f: &Fixture, side: Side) -> std::process::Output {
 }
 
 /// Moves `side`'s branch with `change` after `prepare` ran in its checkout,
-/// then lands and runs `rwv doctor --fix`, each refusing or leaving `kept`
-/// exactly as it stood.
+/// then lands, refused as `state`, and runs `rwv doctor --fix`, each leaving
+/// `kept` exactly as it stood.
 fn landing_and_fix_keep(
     side: Side,
+    state: State,
     kept: &[&str],
     prepare: impl FnOnce(&Path),
     change: impl FnOnce(&Path),
@@ -947,7 +948,7 @@ fn landing_and_fix_keep(
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let stderr = common::cli::refused(&out, state);
     assert_eq!(
         path_state(&checkout, kept),
         before,
@@ -962,6 +963,23 @@ fn landing_and_fix_keep(
         "{side:?}: doctor --fix replaced what was there:\n{}",
         common::cli::describe(&out)
     );
+    if state != State::EditsMovedAndEdited {
+        return;
+    }
+    let workspace = match side {
+        Side::Source => &f.ww,
+        Side::Target => &f.primary,
+    };
+    for flag in ["--merge-edited-drift", "--set-aside-edited-drift"] {
+        let out = common::cli::run(&["doctor", "--fix", flag], workspace);
+        let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+        assert!(stderr.contains("so no backup would keep"), "{stderr}");
+        assert_eq!(
+            path_state(&checkout, kept),
+            before,
+            "{side:?}: {flag} replaced what was there:\n{stderr}"
+        );
+    }
 }
 
 /// An untracked file stands where the move puts a directory: git would
@@ -969,6 +987,7 @@ fn landing_and_fix_keep(
 fn untracked_file_where_the_move_puts_a_directory(side: Side) {
     landing_and_fix_keep(
         side,
+        State::EditsDirty,
         &["docs"],
         |checkout| std::fs::write(checkout.join("docs"), "never committed\n").unwrap(),
         |elsewhere| {
@@ -989,10 +1008,12 @@ fn an_untracked_file_where_the_move_puts_a_directory_is_kept_in_the_target() {
 }
 
 /// An ignored file stands where the move adds a file: git's merge treats an
-/// ignored file as expendable, so only reading it first keeps it.
+/// ignored file as expendable, so only reading it first keeps it. It holds
+/// the checkout as a file both moved and edited.
 fn ignored_file_where_the_move_adds_one(side: Side) {
     landing_and_fix_keep(
         side,
+        State::EditsMovedAndEdited,
         &["build.log"],
         |checkout| {
             let exclude = common::git_in(
@@ -1022,10 +1043,12 @@ fn an_ignored_file_where_the_move_adds_one_is_kept_in_the_target() {
 }
 
 /// A file git does not compare with its index entry carries a change the
-/// move's file would overwrite: skip-worktree, or assume-unchanged.
+/// move's file would overwrite: skip-worktree, or assume-unchanged. It holds
+/// the checkout as a file both moved and edited.
 fn unwatched_change_under_a_move(side: Side, flag: &'static str) {
     landing_and_fix_keep(
         side,
+        State::EditsMovedAndEdited,
         &["notes.txt"],
         |checkout| {
             common::git_in(checkout, &["update-index", flag, "notes.txt"]);
@@ -1298,6 +1321,7 @@ fn a_hand_refresh_after_the_first_reading_voids_the_drift_before_the_write() {
 /// the landing is about to write. That something is kept, and the drift left.
 fn put_where_the_move_adds_a_file_as_the_refresh_starts(
     path: &str,
+    then: State,
     prepare: impl FnOnce(&Path),
     put: impl FnOnce(&Path),
 ) {
@@ -1318,7 +1342,7 @@ fn put_where_the_move_adds_a_file_as_the_refresh_starts(
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let stderr = common::cli::refused(&out, then);
     assert_eq!(path_state(&f.ww_lib, &[path]), before, "{stderr}");
 }
 
@@ -1326,6 +1350,7 @@ fn put_where_the_move_adds_a_file_as_the_refresh_starts(
 fn an_ignored_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
     put_where_the_move_adds_a_file_as_the_refresh_starts(
         "build.log",
+        State::EditsMovedAndEdited,
         |checkout| {
             let common_dir = common::git_in(
                 checkout,
@@ -1343,6 +1368,7 @@ fn an_ignored_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
 fn an_ignored_directory_put_where_the_move_adds_a_file_as_the_refresh_starts_is_kept() {
     put_where_the_move_adds_a_file_as_the_refresh_starts(
         "out",
+        State::EditsDirty,
         |checkout| {
             let common_dir = common::git_in(
                 checkout,
@@ -1363,6 +1389,7 @@ fn an_ignored_directory_put_where_the_move_adds_a_file_as_the_refresh_starts_is_
 fn an_untracked_file_put_where_the_move_adds_one_as_the_refresh_starts_is_kept() {
     put_where_the_move_adds_a_file_as_the_refresh_starts(
         "new.txt",
+        State::EditsMovedAndEdited,
         |_| {},
         |checkout| std::fs::write(checkout.join("new.txt"), "never committed\n").unwrap(),
     );

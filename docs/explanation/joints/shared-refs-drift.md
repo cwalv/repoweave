@@ -256,10 +256,14 @@ The merge writes nothing through a symbolic link, at a file or at any
 directory above it. A write that fails puts every file back as it stood; a
 run stopped part way leaves the checkout `merge interrupted`, which every
 verb names, and running the merge again puts each file back before merging
-afresh, so your edit, never a half-merged file, is what it merges. Setting
-the edits aside instead keeps everything, including the old tip's content
-at every path the move changed, so taking them back brings that content
-back too; commit nothing from there until the edits are on the moved tip.
+afresh, so your edit, never a half-merged file, is what it merges. `rwv doctor --fix --set-aside-edited-drift` is the other way out: it takes
+the same backup, then gives each such file the moved tip's content and
+refreshes the rest, so the backup is the only place the edits are held; it
+prints, for each file, the command that shows the version you had, and the
+staged version where that differed. Neither flag writes over a file git does
+not compare with what it records, an ignored one or one marked
+assume-unchanged or skip-worktree, since no backup would keep it: both
+refuse, naming the command that has git compare it.
 
 ## The shared invariant
 
