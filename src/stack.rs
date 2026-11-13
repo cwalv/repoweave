@@ -463,6 +463,18 @@ pub(crate) struct Carrier<'a> {
     pub(crate) t: &'a str,
 }
 
+/// What `from` is replayed above onto `tip`: `tip` itself, so the commits
+/// replayed are those `from` holds that no common ancestor of the two holds,
+/// however many merge bases they have; none where the two share no history.
+fn replay_base(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    tip: &CommitId,
+    from: &CommitId,
+) -> anyhow::Result<Option<CommitId>> {
+    Ok((!vcs.merge_bases(dir, tip, from)?.is_empty()).then(|| tip.clone()))
+}
+
 fn policy(repo: &RepoKey) -> DerivedContentPolicy {
     match repo {
         RepoKey::Project => DerivedContentPolicy::rewritten_after(),
@@ -788,15 +800,7 @@ impl Carrier<'_> {
         else {
             return Ok(None);
         };
-        let base = if vcs.is_ancestor(&dir, &tip, &rev(from))? {
-            tip.id().clone()
-        } else {
-            match vcs.merge_bases(&dir, tip.id(), from)?.into_iter().next() {
-                Some(base) => base,
-                None => return Ok(None),
-            }
-        };
-        Ok(Some((base, tip.id().clone())))
+        Ok(replay_base(vcs.as_ref(), &dir, tip.id(), from)?.map(|base| (base, tip.id().clone())))
     }
 
     fn compose(
@@ -1003,5 +1007,87 @@ impl Carrier<'_> {
         }
         crate::test_pause::point("carry-moved");
         Ok(carried)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=T", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn id(dir: &Path, rev: &str) -> CommitId {
+        CommitId::parse(&git(dir, &["rev-parse", rev])).unwrap()
+    }
+
+    fn history(dir: &Path) {
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "root"]);
+        git(dir, &["switch", "-qc", "left"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "left"]);
+        git(dir, &["switch", "-qc", "right", "main"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "right"]);
+        git(dir, &["switch", "-q", "left"]);
+        git(
+            dir,
+            &["merge", "-q", "--no-ff", "-m", "left takes right", "right"],
+        );
+        git(dir, &["switch", "-q", "right"]);
+        git(dir, &["branch", "-f", "crossed", "right"]);
+        git(dir, &["switch", "-q", "crossed"]);
+        git(
+            dir,
+            &["merge", "-q", "--no-ff", "-m", "right takes left", "left~1"],
+        );
+    }
+
+    #[test]
+    fn a_replay_above_the_tip_is_the_same_whichever_of_several_merge_bases_there_are() {
+        let dir = tempfile::tempdir().unwrap();
+        history(dir.path());
+        let (tip, from) = (id(dir.path(), "left"), id(dir.path(), "crossed"));
+        let vcs = crate::vcs::project_vcs();
+        assert_eq!(vcs.merge_bases(dir.path(), &tip, &from).unwrap().len(), 2);
+
+        assert_eq!(
+            replay_base(vcs.as_ref(), dir.path(), &tip, &from).unwrap(),
+            Some(tip)
+        );
+    }
+
+    #[test]
+    fn no_replay_base_is_chosen_between_histories_sharing_none() {
+        let dir = tempfile::tempdir().unwrap();
+        history(dir.path());
+        git(dir.path(), &["switch", "-q", "--orphan", "alone"]);
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "alone"],
+        );
+        let vcs = crate::vcs::project_vcs();
+
+        assert_eq!(
+            replay_base(
+                vcs.as_ref(),
+                dir.path(),
+                &id(dir.path(), "left"),
+                &id(dir.path(), "alone")
+            )
+            .unwrap(),
+            None
+        );
     }
 }
