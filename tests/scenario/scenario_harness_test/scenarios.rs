@@ -17077,6 +17077,37 @@ pub fn siblings_at_one_commit_are_carried_to_one_commit() -> Scenario {
     )
 }
 
+/// `a-landing-killed-after-its-carry-continues`, with `w1`'s top-level
+/// `history` changed and committed before the resume: the carry being
+/// done, `rwv land --continue` judges `w1`'s entries against `main` as
+/// before and refuses the change unnamed, and lands it once named.
+pub fn a_landing_resumed_after_its_carry_judges_an_entry_changed_since() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::hand_edit(&ww("w1"), Repo::Proj, "rwv.toml", "\"linear\"", "\"merge\""),
+        Step::git(&ww("w1"), Repo::Proj, &["commit", "-qam", "history merge"]),
+        Step::rwv(&ww("w1"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::TargetMemberChanges)),
+        Step::rwv(
+            &ww("w1"),
+            &[
+                "land",
+                "--continue",
+                "--allow-member-change",
+                "projects/proj",
+            ],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: a landing resumed after its carry judges an entry changed since",
+        steps,
+    )
+}
+
 /// How the carry a landing into its dependent waits on ends.
 #[derive(Debug, Clone, Copy)]
 pub enum StoppedCarryEnds {

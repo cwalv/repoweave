@@ -4750,8 +4750,15 @@ fn rejudge_entries(
     let target = target_branch.as_str();
     let settled = if matches!(record.phase, op_state::OpPhase::Retire) {
         Some("it has already landed into it")
-    } else if !take_in.carries.is_empty() {
-        Some("they were settled before it began carrying its dependents along")
+    } else if take_in
+        .carries
+        .iter()
+        .any(|c| c.repo == RepoKey::Project && c.composed.is_none())
+    {
+        Some(
+            "the project checkout holds a dependent's `rwv.toml` while its carry is stopped; \
+             they are judged again once the carry is continued",
+        )
     } else {
         None
     };
